@@ -1,0 +1,10 @@
+[package]
+name = "map-core"
+version = "0.1.0"
+description = "Editor-independent map model: brush geometry, selection, edit commands"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+glam.workspace = true
+source-formats.workspace = true

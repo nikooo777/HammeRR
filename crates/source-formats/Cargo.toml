@@ -1,0 +1,10 @@
+[package]
+name = "source-formats"
+version = "0.1.0"
+description = "Readers and writers for Source engine file formats (KeyValues, VMF, ...)"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+glam = "0.34.1"
+thiserror = "2.0.21"

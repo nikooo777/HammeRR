@@ -132,11 +132,26 @@ impl Material {
         self.flag("$alphatest")
     }
 
-    /// True for `%compile*` tool materials like nodraw, clip, trigger, skip.
+    /// Whether this is an editor-only surface that is invisible in game
+    /// (clip, trigger, nodraw, skybox, ...). Water and other visible
+    /// `%compile*` materials are not tools.
     pub fn is_tool(&self) -> bool {
-        self.params
-            .iter()
-            .any(|(k, v)| k.starts_with("%compile") && v.trim() != "0")
+        const INVISIBLE: &[&str] = &[
+            "%compileareaportal",
+            "%compileblocklight",
+            "%compileclip",
+            "%compilefog",
+            "%compilehint",
+            "%compileinvisible",
+            "%compilenodraw",
+            "%compilenpcclip",
+            "%compileorigin",
+            "%compileplayerclip",
+            "%compileskip",
+            "%compilesky",
+            "%compiletrigger",
+        ];
+        INVISIBLE.iter().any(|k| self.get(k).is_some_and(|v| v.trim() != "0"))
             || self.shader == "sky"
     }
 }
@@ -187,6 +202,8 @@ mod tests {
         assert_eq!(m.shader, "lightmappedgeneric");
         assert_eq!(m.get("$BaseTexture"), Some("Tools/toolsnodraw"));
         assert!(m.is_tool());
+        let water = Material::parse("Water\n{\n\t%compilewater 1\n}\n").unwrap();
+        assert!(!water.is_tool());
         assert_eq!(m.editor_textures(), ["materials/tools/toolsnodraw.vtf"]);
     }
 

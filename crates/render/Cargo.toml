@@ -1,0 +1,17 @@
+[package]
+name = "render"
+version = "0.1.0"
+description = "wgpu renderer for Source maps, independent of the editor UI"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
+glam.workspace = true
+map-core.workspace = true
+pollster = "1.0.1"
+source-formats.workspace = true
+wgpu = "30"
+
+[dev-dependencies]
+png = "0.18.1"

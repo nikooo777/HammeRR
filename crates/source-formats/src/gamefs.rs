@@ -1,0 +1,262 @@
+//! The engine's layered game filesystem, configured from `gameinfo.txt`.
+//!
+//! Files are looked up by game path (`materials/tools/toolsnodraw.vmt`)
+//! through an ordered list of mounts; the first mount that has the file wins.
+
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use crate::keyvalues::{self, Node};
+use crate::vpk::Vpk;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("{path}: {source}")]
+    Io { path: PathBuf, source: io::Error },
+    #[error("{path}: {source}")]
+    Syntax {
+        path: PathBuf,
+        source: keyvalues::ParseError,
+    },
+    #[error("{0}: no GameInfo/FileSystem/SearchPaths block")]
+    NoSearchPaths(PathBuf),
+}
+
+/// Lowercase, forward slashes, no leading `/` or `./`.
+pub fn normalize(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for part in path.split(['/', '\\']) {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(&part.to_ascii_lowercase());
+    }
+    out
+}
+
+#[derive(Debug)]
+pub enum Mount {
+    Directory(PathBuf),
+    Pak(Vpk),
+}
+
+impl Mount {
+    fn read(&self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        match self {
+            Self::Pak(vpk) => vpk.read(path),
+            Self::Directory(root) => match find_case_insensitive(root, path) {
+                Some(file) => fs::read(file).map(Some),
+                None => Ok(None),
+            },
+        }
+    }
+
+    pub fn location(&self) -> &Path {
+        match self {
+            Self::Directory(root) => root,
+            Self::Pak(vpk) => vpk.path(),
+        }
+    }
+}
+
+/// Resolves `relative` under `root`, matching each component without regard
+/// to case when the exact path doesn't exist.
+fn find_case_insensitive(root: &Path, relative: &str) -> Option<PathBuf> {
+    let exact = root.join(relative);
+    if exact.is_file() {
+        return Some(exact);
+    }
+    let mut current = root.to_path_buf();
+    for part in relative.split('/') {
+        let entry = fs::read_dir(&current).ok()?.flatten().find(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(part))
+        })?;
+        current = entry.path();
+    }
+    current.is_file().then_some(current)
+}
+
+#[derive(Debug)]
+pub struct MountedPath {
+    /// Search path IDs such as `game`, `mod`, `platform`, lowercase.
+    pub ids: Vec<String>,
+    pub mount: Mount,
+}
+
+#[derive(Debug)]
+pub struct GameFs {
+    /// The folder containing `gameinfo.txt` (e.g. `.../cstrike`).
+    pub game_dir: PathBuf,
+    /// The install root that relative search paths start from.
+    pub base_dir: PathBuf,
+    pub mounts: Vec<MountedPath>,
+}
+
+impl GameFs {
+    pub fn from_gameinfo(gameinfo: impl AsRef<Path>) -> Result<Self, Error> {
+        let gameinfo = gameinfo.as_ref();
+        let io_err = |path: &Path| {
+            let path = path.to_path_buf();
+            move |source| Error::Io { path, source }
+        };
+        let text = fs::read_to_string(gameinfo).map_err(io_err(gameinfo))?;
+        let nodes = keyvalues::parse(&text).map_err(|source| Error::Syntax {
+            path: gameinfo.to_path_buf(),
+            source,
+        })?;
+        let search_paths = find_block(&nodes, &["GameInfo", "FileSystem", "SearchPaths"])
+            .ok_or_else(|| Error::NoSearchPaths(gameinfo.to_path_buf()))?;
+
+        let game_dir = gameinfo.parent().map(Path::to_path_buf).unwrap_or_default();
+        let base_dir = game_dir.parent().map(Path::to_path_buf).unwrap_or_default();
+        let mut gamefs = Self {
+            game_dir,
+            base_dir,
+            mounts: Vec::new(),
+        };
+        for node in search_paths {
+            let Some(value) = node.as_str() else {
+                continue;
+            };
+            let ids: Vec<String> = node
+                .key
+                .split('+')
+                .map(|id| id.trim().to_ascii_lowercase())
+                .collect();
+            gamefs.mount_search_path(ids, value)?;
+        }
+        Ok(gamefs)
+    }
+
+    fn resolve(&self, value: &str) -> PathBuf {
+        let mut rest = value;
+        let mut base = &self.base_dir;
+        for (token, dir) in [
+            ("|gameinfo_path|", &self.game_dir),
+            ("|all_source_engine_paths|", &self.base_dir),
+        ] {
+            if let Some(stripped) = rest.strip_prefix(token) {
+                rest = stripped;
+                base = dir;
+            }
+        }
+        rest.split(['/', '\\'])
+            .filter(|p| !p.is_empty() && *p != ".")
+            .fold(base.clone(), |path, part| path.join(part))
+    }
+
+    fn mount_search_path(&mut self, ids: Vec<String>, value: &str) -> Result<(), Error> {
+        if let Some(dir) = value
+            .strip_suffix("/*")
+            .or_else(|| value.strip_suffix("\\*"))
+        {
+            let dir = self.resolve(dir);
+            let Ok(entries) = fs::read_dir(&dir) else {
+                return Ok(());
+            };
+            let mut children: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+            children.sort();
+            for child in children {
+                let name = child
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                if child.is_dir() {
+                    self.add(ids.clone(), Mount::Directory(child));
+                } else if name.ends_with("_dir.vpk") {
+                    let vpk = Vpk::open(&child).map_err(|e| Error::Io {
+                        path: child,
+                        source: e,
+                    })?;
+                    self.add(ids.clone(), Mount::Pak(vpk));
+                }
+            }
+            return Ok(());
+        }
+
+        let path = self.resolve(value);
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("vpk"))
+        {
+            if Vpk::dir_file_for(&path).is_file() {
+                let vpk = Vpk::open(&path).map_err(|e| Error::Io { path, source: e })?;
+                self.add(ids, Mount::Pak(vpk));
+            }
+        } else if path.is_dir() {
+            self.add(ids, Mount::Directory(path));
+        }
+        Ok(())
+    }
+
+    /// Adds a mount, merging IDs into an existing mount of the same location.
+    fn add(&mut self, ids: Vec<String>, mount: Mount) {
+        let key = fs::canonicalize(mount.location()).unwrap_or_else(|_| mount.location().into());
+        let existing = self.mounts.iter_mut().find(|m| {
+            fs::canonicalize(m.mount.location()).unwrap_or_else(|_| m.mount.location().into())
+                == key
+        });
+        match existing {
+            Some(existing) => {
+                for id in ids {
+                    if !existing.ids.contains(&id) {
+                        existing.ids.push(id);
+                    }
+                }
+            }
+            None => self.mounts.push(MountedPath { ids, mount }),
+        }
+    }
+
+    /// Reads a file from the `game` search path, where the engine looks for
+    /// materials, models and other content.
+    pub fn read(&self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        self.read_from(path, Some("game"))
+    }
+
+    /// Reads a file from mounts tagged with `id`, or from every mount.
+    pub fn read_from(&self, path: &str, id: Option<&str>) -> io::Result<Option<Vec<u8>>> {
+        let path = normalize(path);
+        for mounted in &self.mounts {
+            if id.is_some_and(|id| !mounted.ids.iter().any(|m| m == id)) {
+                continue;
+            }
+            if let Some(data) = mounted.mount.read(&path)? {
+                return Ok(Some(data));
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn find_block<'a>(nodes: &'a [Node], path: &[&str]) -> Option<&'a [Node]> {
+    let (first, rest) = path.split_first()?;
+    let children = nodes
+        .iter()
+        .find(|n| n.key.eq_ignore_ascii_case(first))?
+        .children()?;
+    if rest.is_empty() {
+        Some(children)
+    } else {
+        find_block(children, rest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_game_paths() {
+        assert_eq!(
+            normalize("\\Materials\\DE_CBBLE//./CobbleRoad01.vmt"),
+            "materials/de_cbble/cobbleroad01.vmt"
+        );
+    }
+}

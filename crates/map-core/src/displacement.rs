@@ -9,6 +9,9 @@ pub struct DisplacementMesh {
     pub size: usize,
     /// Row-major, `positions[row * size + col]`.
     pub positions: Vec<DVec3>,
+    /// The same grid before displacement, on the flat face. Texture
+    /// coordinates are taken from these.
+    pub base_positions: Vec<DVec3>,
     /// Blend weights for two-texture blending, 0..=255.
     pub alphas: Vec<f64>,
 }
@@ -83,6 +86,7 @@ impl DisplacementMesh {
             }
         }
 
+        let base_positions = positions.clone();
         let elevation = face.plane.normal * disp.elevation;
         let normals = grid(disp.normals.as_deref(), size, "normals")?;
         let distances = grid(disp.distances.as_deref(), size, "distances")?;
@@ -108,6 +112,7 @@ impl DisplacementMesh {
         Ok(Self {
             size,
             positions,
+            base_positions,
             alphas,
         })
     }

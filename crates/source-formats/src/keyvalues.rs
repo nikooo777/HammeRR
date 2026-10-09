@@ -1,0 +1,346 @@
+//! Valve KeyValues text format, in the dialect Hammer uses for VMF files.
+//!
+//! A document is a list of nodes; each node is a key with either a string
+//! value or a block of child nodes. Keys may repeat and order is preserved.
+//! Strings are taken verbatim: VMF has no escape sequences, so `\n` inside an
+//! entity `message` stays two characters.
+
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    String(String),
+    Block(Vec<Node>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Node {
+    pub key: String,
+    pub value: Value,
+}
+
+impl Node {
+    pub fn string(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: Value::String(value.into()),
+        }
+    }
+
+    pub fn block(key: impl Into<String>, children: Vec<Node>) -> Self {
+        Self {
+            key: key.into(),
+            value: Value::Block(children),
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match &self.value {
+            Value::String(s) => Some(s),
+            Value::Block(_) => None,
+        }
+    }
+
+    pub fn children(&self) -> Option<&[Node]> {
+        match &self.value {
+            Value::String(_) => None,
+            Value::Block(children) => Some(children),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseErrorKind {
+    UnterminatedString,
+    UnexpectedOpenBrace,
+    UnexpectedCloseBrace,
+    UnclosedBlock,
+    MissingValue,
+}
+
+impl fmt::Display for ParseErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::UnterminatedString => "unterminated quoted string",
+            Self::UnexpectedOpenBrace => "'{' without a preceding key",
+            Self::UnexpectedCloseBrace => "'}' without a matching '{'",
+            Self::UnclosedBlock => "block opened here is never closed",
+            Self::MissingValue => "key is missing a value or block",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("line {line}, column {column}: {kind}")]
+pub struct ParseError {
+    pub line: usize,
+    pub column: usize,
+    pub kind: ParseErrorKind,
+}
+
+impl ParseError {
+    fn at(src: &str, offset: usize, kind: ParseErrorKind) -> Self {
+        let before = &src[..offset];
+        let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
+        let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+        let column = before[line_start..].chars().count() + 1;
+        Self { line, column, kind }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Token<'a> {
+    Str(&'a str),
+    Open,
+    Close,
+    Eof,
+}
+
+struct Lexer<'a> {
+    src: &'a str,
+    pos: usize,
+}
+
+impl<'a> Lexer<'a> {
+    fn next(&mut self) -> Result<(Token<'a>, usize), ParseError> {
+        let bytes = self.src.as_bytes();
+        loop {
+            while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
+                self.pos += 1;
+            }
+            if bytes[self.pos..].starts_with(b"//") {
+                self.pos = match self.src[self.pos..].find('\n') {
+                    Some(i) => self.pos + i + 1,
+                    None => bytes.len(),
+                };
+                continue;
+            }
+            break;
+        }
+
+        let start = self.pos;
+        let Some(&b) = bytes.get(start) else {
+            return Ok((Token::Eof, start));
+        };
+        let token = match b {
+            b'{' => {
+                self.pos += 1;
+                Token::Open
+            }
+            b'}' => {
+                self.pos += 1;
+                Token::Close
+            }
+            b'"' => {
+                let body = start + 1;
+                let Some(len) = self.src[body..].find('"') else {
+                    return Err(ParseError::at(
+                        self.src,
+                        start,
+                        ParseErrorKind::UnterminatedString,
+                    ));
+                };
+                self.pos = body + len + 1;
+                Token::Str(&self.src[body..body + len])
+            }
+            _ => {
+                let len = bytes[start..]
+                    .iter()
+                    .position(|&c| c.is_ascii_whitespace() || matches!(c, b'"' | b'{' | b'}'))
+                    .unwrap_or(bytes.len() - start);
+                self.pos = start + len;
+                Token::Str(&self.src[start..start + len])
+            }
+        };
+        Ok((token, start))
+    }
+}
+
+pub fn parse(src: &str) -> Result<Vec<Node>, ParseError> {
+    let mut lexer = Lexer { src, pos: 0 };
+    let mut current: Vec<Node> = Vec::new();
+    // Enclosing blocks: (key, siblings collected so far, offset of the '{').
+    let mut stack: Vec<(String, Vec<Node>, usize)> = Vec::new();
+
+    loop {
+        let (token, offset) = lexer.next()?;
+        match token {
+            Token::Eof => {
+                return match stack.last() {
+                    Some(&(_, _, open)) => {
+                        Err(ParseError::at(src, open, ParseErrorKind::UnclosedBlock))
+                    }
+                    None => Ok(current),
+                };
+            }
+            Token::Open => {
+                return Err(ParseError::at(
+                    src,
+                    offset,
+                    ParseErrorKind::UnexpectedOpenBrace,
+                ));
+            }
+            Token::Close => {
+                let Some((key, siblings, _)) = stack.pop() else {
+                    return Err(ParseError::at(
+                        src,
+                        offset,
+                        ParseErrorKind::UnexpectedCloseBrace,
+                    ));
+                };
+                let children = std::mem::replace(&mut current, siblings);
+                current.push(Node::block(key, children));
+            }
+            Token::Str(key) => match lexer.next()? {
+                (Token::Str(value), _) => current.push(Node::string(key, value)),
+                (Token::Open, open) => {
+                    stack.push((key.to_owned(), std::mem::take(&mut current), open));
+                }
+                (Token::Close | Token::Eof, _) => {
+                    return Err(ParseError::at(src, offset, ParseErrorKind::MissingValue));
+                }
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineEnding {
+    Lf,
+    #[default]
+    CrLf,
+}
+
+impl LineEnding {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Lf => "\n",
+            Self::CrLf => "\r\n",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WriteOptions {
+    pub line_ending: LineEnding,
+}
+
+/// Writes nodes in Hammer's layout: tab indentation, bare block names, quoted
+/// key/value pairs. The format cannot represent a `"` inside a string, so
+/// callers must keep quotes out of keys and values.
+pub fn write(nodes: &[Node], options: &WriteOptions) -> String {
+    let mut out = String::new();
+    write_nodes(&mut out, nodes, 0, options.line_ending.as_str());
+    out
+}
+
+fn write_nodes(out: &mut String, nodes: &[Node], depth: usize, newline: &str) {
+    for node in nodes {
+        debug_assert!(
+            !node.key.contains('"'),
+            "key contains a quote: {:?}",
+            node.key
+        );
+        indent(out, depth);
+        match &node.value {
+            Value::String(value) => {
+                debug_assert!(!value.contains('"'), "value contains a quote: {value:?}");
+                out.push('"');
+                out.push_str(&node.key);
+                out.push_str("\" \"");
+                out.push_str(value);
+                out.push('"');
+                out.push_str(newline);
+            }
+            Value::Block(children) => {
+                out.push_str(&node.key);
+                out.push_str(newline);
+                indent(out, depth);
+                out.push('{');
+                out.push_str(newline);
+                write_nodes(out, children, depth + 1, newline);
+                indent(out, depth);
+                out.push('}');
+                out.push_str(newline);
+            }
+        }
+    }
+}
+
+fn indent(out: &mut String, depth: usize) {
+    out.extend(std::iter::repeat_n('\t', depth));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_nested_blocks_and_repeated_keys() {
+        let nodes =
+            parse("world\n{\n\t\"id\" \"1\"\n\tsolid\n\t{\n\t}\n\tsolid { \"id\" \"2\" }\n}\n")
+                .unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::block(
+                "world",
+                vec![
+                    Node::string("id", "1"),
+                    Node::block("solid", vec![]),
+                    Node::block("solid", vec![Node::string("id", "2")]),
+                ],
+            )]
+        );
+    }
+
+    #[test]
+    fn keeps_backslashes_and_skips_comments() {
+        let nodes = parse("// header\n\"message\" \"a\\nb\" // trailing\nbare value").unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                Node::string("message", "a\\nb"),
+                Node::string("bare", "value")
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_error_positions() {
+        let err = parse("a\n{\n\t\"b\" \"c\n").unwrap_err();
+        assert_eq!(
+            (err.line, err.column, err.kind),
+            (3, 6, ParseErrorKind::UnterminatedString)
+        );
+
+        let err = parse("a\n{\n\t\"b\" \"c\"\n").unwrap_err();
+        assert_eq!(
+            (err.line, err.column, err.kind),
+            (2, 1, ParseErrorKind::UnclosedBlock)
+        );
+
+        let err = parse("}").unwrap_err();
+        assert_eq!(err.kind, ParseErrorKind::UnexpectedCloseBrace);
+
+        let err = parse("a { b }").unwrap_err();
+        assert_eq!(err.kind, ParseErrorKind::MissingValue);
+    }
+
+    #[test]
+    fn writes_hammer_layout() {
+        let nodes = vec![Node::block(
+            "cordon",
+            vec![Node::string("active", "0"), Node::block("inner", vec![])],
+        )];
+        let lf = write(
+            &nodes,
+            &WriteOptions {
+                line_ending: LineEnding::Lf,
+            },
+        );
+        assert_eq!(lf, "cordon\n{\n\t\"active\" \"0\"\n\tinner\n\t{\n\t}\n}\n");
+        assert_eq!(parse(&lf).unwrap(), nodes);
+        let crlf = write(&nodes, &WriteOptions::default());
+        assert_eq!(crlf, lf.replace('\n', "\r\n"));
+    }
+}

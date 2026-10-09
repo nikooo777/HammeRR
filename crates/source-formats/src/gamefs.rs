@@ -106,7 +106,7 @@ impl GameFs {
             move |source| Error::Io { path, source }
         };
         let text = fs::read_to_string(gameinfo).map_err(io_err(gameinfo))?;
-        let nodes = keyvalues::parse(&text).map_err(|source| Error::Syntax {
+        let nodes = keyvalues::parse_lenient(&text).map_err(|source| Error::Syntax {
             path: gameinfo.to_path_buf(),
             source,
         })?;

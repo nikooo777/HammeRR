@@ -11,3 +11,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 crc32fast = "1.5.2"
+png = "0.18.1"

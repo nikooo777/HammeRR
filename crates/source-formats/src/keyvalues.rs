@@ -99,6 +99,7 @@ enum Token<'a> {
 struct Lexer<'a> {
     src: &'a str,
     pos: usize,
+    lenient: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -108,11 +109,13 @@ impl<'a> Lexer<'a> {
             while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
                 self.pos += 1;
             }
-            if bytes[self.pos..].starts_with(b"//") {
-                self.pos = match self.src[self.pos..].find('\n') {
-                    Some(i) => self.pos + i + 1,
-                    None => bytes.len(),
-                };
+            let rest = &self.src[self.pos..];
+            if rest.starts_with("//") {
+                self.pos = rest.find('\n').map_or(bytes.len(), |i| self.pos + i + 1);
+                continue;
+            }
+            if self.lenient && rest.starts_with("/*") {
+                self.pos = rest.find("*/").map_or(bytes.len(), |i| self.pos + i + 2);
                 continue;
             }
             break;
@@ -156,8 +159,24 @@ impl<'a> Lexer<'a> {
     }
 }
 
+/// Parses strictly: unclosed blocks are errors. Use for files we write back,
+/// where silently accepting a truncated file would lose data on save.
 pub fn parse(src: &str) -> Result<Vec<Node>, ParseError> {
-    let mut lexer = Lexer { src, pos: 0 };
+    parse_impl(src, false)
+}
+
+/// Parses the way the engine reads game files: blocks left open at the end
+/// of the file are closed, and `/* */` comments are skipped.
+pub fn parse_lenient(src: &str) -> Result<Vec<Node>, ParseError> {
+    parse_impl(src, true)
+}
+
+fn parse_impl(src: &str, lenient: bool) -> Result<Vec<Node>, ParseError> {
+    let mut lexer = Lexer {
+        src,
+        pos: 0,
+        lenient,
+    };
     let mut current: Vec<Node> = Vec::new();
     // Enclosing blocks: (key, siblings collected so far, offset of the '{').
     let mut stack: Vec<(String, Vec<Node>, usize)> = Vec::new();
@@ -166,12 +185,16 @@ pub fn parse(src: &str) -> Result<Vec<Node>, ParseError> {
         let (token, offset) = lexer.next()?;
         match token {
             Token::Eof => {
-                return match stack.last() {
-                    Some(&(_, _, open)) => {
-                        Err(ParseError::at(src, open, ParseErrorKind::UnclosedBlock))
-                    }
-                    None => Ok(current),
-                };
+                if let Some(&(_, _, open)) = stack.last()
+                    && !lenient
+                {
+                    return Err(ParseError::at(src, open, ParseErrorKind::UnclosedBlock));
+                }
+                while let Some((key, siblings, _)) = stack.pop() {
+                    let children = std::mem::replace(&mut current, siblings);
+                    current.push(Node::block(key, children));
+                }
+                return Ok(current);
             }
             Token::Open => {
                 return Err(ParseError::at(
@@ -324,6 +347,22 @@ mod tests {
 
         let err = parse("a { b }").unwrap_err();
         assert_eq!(err.kind, ParseErrorKind::MissingValue);
+    }
+
+    #[test]
+    fn lenient_mode_accepts_hand_edited_game_files() {
+        let src = "Shader\n{\n\t\"$a\" 1\n\t/* \"Proxies\" { } */\n\tProxies\n\t{\n\t\tx 1\n";
+        assert!(parse(src).is_err());
+        assert_eq!(
+            parse_lenient(src).unwrap(),
+            vec![Node::block(
+                "Shader",
+                vec![
+                    Node::string("$a", "1"),
+                    Node::block("Proxies", vec![Node::string("x", "1")]),
+                ],
+            )]
+        );
     }
 
     #[test]

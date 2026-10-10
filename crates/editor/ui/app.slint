@@ -1,4 +1,84 @@
-import { Button, CheckBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+
+export struct EntityClassRow {
+    classname: string,
+    description: string,
+}
+
+export component EntityWindow inherits Window {
+    title: root.brush-mode ? "Brush Entity - HammeRR" : "Place Entity - HammeRR";
+    preferred-width: 900px;
+    preferred-height: 700px;
+    in property <bool> brush-mode;
+    in property <[EntityClassRow]> classes;
+    in property <string> definition;
+    in property <string> message;
+    in-out property <string> filter;
+    in-out property <string> classname;
+    in-out property <string> origin-x;
+    in-out property <string> origin-y;
+    in-out property <string> origin-z;
+    callback filter-changed();
+    callback class-selected();
+    callback create();
+    callback load-fgd();
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+        HorizontalLayout {
+            LineEdit {
+                placeholder-text: "Search classes or descriptions";
+                input-type: search;
+                text <=> root.filter;
+                edited => { root.filter-changed(); }
+            }
+            Button { text: "Load FGD…"; clicked => { root.load-fgd(); } }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            vertical-stretch: 1;
+            ListView {
+                width: 280px;
+                for class in root.classes: VerticalLayout {
+                    padding-bottom: 4px;
+                    Button {
+                        text: class.classname;
+                        clicked => {
+                            root.classname = class.classname;
+                            root.class-selected();
+                        }
+                    }
+                }
+            }
+            TextEdit { text: root.definition; read-only: true; wrap: word-wrap; }
+        }
+        LineEdit {
+            placeholder-text: "Classname (custom classes are supported)";
+            text <=> root.classname;
+            edited => { root.class-selected(); }
+        }
+        if !root.brush-mode: HorizontalLayout {
+            spacing: 6px;
+            Text { text: "Position"; vertical-alignment: center; }
+            LineEdit { text <=> root.origin-x; placeholder-text: "X"; }
+            LineEdit { text <=> root.origin-y; placeholder-text: "Y"; }
+            LineEdit { text <=> root.origin-z; placeholder-text: "Z"; }
+        }
+        Text { text: root.message; wrap: word-wrap; }
+        Button {
+            text: root.brush-mode ? "Tie selected brushes to entity" : "Place entity";
+            enabled: root.classname != "";
+            clicked => { root.create(); }
+        }
+    }
+}
+
+export struct EntityFlag {
+    label: string,
+    value: string,
+    checked: bool,
+}
 
 export component GameLogWindow inherits Window {
     title: "CS:S Game Log - HammeRR";
@@ -19,6 +99,14 @@ export component GameLogWindow inherits Window {
 export struct KeyValue {
     key: string,
     value: string,
+    label: string,
+    description: string,
+    type-name: string,
+    read-only: bool,
+    choices: [string],
+    choice-values: [string],
+    choice-index: int,
+    flags: [EntityFlag],
 }
 
 export struct Activity {
@@ -71,6 +159,8 @@ export component AppWindow inherits Window {
     in property <string> selection-title: "Nothing selected";
     in property <string> selection-detail;
     in property <bool> entity-selected;
+    in property <bool> brush-entity-selected;
+    in property <bool> can-tie;
     in property <[KeyValue]> entity-properties;
     in property <[Activity]> activity;
 
@@ -92,6 +182,10 @@ export component AppWindow inherits Window {
     callback options-changed();
     callback property-edited(key: string, value: string);
     callback property-removed(key: string);
+    callback flag-toggled(key: string, flag: string, checked: bool);
+    callback place-entity();
+    callback tie-entity();
+    callback move-to-world();
     // Returns whether the key was handled.
     callback key(text: string, down: bool, control: bool, shift: bool) -> bool;
     // button: 0 = left, 1 = right, 2 = middle
@@ -302,6 +396,17 @@ export component AppWindow inherits Window {
                         text: "SELECTION";
                     }
 
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: "Entity…"; clicked => { root.place-entity(); } }
+                        Button { text: "Tie to entity…"; enabled: root.can-tie; clicked => { root.tie-entity(); } }
+                    }
+
+                    if root.brush-entity-selected: Button {
+                        text: "Move to world";
+                        clicked => { root.move-to-world(); }
+                    }
+
                     Text {
                         text: root.selection-title;
                         color: #e6e8ec;
@@ -320,33 +425,49 @@ export component AppWindow inherits Window {
                         min-height: 120px;
                         vertical-stretch: 1;
 
-                        for row in root.entity-properties: HorizontalLayout {
-                            spacing: 6px;
-                            padding-bottom: 4px;
-
+                        for row in root.entity-properties: VerticalLayout {
+                            spacing: 3px;
+                            padding-bottom: 8px;
                             Text {
-                                width: 110px;
-                                text: row.key;
+                                text: row.label + " · " + row.key + " (" + row.type-name + ")";
                                 color: #aab0bb;
-                                vertical-alignment: center;
+                                font-size: 11px;
                                 overflow: elide;
                             }
-
-                            LineEdit {
-                                horizontal-stretch: 1;
-                                text: row.value;
-                                accepted(text) => {
-                                    root.property-edited(row.key, text);
+                            HorizontalLayout {
+                                spacing: 6px;
+                                if row.choices.length > 0: ComboBox {
+                                    horizontal-stretch: 1;
+                                    model: row.choices;
+                                    current-index: row.choice-index;
+                                    enabled: !row.read-only;
+                                    selected => { root.property-edited(row.key, row.choice-values[self.current-index]); }
+                                }
+                                if row.choices.length == 0: LineEdit {
+                                    horizontal-stretch: 1;
+                                    text: row.value;
+                                    enabled: !row.read-only;
+                                    input-type: row.type-name == "integer" || row.type-name == "float" || row.type-name == "angle" ? InputType.decimal : InputType.text;
+                                    accepted(text) => { root.property-edited(row.key, text); }
+                                }
+                                Button {
+                                    text: "×";
+                                    width: 28px;
+                                    enabled: row.key != "classname" && !row.read-only;
+                                    clicked => { root.property-removed(row.key); }
                                 }
                             }
-
-                            Button {
-                                text: "×";
-                                width: 28px;
-                                enabled: row.key != "classname";
-                                clicked => {
-                                    root.property-removed(row.key);
-                                }
+                            for flag in row.flags: CheckBox {
+                                text: flag.label;
+                                checked: flag.checked;
+                                enabled: !row.read-only;
+                                toggled => { root.flag-toggled(row.key, flag.value, self.checked); }
+                            }
+                            if row.description != "": Text {
+                                text: row.description;
+                                color: #8a909c;
+                                font-size: 11px;
+                                wrap: word-wrap;
                             }
                         }
                     }

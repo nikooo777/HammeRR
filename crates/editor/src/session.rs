@@ -1,7 +1,7 @@
 //! Editor state shared by the UI and the MCP server. Every user-visible
 //! operation goes through here, so both front ends behave identically.
 
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,6 +10,7 @@ use glam::DVec3;
 use map_core::query::{self, Hit, Ray};
 use map_core::{Document, EditError, ObjectId, Transaction};
 use render::{Camera, MaterialLibrary, SceneMesh, ViewOptions};
+use source_formats::fgd::{self, Catalog, ClassKind};
 use source_formats::gamefs::GameFs;
 use source_formats::keyvalues::WriteOptions;
 use source_formats::vmf::Vmf;
@@ -81,6 +82,9 @@ pub struct Session {
     game_run: Option<game::Run>,
     game_exit_reported: bool,
     closing: bool,
+    definitions: Catalog,
+    definitions_error: Option<String>,
+    definitions_serial: u64,
 }
 
 pub struct CompileRequest {
@@ -161,6 +165,9 @@ impl Session {
             game_run: None,
             game_exit_reported: false,
             closing: false,
+            definitions: Catalog::default(),
+            definitions_error: None,
+            definitions_serial: 0,
         }
     }
 
@@ -170,6 +177,238 @@ impl Session {
 
     pub fn game_error(&self) -> Option<&str> {
         self.game_error.as_deref()
+    }
+
+    pub fn definitions(&self) -> &Catalog {
+        &self.definitions
+    }
+
+    pub fn search_entity_classes(
+        &self,
+        query: &str,
+        kind: Option<ClassKind>,
+        limit: usize,
+    ) -> Vec<&fgd::Class> {
+        let query = query.to_ascii_lowercase();
+        self.definitions
+            .classes()
+            .filter(|class| {
+                kind.is_none_or(|kind| class.kind == kind)
+                    && (class.name.to_ascii_lowercase().contains(&query)
+                        || class.description.to_ascii_lowercase().contains(&query))
+            })
+            .take(limit.min(1000))
+            .collect()
+    }
+
+    pub fn definitions_error(&self) -> Option<&str> {
+        self.definitions_error.as_deref()
+    }
+
+    pub fn definitions_serial(&self) -> u64 {
+        self.definitions_serial
+    }
+
+    pub fn set_definitions(&mut self, actor: Actor, catalog: Catalog) {
+        let count = catalog.classes().count();
+        self.definitions = catalog;
+        self.definitions_error = None;
+        self.definitions_serial += 1;
+        self.changed();
+        self.log(actor, format!("loaded {count} entity classes"));
+    }
+
+    pub fn report_definitions_error(&mut self, error: String) {
+        self.log(Actor::User, format!("entity definitions: {error}"));
+        self.definitions_error = Some(error);
+    }
+
+    pub fn placement_origin(&self) -> DVec3 {
+        let position = (self.camera.position + self.camera.forward() * 128.0).as_dvec3();
+        (position / 16.0).round() * 16.0
+    }
+
+    fn entity_properties(
+        &self,
+        classname: &str,
+        kind: ClassKind,
+        properties: BTreeMap<String, String>,
+    ) -> Result<(String, Vec<(String, String)>), String> {
+        let class = self.definitions.class(classname);
+        if let Some(class) = class
+            && class.kind != kind
+        {
+            return Err(format!(
+                "{} is a {} entity class",
+                class.name,
+                class.kind.label()
+            ));
+        }
+        let classname = class.map_or(classname, |class| class.name.as_str());
+        if classname.trim().is_empty() {
+            return Err("classname must not be empty".into());
+        }
+        let mut values = class.map_or_else(BTreeMap::new, |class| class.defaults());
+        for (key, value) in properties {
+            if key.eq_ignore_ascii_case("classname") {
+                if !value.eq_ignore_ascii_case(classname) {
+                    return Err("classname property conflicts with the chosen class".into());
+                }
+                continue;
+            }
+            self.validate_property(classname, &key, Some(&value))?;
+            let name = class
+                .and_then(|class| class.property(&key))
+                .map_or(key, |property| property.name.clone());
+            values.insert(name, value);
+        }
+        Ok((classname.into(), values.into_iter().collect()))
+    }
+
+    fn validate_property(
+        &self,
+        classname: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<(), String> {
+        if key.trim().is_empty() {
+            return Err("property name must not be empty".into());
+        }
+        if let Some(property) = self
+            .definitions
+            .class(classname)
+            .and_then(|class| class.property(key))
+        {
+            if property.read_only {
+                return Err(format!("{key} is read-only"));
+            }
+            if let Some(value) = value {
+                property.validate(value)?;
+            }
+        }
+        if let Some(value) = value
+            && (key.eq_ignore_ascii_case("origin") || key.eq_ignore_ascii_case("angles"))
+            && fgd::vector(value, 3).is_none()
+        {
+            return Err(format!("{key} expects three finite coordinates"));
+        }
+        Ok(())
+    }
+
+    pub fn create_entity(
+        &mut self,
+        actor: Actor,
+        classname: &str,
+        origin: Option<DVec3>,
+        properties: BTreeMap<String, String>,
+    ) -> Result<ObjectId, String> {
+        let (classname, properties) =
+            self.entity_properties(classname, ClassKind::Point, properties)?;
+        let origin = origin
+            .or_else(|| {
+                properties
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case("origin"))
+                    .and_then(|(_, value)| fgd::vector(value, 3))
+                    .map(|value| DVec3::new(value[0], value[1], value[2]))
+            })
+            .unwrap_or_else(|| self.placement_origin());
+        if !origin.is_finite() {
+            return Err("origin expects three finite coordinates".into());
+        }
+        let id = self.edit(actor, &format!("create {classname}"), |tx| {
+            map_core::edit::create_entity(tx, &classname, Some(origin), &properties, Vec::new())
+        })?;
+        self.select(&[id], SelectMode::Replace)?;
+        Ok(id)
+    }
+
+    pub fn set_entity_properties(
+        &mut self,
+        actor: Actor,
+        entity: u32,
+        changes: &[(String, Option<String>)],
+    ) -> Result<(), String> {
+        let current = self
+            .document
+            .entity(entity)
+            .ok_or_else(|| format!("entity:{entity} does not exist"))?;
+        let classname = changes
+            .iter()
+            .rev()
+            .find(|(key, _)| key.eq_ignore_ascii_case("classname"))
+            .and_then(|(_, value)| value.as_deref())
+            .or_else(|| current.classname())
+            .unwrap_or("");
+        if classname.trim().is_empty() {
+            return Err("classname must not be empty".into());
+        }
+        if let Some(class) = self.definitions.class(classname) {
+            let kind = if current.solids.is_empty() {
+                ClassKind::Point
+            } else {
+                ClassKind::Solid
+            };
+            if class.kind != kind {
+                return Err(format!(
+                    "{} is a {} entity class",
+                    class.name,
+                    class.kind.label()
+                ));
+            }
+        }
+        for (key, value) in changes {
+            self.validate_property(classname, key, value.as_deref())?;
+        }
+        let canonical = self
+            .definitions
+            .class(classname)
+            .map(|class| class.name.clone());
+        let mut changes = changes.to_vec();
+        if let Some(canonical) = canonical {
+            for (key, value) in &mut changes {
+                if key.eq_ignore_ascii_case("classname") && value.is_some() {
+                    *value = Some(canonical.clone());
+                }
+            }
+        }
+        self.edit(actor, "edit entity properties", |tx| {
+            map_core::edit::set_properties(tx, entity, &changes)
+        })
+    }
+
+    pub fn tie_to_entity(
+        &mut self,
+        actor: Actor,
+        ids: &[ObjectId],
+        classname: &str,
+        properties: BTreeMap<String, String>,
+    ) -> Result<ObjectId, String> {
+        let solids = ids
+            .iter()
+            .map(|id| match id {
+                ObjectId::Solid(id) => Ok(*id),
+                ObjectId::Entity(_) => Err(format!(
+                    "{} is not a world brush",
+                    crate::mcp::id_string(*id)
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (classname, properties) =
+            self.entity_properties(classname, ClassKind::Solid, properties)?;
+        let id = self.edit(actor, &format!("tie to {classname}"), |tx| {
+            map_core::edit::tie_to_entity(tx, &solids, &classname, &properties)
+        })?;
+        self.select(&[id], SelectMode::Replace)?;
+        Ok(id)
+    }
+
+    pub fn move_to_world(&mut self, actor: Actor, entity: u32) -> Result<Vec<ObjectId>, String> {
+        let solids = self.edit(actor, "move to world", |tx| {
+            map_core::edit::move_to_world(tx, entity)
+        })?;
+        self.select(&solids, SelectMode::Replace)?;
+        Ok(solids)
     }
 
     pub fn document(&self) -> &Document {
@@ -678,6 +917,158 @@ impl Session {
 mod tests {
     use super::*;
     use map_core::edit;
+
+    const ENTITY_FGD: &str = r#"
+        @BaseClass = LightValues [
+            _light(color255) : "Brightness" : "255 240 220 250"
+            style(choices) : "Style" : 0 = [ 0 : "Steady" 1 : "Pulse" ]
+            spawnflags(flags) = [ 1 : "Enabled" : 1 ]
+            editor_id(integer) readonly : "Editor ID"
+        ]
+        @PointClass base(LightValues) = light []
+        @SolidClass = func_detail []
+    "#;
+
+    #[test]
+    fn humans_and_agents_create_the_same_lights_with_defaults() {
+        let mut entities = Vec::new();
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no game required".into()));
+            session.set_definitions(actor, Catalog::parse(ENTITY_FGD).unwrap());
+            let id = session
+                .create_entity(
+                    actor,
+                    "LIGHT",
+                    Some(DVec3::new(16., 32., 96.)),
+                    BTreeMap::from([("targetname".into(), "test_light".into())]),
+                )
+                .unwrap();
+            let ObjectId::Entity(id) = id else { panic!() };
+            let entity = session.document().entity(id).unwrap();
+            assert_eq!(entity.classname(), Some("light"));
+            assert_eq!(entity.properties.get("_light"), Some("255 240 220 250"));
+            assert_eq!(entity.properties.get("spawnflags"), Some("1"));
+            assert_eq!(entity.origin(), Some(DVec3::new(16., 32., 96.)));
+            let saved = session.document().vmf().write(&WriteOptions::default());
+            let parsed = Vmf::parse(&saved).unwrap();
+            assert_eq!(
+                parsed.entities[0].properties.get("_light"),
+                entity.properties.get("_light")
+            );
+            entities.push(entity.clone());
+            session.undo(actor).unwrap();
+            assert!(session.document().entity(id).is_none());
+            session.redo(actor).unwrap();
+            assert!(session.document().entity(id).is_some());
+        }
+        assert_eq!(entities[0], entities[1]);
+    }
+
+    #[test]
+    fn invalid_entity_edits_are_atomic_and_custom_data_survives() {
+        let mut session = Session::new(Err("no game required".into()));
+        session.set_definitions(Actor::Agent, Catalog::parse(ENTITY_FGD).unwrap());
+        let ObjectId::Entity(id) = session
+            .create_entity(
+                Actor::Agent,
+                "light",
+                Some(DVec3::ZERO),
+                BTreeMap::from([("custom_key".into(), "keep me".into())]),
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let revision = session.document().revision();
+        for (key, value) in [
+            ("_light", "300 0 0 250"),
+            ("style", "99"),
+            ("origin", "0 NaN 0"),
+            ("editor_id", "2"),
+            ("classname", "func_detail"),
+        ] {
+            assert!(
+                session
+                    .set_entity_properties(
+                        Actor::User,
+                        id,
+                        &[
+                            ("targetname".into(), Some("must not apply".into())),
+                            (key.into(), Some(value.into()))
+                        ]
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.document().revision(), revision);
+        }
+        session
+            .set_entity_properties(
+                Actor::User,
+                id,
+                &[
+                    ("classname".into(), Some("LIGHT".into())),
+                    ("_light".into(), Some("128 96 64 500".into())),
+                    ("style".into(), Some("1".into())),
+                    ("spawnflags".into(), Some("1025".into())),
+                ],
+            )
+            .unwrap();
+        let entity = session.document().entity(id).unwrap();
+        assert_eq!(entity.classname(), Some("light"));
+        assert_eq!(entity.properties.get("_light"), Some("128 96 64 500"));
+        assert_eq!(entity.properties.get("custom_key"), Some("keep me"));
+        assert_eq!(entity.properties.get("spawnflags"), Some("1025"));
+        assert!(entity.properties.get("targetname").is_none());
+        assert!(
+            session
+                .create_entity(Actor::Agent, "func_detail", None, BTreeMap::new())
+                .is_err()
+        );
+        assert!(
+            session
+                .create_entity(Actor::User, "custom_light", None, BTreeMap::new())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn brush_entity_conversion_uses_shared_validation_and_undo() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no game required".into()));
+            session.set_definitions(actor, Catalog::parse(ENTITY_FGD).unwrap());
+            let brush = session
+                .edit(actor, "block", |tx| {
+                    edit::create_block(tx, DVec3::ZERO, DVec3::splat(32.), "tools/toolsnodraw")
+                })
+                .unwrap();
+            assert!(
+                session
+                    .tie_to_entity(actor, &[brush], "light", BTreeMap::new())
+                    .is_err()
+            );
+            let ObjectId::Entity(id) = session
+                .tie_to_entity(actor, &[brush], "func_detail", BTreeMap::new())
+                .unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(session.document().entity(id).unwrap().solids.len(), 1);
+            assert_eq!(session.move_to_world(actor, id).unwrap(), [brush]);
+            session.undo(actor).unwrap();
+            assert!(session.document().entity(id).is_some());
+            session.undo(actor).unwrap();
+            assert!(session.document().entity(id).is_none());
+            assert!(
+                session
+                    .document()
+                    .solid(match brush {
+                        ObjectId::Solid(id) => id,
+                        _ => panic!(),
+                    })
+                    .is_some()
+            );
+        }
+    }
 
     fn room() -> Vmf {
         let mut document = Document::empty();

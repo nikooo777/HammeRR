@@ -5,6 +5,7 @@ mod steam;
 mod viewport;
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -20,15 +21,17 @@ use render::GpuContext;
 use session::{Actor, SelectMode, Session};
 use slint::platform::Key;
 use slint::{ComponentHandle, ModelRc, VecModel};
+use source_formats::fgd::{Catalog, ClassKind};
 use source_formats::gamefs::GameFs;
 use viewport::{Viewport, key_text};
 
 slint::include_modules!();
 
 const USAGE: &str = "\
-usage: editor [map.vmf] [--game <gameinfo.txt>] [--mcp-port <port> | --no-mcp] [--headless]
+usage: editor [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port <port> | --no-mcp] [--headless]
 
   --game       gameinfo.txt to load content from (default: Counter-Strike: Source via Steam)
+  --fgd        entity definition file (default: installed CS:S SDK FGD)
   --mcp-port   port for the MCP server at http://127.0.0.1:<port>/mcp (default 7377)
   --no-mcp     don't start the MCP server
   --headless   no window; serve MCP over stdin/stdout instead";
@@ -57,6 +60,7 @@ impl Drop for ShutdownGuard {
 struct Args {
     map: Option<PathBuf>,
     gameinfo: Option<PathBuf>,
+    fgd: Option<PathBuf>,
     mcp_port: Option<u16>,
     headless: bool,
 }
@@ -67,12 +71,14 @@ impl Args {
         let mut parsed = Self {
             map: None,
             gameinfo: None,
+            fgd: None,
             mcp_port: Some(DEFAULT_MCP_PORT),
             headless: false,
         };
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--game") => parsed.gameinfo = Some(args.next().ok_or(USAGE)?.into()),
+                Some("--fgd") => parsed.fgd = Some(args.next().ok_or(USAGE)?.into()),
                 Some("--mcp-port") => {
                     let port = args
                         .next()
@@ -107,6 +113,8 @@ struct Ui {
     seen_log: u64,
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
+    entity_window: Option<EntityWindow>,
+    seen_definitions: u64,
 }
 
 type SharedUi = Rc<RefCell<Ui>>;
@@ -162,14 +170,7 @@ fn selection_summary(session: &Session) -> (String, String, Option<Vec<KeyValue>
             if !entity.solids.is_empty() {
                 detail += &format!(" · {} brushes", entity.solids.len());
             }
-            let rows = entity
-                .properties
-                .iter()
-                .map(|(k, v)| KeyValue {
-                    key: k.into(),
-                    value: v.into(),
-                })
-                .collect();
+            let rows = entity_property_rows(session, entity);
             (title, detail, Some(rows))
         }
         [ObjectId::Solid(n)] => {
@@ -201,6 +202,321 @@ fn selection_summary(session: &Session) -> (String, String, Option<Vec<KeyValue>
     }
 }
 
+fn entity_property_rows(session: &Session, entity: &source_formats::vmf::Entity) -> Vec<KeyValue> {
+    let class = entity
+        .classname()
+        .and_then(|name| session.definitions().class(name));
+    let mut names: Vec<String> = entity
+        .properties
+        .iter()
+        .map(|(key, _)| key.into())
+        .collect();
+    if let Some(class) = class {
+        for property in &class.properties {
+            if !names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&property.name))
+            {
+                names.push(property.name.clone());
+            }
+        }
+    }
+    names
+        .into_iter()
+        .map(|name| {
+            let property = class.and_then(|class| class.property(&name));
+            let value = entity
+                .properties
+                .get(&name)
+                .map(str::to_owned)
+                .or_else(|| property.and_then(|property| property.default_value()))
+                .unwrap_or_default();
+            let mut labels = Vec::new();
+            let mut values = Vec::new();
+            let mut flags = Vec::new();
+            let mask = value.parse::<u64>().unwrap_or_default();
+            if let Some(property) = property {
+                for choice in &property.choices {
+                    if property.kind == "flags" {
+                        let bit = choice.value.parse::<u64>().unwrap_or_default();
+                        flags.push(EntityFlag {
+                            label: choice.label.clone().into(),
+                            value: choice.value.clone().into(),
+                            checked: bit != 0 && mask & bit == bit,
+                        });
+                    } else {
+                        labels.push(slint::SharedString::from(format!(
+                            "{} ({})",
+                            choice.label, choice.value
+                        )));
+                        values.push(slint::SharedString::from(choice.value.clone()));
+                    }
+                }
+            }
+            if !values.is_empty() && !values.iter().any(|item| item.as_str() == value) {
+                labels.insert(0, format!("{value} (stored value)").into());
+                values.insert(0, value.clone().into());
+            }
+            let choice_index = values
+                .iter()
+                .position(|item| item.as_str() == value)
+                .unwrap_or_default() as i32;
+            KeyValue {
+                key: name.clone().into(),
+                value: value.into(),
+                label: property
+                    .map_or(name.as_str(), |property| property.label.as_str())
+                    .into(),
+                description: property
+                    .map_or("", |property| property.description.as_str())
+                    .into(),
+                type_name: property
+                    .map_or("string", |property| property.kind.as_str())
+                    .into(),
+                read_only: property.is_some_and(|property| property.read_only),
+                choices: ModelRc::new(VecModel::from(labels)),
+                choice_values: ModelRc::new(VecModel::from(values)),
+                choice_index,
+                flags: ModelRc::new(VecModel::from(flags)),
+            }
+        })
+        .collect()
+}
+
+fn refresh_entity_window(window: &EntityWindow, session: &Session) {
+    let kind = if window.get_brush_mode() {
+        ClassKind::Solid
+    } else {
+        ClassKind::Point
+    };
+    let classes: Vec<EntityClassRow> = session
+        .search_entity_classes(&window.get_filter(), Some(kind), 1000)
+        .iter()
+        .map(|class| EntityClassRow {
+            classname: class.name.clone().into(),
+            description: class.description.clone().into(),
+        })
+        .collect();
+    window.set_classes(ModelRc::new(VecModel::from(classes)));
+    let definition = match session.definitions().class(&window.get_classname()) {
+        Some(class) => entity_class_preview(class),
+        None => "Custom class. You can place it and edit its raw properties. Load an FGD for property definitions.".into(),
+    };
+    window.set_definition(definition.into());
+}
+
+fn entity_class_preview(class: &source_formats::fgd::Class) -> String {
+    let mut text = format!(
+        "{} ({})\n\n{}\n\nProperties\n",
+        class.name,
+        class.kind.label(),
+        class.description
+    );
+    for property in &class.properties {
+        text += &format!(
+            "\n{} — {} ({}){}\n",
+            property.label,
+            property.name,
+            property.kind,
+            if property.read_only {
+                " [read-only]"
+            } else {
+                ""
+            }
+        );
+        if let Some(default) = property.default_value() {
+            text += &format!("Default: {default}\n");
+        }
+        if !property.description.is_empty() {
+            text += &format!("{}\n", property.description);
+        }
+        for choice in &property.choices {
+            text += &format!(
+                "  {}: {}{}\n",
+                choice.value,
+                choice.label,
+                if choice.selected { " [default]" } else { "" }
+            );
+        }
+    }
+    for (label, members) in [("Inputs", &class.inputs), ("Outputs", &class.outputs)] {
+        text += &format!("\n{label}\n");
+        for member in members {
+            text += &format!(
+                "{} ({}) — {}\n",
+                member.name, member.kind, member.description
+            );
+        }
+    }
+    text += "\nHelpers\n";
+    for helper in &class.helpers {
+        text += &format!("{}({})\n", helper.name, helper.arguments.join(", "));
+    }
+    text
+}
+
+fn refresh_entity_picker(ui: &SharedUi) {
+    let (session, window) = {
+        let ui = ui.borrow();
+        (
+            ui.session.clone(),
+            ui.entity_window.as_ref().map(ComponentHandle::clone_strong),
+        )
+    };
+    if let Some(window) = window {
+        refresh_entity_window(&window, &lock(&session));
+    }
+}
+
+fn load_fgd(app: &AppWindow, ui: &SharedUi) {
+    let (app, ui) = (app.as_weak(), ui.clone());
+    slint::spawn_local(async move {
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .add_filter("Entity definitions", &["fgd"])
+            .pick_file()
+            .await
+        else {
+            return;
+        };
+        let result = Catalog::load(file.path());
+        match result {
+            Ok(catalog) => {
+                lock(&session_of(&ui)).set_definitions(Actor::User, catalog);
+                if let Some(window) = &ui.borrow().entity_window {
+                    window.set_message("Entity definitions loaded".into());
+                }
+                refresh_entity_picker(&ui);
+            }
+            Err(error) => {
+                if let Some(app) = app.upgrade() {
+                    app.set_message(error.clone().into());
+                }
+                if let Some(window) = &ui.borrow().entity_window {
+                    window.set_message(error.into());
+                }
+            }
+        }
+    })
+    .expect("event loop is running");
+}
+
+fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: bool) {
+    if ui.borrow().entity_window.is_none() {
+        let window = match EntityWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        window.on_filter_changed({
+            let ui = ui.clone();
+            move || refresh_entity_picker(&ui)
+        });
+        window.on_class_selected({
+            let ui = ui.clone();
+            move || refresh_entity_picker(&ui)
+        });
+        window.on_load_fgd({
+            let (app, ui) = (app.as_weak(), ui.clone());
+            move || load_fgd(&app.unwrap(), &ui)
+        });
+        window.on_create({
+            let (app, ui) = (app.as_weak(), ui.clone());
+            move || {
+                let Some(window) = ui
+                    .borrow()
+                    .entity_window
+                    .as_ref()
+                    .map(ComponentHandle::clone_strong)
+                else {
+                    return;
+                };
+                let shared = session_of(&ui);
+                let mut session = lock(&shared);
+                let result = if window.get_brush_mode() {
+                    let ids = session.selected_ids();
+                    session.tie_to_entity(
+                        Actor::User,
+                        &ids,
+                        &window.get_classname(),
+                        BTreeMap::new(),
+                    )
+                } else {
+                    let position = format!(
+                        "{} {} {}",
+                        window.get_origin_x(),
+                        window.get_origin_y(),
+                        window.get_origin_z()
+                    );
+                    source_formats::fgd::vector(&position, 3)
+                        .ok_or_else(|| "position expects three finite coordinates".into())
+                        .and_then(|values| {
+                            session.create_entity(
+                                Actor::User,
+                                &window.get_classname(),
+                                Some(DVec3::new(values[0], values[1], values[2])),
+                                BTreeMap::new(),
+                            )
+                        })
+                };
+                match result {
+                    Ok(_) => {
+                        if let Err(error) = window.hide() {
+                            app.unwrap().set_message(error.to_string().into());
+                        }
+                    }
+                    Err(error) => {
+                        window.set_message(error.clone().into());
+                        app.unwrap().set_message(error.into());
+                    }
+                }
+            }
+        });
+        ui.borrow_mut().entity_window = Some(window);
+    }
+    let shared = session_of(ui);
+    let session = lock(&shared);
+    let Some(window) = ui
+        .borrow()
+        .entity_window
+        .as_ref()
+        .map(ComponentHandle::clone_strong)
+    else {
+        return;
+    };
+    window.set_brush_mode(brush_mode);
+    window.set_filter("".into());
+    let kind = if brush_mode {
+        ClassKind::Solid
+    } else {
+        ClassKind::Point
+    };
+    let selected = single_selected_entity(&session)
+        .and_then(|id| session.document().entity(id))
+        .and_then(|entity| entity.classname())
+        .filter(|name| {
+            session
+                .definitions()
+                .class(name)
+                .is_some_and(|class| class.kind == kind)
+        });
+    window.set_classname(
+        selected
+            .unwrap_or(if brush_mode { "func_detail" } else { "light" })
+            .into(),
+    );
+    let origin = session.placement_origin();
+    window.set_origin_x(origin.x.to_string().into());
+    window.set_origin_y(origin.y.to_string().into());
+    window.set_origin_z(origin.z.to_string().into());
+    window.set_message("".into());
+    refresh_entity_window(&window, &session);
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
 fn refresh_panel(app: &AppWindow, session: &Session) {
     let doc = session.document();
     app.set_map_title(session.title().into());
@@ -214,6 +530,18 @@ fn refresh_panel(app: &AppWindow, session: &Session) {
     app.set_selection_title(title.into());
     app.set_selection_detail(detail.into());
     app.set_entity_selected(properties.is_some());
+    app.set_brush_entity_selected(
+        single_selected_entity(session)
+            .and_then(|id| doc.entity(id))
+            .is_some_and(|entity| !entity.solids.is_empty()),
+    );
+    app.set_can_tie(
+        !session.selection().is_empty()
+            && session
+                .selection()
+                .iter()
+                .all(|id| matches!(id, ObjectId::Solid(_))),
+    );
     app.set_entity_properties(ModelRc::new(VecModel::from(properties.unwrap_or_default())));
     let activity: Vec<Activity> = session
         .recent_log()
@@ -523,6 +851,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = GpuContext::new()?;
     let session = Arc::new(Mutex::new(Session::new(mount_game(args.gameinfo))));
     let _shutdown = ShutdownGuard(session.clone());
+    let fgd = args
+        .fgd
+        .or_else(|| steam::find_css_fgd(lock(&session).game()));
+    if let Some(path) = fgd {
+        match Catalog::load(&path) {
+            Ok(catalog) => lock(&session).set_definitions(Actor::User, catalog),
+            Err(error) => lock(&session).report_definitions_error(error),
+        }
+    } else {
+        lock(&session)
+            .report_definitions_error("CS:S SDK FGD not found; use --fgd or Load FGD".into());
+    }
     let open_message = args
         .map
         .as_ref()
@@ -584,6 +924,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_log: 0,
         game_log_window: None,
         last_log_refresh: Instant::now(),
+        entity_window: None,
+        seen_definitions: 0,
     }));
 
     app.on_open_map({
@@ -635,6 +977,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || create_block(&app.unwrap(), &ui)
     });
+    app.on_place_entity({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_entity_window(&app.unwrap(), &ui, false)
+    });
+    app.on_tie_entity({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_entity_window(&app.unwrap(), &ui, true)
+    });
+    app.on_move_to_world({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            let mut session = lock(&shared);
+            if let Some(entity) = single_selected_entity(&session)
+                && let Err(error) = session.move_to_world(Actor::User, entity)
+            {
+                app.unwrap().set_message(error.into());
+            }
+        }
+    });
     app.on_delete_selection({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -676,10 +1038,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             };
             let changes = [(key.clone(), Some(value.to_string()))];
-            if let Err(message) = session.edit(Actor::User, &format!("set {key}"), |tx| {
-                edit::set_properties(tx, entity, &changes)
-            }) {
-                app.unwrap().set_message(message.into());
+            if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
+                let app = app.unwrap();
+                refresh_panel(&app, &session);
+                app.set_message(message.into());
             }
         }
     });
@@ -692,10 +1054,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             };
             let changes = [(key.to_string(), None)];
-            if let Err(message) = session.edit(Actor::User, &format!("remove {key}"), |tx| {
-                edit::set_properties(tx, entity, &changes)
-            }) {
-                app.unwrap().set_message(message.into());
+            if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
+                let app = app.unwrap();
+                refresh_panel(&app, &session);
+                app.set_message(message.into());
+            }
+        }
+    });
+    app.on_flag_toggled({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move |key, flag, checked| {
+            let shared = session_of(&ui);
+            let mut session = lock(&shared);
+            let Some(id) = single_selected_entity(&session) else {
+                return;
+            };
+            let entity = session.document().entity(id).unwrap();
+            let default = entity
+                .classname()
+                .and_then(|name| session.definitions().class(name))
+                .and_then(|class| class.property(&key))
+                .and_then(|property| property.default_value());
+            let current = entity
+                .properties
+                .get(&key)
+                .or(default.as_deref())
+                .unwrap_or("0");
+            let result = current
+                .parse::<u64>()
+                .and_then(|mask| {
+                    flag.parse::<u64>()
+                        .map(|flag| if checked { mask | flag } else { mask & !flag })
+                })
+                .map_err(|error| error.to_string())
+                .and_then(|mask| {
+                    session.set_entity_properties(
+                        Actor::User,
+                        id,
+                        &[(key.to_string(), Some(mask.to_string()))],
+                    )
+                });
+            if let Err(error) = result {
+                let app = app.unwrap();
+                refresh_panel(&app, &session);
+                app.set_message(error.into());
             }
         }
     });
@@ -783,6 +1185,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let mut session = lock(&ui.session);
                 session.poll_game();
+                if session.definitions_serial() != ui.seen_definitions {
+                    ui.seen_definitions = session.definitions_serial();
+                    if let Some(window) = &ui.entity_window {
+                        refresh_entity_window(window, &session);
+                    }
+                    panel_dirty = true;
+                }
                 if session.camera_serial() != ui.seen_camera {
                     ui.seen_camera = session.camera_serial();
                     ui.viewport.camera = session.camera();
@@ -848,4 +1257,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     app.run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slint::Model;
+    use source_formats::vmf::Entity;
+
+    #[test]
+    fn property_controls_preserve_imported_values_and_show_inherited_defaults() {
+        let mut session = Session::new(Err("no game required".into()));
+        session.set_definitions(
+            Actor::User,
+            Catalog::parse(
+                r#"@BaseClass = Base [
+                    _light(color255) : "Brightness" : "255 255 255 200"
+                    spawnflags(flags) = [ 1 : "Enabled" : 0 2 : "Special" : 0 ]
+                ]
+                @PointClass base(Base) = light [
+                    style(choices) : "Style" : 0 = [ 0 : "Steady" 1 : "Pulse" ]
+                    editor_id(integer) readonly : "Editor ID"
+                ]"#,
+            )
+            .unwrap(),
+        );
+        let mut entity = Entity::new(1, "light");
+        entity.properties.set("style", "99");
+        entity.properties.set("spawnflags", "9");
+        entity.properties.set("custom_key", "keep me");
+        let rows = entity_property_rows(&session, &entity);
+        let row = |key| rows.iter().find(|row| row.key == key).unwrap();
+        let style = row("style");
+        assert_eq!(style.value, "99");
+        assert_eq!(style.choice_index, 0);
+        assert_eq!(style.choice_values.row_data(0).unwrap(), "99");
+        assert_eq!(style.choice_values.row_count(), 3);
+        let flags = row("spawnflags");
+        assert_eq!(flags.value, "9");
+        assert!(flags.flags.row_data(0).unwrap().checked);
+        assert!(!flags.flags.row_data(1).unwrap().checked);
+        assert_eq!(row("_light").value, "255 255 255 200");
+        assert_eq!(row("_light").type_name, "color255");
+        assert!(row("editor_id").read_only);
+        assert_eq!(row("custom_key").value, "keep me");
+        assert_eq!(row("custom_key").type_name, "string");
+        assert!(entity.properties.get("_light").is_none());
+    }
 }

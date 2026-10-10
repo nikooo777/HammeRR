@@ -4,6 +4,7 @@ mod inspector;
 mod interaction;
 mod materials;
 mod mcp;
+mod rename_ui;
 mod session;
 mod spatial;
 mod steam;
@@ -124,6 +125,8 @@ struct Ui {
     entity_window: Option<EntityWindow>,
     connection_window: Option<ConnectionWindow>,
     seen_connections: (u64, u64, u64),
+    rename_window: Option<RenameWindow>,
+    seen_rename: (u64, u64, u64),
     color_window: Option<ColorWindow>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
@@ -1426,6 +1429,51 @@ fn show_connection_window(app: &AppWindow, ui: &SharedUi) {
     }
 }
 
+fn show_rename_window(app: &AppWindow, ui: &SharedUi, name: Option<String>) {
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    let Some(entity) = single_selected_entity(&session) else {
+        app.set_message("Select an entity to inspect its references.".into());
+        return;
+    };
+    if ui.borrow().rename_window.is_none() {
+        let window = match RenameWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        rename_ui::bind(&window, &shared);
+        ui.borrow_mut().rename_window = Some(window);
+    }
+    let begin = if name.is_none()
+        && session
+            .rename_draft()
+            .is_some_and(|draft| draft.entity == entity)
+    {
+        Ok(())
+    } else {
+        session.begin_entity_rename(entity)
+    };
+    let result = begin.and_then(|()| {
+        if let Some(name) = name {
+            session.update_entity_rename(name, false, false)
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(error) = result {
+        app.set_message(error.into());
+        return;
+    }
+    let window = ui.borrow().rename_window.as_ref().unwrap().clone_strong();
+    rename_ui::refresh(&window, &session);
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
 fn refresh_material_catalog(window: &MaterialWindow, session: &mut Session) {
     let catalog = match session.material_catalog(
         &window.get_filter(),
@@ -2236,6 +2284,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         entity_window: None,
         connection_window: None,
         seen_connections: (0, 0, 0),
+        rename_window: None,
+        seen_rename: (0, 0, 0),
         color_window: None,
         color_target: None,
         material_window: None,
@@ -2408,11 +2458,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    app.on_edit_references({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_rename_window(&app.unwrap(), &ui, None)
+    });
     app.on_property_edited({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |key, value| {
             let key = key.trim().to_owned();
             if key.is_empty() {
+                return;
+            }
+            if key.eq_ignore_ascii_case("targetname") {
+                show_rename_window(&app.unwrap(), &ui, Some(value.to_string()));
                 return;
             }
             let shared = session_of(&ui);
@@ -2876,6 +2934,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         connection_ui::refresh(window, &session);
                     }
                 }
+                let rename = (
+                    session.rename_serial(),
+                    session.scene_serial(),
+                    session.definitions_serial(),
+                );
+                if rename != ui.seen_rename {
+                    ui.seen_rename = rename;
+                    if let Some(window) = &ui.rename_window
+                        && window.window().is_visible()
+                    {
+                        rename_ui::refresh(window, &session);
+                    }
+                }
                 if panel_dirty {
                     refresh_panel(&app, &mut session);
                 }
@@ -3307,6 +3378,185 @@ mod tests {
         lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(lock(&shared).connection_records(source).unwrap().len(), 1);
         lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+    }
+
+    #[test]
+    fn rename_controls_share_previews_review_cancel_and_stale_guards() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.set_definitions(Actor::Agent, Catalog::parse(r#"
+@PointClass = logic_relay [ targetname(target_source) : "Name" target(target_destination) : "Target" parentname(target_destination) : "Parent" ]
+"#).unwrap());
+        let ObjectId::Entity(target) = session
+            .create_entity(
+                Actor::Agent,
+                "logic_relay",
+                Some(DVec3::ZERO),
+                BTreeMap::from([("targetname".into(), "courtyard_relay".into())]),
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let ObjectId::Entity(source) = session
+            .create_entity(
+                Actor::Agent,
+                "logic_relay",
+                Some(DVec3::X * 64.0),
+                BTreeMap::from([
+                    ("targetname".into(), "entrance_trigger".into()),
+                    ("target".into(), "courtyard_relay".into()),
+                    ("parentname".into(), "courtyard_relay,hinge".into()),
+                    ("notes".into(), "courtyard_relay".into()),
+                ]),
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        session
+            .set_entity_connection(
+                Actor::Agent,
+                source,
+                None,
+                &map_core::connections::Spec {
+                    output: "OnTrigger".into(),
+                    target: "courtyard*".into(),
+                    input: "Trigger".into(),
+                    parameter: "".into(),
+                    delay: 0.25,
+                    times: -1,
+                },
+            )
+            .unwrap();
+        let original = session.document().vmf().clone();
+        session.begin_entity_rename(target).unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let window = RenameWindow::new().unwrap();
+        rename_ui::bind(&window, &shared);
+        rename_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        window.set_new_name("garden_relay".into());
+        window.invoke_fields_changed();
+        assert!(window.get_requires_review());
+        assert!(!window.get_can_apply());
+        assert_eq!(window.get_changes().row_count(), 2);
+        assert_eq!(window.get_attention().row_count(), 2);
+        assert!(!window.get_show_details());
+        for row in window.get_references().iter() {
+            assert!(!row.label.contains("entity:"));
+            assert!(!row.label.contains("logic_relay"));
+        }
+        let parent = window
+            .get_changes()
+            .iter()
+            .find(|row| row.label.ends_with(" · Parent"))
+            .unwrap();
+        assert!(
+            parent.label.contains("Entrance trigger · Parent"),
+            "{}",
+            parent.label
+        );
+        assert!(parent.reason.contains("Attachment “hinge” stays the same"));
+        let wildcard = window
+            .get_attention()
+            .iter()
+            .find(|row| row.change.contains("courtyard*"))
+            .unwrap();
+        assert!(wildcard.label.contains("When triggered · recipient"));
+        assert!(wildcard.reason.contains("will no longer include"));
+        window.set_show_details(true);
+        window.invoke_fields_changed();
+        assert!(lock(&shared).rename_draft().unwrap().show_details);
+        assert!(
+            window
+                .get_changes()
+                .row_data(0)
+                .unwrap()
+                .details
+                .contains("logic_relay")
+        );
+        assert!(!window.get_can_apply());
+        window.set_show_details(false);
+        window.invoke_fields_changed();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.set_accept_review(true);
+        window.invoke_fields_changed();
+        assert!(window.get_can_apply());
+        save_ui_snapshot(window.window(), "entity-rename");
+        assert_dialog_button_visible(&window, "New entity name");
+        assert_dialog_button_visible(&window, "Current entity name");
+        let name_field = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &window,
+            "New entity name",
+        )
+        .next()
+        .unwrap();
+        let summary = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &window,
+            "Rename summary",
+        )
+        .next()
+        .unwrap();
+        assert!(
+            name_field.absolute_position().y + name_field.size().height
+                <= summary.absolute_position().y,
+            "Name field overlaps the rename summary"
+        );
+        assert_dialog_button_visible(&window, "Cancel");
+        assert_dialog_button_visible(&window, "Apply rename");
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Apply rename")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(lock(&shared).rename_draft().is_none());
+        assert_eq!(
+            lock(&shared)
+                .document()
+                .entity(source)
+                .unwrap()
+                .properties
+                .get("parentname"),
+            Some("garden_relay,hinge")
+        );
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        lock(&shared).begin_entity_rename(target).unwrap();
+        rename_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        window.set_new_name("another_name".into());
+        window.invoke_fields_changed();
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Cancel")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(lock(&shared).rename_draft().is_none());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        lock(&shared).begin_entity_rename(target).unwrap();
+        rename_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        lock(&shared).begin_entity_rename(source).unwrap();
+        window.invoke_apply();
+        assert!(window.get_message().contains("draft changed"));
+        assert_eq!(lock(&shared).rename_draft().unwrap().entity, source);
+        rename_ui::refresh(&window, &lock(&shared));
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: Key::Escape.into(),
+            });
+        assert!(lock(&shared).rename_draft().is_none());
+        assert!(!window.window().is_visible());
         assert_eq!(lock(&shared).document().vmf(), &original);
     }
 

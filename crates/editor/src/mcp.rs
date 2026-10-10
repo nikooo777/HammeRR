@@ -94,6 +94,10 @@ get_connection_choices provides map target names and FGD inputs/outputs. Begin a
 with begin_connection_edit, change fields with update_connection_draft, then commit_connection_edit \
 or cancel_connection_edit. delete_entity_connection removes one outgoing index. Use generation \
 and revision guards when starting an edit or deleting from a previously inspected list. \
+get_entity_references also inspects FGD property links, parent references and input parameters. \
+Use begin_entity_rename, update_entity_rename, commit_entity_rename or cancel_entity_rename \
+for safe naming: exact links update atomically, shared names require rename_group, and \
+unchanged ambiguous references require accept_review after inspecting the preview. \
 the current compiler still produces fullbright maps without baked lighting. \
 Compile with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
@@ -929,6 +933,76 @@ pub struct ConnectionChoicesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RenameArgs {
+    /// Entity ID; defaults to the single selected entity.
+    pub id: Option<String>,
+    /// Optional stale-map guard from get_entity_references; supply both values.
+    pub generation: Option<u64>,
+    pub revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RenameFieldsArgs {
+    /// Identity guard from begin_entity_rename.
+    pub token: Option<u64>,
+    pub new_name: Option<String>,
+    /// Explicitly rename all entities sharing the old name, including hidden ones.
+    pub rename_group: Option<bool>,
+    /// Acknowledge references left unchanged. Set after inspecting the preview;
+    /// changing the name or group resets this acknowledgment.
+    pub accept_review: Option<bool>,
+    /// Show raw engine keys, class names and IDs in the shared human preview.
+    pub show_details: Option<bool>,
+}
+
+fn reference_json(reference: &map_core::references::Reference) -> Value {
+    use map_core::references::Location;
+    let location = match &reference.location {
+        Location::Property { index, key } => json!({"kind":"property", "index":index, "key":key}),
+        Location::Connection {
+            index,
+            output,
+            field,
+        } => {
+            json!({"kind":"connection", "index":index, "output":output, "field":if *field == 0 {"target"} else {"parameter"}})
+        }
+    };
+    json!({"source":id_string(ObjectId::Entity(reference.source)), "location":location,
+        "value":reference.value, "target":reference.target, "declared":reference.declared, "certain":reference.certain,
+        "reason":reference.reason, "hidden":reference.hidden})
+}
+
+fn rename_plan_json(session: &Session, plan: &map_core::references::RenamePlan) -> Value {
+    json!({"entity":id_string(ObjectId::Entity(plan.entity)), "old_name":plan.old_name, "new_name":plan.new_name,
+        "entities":plan.entities.iter().map(|id| id_string(ObjectId::Entity(*id))).collect::<Vec<_>>(),
+        "references":plan.references.iter().map(|change| json!({"reference":reference_json(&change.reference),
+            "after":change.after, "changed":change.changed,
+            "review":change.review, "reason":change.reason,
+            "display":session.rename_reference_view(change, &plan.new_name)})).collect::<Vec<_>>(), "error":plan.error})
+}
+
+fn rename_draft_json(session: &Session) -> Value {
+    let Some(draft) = session.rename_draft() else {
+        return Value::Null;
+    };
+    let (preview, error, review, can_apply) = match session.rename_preview() {
+        Ok(plan) => (
+            rename_plan_json(session, &plan),
+            plan.error.clone(),
+            plan.references.iter().any(|change| change.review),
+            session.rename_can_apply(&plan),
+        ),
+        Err(error) => (Value::Null, Some(error), false, false),
+    };
+    json!({"entity":id_string(ObjectId::Entity(draft.entity)), "token":draft.token,
+        "new_name":draft.new_name, "rename_group":draft.rename_group, "accept_review":draft.accept_review,
+        "show_details":draft.show_details,
+        "generation":draft.generation, "revision":draft.revision,
+        "preview":preview, "error":error, "requires_review":review,
+        "can_apply":can_apply})
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnectionFieldsArgs {
     /// Optional identity guard from begin_connection_edit; rejects a replaced draft.
     pub token: Option<u64>,
@@ -945,7 +1019,7 @@ pub struct ConnectionFieldsArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnectionDraftArgs {
-    /// Optional identity guard from begin_connection_edit.
+    /// Optional identity guard from the shared connection or rename draft.
     pub token: Option<u64>,
 }
 
@@ -1330,6 +1404,7 @@ impl EditorServer {
             "transform": transform_state(&session),
             "area_selection": area_state(&session),
             "connection_draft": connection_draft_json(&session),
+            "rename_draft": rename_draft_json(&session),
             "face_selection": face_state(&session),
             "world_brushes": vmf.world.solids.len(),
             "point_entities": point_entities,
@@ -1816,6 +1891,107 @@ impl EditorServer {
                 .ok_or("Choose the outgoing connection index to delete")?;
             session.delete_entity_connection(Actor::Agent, source, index)?;
             Ok(json!({"deleted":index,"source":id_string(ObjectId::Entity(source))}))
+        })
+    }
+
+    #[tool(
+        description = "Inspect incoming I/O targets, entity reference parameters, FGD reference properties and exact untyped text candidates. Includes hidden sources. Use generation/revision guards when beginning a rename.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_entity_references(&self, Parameters(args): Parameters<EntityArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let entity = single_entity(&session, args.id.as_deref())?;
+            let references = session.entity_references(entity)?;
+            Ok(json!({"entity":id_string(ObjectId::Entity(entity)),
+                "generation":session.document_generation(), "revision":session.document().revision(),
+                "references":references.iter().map(reference_json).collect::<Vec<_>>(),
+                "draft":rename_draft_json(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Begin a shared entity rename preview without editing the map. Exact references can be propagated atomically; shared names require an explicit group rename. Wildcards and untyped text remain unchanged for review."
+    )]
+    fn begin_entity_rename(&self, Parameters(args): Parameters<RenameArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            match (args.generation, args.revision) {
+                (Some(generation), Some(revision))
+                    if generation != session.document_generation()
+                        || revision != session.document().revision() =>
+                {
+                    return Err("Map changed. Inspect entity references again.".into());
+                }
+                (Some(_), Some(_)) | (None, None) => (),
+                _ => {
+                    return Err(
+                        "Supply both generation and revision for the stale-map guard".into(),
+                    );
+                }
+            }
+            let entity = single_entity(&session, args.id.as_deref())?;
+            session.begin_entity_rename(entity)?;
+            Ok(rename_draft_json(&session))
+        })
+    }
+
+    #[tool(
+        description = "Change the proposed name or group option and inspect all affected references. No map edit. accept_review acknowledges unchanged references; changing name/group resets it, so review the preview before acknowledging in a subsequent call."
+    )]
+    fn update_entity_rename(&self, Parameters(args): Parameters<RenameFieldsArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            if let Some(token) = args.token {
+                session.check_rename_draft(token)?;
+            }
+            let draft = session
+                .rename_draft()
+                .ok_or("Begin an entity rename first")?;
+            let (name, group, review) = (
+                args.new_name.unwrap_or_else(|| draft.new_name.clone()),
+                args.rename_group.unwrap_or(draft.rename_group),
+                args.accept_review.unwrap_or(draft.accept_review),
+            );
+            session.update_entity_rename(name, group, review)?;
+            if let Some(show_details) = args.show_details {
+                session.set_rename_details(show_details)?;
+            }
+            Ok(rename_draft_json(&session))
+        })
+    }
+
+    #[tool(
+        description = "Apply the shared rename and exact reference changes in one undo step. Rejects occupied names, invalid names, unreviewed ambiguous references, replaced drafts and map/FGD changes. Preserves imported connection formatting and unrelated data."
+    )]
+    fn commit_entity_rename(
+        &self,
+        Parameters(args): Parameters<ConnectionDraftArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            if let Some(token) = args.token {
+                session.check_rename_draft(token)?;
+            }
+            let plan = session.commit_entity_rename(Actor::Agent)?;
+            Ok(rename_plan_json(&session, &plan))
+        })
+    }
+
+    #[tool(
+        description = "Discard the shared entity rename preview without changing the map or undo history."
+    )]
+    fn cancel_entity_rename(
+        &self,
+        Parameters(args): Parameters<ConnectionDraftArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            if let Some(token) = args.token {
+                session.check_rename_draft(token)?;
+            }
+            session.cancel_entity_rename();
+            Ok(json!({"cancelled":true}))
         })
     }
 

@@ -28,7 +28,7 @@ and the shared entity inspector and activity panel.*
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Face materials | Individual face selection, UV offset/scale/rotation, texture fitting, cancellable previews, and a grouped material browser with thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
-| Entity logic | Connection creation, editing and deletion; target and input suggestions; incoming links; delay and firing rules; cancellable drafts and undo. |
+| Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
 | Humans and agents | Shared map, selection, camera, previews and undo history. MCP edits appear live in the editor. |
 | Build and play | Native BSP compilation, leak detection and viewport paths, CS:S launch controls, and game logs. |
 
@@ -186,8 +186,7 @@ Missing targets, undeclared I/O and parameter type mismatches show warnings.
 Invalid encoding, negative delays and invalid counts prevent Apply. Map edits
 invalidate an open draft, so it cannot overwrite a shifted connection index.
 Incoming links resolve named targets, prefix wildcards and `!self`; other
-procedural targets resolve in game. Renaming an entity currently leaves its
-existing references unchanged.
+procedural targets resolve in game.
 
 New connections use CS:S's comma-separated format, so their fields cannot
 contain commas, quotes or control characters. Imported escape-separated
@@ -195,6 +194,34 @@ connections retain their delimiter; other imported records stay untouched
 until explicitly edited or deleted.
 
 ![Entity connection form with readable fields, suggestions and Cancel](docs/images/entity-connections.png)
+
+### References and safe renaming
+
+Select an entity and open **References and rename…**, or edit its **Name**.
+The preview lists incoming connections, FGD entity-reference properties,
+parent links and reference parameters such as `SetParent`. Enter a new name
+to see which fields will change. **Apply rename** updates the name and exact
+references in one undo step. **Cancel**, Escape or closing the window discards
+the draft.
+
+Names shared by several entities require **Rename all … entities**; the preview
+lists every member, including hidden entities. An occupied destination name
+blocks Apply. Wildcards, procedural targets, ambiguous class references and
+untyped text stay unchanged. References whose meaning may change are listed
+under **Needs your attention**, with an explanation of each effect. Review them
+before choosing **I’ve reviewed these effects; leave these fields unchanged**.
+Changing the name or group resets that acknowledgment. **What will change**
+lists the link updates separately. **Show engine details** reveals raw keys,
+class names and IDs when needed.
+
+Attachment suffixes, duplicate outputs, connection delimiters and imported
+numeric formatting are preserved. Edits, undo/redo and FGD changes invalidate
+an open preview. MCP shares the same draft, preview and guards. Raw MCP property
+edits and explicit Advanced-property removal remain available; use this workflow
+when renaming should propagate references. Embedded scripts, runtime-created
+links and arbitrary text expressions require manual inspection.
+
+![Reference rename preview with exact updates and unchanged references to review](docs/images/entity-rename.png)
 
 ## MCP
 
@@ -252,6 +279,7 @@ For example, place a warm light:
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
+| References and renaming | `get_entity_references`, `begin_entity_rename`, `update_entity_rename`, `commit_entity_rename`, `cancel_entity_rename` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `commit_face_preview`, `cancel_face_preview` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
@@ -285,6 +313,14 @@ strings so unfinished values can be shared with the UI. Inspect feedback,
 then commit or cancel. Pass the draft's `token` to guard against another
 operation replacing the form. Starting an edit or deleting supports optional
 `generation` and `revision` guards from `get_entity_connections`.
+
+`get_entity_references` includes proven links and untyped text candidates.
+Begin a rename, update `new_name` and optionally `rename_group`, then inspect
+the returned preview. If `requires_review` is true, acknowledge it with
+`accept_review: true` in a subsequent update. Commit or cancel with the draft's
+`token`; starting a rename accepts generation/revision guards from inspection.
+Preview rows include the same readable `display` labels and explanations used
+by the UI. `show_details` controls the shared engine-details toggle.
 
 </details>
 
@@ -340,7 +376,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes safe reference renaming, more brush tools, displacement
+Editor work ahead includes world settings, more brush tools, displacement
 editing, model rendering and further texture alignment tools.
 
 ## Project layout

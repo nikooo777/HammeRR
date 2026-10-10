@@ -212,6 +212,126 @@ export component ConnectionWindow inherits Window {
     }
 }
 
+export struct RenameRow {
+    section: string,
+    section-note: string,
+    label: string,
+    change: string,
+    reason: string,
+    review: bool,
+    changed: bool,
+    details: string,
+}
+
+component RenameReference inherits VerticalLayout {
+    in property <RenameRow> entry;
+    in property <bool> show-details;
+    padding-bottom: 16px;
+    spacing: 4px;
+    Text { text: root.entry.label; wrap: word-wrap; font-weight: 600; }
+    Text { text: root.entry.change; wrap: word-wrap; }
+    Text { text: root.entry.reason; wrap: word-wrap; color: root.entry.review ? #dcaa59 : #a5aab4; font-size: 12px; }
+    if root.show-details: Text { text: root.entry.details; wrap: word-wrap; font-size: 11px; color: #818999; }
+}
+
+export component RenameWindow inherits Window {
+    title: "Entity References and Rename - HammeRR";
+    preferred-width: 920px;
+    preferred-height: 740px;
+    in property <string> entity-label;
+    in property <string> old-name;
+    in property <string> draft-token;
+    in property <[RenameRow]> references;
+    in property <[RenameRow]> changes;
+    in property <[RenameRow]> attention;
+    in property <[RenameRow]> other;
+    in property <string> summary;
+    in property <string> members;
+    in property <string> message;
+    in property <bool> can-apply;
+    in property <bool> requires-review;
+    in property <bool> has-proposal;
+    in property <int> shared-count;
+    in-out property <string> new-name;
+    in-out property <bool> rename-group;
+    in-out property <bool> accept-review;
+    in-out property <bool> show-details;
+    callback fields-changed();
+    callback apply();
+    callback cancel();
+    forward-focus: rename-focus;
+    rename-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: root.has-proposal ? "Rename entity" : "Entity references"; font-size: 24px; font-weight: 600; }
+            Text { text: root.entity-label; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    Text { text: "Current name"; font-weight: 600; }
+                    Text { text: root.old-name == "" ? "Unnamed" : root.old-name; wrap: word-wrap; accessible-label: "Current entity name"; }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    Text { text: "New name"; font-weight: 600; }
+                    LineEdit {
+                        text <=> root.new-name;
+                        accessible-label: "New entity name";
+                        placeholder-text: "Choose an unused entity name";
+                        edited => { root.fields-changed(); }
+                    }
+                }
+            }
+            if root.shared-count > 1: CheckBox {
+                text: "Rename all " + root.shared-count + " entities named “" + root.old-name + "”";
+                checked <=> root.rename-group;
+                toggled => { root.fields-changed(); }
+            }
+            Text { text: root.summary; wrap: word-wrap; font-weight: 600; accessible-label: "Rename summary"; }
+            if root.rename-group: Text { text: root.members; wrap: word-wrap; font-size: 12px; color: #929cae; }
+            if root.references.length == 0: Text { text: root.has-proposal ? "No linked fields need updating." : "No references found."; wrap: word-wrap; }
+            ListView {
+                vertical-stretch: 1;
+                for row in root.references: VerticalLayout {
+                    spacing: 8px;
+                    if row.section != "": Text {
+                        text: row.section;
+                        font-size: 18px;
+                        font-weight: 600;
+                        color: row.review ? #dcaa59 : #ffffff;
+                    }
+                    if row.section-note != "": Text { text: row.section-note; wrap: word-wrap; font-size: 12px; }
+                    RenameReference { entry: row; show-details: root.show-details; }
+                }
+            }
+            if root.requires-review: CheckBox {
+                text: "I’ve reviewed these effects; leave these fields unchanged";
+                checked <=> root.accept-review;
+                toggled => { root.fields-changed(); }
+            }
+            CheckBox {
+                text: "Show engine details";
+                checked <=> root.show-details;
+                toggled => { root.fields-changed(); }
+            }
+            Text { text: root.message; wrap: word-wrap; color: root.can-apply ? #73b98d : #dcaa59; }
+            HorizontalLayout {
+                spacing: 12px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply rename"; enabled: root.can-apply; clicked => { root.apply(); } }
+            }
+        }
+    }
+}
+
 export component EntityWindow inherits Window {
     title: root.brush-mode ? "Brush Entity - HammeRR" : "Place Entity - HammeRR";
     preferred-width: 900px;
@@ -859,6 +979,7 @@ export component AppWindow inherits Window {
     callback flag-toggled(key: string, flag: string, checked: bool);
     callback place-entity();
     callback edit-connections();
+    callback edit-references();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -1322,6 +1443,11 @@ export component AppWindow inherits Window {
                     if root.entity-selected: Button {
                         text: "Connections…";
                         clicked => { root.edit-connections(); }
+                    }
+
+                    if root.entity-selected: Button {
+                        text: "References and rename…";
+                        clicked => { root.edit-references(); }
                     }
 
                     if root.entity-selected: CheckBox {

@@ -52,6 +52,70 @@ use source_formats::bsp::{
     Brush, BrushSide, Bsp, Edge, Face, Leaf, Model, Node, Plane, TexInfo, contents, lump,
 };
 
+#[test]
+fn safe_rename_preserves_entity_links_in_compiled_bsp() {
+    let mut document = Document::new(common::room());
+    let target = document
+        .edit("logic", |tx| {
+            let ObjectId::Entity(target) = edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(DVec3::Z * 64.0),
+                &[("targetname".into(), "old_relay".into())],
+                Vec::new(),
+            )?
+            else {
+                panic!()
+            };
+            let ObjectId::Entity(source) = edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(DVec3::Z * 96.0),
+                &[
+                    ("target".into(), "old_relay".into()),
+                    ("parentname".into(), "old_relay,hinge".into()),
+                ],
+                Vec::new(),
+            )?
+            else {
+                panic!()
+            };
+            for _ in 0..2 {
+                map_core::connections::set(
+                    tx,
+                    source,
+                    None,
+                    &map_core::connections::Spec {
+                        output: "OnTrigger".into(),
+                        target: "old_relay".into(),
+                        input: "Trigger".into(),
+                        parameter: "".into(),
+                        delay: 0.75,
+                        times: 1,
+                    },
+                )?;
+            }
+            Ok(target)
+        })
+        .unwrap();
+    let catalog = source_formats::fgd::Catalog::parse(r#"@PointClass = logic_relay [ targetname(target_source) : "Name" target(target_destination) : "Target" parentname(target_destination) : "Parent" ]"#).unwrap();
+    let plan = map_core::references::plan(&document, &catalog, target, "new_relay", false).unwrap();
+    document
+        .edit("rename", |tx| map_core::references::apply(tx, &plan, false))
+        .unwrap();
+    let saved = document.vmf().write(&Default::default());
+    let reloaded = source_formats::vmf::Vmf::parse(&saved).unwrap();
+    let output = compiler::compile(&reloaded, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let bsp = Bsp::parse(&output.bsp.unwrap().to_bytes()).unwrap();
+    let entities = bsp.entities().unwrap();
+    assert!(entities.contains("\"targetname\" \"new_relay\""));
+    assert!(entities.contains("\"target\" \"new_relay\""));
+    assert!(entities.contains("\"parentname\" \"new_relay,hinge\""));
+    assert_eq!(entities.matches("new_relay,Trigger,,0.75,1").count(), 2);
+    assert!(!entities.contains("old_relay"));
+}
+
 fn bsp_leaf(bsp: &Bsp, point: DVec3) -> Leaf {
     let nodes = bsp.records::<Node>().unwrap();
     let planes = bsp.records::<Plane>().unwrap();

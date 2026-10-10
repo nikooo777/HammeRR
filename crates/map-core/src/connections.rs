@@ -146,7 +146,7 @@ pub fn targets(document: &Document, source: u32, target: &str) -> Vec<u32> {
         .collect()
 }
 
-fn name_matches(name: &str, target: &str) -> bool {
+pub fn name_matches(name: &str, target: &str) -> bool {
     if name.is_empty() || target.is_empty() || target.starts_with('!') {
         return false;
     }

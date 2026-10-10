@@ -19,6 +19,8 @@ over MCP; the activity panel shows who did what.*
   highlights and fly camera.
 - Undoable editing: blocks, entities, key/values, move with texture lock,
   duplicate, delete, materials, tie to entity / move to world.
+- FGD entity classes with inherited defaults, class search, typed properties,
+  choices and spawn flags. Humans and agents can place lights and spawns.
 - Built-in MCP server. Agents share the map, selection, camera and undo
   history with the user, and edits show up live.
 - Native BSP compilation with leak detection, pointfiles, detail brushes
@@ -43,6 +45,17 @@ snapshot and returns diagnostics, geometry counts and leak paths.
 `run_map` compiles and launches CS:S; `launch_game` launches the latest
 successful compile. `game_log` reads engine output and `stop_game` stops
 the managed client. `set_view` controls tool textures and leak paths.
+`search_entity_classes` finds point and brush classes; `get_entity_class`
+returns their defaults, property types, choices, flags and I/O signatures.
+`load_entity_definitions` loads an FGD and its includes for both front ends.
+`create_entity`, `set_entity_properties`, `tie_to_entity` and `move_to_world`
+use the same creation and validation operations as the GUI.
+
+For example, an agent can place a warm light with:
+
+```json
+{ "name": "create_entity", "arguments": { "classname": "light", "origin": [0, 0, 128], "properties": { "_light": "255 220 180 400" } } }
+```
 
 | `render_view` of a map built entirely by an agent | `render_view` framing an agent-placed block |
 | --- | --- |
@@ -53,13 +66,36 @@ the managed client. `set_view` controls tool textures and leak paths.
 Requires Rust 1.88+ and a Vulkan-capable GPU.
 
 ```sh
-cargo run --release -p editor -- [map.vmf] [--game <gameinfo.txt>] [--mcp-port N | --no-mcp] [--headless]
+cargo run --release -p editor -- [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port N | --no-mcp] [--headless]
 cargo test --workspace
 ```
 
 Fly with the right mouse button held and WASD/QE. Click selects, Ctrl+click
 toggles, arrows and PgUp/PgDn nudge, Ctrl+D duplicates, Del deletes,
 Ctrl+Z/Y undo and redo.
+
+## Entities
+
+Click **Entity…** in the selection panel to search point classes and place
+an entity at the shown coordinates. The position starts 128 units in front
+of the camera, snapped to grid 16; MCP uses the same position when `origin`
+is omitted. New entities receive inherited FGD defaults. Select the entity
+to edit its properties, choose enumerated values and toggle spawn flags.
+Invalid typed values are rejected without changing the map.
+
+Select world brushes and click **Tie to entity…** to make a brush entity.
+Select a brush entity and click **Move to world** to return its brushes.
+These operations share the map's undo history with agent edits.
+
+The editor discovers `cstrike.fgd` in the game directory or installed
+Source SDK. Use `--fgd` or **Load FGD…** in the class picker for another
+definition file. Custom classes and keys remain editable, and loading
+definitions preserves existing map data. Definitions are read from your
+installation; game assets are not bundled.
+
+Lights are saved to VMF and carried into BSP entities. The compiler
+currently produces fullbright maps; placed lights will affect baked
+lighting once lighting compilation is implemented.
 
 ## Compiling maps
 
@@ -104,7 +140,7 @@ with a player spawned inside and fullbright rendering enabled by the engine.
 
 | Crate | Role |
 | --- | --- |
-| `source-formats` | KeyValues, VMF, VPK, VTF, VMT, BSP, game filesystem |
+| `source-formats` | KeyValues, VMF, FGD, VPK, VTF, VMT, BSP, game filesystem |
 | `map-core` | Brush geometry, displacements, undoable document, edit operations, picking |
 | `render` | wgpu renderer, materials, camera, offscreen snapshots |
 | `editor` | Slint UI, shared session, MCP server |
@@ -118,8 +154,8 @@ displacements, static props, areaportals, overlays, cubemaps and origin
 brushes remain unfinished. Unsupported geometry is reported in diagnostics.
 The BSP reader/writer is verified against the stock CS:S maps.
 
-Planned editor work: entity classes from FGDs, I/O connections, brush tools,
-2D views, displacement editing and model rendering.
+Planned editor work: I/O connections, brush tools, 2D views, displacement
+editing and model rendering.
 
 This is a clean-room project: no Valve or Hammer++ code is used.
 Counter-Strike: Source and its assets are not included.

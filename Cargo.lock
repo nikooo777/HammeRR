@@ -4618,6 +4618,7 @@ dependencies = [
  "crc32fast",
  "glam",
  "png",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 

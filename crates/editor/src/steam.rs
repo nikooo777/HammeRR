@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use source_formats::gamefs::GameFs;
 use source_formats::keyvalues::{self, Node};
 
 const CSS_GAMEINFO: &str = "steamapps/common/Counter-Strike Source/cstrike/gameinfo.txt";
@@ -63,4 +64,23 @@ pub fn sample_maps_dir(gameinfo: &Path) -> Option<PathBuf> {
     let common = gameinfo.parent()?.parent()?.parent()?;
     let dir = common.join("sourcesdk_content/cstrike/mapsrc");
     dir.is_dir().then_some(dir)
+}
+
+pub fn find_css_fgd(game: &GameFs) -> Option<PathBuf> {
+    let mut paths = vec![game.game_dir.join("cstrike.fgd")];
+    if let Some(common) = game.game_dir.parent().and_then(Path::parent) {
+        paths.extend(
+            ["SourceSDK", "sourcesdk"]
+                .map(|sdk| common.join(sdk).join("bin/source2009/bin/cstrike.fgd")),
+        );
+    }
+    for library in libraries() {
+        paths.extend(["SourceSDK", "sourcesdk"].map(|sdk| {
+            library
+                .join("steamapps/common")
+                .join(sdk)
+                .join("bin/source2009/bin/cstrike.fgd")
+        }));
+    }
+    paths.into_iter().find(|path| path.is_file())
 }

@@ -20,6 +20,7 @@ use rmcp::model::{CallToolResult, ContentBlock, ServerCapabilities, ServerConfig
 use rmcp::{ErrorData, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use source_formats::fgd::{Catalog, Class, ClassKind};
 use source_formats::vmf::{Entity, Solid};
 
 use crate::game;
@@ -64,6 +65,10 @@ Materials are paths under materials/ without extension, e.g. 'tools/toolsnodraw'
 'tools/toolsskybox', 'dev/dev_measuregeneric01'; find more with search_materials.\n\
 Verify work visually with render_view (focus on objects, or an explicit camera) and \
 pick_at_pixel to identify what is at a point in a rendered image. Save with save_map. \
+Discover entity classes with search_entity_classes and get_entity_class. create_entity \
+applies FGD defaults, including light brightness; set_entity_properties validates declared \
+types. Custom classes and keys remain supported. Placed lights are stored in the VMF; \
+the current compiler still produces fullbright maps without baked lighting. \
 Compile with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
 in the viewport; set_view controls their visibility.";
@@ -390,10 +395,52 @@ pub struct CreateBlockArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateEntityArgs {
     pub classname: String,
-    /// Position [x, y, z] for point entities.
+    /// Position [x, y, z]. Overrides properties.origin; otherwise defaults to 128 units in front of the camera, snapped to grid 16.
     pub origin: Option<[f64; 3]>,
     /// Extra key/values, e.g. {"targetname": "door1", "angles": "0 90 0"}.
     pub properties: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EntityClassArgs {
+    pub classname: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SearchEntityClassesArgs {
+    /// Case-insensitive substring of the classname or description.
+    pub query: Option<String>,
+    /// "point" or "solid"; omitted searches both.
+    pub kind: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionsArgs {
+    /// Root FGD filename; includes resolve relative to each containing FGD.
+    pub path: String,
+}
+
+fn class_json(class: &Class) -> Value {
+    let properties: Vec<Value> = class.properties.iter().map(|property| json!({
+        "name": property.name, "type": property.kind, "label": property.label,
+        "description": property.description, "default": property.default_value(),
+        "read_only": property.read_only,
+        "choices": property.choices.iter().map(|choice| json!({"value": choice.value, "label": choice.label, "default_selected": choice.selected})).collect::<Vec<_>>()
+    })).collect();
+    let io = |members: &[source_formats::fgd::Io]| {
+        members.iter().map(|member| json!({"name": member.name, "type": member.kind, "description": member.description})).collect::<Vec<_>>()
+    };
+    json!({"classname": class.name, "kind": class.kind.label(), "description": class.description,
+        "bases": class.bases, "defaults": class.defaults(), "properties": properties,
+        "inputs": io(&class.inputs), "outputs": io(&class.outputs),
+        "helpers": class.helpers.iter().map(|helper| json!({"name": helper.name, "arguments": helper.arguments})).collect::<Vec<_>>()})
+}
+
+fn definitions_json(session: &Session) -> Value {
+    json!({"classes": session.definitions().classes().count(),
+        "sources": session.definitions().sources.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+        "error": session.definitions_error()})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -759,6 +806,7 @@ impl EditorServer {
             "unsaved_changes": doc.is_dirty(),
             "game": session.game().game_dir.display().to_string(),
             "game_error": session.game_error(),
+            "entity_definitions": definitions_json(&session),
             "compiling": session.compiling(),
             "launching": session.launching(),
             "game_running": session.game_running(),
@@ -950,30 +998,95 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Create a point entity (e.g. info_player_terrorist, light, prop_static with model) and select it."
+        description = "Create and select a point entity, including lights and player spawns. Applies inherited FGD defaults and validates declared property types. Custom classes and keys are supported. Light brightness uses RGB plus intensity, e.g. _light='255 220 180 400'; lighting compilation is not implemented yet."
     )]
     fn create_entity(&self, Parameters(args): Parameters<CreateEntityArgs>) -> ToolResult {
         run(|| {
-            let properties: Vec<(String, String)> =
-                args.properties.unwrap_or_default().into_iter().collect();
             let mut session = self.session();
-            let label = format!("create {}", args.classname);
-            let id = session.edit(Actor::Agent, &label, |tx| {
-                edit::create_entity(
-                    tx,
-                    &args.classname,
-                    args.origin.map(vec3),
-                    &properties,
-                    Vec::new(),
-                )
-            })?;
-            session.select(&[id], SelectMode::Replace)?;
-            Ok(summary(session.document(), id))
+            let id = session.create_entity(
+                Actor::Agent,
+                &args.classname,
+                args.origin.map(vec3),
+                args.properties.unwrap_or_default(),
+            )?;
+            detail(session.document(), id)
         })
     }
 
     #[tool(
-        description = "Set and/or remove key/values on an entity (including classname, origin, angles, targetname)."
+        description = "Search the loaded FGD point and brush entity classes by classname or description. Returns class summaries for human and agent entity creation.",
+        annotations(read_only_hint = true)
+    )]
+    fn search_entity_classes(
+        &self,
+        Parameters(args): Parameters<SearchEntityClassesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let kind = match args.kind.as_deref() {
+                None => None,
+                Some("point") => Some(ClassKind::Point),
+                Some("solid") => Some(ClassKind::Solid),
+                Some(_) => return Err("kind must be point or solid".into()),
+            };
+            let session = self.session();
+            let classes: Vec<Value> = session
+                .search_entity_classes(
+                    args.query.as_deref().unwrap_or(""),
+                    kind,
+                    args.limit.unwrap_or(100),
+                )
+                .iter()
+                .map(|class| {
+                    json!({"classname": class.name, "kind": class.kind.label(), "description": class.description})
+                })
+                .collect();
+            Ok(json!({"classes": classes, "definitions": definitions_json(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Inspect a loaded entity class: inherited property types, descriptions, defaults, choices, spawnflags, helpers, inputs and outputs.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_entity_class(&self, Parameters(args): Parameters<EntityClassArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .definitions()
+                .class(&args.classname)
+                .map(class_json)
+                .ok_or_else(|| {
+                    format!(
+                        "no definition for {}; use search_entity_classes or load_entity_definitions",
+                        args.classname
+                    )
+                })
+        })
+    }
+
+    #[tool(
+        description = "Load an FGD and its includes, resolving inherited entity definitions. Updates the GUI and MCP class catalog together; existing map data is preserved."
+    )]
+    async fn load_entity_definitions(
+        &self,
+        Parameters(args): Parameters<DefinitionsArgs>,
+    ) -> ToolResult {
+        let session = self.session.clone();
+        match tokio::task::spawn_blocking(move || {
+            let catalog = Catalog::load(&PathBuf::from(args.path))?;
+            let mut session = lock(&session);
+            session.set_definitions(Actor::Agent, catalog);
+            Ok::<_, String>(definitions_json(&session))
+        })
+        .await
+        {
+            Ok(Ok(value)) => ok(value),
+            Ok(Err(error)) => fail(error),
+            Err(error) => fail(error.to_string()),
+        }
+    }
+
+    #[tool(
+        description = "Set and/or remove entity properties (including classname, origin, angles, targetname and light brightness). Validates declared FGD types, choices and read-only fields atomically. Unknown keys are preserved and editable."
     )]
     fn set_entity_properties(&self, Parameters(args): Parameters<SetPropertiesArgs>) -> ToolResult {
         run(|| {
@@ -991,9 +1104,7 @@ impl EditorServer {
                     .into_iter()
                     .map(|k| (k, None)),
             );
-            session.edit(Actor::Agent, "edit entity properties", |tx| {
-                edit::set_properties(tx, entity, &changes)
-            })?;
+            session.set_entity_properties(Actor::Agent, entity, &changes)?;
             detail(session.document(), ObjectId::Entity(entity))
         })
     }
@@ -1084,20 +1195,12 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
-            let solids = ids
-                .iter()
-                .map(|&id| match id {
-                    ObjectId::Solid(n) => Ok(n),
-                    ObjectId::Entity(_) => Err(format!("{} is not a world brush", id_string(id))),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let properties: Vec<(String, String)> =
-                args.properties.unwrap_or_default().into_iter().collect();
-            let entity =
-                session.edit(Actor::Agent, &format!("tie to {}", args.classname), |tx| {
-                    edit::tie_to_entity(tx, &solids, &args.classname, &properties)
-                })?;
-            session.select(&[entity], SelectMode::Replace)?;
+            let entity = session.tie_to_entity(
+                Actor::Agent,
+                &ids,
+                &args.classname,
+                args.properties.unwrap_or_default(),
+            )?;
             detail(session.document(), entity)
         })
     }
@@ -1107,10 +1210,7 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let entity = single_entity(&session, args.id.as_deref())?;
-            let solids = session.edit(Actor::Agent, "move to world", |tx| {
-                edit::move_to_world(tx, entity)
-            })?;
-            session.select(&solids, SelectMode::Replace)?;
+            let solids = session.move_to_world(Actor::Agent, entity)?;
             Ok(json!({ "solids": solids.iter().map(|&id| id_string(id)).collect::<Vec<_>>() }))
         })
     }

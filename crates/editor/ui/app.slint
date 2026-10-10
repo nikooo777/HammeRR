@@ -1,4 +1,14 @@
-import { Button, CheckBox } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, ListView } from "std-widgets.slint";
+
+export struct KeyValue {
+    key: string,
+    value: string,
+}
+
+export struct Activity {
+    actor: string,
+    text: string,
+}
 
 component StatusText inherits Text {
     color: #8a909c;
@@ -6,8 +16,19 @@ component StatusText inherits Text {
     font-size: 12px;
 }
 
+component SectionTitle inherits Text {
+    color: #8a909c;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+component ToolbarSeparator inherits Rectangle {
+    width: 1px;
+    background: #2c3038;
+}
+
 export component AppWindow inherits Window {
-    title: root.map-name == "" ? "Map Editor" : root.map-name + " - Map Editor";
+    title: root.map-title + " - Map Editor";
     preferred-width: 1600px;
     preferred-height: 960px;
     background: #111317;
@@ -15,21 +36,42 @@ export component AppWindow inherits Window {
     forward-focus: focus;
 
     in property <image> frame;
-    in property <string> map-name;
+    in property <string> map-title: "untitled.vmf";
     in property <string> message;
     in property <string> stats;
     in property <string> camera;
+    in property <string> mcp-status;
     in property <bool> flying;
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> has-selection;
     in-out property <bool> show-tools: true;
+    in-out property <string> material: "dev/dev_measuregeneric01";
+
+    in property <string> selection-title: "Nothing selected";
+    in property <string> selection-detail;
+    in property <bool> entity-selected;
+    in property <[KeyValue]> entity-properties;
+    in property <[Activity]> activity;
+
     out property <length> viewport-width: viewport.width;
     out property <length> viewport-height: viewport.height;
 
+    callback new-map();
     callback open-map();
+    callback save-map();
+    callback undo();
+    callback redo();
+    callback create-block();
+    callback delete-selection();
+    callback apply-material();
     callback options-changed();
+    callback property-edited(key: string, value: string);
+    callback property-removed(key: string);
     // Returns whether the key was handled.
-    callback key(text: string, down: bool) -> bool;
+    callback key(text: string, down: bool, control: bool, shift: bool) -> bool;
     // button: 0 = left, 1 = right, 2 = middle
-    callback mouse-button(button: int, down: bool, x: length, y: length);
+    callback mouse-button(button: int, down: bool, x: length, y: length, control: bool);
     callback mouse-moved(x: length, y: length);
     callback wheel(delta: length);
     callback viewport-focus-lost();
@@ -42,15 +84,67 @@ export component AppWindow inherits Window {
             HorizontalLayout {
                 padding-left: 10px;
                 padding-right: 10px;
-                spacing: 12px;
-                alignment: start;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: 8px;
 
                 Button {
-                    text: "Open map…";
+                    text: "New";
+                    clicked => {
+                        root.new-map();
+                    }
+                }
+
+                Button {
+                    text: "Open…";
                     clicked => {
                         root.open-map();
                     }
                 }
+
+                Button {
+                    text: "Save";
+                    clicked => {
+                        root.save-map();
+                    }
+                }
+
+                ToolbarSeparator { }
+
+                Button {
+                    text: "Undo";
+                    enabled: root.can-undo;
+                    clicked => {
+                        root.undo();
+                    }
+                }
+
+                Button {
+                    text: "Redo";
+                    enabled: root.can-redo;
+                    clicked => {
+                        root.redo();
+                    }
+                }
+
+                ToolbarSeparator { }
+
+                Button {
+                    text: "Block";
+                    clicked => {
+                        root.create-block();
+                    }
+                }
+
+                Button {
+                    text: "Delete";
+                    enabled: root.has-selection;
+                    clicked => {
+                        root.delete-selection();
+                    }
+                }
+
+                ToolbarSeparator { }
 
                 CheckBox {
                     text: "Tool textures";
@@ -59,77 +153,225 @@ export component AppWindow inherits Window {
                         root.options-changed();
                     }
                 }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                Text {
+                    text: root.mcp-status;
+                    color: #6fbf73;
+                    vertical-alignment: center;
+                    font-size: 12px;
+                }
             }
         }
 
-        viewport := Rectangle {
+        HorizontalLayout {
             vertical-stretch: 1;
-            background: #08090b;
 
-            Image {
-                width: parent.width;
-                height: parent.height;
-                source: root.frame;
-                image-fit: fill;
-            }
+            viewport := Rectangle {
+                horizontal-stretch: 1;
+                background: #08090b;
 
-            focus := FocusScope {
-                key-pressed(event) => {
-                    if (event.modifiers.control && event.text == "o") {
-                        root.open-map();
-                        return accept;
-                    }
-                    root.key(event.text, true) ? EventResult.accept : EventResult.reject
-                }
-                key-released(event) => {
-                    root.key(event.text, false) ? EventResult.accept : EventResult.reject
-                }
-                focus-lost => {
-                    root.viewport-focus-lost();
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: root.frame;
+                    image-fit: fill;
                 }
 
-                touch := TouchArea {
-                    mouse-cursor: root.flying ? MouseCursor.move : MouseCursor.default;
-                    pointer-event(event) => {
-                        if (event.kind == PointerEventKind.down) {
-                            focus.focus();
+                focus := FocusScope {
+                    key-pressed(event) => {
+                        if (event.modifiers.control && event.text == "o") {
+                            root.open-map();
+                            return accept;
                         }
-                        if (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
-                            root.mouse-button(
-                                event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.right ? 1 : 2,
-                                event.kind == PointerEventKind.down,
-                                self.mouse-x,
-                                self.mouse-y);
+                        root.key(event.text, true, event.modifiers.control, event.modifiers.shift) ? EventResult.accept : EventResult.reject
+                    }
+                    key-released(event) => {
+                        root.key(event.text, false, event.modifiers.control, event.modifiers.shift) ? EventResult.accept : EventResult.reject
+                    }
+                    focus-lost => {
+                        root.viewport-focus-lost();
+                    }
+
+                    touch := TouchArea {
+                        mouse-cursor: root.flying ? MouseCursor.move : MouseCursor.default;
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.down) {
+                                focus.focus();
+                            }
+                            if (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
+                                root.mouse-button(
+                                    event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.right ? 1 : 2,
+                                    event.kind == PointerEventKind.down,
+                                    self.mouse-x,
+                                    self.mouse-y,
+                                    event.modifiers.control);
+                            }
+                        }
+                        moved => {
+                            root.mouse-moved(self.mouse-x, self.mouse-y);
+                        }
+                        scroll-event(event) => {
+                            root.wheel(event.delta-y);
+                            accept
                         }
                     }
-                    moved => {
-                        root.mouse-moved(self.mouse-x, self.mouse-y);
-                    }
-                    scroll-event(event) => {
-                        root.wheel(event.delta-y);
-                        accept
+                }
+
+                Rectangle {
+                    x: 10px;
+                    y: parent.height - self.height - 10px;
+                    width: hint.preferred-width + 16px;
+                    height: hint.preferred-height + 10px;
+                    border-radius: 4px;
+                    background: #000000a0;
+
+                    hint := Text {
+                        text: "Click select (Ctrl toggles) · hold right mouse to look · WASD/QE fly · arrows/PgUp/PgDn nudge · Del · Ctrl+Z/Y/S/D";
+                        color: #c8ccd4;
+                        font-size: 12px;
                     }
                 }
             }
 
-            if root.map-name == "": Text {
-                text: "Open a .vmf map to start (Ctrl+O)";
-                color: #6c7280;
-                font-size: 16px;
-            }
+            Rectangle {
+                width: 340px;
+                background: #16181d;
 
-            if root.map-name != "": Rectangle {
-                x: 10px;
-                y: parent.height - self.height - 10px;
-                width: hint.preferred-width + 16px;
-                height: hint.preferred-height + 10px;
-                border-radius: 4px;
-                background: #000000a0;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
 
-                hint := Text {
-                    text: "Hold right mouse to look · WASD move · Q/E down/up · Shift fast · wheel dolly (speed while looking)";
-                    color: #c8ccd4;
-                    font-size: 12px;
+                    SectionTitle {
+                        text: "SELECTION";
+                    }
+
+                    Text {
+                        text: root.selection-title;
+                        color: #e6e8ec;
+                        font-size: 15px;
+                        wrap: word-wrap;
+                    }
+
+                    if root.selection-detail != "": Text {
+                        text: root.selection-detail;
+                        color: #8a909c;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    if root.entity-selected: ListView {
+                        min-height: 120px;
+                        vertical-stretch: 1;
+
+                        for row in root.entity-properties: HorizontalLayout {
+                            spacing: 6px;
+                            padding-bottom: 4px;
+
+                            Text {
+                                width: 110px;
+                                text: row.key;
+                                color: #aab0bb;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text: row.value;
+                                accepted(text) => {
+                                    root.property-edited(row.key, text);
+                                }
+                            }
+
+                            Button {
+                                text: "×";
+                                width: 28px;
+                                enabled: row.key != "classname";
+                                clicked => {
+                                    root.property-removed(row.key);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.entity-selected: HorizontalLayout {
+                        spacing: 6px;
+
+                        new-key := LineEdit {
+                            width: 110px;
+                            placeholder-text: "key";
+                        }
+
+                        new-value := LineEdit {
+                            horizontal-stretch: 1;
+                            placeholder-text: "value";
+                            accepted(text) => {
+                                root.property-edited(new-key.text, text);
+                                new-key.text = "";
+                                self.text = "";
+                            }
+                        }
+                    }
+
+                    if !root.entity-selected: Rectangle {
+                        vertical-stretch: 1;
+                    }
+
+                    SectionTitle {
+                        text: "MATERIAL";
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.material;
+                            accepted => {
+                                root.apply-material();
+                            }
+                        }
+
+                        Button {
+                            text: "Apply";
+                            enabled: root.has-selection;
+                            clicked => {
+                                root.apply-material();
+                            }
+                        }
+                    }
+
+                    SectionTitle {
+                        text: "ACTIVITY";
+                    }
+
+                    ListView {
+                        height: 200px;
+
+                        for entry in root.activity: HorizontalLayout {
+                            spacing: 6px;
+                            padding-bottom: 2px;
+
+                            Text {
+                                width: 40px;
+                                text: entry.actor;
+                                color: entry.actor == "agent" ? #6fbf73 : #6c9bd2;
+                                font-size: 12px;
+                            }
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: entry.text;
+                                color: #c8ccd4;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
                 }
             }
         }

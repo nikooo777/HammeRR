@@ -233,6 +233,53 @@ impl GameFs {
         }
         Ok(None)
     }
+
+    /// Every file on the `game` search path under `dir` (e.g. `materials`)
+    /// ending in `extension` (e.g. `.vmt`), normalized, sorted, without
+    /// duplicates.
+    pub fn list(&self, dir: &str, extension: &str) -> Vec<String> {
+        let prefix = format!("{}/", normalize(dir).trim_end_matches('/'));
+        let extension = extension.to_ascii_lowercase();
+        let mut files = Vec::new();
+        for mounted in self
+            .mounts
+            .iter()
+            .filter(|m| m.ids.iter().any(|id| id == "game"))
+        {
+            match &mounted.mount {
+                Mount::Pak(vpk) => files.extend(
+                    vpk.paths()
+                        .filter(|p| p.starts_with(&prefix) && p.ends_with(&extension))
+                        .map(str::to_owned),
+                ),
+                Mount::Directory(root) => {
+                    let mut stack = vec![root.join(&prefix)];
+                    while let Some(dir) = stack.pop() {
+                        let Ok(entries) = fs::read_dir(&dir) else {
+                            continue;
+                        };
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                stack.push(path);
+                            } else if let Some(relative) = path
+                                .strip_prefix(root)
+                                .ok()
+                                .and_then(|p| p.to_str())
+                                .map(normalize)
+                                .filter(|p| p.ends_with(&extension))
+                            {
+                                files.push(relative);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        files.sort_unstable();
+        files.dedup();
+        files
+    }
 }
 
 fn find_block<'a>(nodes: &'a [Node], path: &[&str]) -> Option<&'a [Node]> {

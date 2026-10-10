@@ -8,6 +8,7 @@ pub mod document;
 pub mod edit;
 pub mod plane;
 pub mod query;
+pub mod references;
 pub mod region;
 pub mod surface;
 pub mod transform;

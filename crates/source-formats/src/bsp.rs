@@ -462,7 +462,9 @@ impl Bsp {
     fn leafs_v0(&self) -> io::Result<Vec<Leaf>> {
         let data = self.checked(lump::LEAFS, LEAF_V0_SIZE)?;
         Ok(data
-            .as_chunks::<LEAF_V0_SIZE>().0.iter()
+            .as_chunks::<LEAF_V0_SIZE>()
+            .0
+            .iter()
             .map(|chunk| {
                 let mut leaf: Leaf = bytemuck::pod_read_unaligned(&chunk[..size_of::<Leaf>()]);
                 leaf.water_data = u16_at(chunk, 52) as i16;

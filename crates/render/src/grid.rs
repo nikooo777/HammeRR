@@ -1,0 +1,120 @@
+use glam::Vec3;
+
+use crate::{Camera, Projection, ViewOptions, scene::LineVertex};
+
+const MIN_CELL_PIXELS: f32 = 12.0;
+const MINOR_COLOR: [u8; 4] = [10, 12, 16, 255];
+const MAJOR_COLOR: [u8; 4] = [22, 27, 36, 255];
+const AXIS_COLORS: [[u8; 4]; 3] = [[153, 69, 77, 255], [68, 135, 100, 255], [76, 114, 176, 255]];
+const PREVIEW_COLOR: [u8; 4] = [100, 210, 255, 255];
+
+fn line(vertices: &mut Vec<LineVertex>, a: Vec3, b: Vec3, color: [u8; 4]) {
+    vertices.extend([a, b].map(|point| LineVertex {
+        position: point.to_array(),
+        color,
+    }));
+}
+
+pub(crate) fn overlay_lines(
+    camera: &Camera,
+    size: (u32, u32),
+    options: &ViewOptions,
+) -> (Vec<LineVertex>, usize) {
+    let mut vertices = Vec::new();
+    if options.grid_visible {
+        let aspect = size.0 as f32 / size.1.max(1) as f32;
+        let (horizontal, vertical, normal) = camera.projection.axes().unwrap_or((0, 1, 2));
+        let mut center = camera.position;
+        let height = if camera.projection == Projection::Perspective {
+            center += camera.forward() * 384.0;
+            options.grid_size * 64.0
+        } else {
+            camera.ortho_height
+        };
+        let minimum =
+            (height / size.1.max(1) as f32 * MIN_CELL_PIXELS).max(height * aspect.max(1.0) / 256.0);
+        let mut spacing = options.grid_size.max(0.125);
+        while spacing < minimum {
+            spacing *= 2.0;
+        }
+        let extent = [height * aspect * 0.5 + spacing, height * 0.5 + spacing];
+        let axes = [horizontal, vertical];
+        for index in 0..2 {
+            let axis = axes[index];
+            let other = axes[1 - index];
+            let start = ((center[axis] - extent[index]) / spacing).floor() as i32;
+            let end = ((center[axis] + extent[index]) / spacing).ceil() as i32;
+            for tick in start..=end {
+                let mut a = Vec3::ZERO;
+                a[axis] = tick as f32 * spacing;
+                a[other] = center[other] - extent[1 - index];
+                a[normal] = options.grid_elevation;
+                let mut b = a;
+                b[other] = center[other] + extent[1 - index];
+                let color = if tick == 0 {
+                    AXIS_COLORS[other]
+                } else if tick % 8 == 0 {
+                    MAJOR_COLOR
+                } else {
+                    MINOR_COLOR
+                };
+                line(&mut vertices, a, b, color);
+            }
+        }
+    }
+    let grid_count = vertices.len();
+    if let Some([mins, maxs]) = options.block_preview {
+        for axis in 0..3 {
+            let a = (axis + 1) % 3;
+            let b = (axis + 2) % 3;
+            for side_a in [mins[a], maxs[a]] {
+                for side_b in [mins[b], maxs[b]] {
+                    let mut start = mins;
+                    start[a] = side_a;
+                    start[b] = side_b;
+                    let mut end = start;
+                    end[axis] = maxs[axis];
+                    line(&mut vertices, start, end, PREVIEW_COLOR);
+                }
+            }
+        }
+    }
+    (vertices, grid_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_stays_bounded_when_fractional_spacing_is_zoomed_out() {
+        let camera = Camera::planar(Projection::Top, Vec3::ZERO, Camera::MAX_ORTHO_HEIGHT);
+        let options = ViewOptions {
+            grid_size: 0.125,
+            ..ViewOptions::default()
+        };
+        let (lines, count) = overlay_lines(&camera, (1920, 1080), &options);
+        assert!(count > 0 && count < 1000);
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.position[2] == options.grid_elevation)
+        );
+    }
+
+    #[test]
+    fn hidden_grid_keeps_brush_preview_visible() {
+        let options = ViewOptions {
+            grid_visible: false,
+            block_preview: Some([Vec3::ZERO, Vec3::new(32.0, 64.0, 128.0)]),
+            ..ViewOptions::default()
+        };
+        let (lines, grid_count) = overlay_lines(
+            &Camera::planar(Projection::Front, Vec3::ZERO, 512.0),
+            (800, 600),
+            &options,
+        );
+        assert_eq!(grid_count, 0);
+        assert_eq!(lines.len(), 24);
+    }
+}

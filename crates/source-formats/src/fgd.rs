@@ -58,6 +58,7 @@ impl Property {
         let valid = match self.kind.as_str() {
             "integer" => value.parse::<i64>().is_ok(),
             "flags" => value.parse::<u64>().is_ok(),
+            "angle" if self.name.eq_ignore_ascii_case("angles") => vector(value, 3).is_some(),
             "float" | "angle" => number(value).is_some(),
             "bool" | "boolean" => matches!(value, "0" | "1"),
             "vector" | "origin" => vector(value, 3).is_some(),
@@ -654,6 +655,8 @@ mod tests {
         ]
         @PointClass base(Light) size(-8 -8 -8, 8 8 8) = light : "A light. " + "Place it." [
             value(integer) : "Count" : 4
+            angles(angle) : "Orientation" : "0 0 0"
+            pitch(angle) : "Pitch" : 0
             spawnflags(flags) = [ 2 : "Special" : 1 ]
             style(choices) : "Style" : 0 = [ 0 : "Steady" 1 : "Pulse" ]
             output OnReady(void) : "Ready"
@@ -681,6 +684,13 @@ mod tests {
         let light = catalog.class("light").unwrap();
         assert!(light.property("style").unwrap().validate("5").is_err());
         assert!(light.property("value").unwrap().validate("NaN").is_err());
+        let angles = light.property("angles").unwrap();
+        assert!(angles.validate("0 90 0").is_ok());
+        assert!(angles.validate("90").is_err());
+        assert!(angles.validate("0 NaN 0").is_err());
+        let pitch = light.property("pitch").unwrap();
+        assert!(pitch.validate("-45").is_ok());
+        assert!(pitch.validate("0 90 0").is_err());
         let color = light.property("_light").unwrap();
         assert!(color.validate("255 128 64 500.5").is_ok());
         assert!(color.validate("-1 -1 -1 1").is_ok());

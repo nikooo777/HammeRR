@@ -1,6 +1,9 @@
 mod game;
+mod inspector;
+mod materials;
 mod mcp;
 mod session;
+mod spatial;
 mod steam;
 mod viewport;
 
@@ -12,15 +15,15 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use glam::{DVec3, Vec3};
+use glam::{DVec2, DVec3, Vec3};
 use map_core::ObjectId;
-use map_core::edit::{self, FaceTarget};
+use map_core::edit;
 use map_core::query::{self, Ray};
 use mcp::{EditorServer, SharedSession, id_string, lock};
-use render::GpuContext;
+use render::{GpuContext, Projection};
 use session::{Actor, SelectMode, Session};
 use slint::platform::Key;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use source_formats::fgd::{Catalog, ClassKind};
 use source_formats::gamefs::GameFs;
 use viewport::{Viewport, key_text};
@@ -37,7 +40,6 @@ usage: editor [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port <
   --headless   no window; serve MCP over stdin/stdout instead";
 
 const DEFAULT_MCP_PORT: u16 = 7377;
-const GRID: f64 = 16.0;
 const BLOCK_SIZE: f64 = 128.0;
 const ACTIVITY_SHOWN: usize = 30;
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -110,11 +112,29 @@ struct Ui {
     viewport: Viewport,
     seen_scene: u64,
     seen_camera: u64,
+    seen_view: u64,
+    brush_drag: Option<BrushDrag>,
     seen_log: u64,
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
     entity_window: Option<EntityWindow>,
+    color_window: Option<ColorWindow>,
+    color_target: Option<(u32, String, u64)>,
+    material_window: Option<MaterialWindow>,
+    material_target: Option<(u32, String, u64)>,
+    surface_window: Option<SurfaceWindow>,
+    surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
+    material_for_faces: bool,
     seen_definitions: u64,
+}
+
+#[derive(Clone, Copy)]
+struct BrushDrag {
+    start: DVec2,
+    epoch: u64,
+    generation: u64,
+    revision: u64,
+    projection: Projection,
 }
 
 type SharedUi = Rc<RefCell<Ui>>;
@@ -123,8 +143,163 @@ fn session_of(ui: &SharedUi) -> SharedSession {
     ui.borrow().session.clone()
 }
 
-fn snap(v: f64) -> f64 {
-    (v / GRID).round() * GRID
+fn refresh_spatial(app: &AppWindow, session: &Session) {
+    let settings = session.spatial();
+    let projection = session.camera().projection;
+    app.set_projection_index(projection.index() as i32);
+    app.set_workplane_axis(
+        match projection {
+            Projection::Front => "Y",
+            Projection::Side => "X",
+            _ => "Z",
+        }
+        .into(),
+    );
+    app.set_grid_size(settings.grid_size.to_string().into());
+    app.set_grid_visible(settings.grid_visible);
+    app.set_snap_grid(settings.snap);
+    app.set_drawing_block(settings.draw_block);
+    app.set_brush_elevation(settings.elevation.to_string().into());
+    app.set_brush_depth(settings.depth.to_string().into());
+    app.set_brush_preview(
+        session
+            .block_preview()
+            .map(|(mins, maxs)| {
+                let size = maxs - mins;
+                format!(
+                    "{} × {} × {} units · release to place · Esc cancels",
+                    size.x, size.y, size.z
+                )
+            })
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
+fn spatial_changed(app: &AppWindow, ui: &SharedUi) {
+    let result = (|| {
+        let grid_size = app
+            .get_grid_size()
+            .parse()
+            .map_err(|_| "Enter a valid grid spacing")?;
+        let elevation = app
+            .get_brush_elevation()
+            .parse()
+            .map_err(|_| "Enter a valid start coordinate")?;
+        let depth = app
+            .get_brush_depth()
+            .parse()
+            .map_err(|_| "Enter a valid brush depth")?;
+        lock(&session_of(ui)).set_spatial(
+            Actor::User,
+            spatial::Update {
+                grid_size: Some(grid_size),
+                grid_visible: Some(app.get_grid_visible()),
+                snap: Some(app.get_snap_grid()),
+                elevation: Some(elevation),
+                depth: Some(depth),
+                ..spatial::Update::default()
+            },
+        )
+    })();
+    if let Err(message) = result {
+        app.set_message(message.into());
+        refresh_spatial(app, &lock(&session_of(ui)));
+    }
+}
+
+fn frame_selection(app: &AppWindow, ui: &SharedUi) {
+    let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
+    if let Err(message) = lock(&session_of(ui)).frame_selection(Actor::User, aspect) {
+        app.set_message(message.into());
+    }
+}
+
+fn input_vector(values: [SharedString; 3]) -> Result<DVec3, String> {
+    let mut result = DVec3::ZERO;
+    for (index, value) in values.iter().enumerate() {
+        result[index] = value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter a number for each X, Y and Z component")?;
+    }
+    if !result.is_finite() {
+        return Err("Transform components must be finite".into());
+    }
+    Ok(result)
+}
+
+fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(), String> {
+    let values = input_vector([
+        app.get_transform_x(),
+        app.get_transform_y(),
+        app.get_transform_z(),
+    ])?;
+    let mut transform = edit::Transform {
+        texture_lock: app.get_transform_texture_lock(),
+        ..edit::Transform::default()
+    };
+    match app.get_transform_mode() {
+        0 => transform.translation = values,
+        1 => transform.rotation = values,
+        2 => transform.scale = values,
+        _ => return Err("Choose Move, Rotate or Scale".into()),
+    }
+    let pivot = if app.get_transform_mode() == 0 {
+        None
+    } else {
+        match app.get_transform_pivot_mode() {
+            0 => None,
+            1 => Some(DVec3::ZERO),
+            2 => Some(input_vector([
+                app.get_pivot_x(),
+                app.get_pivot_y(),
+                app.get_pivot_z(),
+            ])?),
+            _ => return Err("Choose a pivot".into()),
+        }
+    };
+    let ids = session.selected_ids();
+    session.transform_objects(Actor::User, &ids, transform, pivot)?;
+    Ok(())
+}
+
+fn apply_transform(app: &AppWindow, ui: &SharedUi) {
+    let result = apply_selection_transform(app, &mut lock(&session_of(ui)));
+    if let Err(message) = result {
+        app.set_message(message.into());
+    }
+}
+
+fn plane_coordinates(
+    camera: render::Camera,
+    position: (f32, f32),
+    size: (f32, f32),
+    elevation: f64,
+) -> Option<DVec2> {
+    if size.0 <= 0.0 || size.1 <= 0.0 {
+        return None;
+    }
+    let ndc = (
+        position.0 * 2.0 / size.0 - 1.0,
+        1.0 - position.1 * 2.0 / size.1,
+    );
+    let point = camera
+        .plane_point(ndc, size.0 / size.1, elevation as f32)?
+        .as_dvec3();
+    let (horizontal, vertical, _) = camera.projection.axes()?;
+    Some(DVec2::new(point[horizontal], point[vertical]))
+}
+
+fn drag_bounds(session: &Session, drag: BrushDrag, end: DVec2) -> Result<(DVec3, DVec3), String> {
+    if drag.generation != session.document_generation()
+        || drag.revision != session.document().revision()
+        || drag.projection != session.camera().projection
+        || drag.epoch != session.brush_epoch()
+    {
+        return Err("The brush drag was cancelled or its map/settings changed".into());
+    }
+    session.drawn_block_bounds(drag.projection, drag.start, end, None, None)
 }
 
 /// The horizontal world axis closest to the camera's forward direction, and
@@ -141,6 +316,27 @@ fn nudge_axes(forward: Vec3) -> (DVec3, DVec3) {
 fn selection_summary(session: &Session) -> (String, String, Option<Vec<KeyValue>>) {
     let doc = session.document();
     let ids = session.selected_ids();
+    if session.face_mode() {
+        let faces = session.selected_faces();
+        let names = faces
+            .iter()
+            .filter_map(|face| map_core::surface::side(doc, *face))
+            .map(|side| side.material.to_ascii_lowercase())
+            .collect::<std::collections::BTreeSet<_>>();
+        return (
+            if faces.is_empty() {
+                "Select a face in the viewport".into()
+            } else {
+                format!(
+                    "{} selected face{}",
+                    faces.len(),
+                    if faces.len() == 1 { "" } else { "s" }
+                )
+            },
+            names.into_iter().collect::<Vec<_>>().join(", "),
+            None,
+        );
+    }
     let size_text = |bounds: Option<(DVec3, DVec3)>| {
         bounds.map_or_else(String::new, |(lo, hi)| {
             let (size, center) = (hi - lo, (lo + hi) * 0.5);
@@ -161,12 +357,12 @@ fn selection_summary(session: &Session) -> (String, String, Option<Vec<KeyValue>
             let Some(entity) = doc.entity(n) else {
                 return ("Nothing selected".into(), String::new(), None);
             };
-            let title = format!(
-                "{} · {}",
-                entity.classname().unwrap_or("entity"),
-                id_string(ids[0])
-            );
-            let mut detail = size_text(query::entity_bounds(entity));
+            let title = inspector::title(entity.classname().unwrap_or("entity"));
+            let mut detail = if entity.solids.is_empty() {
+                String::new()
+            } else {
+                size_text(query::entity_bounds(entity))
+            };
             if !entity.solids.is_empty() {
                 detail += &format!(" · {} brushes", entity.solids.len());
             }
@@ -206,81 +402,99 @@ fn entity_property_rows(session: &Session, entity: &source_formats::vmf::Entity)
     let class = entity
         .classname()
         .and_then(|name| session.definitions().class(name));
-    let mut names: Vec<String> = entity
+    inspector::inspect(entity, class)
         .properties
-        .iter()
-        .map(|(key, _)| key.into())
-        .collect();
-    if let Some(class) = class {
-        for property in &class.properties {
-            if !names
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(&property.name))
-            {
-                names.push(property.name.clone());
-            }
-        }
-    }
-    names
         .into_iter()
-        .map(|name| {
-            let property = class.and_then(|class| class.property(&name));
-            let value = entity
-                .properties
-                .get(&name)
-                .map(str::to_owned)
-                .or_else(|| property.and_then(|property| property.default_value()))
-                .unwrap_or_default();
-            let mut labels = Vec::new();
-            let mut values = Vec::new();
-            let mut flags = Vec::new();
-            let mask = value.parse::<u64>().unwrap_or_default();
-            if let Some(property) = property {
-                for choice in &property.choices {
-                    if property.kind == "flags" {
-                        let bit = choice.value.parse::<u64>().unwrap_or_default();
-                        flags.push(EntityFlag {
-                            label: choice.label.clone().into(),
-                            value: choice.value.clone().into(),
-                            checked: bit != 0 && mask & bit == bit,
-                        });
-                    } else {
-                        labels.push(slint::SharedString::from(format!(
-                            "{} ({})",
-                            choice.label, choice.value
-                        )));
-                        values.push(slint::SharedString::from(choice.value.clone()));
-                    }
-                }
-            }
-            if !values.is_empty() && !values.iter().any(|item| item.as_str() == value) {
-                labels.insert(0, format!("{value} (stored value)").into());
-                values.insert(0, value.clone().into());
-            }
-            let choice_index = values
-                .iter()
-                .position(|item| item.as_str() == value)
-                .unwrap_or_default() as i32;
-            KeyValue {
-                key: name.clone().into(),
-                value: value.into(),
-                label: property
-                    .map_or(name.as_str(), |property| property.label.as_str())
-                    .into(),
-                description: property
-                    .map_or("", |property| property.description.as_str())
-                    .into(),
-                type_name: property
-                    .map_or("string", |property| property.kind.as_str())
-                    .into(),
-                read_only: property.is_some_and(|property| property.read_only),
-                choices: ModelRc::new(VecModel::from(labels)),
-                choice_values: ModelRc::new(VecModel::from(values)),
-                choice_index,
-                flags: ModelRc::new(VecModel::from(flags)),
-            }
-        })
+        .map(property_row)
         .collect()
+}
+
+fn property_row(field: inspector::Field) -> KeyValue {
+    use inspector::Control;
+    let choice_index = field
+        .choices
+        .iter()
+        .position(|choice| choice.value == field.value)
+        .unwrap_or_default() as i32;
+    let color = field.color.unwrap_or([0; 3]);
+    let range = field.range.unwrap_or([0.0, 100.0]);
+    let control = match field.control {
+        Control::Text => "text",
+        Control::Number => "number",
+        Control::Slider => "slider",
+        Control::Choices => "choices",
+        Control::Flags => "flags",
+        Control::Boolean => "boolean",
+        Control::Vector => "vector",
+        Control::Color => "color",
+        Control::Material => "material",
+    };
+    KeyValue {
+        key: field.key.into(),
+        label: field.label.into(),
+        description: field.description.into(),
+        type_name: field.kind.into(),
+        numeric: matches!(field.control, Control::Number | Control::Slider),
+        read_only: field.read_only,
+        choices: ModelRc::new(VecModel::from(
+            field
+                .choices
+                .iter()
+                .map(|choice| choice.label.clone().into())
+                .collect::<Vec<_>>(),
+        )),
+        choice_values: ModelRc::new(VecModel::from(
+            field
+                .choices
+                .into_iter()
+                .map(|choice| choice.value.into())
+                .collect::<Vec<_>>(),
+        )),
+        choice_index,
+        flags: ModelRc::new(VecModel::from(
+            field
+                .flags
+                .into_iter()
+                .map(|flag| EntityFlag {
+                    label: flag.label.into(),
+                    value: flag.value.into(),
+                    checked: flag.checked,
+                })
+                .collect::<Vec<_>>(),
+        )),
+        control: control.into(),
+        advanced: field.advanced,
+        components: ModelRc::new(VecModel::from(
+            field
+                .components
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        )),
+        component_labels: ModelRc::new(VecModel::from(
+            field
+                .component_labels
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        )),
+        swatch: slint::Color::from_rgb_u8(color[0], color[1], color[2]),
+        has_intensity: field.intensity.is_some(),
+        intensity_value: widget_number(field.intensity.unwrap_or_default()),
+        intensity: field
+            .intensity
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+            .into(),
+        number_value: field.value.parse().map(widget_number).unwrap_or_default(),
+        minimum: widget_number(range[0]),
+        maximum: widget_number(range[1]),
+        value: field.value.into(),
+    }
+}
+
+fn widget_number(value: f64) -> f32 {
+    value.clamp(-f64::from(f32::MAX), f64::from(f32::MAX)) as f32
 }
 
 fn refresh_entity_window(window: &EntityWindow, session: &Session) {
@@ -409,6 +623,12 @@ fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: bool) {
                 return;
             }
         };
+        window.on_cancel({
+            let window = window.as_weak();
+            move || {
+                let _ = window.unwrap().hide();
+            }
+        });
         window.on_filter_changed({
             let ui = ui.clone();
             move || refresh_entity_picker(&ui)
@@ -517,7 +737,591 @@ fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: bool) {
     }
 }
 
-fn refresh_panel(app: &AppWindow, session: &Session) {
+fn preview_image(preview: &session::MaterialPreview) -> slint::Image {
+    preview
+        .image
+        .as_ref()
+        .map_or_else(slint::Image::default, |image| {
+            let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                &image.pixels,
+                image.width,
+                image.height,
+            );
+            slint::Image::from_rgba8(buffer)
+        })
+}
+
+fn refresh_material_preview(app: &AppWindow, session: &mut Session) {
+    match session.material_preview(&app.get_material()) {
+        Ok(preview) => {
+            app.set_has_material_preview(preview.image.is_some());
+            app.set_material_preview(preview_image(&preview));
+        }
+        Err(_) => {
+            app.set_has_material_preview(false);
+            app.set_material_preview(slint::Image::default());
+        }
+    }
+}
+
+fn refresh_material_window(window: &MaterialWindow, session: &mut Session) {
+    window.set_favorite(session.is_material_favorite(&window.get_material()));
+    match session.material_preview(&window.get_material()) {
+        Ok(preview) => {
+            window.set_available(preview.image.is_some());
+            window.set_preview(preview_image(&preview));
+            window.set_detail(
+                format!(
+                    "{}\n{} × {}{}",
+                    preview.name,
+                    preview.width,
+                    preview.height,
+                    if preview.missing {
+                        " · Missing texture"
+                    } else if preview.tool {
+                        " · Tool material"
+                    } else {
+                        ""
+                    }
+                )
+                .into(),
+            );
+        }
+        Err(error) => {
+            window.set_available(false);
+            window.set_preview(slint::Image::default());
+            window.set_detail(error.into());
+        }
+    }
+}
+
+fn optional_number(value: SharedString) -> Result<Option<f64>, String> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let number = value
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("Enter a number: {value}"))?;
+    if !number.is_finite() {
+        return Err("Texture values must be finite".into());
+    }
+    Ok(Some(number))
+}
+
+fn surface_patch(window: &SurfaceWindow) -> Result<map_core::surface::SurfaceEdit, String> {
+    Ok(map_core::surface::SurfaceEdit {
+        material: (!window.get_material().trim().is_empty())
+            .then(|| window.get_material().trim().to_owned()),
+        shift_u: optional_number(window.get_shift_u())?,
+        shift_v: optional_number(window.get_shift_v())?,
+        scale_u: optional_number(window.get_scale_u())?,
+        scale_v: optional_number(window.get_scale_v())?,
+        rotation: optional_number(window.get_rotation())?,
+        fit: None,
+    })
+}
+
+fn apply_surface_dialog(
+    window: &SurfaceWindow,
+    session: &mut Session,
+    target: &(Vec<map_core::surface::FaceId>, u64, u64),
+    preview: bool,
+) -> Result<usize, String> {
+    if session.document_generation() != target.1
+        || session.document().revision() != target.2
+        || session.selected_faces() != target.0
+    {
+        return Err("Map or face selection changed. Cancel and reopen texture editing.".into());
+    }
+    session.edit_faces(
+        Actor::User,
+        &target.0,
+        surface_patch(window)?,
+        window.get_fit(),
+        preview,
+    )
+}
+
+fn common_face_number(
+    document: &map_core::Document,
+    faces: &[map_core::surface::FaceId],
+    value: fn(&source_formats::vmf::Side) -> f64,
+) -> SharedString {
+    let values: Vec<_> = faces
+        .iter()
+        .filter_map(|face| map_core::surface::side(document, *face))
+        .map(value)
+        .collect();
+    values
+        .first()
+        .filter(|first| values.iter().all(|value| value == *first))
+        .map(|value| value.to_string())
+        .unwrap_or_default()
+        .into()
+}
+
+fn refresh_surface_dialog(
+    window: &SurfaceWindow,
+    session: &mut Session,
+    target: &(Vec<map_core::surface::FaceId>, u64, u64),
+) {
+    let stale = session.document_generation() != target.1
+        || session.document().revision() != target.2
+        || session.selected_faces() != target.0;
+    window.set_stale(stale);
+    if stale {
+        window.set_message(
+            "Map or face selection changed. Cancel and reopen texture editing.".into(),
+        );
+        return;
+    }
+    let Some(document) = session.face_preview_document() else {
+        window.set_message("No active preview. Preview or apply the current fields.".into());
+        return;
+    };
+    if session.preview_faces() != target.0 {
+        window.set_message(
+            "A preview targets other faces. Preview these fields to replace it.".into(),
+        );
+        return;
+    }
+    let names: Vec<_> = target
+        .0
+        .iter()
+        .filter_map(|face| map_core::surface::side(document, *face))
+        .map(|side| side.material.to_ascii_lowercase())
+        .collect();
+    let material = names
+        .first()
+        .filter(|first| names.iter().all(|name| name == *first))
+        .cloned()
+        .unwrap_or_default();
+    window.set_material(material.clone().into());
+    window.set_shift_u(common_face_number(document, &target.0, |side| {
+        side.u_axis.offset
+    }));
+    window.set_shift_v(common_face_number(document, &target.0, |side| {
+        side.v_axis.offset
+    }));
+    window.set_scale_u(common_face_number(document, &target.0, |side| {
+        side.u_axis.scale
+    }));
+    window.set_scale_v(common_face_number(document, &target.0, |side| {
+        side.v_axis.scale
+    }));
+    window.set_rotation(common_face_number(document, &target.0, |side| {
+        side.rotation
+    }));
+    window.set_preview(
+        session
+            .material_preview(&material)
+            .ok()
+            .map(|preview| preview_image(&preview))
+            .unwrap_or_default(),
+    );
+    window.set_message("Shared preview shown in the viewport. Apply to keep it.".into());
+}
+
+fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
+    if ui.borrow().surface_window.is_none() {
+        let window = match SurfaceWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        window.on_cancel({
+            let (window, ui) = (window.as_weak(), ui.clone());
+            move || {
+                lock(&session_of(&ui)).cancel_face_preview();
+                let _ = window.unwrap().hide();
+            }
+        });
+        window.window().on_close_requested({
+            let ui = ui.clone();
+            move || {
+                lock(&session_of(&ui)).cancel_face_preview();
+                slint::CloseRequestResponse::HideWindow
+            }
+        });
+        window.on_browse({
+            let (app, ui) = (app.as_weak(), ui.clone());
+            move || show_material_window(&app.unwrap(), &ui, "@faces")
+        });
+        window.on_preview_edit({
+            let (window, ui) = (window.as_weak(), ui.clone());
+            move || {
+                let window = window.unwrap();
+                let target = ui.borrow().surface_target.clone();
+                if let Some(target) = target {
+                    let result =
+                        apply_surface_dialog(&window, &mut lock(&session_of(&ui)), &target, true);
+                    window.set_message(match result {
+                        Ok(_) => "Preview shown in the viewport. Apply to keep it.".into(),
+                        Err(error) => error.into(),
+                    });
+                }
+            }
+        });
+        window.on_apply({
+            let (window, ui) = (window.as_weak(), ui.clone());
+            move || {
+                let window = window.unwrap();
+                let target = ui.borrow().surface_target.clone();
+                if let Some(target) = target {
+                    match apply_surface_dialog(&window, &mut lock(&session_of(&ui)), &target, false)
+                    {
+                        Ok(_) => {
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
+                }
+            }
+        });
+        ui.borrow_mut().surface_window = Some(window);
+    }
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    let faces = session.selected_faces();
+    if faces.is_empty() {
+        app.set_message("Select faces in the viewport first.".into());
+        return;
+    }
+    session.cancel_face_preview();
+    let window = ui.borrow().surface_window.as_ref().unwrap().clone_strong();
+    window.set_selection_label(
+        format!(
+            "Textures on {} selected face{}",
+            faces.len(),
+            if faces.len() == 1 { "" } else { "s" }
+        )
+        .into(),
+    );
+    let names: Vec<_> = faces
+        .iter()
+        .filter_map(|face| map_core::surface::side(session.document(), *face))
+        .map(|side| side.material.to_ascii_lowercase())
+        .collect();
+    let material = names
+        .first()
+        .filter(|first| names.iter().all(|name| name == *first))
+        .cloned()
+        .unwrap_or_default();
+    window.set_material(material.clone().into());
+    window.set_preview(
+        session
+            .material_preview(&material)
+            .ok()
+            .map(|preview| preview_image(&preview))
+            .unwrap_or_default(),
+    );
+    window.set_shift_u(common_face_number(session.document(), &faces, |side| {
+        side.u_axis.offset
+    }));
+    window.set_shift_v(common_face_number(session.document(), &faces, |side| {
+        side.v_axis.offset
+    }));
+    window.set_scale_u(common_face_number(session.document(), &faces, |side| {
+        side.u_axis.scale
+    }));
+    window.set_scale_v(common_face_number(session.document(), &faces, |side| {
+        side.v_axis.scale
+    }));
+    window.set_rotation(common_face_number(session.document(), &faces, |side| {
+        side.rotation
+    }));
+    window.set_fit(false);
+    window.set_stale(false);
+    window.set_message("Preview changes before applying, or Cancel to discard.".into());
+    ui.borrow_mut().surface_target = Some((
+        faces,
+        session.document_generation(),
+        session.document().revision(),
+    ));
+    drop(session);
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
+fn refresh_material_catalog(window: &MaterialWindow, session: &mut Session) {
+    let catalog = match session.material_catalog(
+        &window.get_filter(),
+        &window.get_group(),
+        window.get_offset().max(0) as usize,
+        36,
+    ) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            window.set_detail(error.into());
+            return;
+        }
+    };
+    let groups = catalog
+        .groups
+        .into_iter()
+        .map(|group| MaterialGroup {
+            id: group.id.into(),
+            label: format!("{} ({})", group.label, group.count).into(),
+        })
+        .collect::<Vec<_>>();
+    window.set_groups(ModelRc::new(VecModel::from(groups)));
+    window.set_total(catalog.total as i32);
+    window.set_catalog_label(if catalog.total == 0 {
+        "No matching materials".into()
+    } else {
+        format!(
+            "{}–{} of {} materials",
+            catalog.offset + 1,
+            catalog.offset + catalog.entries.len(),
+            catalog.total
+        )
+        .into()
+    });
+    let tiles = catalog
+        .entries
+        .into_iter()
+        .map(|entry| MaterialTile {
+            preview: session
+                .material_preview(&entry.name)
+                .ok()
+                .map(|preview| preview_image(&preview))
+                .unwrap_or_default(),
+            name: entry.name.into(),
+            favorite: entry.favorite,
+        })
+        .collect::<Vec<_>>();
+    let rows = tiles
+        .chunks(3)
+        .map(|tiles| MaterialTileRow {
+            tiles: ModelRc::new(VecModel::from(tiles.to_vec())),
+        })
+        .collect::<Vec<_>>();
+    window.set_rows(ModelRc::new(VecModel::from(rows)));
+    window.set_favorite(session.is_material_favorite(&window.get_material()));
+}
+
+fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
+    if ui.borrow().material_window.is_none() {
+        let window = match MaterialWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        window.on_search({
+            let (window, ui) = (window.as_weak(), ui.clone());
+            move || {
+                let window = window.unwrap();
+                refresh_material_catalog(&window, &mut lock(&session_of(&ui)));
+            }
+        });
+        window.on_cancel({
+            let window = window.as_weak();
+            move || {
+                let _ = window.unwrap().hide();
+            }
+        });
+        window.on_toggle_favorite({
+            let (window, ui) = (window.as_weak(), ui.clone());
+            move || {
+                let window = window.unwrap();
+                let shared = session_of(&ui);
+                let mut session = lock(&shared);
+                if let Err(error) =
+                    session.favorite_material(&window.get_material(), !window.get_favorite())
+                {
+                    window.set_detail(error.into());
+                }
+                refresh_material_catalog(&window, &mut session);
+            }
+        });
+        window.on_preview_material({
+            let (window, ui) = (window.as_weak(), ui.clone());
+            move || refresh_material_window(&window.unwrap(), &mut lock(&session_of(&ui)))
+        });
+        window.on_use_material({
+            let (window, app, ui) = (window.as_weak(), app.as_weak(), ui.clone());
+            move || {
+                let window = window.unwrap();
+                let app = app.unwrap();
+                let material = window.get_material();
+                let target = ui.borrow().material_target.clone();
+                let shared = session_of(&ui);
+                let mut session = lock(&shared);
+                if let Some((entity, key, generation)) = target {
+                    if session.document_generation() != generation {
+                        window.set_detail("Map changed. Open this picker again.".into());
+                        return;
+                    }
+                    let result = session.set_entity_properties(
+                        Actor::User,
+                        entity,
+                        &[(key, Some(material.to_string()))],
+                    );
+                    if let Err(error) = result {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                } else if ui.borrow().material_for_faces {
+                    if let Some(surface) = &ui.borrow().surface_window {
+                        surface.set_material(material.clone());
+                        surface.set_preview(
+                            session
+                                .material_preview(&material)
+                                .ok()
+                                .map(|preview| preview_image(&preview))
+                                .unwrap_or_default(),
+                        );
+                    }
+                } else {
+                    app.set_material(material);
+                    refresh_material_preview(&app, &mut session);
+                }
+                drop(session);
+                let _ = window.hide();
+            }
+        });
+        ui.borrow_mut().material_window = Some(window);
+    }
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    ui.borrow_mut().material_for_faces = key == "@faces";
+    let target = if key.is_empty() || key == "@faces" {
+        None
+    } else {
+        single_selected_entity(&session)
+            .map(|id| (id, key.to_owned(), session.document_generation()))
+    };
+    let material = if key == "@faces" {
+        ui.borrow()
+            .surface_window
+            .as_ref()
+            .map(|window| window.get_material().to_string())
+            .unwrap_or_default()
+    } else {
+        target
+            .as_ref()
+            .and_then(|(id, key, _)| {
+                session
+                    .entity_inspector(*id)
+                    .ok()?
+                    .properties
+                    .into_iter()
+                    .find(|field| field.key == *key)
+                    .map(|field| field.value)
+            })
+            .unwrap_or_else(|| app.get_material().to_string())
+    };
+    ui.borrow_mut().material_target = target;
+    let window = ui.borrow().material_window.as_ref().unwrap().clone_strong();
+    window.set_filter("".into());
+    window.set_material(material.into());
+    window.set_group("all".into());
+    window.set_offset(0);
+    refresh_material_catalog(&window, &mut session);
+    refresh_material_window(&window, &mut session);
+    drop(session);
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
+fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
+    if ui.borrow().color_window.is_none() {
+        let window = match ColorWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        window.on_cancel({
+            let window = window.as_weak();
+            move || {
+                let _ = window.unwrap().hide();
+            }
+        });
+        window.on_apply({
+            let (window, ui) = (window.as_weak(), ui.clone());
+            move || {
+                let window = window.unwrap();
+                let Some((id, key, generation)) = ui.borrow().color_target.clone() else {
+                    return;
+                };
+                let intensity = if window.get_has_intensity() {
+                    match window.get_intensity().parse::<f64>() {
+                        Ok(value) => Some(value),
+                        Err(_) => {
+                            window.set_message("Enter a valid brightness.".into());
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let color = [
+                    window.get_red() as u8,
+                    window.get_green() as u8,
+                    window.get_blue() as u8,
+                ];
+                let shared = session_of(&ui);
+                let mut session = lock(&shared);
+                if session.document_generation() != generation {
+                    window.set_message("Map changed. Open this picker again.".into());
+                    return;
+                }
+                let result = session.set_entity_color(Actor::User, id, &key, color, intensity);
+                match result {
+                    Ok(()) => {
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
+                }
+            }
+        });
+        ui.borrow_mut().color_window = Some(window);
+    }
+    let shared = session_of(ui);
+    let session = lock(&shared);
+    let Some(id) = single_selected_entity(&session) else {
+        return;
+    };
+    let Ok(inspector) = session.entity_inspector(id) else {
+        return;
+    };
+    let Some(field) = inspector
+        .properties
+        .into_iter()
+        .find(|field| field.key == key)
+    else {
+        return;
+    };
+    let Some(color) = field.color else {
+        return;
+    };
+    let generation = session.document_generation();
+    drop(session);
+    ui.borrow_mut().color_target = Some((id, key.into(), generation));
+    let window = ui.borrow().color_window.as_ref().unwrap().clone_strong();
+    window.set_field_label(field.label.into());
+    window.set_red(i32::from(color[0]));
+    window.set_green(i32::from(color[1]));
+    window.set_blue(i32::from(color[2]));
+    window.set_has_intensity(field.intensity.is_some());
+    window.set_intensity(field.intensity.unwrap_or_default().to_string().into());
+    window.set_brightness(widget_number(field.intensity.unwrap_or_default()));
+    window.set_message("".into());
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
+fn refresh_panel(app: &AppWindow, session: &mut Session) {
     let doc = session.document();
     app.set_map_title(session.title().into());
     app.set_can_undo(doc.undo_labels().next().is_some());
@@ -526,7 +1330,36 @@ fn refresh_panel(app: &AppWindow, session: &Session) {
     app.set_launching(session.launching());
     app.set_game_running(session.game_running());
     app.set_has_selection(!session.selection().is_empty());
+    app.set_face_mode(session.face_mode());
+    app.set_has_faces(!session.selected_faces().is_empty());
+    app.set_selection_pivot(
+        session
+            .selection_pivot(&session.selected_ids())
+            .map(|pivot| format!("X {:.3} · Y {:.3} · Z {:.3}", pivot.x, pivot.y, pivot.z))
+            .unwrap_or_default()
+            .into(),
+    );
     let (title, detail, properties) = selection_summary(session);
+    let selection_changed =
+        app.get_selection_title() != title || app.get_selection_detail() != detail;
+    if selection_changed {
+        let faces = session.selected_faces();
+        let material = if let Some(face) = faces.first() {
+            map_core::surface::side(doc, *face)
+        } else {
+            match session.selected_ids().as_slice() {
+                [ObjectId::Solid(id)] => doc.solid(*id).and_then(|solid| solid.sides.first()),
+                [ObjectId::Entity(id)] => doc
+                    .entity(*id)
+                    .and_then(|entity| entity.solids.first())
+                    .and_then(|solid| solid.sides.first()),
+                _ => None,
+            }
+        };
+        if let Some(side) = material {
+            app.set_material(side.material.to_ascii_lowercase().into());
+        }
+    }
     app.set_selection_title(title.into());
     app.set_selection_detail(detail.into());
     app.set_entity_selected(properties.is_some());
@@ -542,6 +1375,15 @@ fn refresh_panel(app: &AppWindow, session: &Session) {
                 .iter()
                 .all(|id| matches!(id, ObjectId::Solid(_))),
     );
+    app.set_can_apply_material(
+        !session.selected_faces().is_empty()
+            || session.selection().iter().any(|id| match id {
+                ObjectId::Solid(_) => true,
+                ObjectId::Entity(id) => doc
+                    .entity(*id)
+                    .is_some_and(|entity| !entity.solids.is_empty()),
+            }),
+    );
     app.set_entity_properties(ModelRc::new(VecModel::from(properties.unwrap_or_default())));
     let activity: Vec<Activity> = session
         .recent_log()
@@ -552,6 +1394,9 @@ fn refresh_panel(app: &AppWindow, session: &Session) {
         })
         .collect();
     app.set_activity(ModelRc::new(VecModel::from(activity)));
+    if app.get_can_apply_material() {
+        refresh_material_preview(app, session);
+    }
 }
 
 fn report(app: &AppWindow, result: Result<String, String>) {
@@ -570,7 +1415,7 @@ fn confirm_discard(ui: &SharedUi, then: impl FnOnce() + 'static) {
     let dialog = rfd::AsyncMessageDialog::new()
         .set_title("Unsaved changes")
         .set_description("The map has unsaved changes. Discard them?")
-        .set_buttons(rfd::MessageButtons::YesNo);
+        .set_buttons(rfd::MessageButtons::YesNoCancel);
     slint::spawn_local(async move {
         if dialog.show().await == rfd::MessageDialogResult::Yes {
             then();
@@ -702,7 +1547,15 @@ fn show_game_log(app: &AppWindow, ui: &SharedUi) {
     let mut ui = ui.borrow_mut();
     if ui.game_log_window.is_none() {
         match GameLogWindow::new() {
-            Ok(window) => ui.game_log_window = Some(window),
+            Ok(window) => {
+                window.on_cancel({
+                    let window = window.as_weak();
+                    move || {
+                        let _ = window.unwrap().hide();
+                    }
+                });
+                ui.game_log_window = Some(window);
+            }
             Err(error) => {
                 app.set_message(error.to_string().into());
                 return;
@@ -740,6 +1593,19 @@ fn create_block(app: &AppWindow, ui: &SharedUi) {
     let ui = ui.borrow();
     let camera = ui.viewport.camera;
     let mut session = lock(&ui.session);
+    if camera.projection != Projection::Perspective {
+        let drawing = !session.spatial().draw_block;
+        if let Err(message) = session.set_spatial(
+            Actor::User,
+            spatial::Update {
+                draw_block: Some(drawing),
+                ..spatial::Update::default()
+            },
+        ) {
+            app.set_message(message.into());
+        }
+        return;
+    }
     let (origin, direction) = camera.ray(0.0, 0.0, 1.0);
     let ray = Ray {
         origin: origin.as_dvec3(),
@@ -748,7 +1614,7 @@ fn create_block(app: &AppWindow, ui: &SharedUi) {
     let half = BLOCK_SIZE / 2.0;
     let (mins, maxs) = match session.pick(&ray) {
         Some(hit) => {
-            let base = DVec3::new(snap(hit.point.x), snap(hit.point.y), snap(hit.point.z));
+            let base = session.spatial().snap_point(hit.point);
             (
                 base - DVec3::new(half, half, 0.0),
                 base + DVec3::new(half, half, BLOCK_SIZE),
@@ -756,16 +1622,12 @@ fn create_block(app: &AppWindow, ui: &SharedUi) {
         }
         None => {
             let p = ray.origin + ray.direction * 384.0;
-            let center = DVec3::new(snap(p.x), snap(p.y), snap(p.z));
+            let center = session.spatial().snap_point(p);
             (center - DVec3::splat(half), center + DVec3::splat(half))
         }
     };
     let material = app.get_material().to_string();
-    let result = session
-        .edit(Actor::User, "create block", |tx| {
-            edit::create_block(tx, mins, maxs, &material)
-        })
-        .and_then(|id| session.select(&[id], SelectMode::Replace));
+    let result = session.create_block(Actor::User, mins, maxs, &material, true);
     if let Err(message) = result {
         app.set_message(message.into());
     }
@@ -797,7 +1659,8 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
                 let shared = session_of(ui);
                 let mut session = lock(&shared);
                 let ids = session.selected_ids();
-                let offset = DVec3::new(GRID, GRID, 0.0);
+                let grid = session.spatial().grid_size;
+                let offset = DVec3::new(grid, grid, 0.0);
                 let result = session
                     .edit(
                         Actor::User,
@@ -818,23 +1681,59 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         return true;
     }
     if key == key_text(Key::Escape) {
-        drop(lock(&session_of(ui)).select(&[], SelectMode::Replace));
+        let cancelled = ui.borrow_mut().brush_drag.take().is_some();
+        let shared = session_of(ui);
+        let mut session = lock(&shared);
+        if cancelled || session.block_preview().is_some() {
+            session.cancel_block_preview();
+            return true;
+        }
+        if session.spatial().draw_block {
+            drop(session.set_spatial(
+                Actor::User,
+                spatial::Update {
+                    draw_block: Some(false),
+                    ..spatial::Update::default()
+                },
+            ));
+            return true;
+        }
+        if session.has_face_preview() {
+            session.cancel_face_preview();
+        } else if session.face_mode() {
+            drop(session.select_faces(&[], SelectMode::Replace));
+        } else {
+            drop(session.select(&[], SelectMode::Replace));
+        }
         return true;
     }
-    let (forward, right) = nudge_axes(ui.borrow().viewport.camera.forward());
+    if key == "f" {
+        frame_selection(app, ui);
+        return true;
+    }
+    let camera = ui.borrow().viewport.camera;
+    let (forward, right, normal) = if let Some((_, _, normal)) = camera.projection.axes() {
+        let mut axis = DVec3::ZERO;
+        axis[normal] = 1.0;
+        (camera.up().as_dvec3(), camera.right().as_dvec3(), axis)
+    } else {
+        let (forward, right) = nudge_axes(camera.forward());
+        (forward, right, DVec3::Z)
+    };
     let direction = [
         (Key::UpArrow, forward),
         (Key::DownArrow, -forward),
         (Key::RightArrow, right),
         (Key::LeftArrow, -right),
-        (Key::PageUp, DVec3::Z),
-        (Key::PageDown, DVec3::NEG_Z),
+        (Key::PageUp, normal),
+        (Key::PageDown, -normal),
     ]
     .into_iter()
     .find(|(k, _)| key == key_text(*k))
     .map(|(_, d)| d);
     if let Some(direction) = direction {
-        let step = if shift { 1.0 } else { GRID };
+        let grid = lock(&session_of(ui)).spatial().grid_size;
+        let step = if shift { grid.min(1.0) } else { grid };
         edit_selection(
             app,
             ui,
@@ -921,10 +1820,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         session,
         seen_scene: 0,
         seen_camera: 0,
+        seen_view: 0,
+        brush_drag: None,
         seen_log: 0,
         game_log_window: None,
         last_log_refresh: Instant::now(),
         entity_window: None,
+        color_window: None,
+        color_target: None,
+        material_window: None,
+        material_target: None,
+        surface_window: None,
+        surface_target: None,
+        material_for_faces: false,
         seen_definitions: 0,
     }));
 
@@ -977,6 +1885,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || create_block(&app.unwrap(), &ui)
     });
+    app.on_projection_changed({
+        let ui = ui.clone();
+        move |index| {
+            let projection = [
+                Projection::Perspective,
+                Projection::Top,
+                Projection::Front,
+                Projection::Side,
+            ][index.clamp(0, 3) as usize];
+            lock(&session_of(&ui)).set_projection(Actor::User, projection);
+        }
+    });
+    app.on_spatial_changed({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || spatial_changed(&app.unwrap(), &ui)
+    });
+    app.on_frame_selection({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || frame_selection(&app.unwrap(), &ui)
+    });
+    app.on_apply_transform({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || apply_transform(&app.unwrap(), &ui)
+    });
     app.on_place_entity({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_entity_window(&app.unwrap(), &ui, false)
@@ -1008,21 +1940,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         }
     });
+    app.on_selection_mode_changed({
+        let ui = ui.clone();
+        move |mode| lock(&session_of(&ui)).set_face_mode(mode == 1)
+    });
+    app.on_edit_face_textures({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_surface_window(&app.unwrap(), &ui)
+    });
     app.on_apply_material({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
             let app = app.unwrap();
-            let material = app.get_material().trim().to_owned();
-            edit_selection(
-                &app,
-                &ui,
-                |_| format!("apply {material}"),
-                |tx, ids| {
-                    let targets: Vec<FaceTarget> =
-                        ids.iter().copied().map(FaceTarget::Object).collect();
-                    edit::set_material(tx, &targets, &material).map(drop)
-                },
-            );
+            let shared = session_of(&ui);
+            let mut session = lock(&shared);
+            let targets = session.material_targets();
+            if let Err(error) =
+                session.apply_material(Actor::User, &targets, app.get_material().trim())
+            {
+                app.set_message(error.into());
+            }
+        }
+    });
+    app.on_browse_material({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move |key| show_material_window(&app.unwrap(), &ui, &key)
+    });
+    app.on_material_changed({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || refresh_material_preview(&app.unwrap(), &mut lock(&session_of(&ui)))
+    });
+    app.on_pick_color({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move |key| show_color_window(&app.unwrap(), &ui, &key)
+    });
+    app.on_property_component_edited({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move |key, index, value| {
+            let shared = session_of(&ui);
+            let mut session = lock(&shared);
+            let Some(id) = single_selected_entity(&session) else {
+                return;
+            };
+            if let Err(error) =
+                session.set_entity_component(Actor::User, id, &key, index as usize, &value)
+            {
+                let app = app.unwrap();
+                refresh_panel(&app, &mut session);
+                app.set_message(error.into());
+            }
         }
     });
     app.on_property_edited({
@@ -1040,7 +2006,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let changes = [(key.clone(), Some(value.to_string()))];
             if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
                 let app = app.unwrap();
-                refresh_panel(&app, &session);
+                refresh_panel(&app, &mut session);
                 app.set_message(message.into());
             }
         }
@@ -1056,7 +2022,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let changes = [(key.to_string(), None)];
             if let Err(message) = session.set_entity_properties(Actor::User, entity, &changes) {
                 let app = app.unwrap();
-                refresh_panel(&app, &session);
+                refresh_panel(&app, &mut session);
                 app.set_message(message.into());
             }
         }
@@ -1096,7 +2062,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             if let Err(error) = result {
                 let app = app.unwrap();
-                refresh_panel(&app, &session);
+                refresh_panel(&app, &mut session);
                 app.set_message(error.into());
             }
         }
@@ -1128,6 +2094,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app = app.unwrap();
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
+            if button == 0 {
+                let shared = ui.session.clone();
+                let mut session = lock(&shared);
+                if down
+                    && session.spatial().draw_block
+                    && ui.viewport.camera.projection != Projection::Perspective
+                {
+                    if let Some(start) = plane_coordinates(
+                        ui.viewport.camera,
+                        (x, y),
+                        viewport_size,
+                        session.spatial().elevation,
+                    ) {
+                        session.cancel_block_preview();
+                        ui.brush_drag = Some(BrushDrag {
+                            start,
+                            epoch: session.brush_epoch(),
+                            generation: session.document_generation(),
+                            revision: session.document().revision(),
+                            projection: ui.viewport.camera.projection,
+                        });
+                    }
+                    return;
+                }
+                if !down && let Some(drag) = ui.brush_drag.take() {
+                    let result = plane_coordinates(
+                        ui.viewport.camera,
+                        (x, y),
+                        viewport_size,
+                        session.spatial().elevation,
+                    )
+                    .ok_or_else(|| "Viewport has no size".to_string())
+                    .and_then(|end| drag_bounds(&session, drag, end))
+                    .and_then(|(mins, maxs)| {
+                        session.create_block(Actor::User, mins, maxs, &app.get_material(), false)
+                    });
+                    session.cancel_block_preview();
+                    if let Err(message) = result {
+                        app.set_message(message.into());
+                    }
+                    return;
+                }
+            }
             let click = ui
                 .viewport
                 .mouse_button(button, down, (x, y), viewport_size, control);
@@ -1142,11 +2151,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 origin: origin.as_dvec3(),
                 direction: direction.as_dvec3(),
             });
-            let result = match (hit, click.control) {
-                (Some(hit), true) => session.select(&[hit.object], SelectMode::Toggle),
-                (Some(hit), false) => session.select(&[hit.object], SelectMode::Replace),
-                (None, true) => Ok(()),
-                (None, false) => session.select(&[], SelectMode::Replace),
+            let result = if session.face_mode() {
+                let face = hit.and_then(|hit| {
+                    Some(map_core::surface::FaceId {
+                        solid: hit.solid?,
+                        side: hit.side?,
+                    })
+                });
+                match (face, click.control) {
+                    (Some(face), true) => session.select_faces(&[face], SelectMode::Toggle),
+                    (Some(face), false) => session.select_faces(&[face], SelectMode::Replace),
+                    (None, true) => Ok(()),
+                    (None, false) => session.select_faces(&[], SelectMode::Replace),
+                }
+            } else {
+                match (hit, click.control) {
+                    (Some(hit), true) => session.select(&[hit.object], SelectMode::Toggle),
+                    (Some(hit), false) => session.select(&[hit.object], SelectMode::Replace),
+                    (None, true) => Ok(()),
+                    (None, false) => session.select(&[], SelectMode::Replace),
+                }
             };
             if let Err(message) = result {
                 app.set_message(message.into());
@@ -1154,17 +2178,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     app.on_mouse_moved({
-        let ui = ui.clone();
-        move |x, y| ui.borrow_mut().viewport.mouse_moved(x, y)
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move |x, y| {
+            let app = app.unwrap();
+            let size = (app.get_viewport_width(), app.get_viewport_height());
+            let mut ui = ui.borrow_mut();
+            ui.viewport.mouse_moved(x, y, size.1);
+            if let Some(drag) = ui.brush_drag {
+                let shared = ui.session.clone();
+                let mut session = lock(&shared);
+                if let Some(end) = plane_coordinates(
+                    ui.viewport.camera,
+                    (x, y),
+                    size,
+                    session.spatial().elevation,
+                ) {
+                    match drag_bounds(&session, drag, end) {
+                        Ok((mins, maxs)) => {
+                            drop(session.preview_block(mins, maxs));
+                        }
+                        Err(_) => session.clear_block_preview(),
+                    }
+                }
+            }
+        }
     });
     app.on_wheel({
-        let ui = ui.clone();
-        move |delta| ui.borrow_mut().viewport.wheel(delta)
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move |delta, x, y| {
+            let app = app.unwrap();
+            let width = app.get_viewport_width().max(1.0);
+            let height = app.get_viewport_height().max(1.0);
+            let ndc = (x * 2.0 / width - 1.0, 1.0 - y * 2.0 / height);
+            ui.borrow_mut().viewport.wheel(delta, ndc, width / height)
+        }
     });
     app.on_viewport_focus_lost({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
             ui.borrow_mut().viewport.release_all();
+            ui.borrow_mut().brush_drag = None;
+            lock(&session_of(&ui)).cancel_block_preview();
             app.unwrap().set_flying(false);
         }
     });
@@ -1185,6 +2239,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let mut session = lock(&ui.session);
                 session.poll_game();
+                if ui
+                    .brush_drag
+                    .is_some_and(|drag| drag.epoch != session.brush_epoch())
+                {
+                    ui.brush_drag = None;
+                }
                 if session.definitions_serial() != ui.seen_definitions {
                     ui.seen_definitions = session.definitions_serial();
                     if let Some(window) = &ui.entity_window {
@@ -1195,18 +2255,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if session.camera_serial() != ui.seen_camera {
                     ui.seen_camera = session.camera_serial();
                     ui.viewport.camera = session.camera();
+                    ui.viewport.release_all();
+                    ui.brush_drag = None;
                     ui.viewport.redraw();
+                    refresh_spatial(&app, &session);
                 } else {
                     session.publish_camera(ui.viewport.camera);
                 }
                 if session.scene_serial() != ui.seen_scene {
+                    ui.brush_drag = None;
                     ui.seen_scene = session.scene_serial();
                     let mesh = session.build_scene();
-                    ui.viewport.options = session.view();
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                    if let Some(window) = &ui.surface_window
+                        && window.window().is_visible()
+                        && let Some(target) = &ui.surface_target
+                    {
+                        refresh_surface_dialog(window, &mut session, target);
+                    }
                     app.set_show_tools(session.view().tool_textures);
                     app.set_show_leak(session.view().leak_path);
                     panel_dirty = true;
+                }
+                if session.view_serial() != ui.seen_view {
+                    ui.seen_view = session.view_serial();
+                    ui.viewport.options = session.view();
+                    ui.viewport.redraw();
+                    refresh_spatial(&app, &session);
+                    if let Some(window) = &ui.material_window
+                        && window.window().is_visible()
+                    {
+                        refresh_material_catalog(window, &mut session);
+                    }
+                    app.set_show_tools(session.view().tool_textures);
+                    app.set_show_leak(session.view().leak_path);
+                    if !session.spatial().draw_block {
+                        ui.brush_drag = None;
+                    }
                 }
                 if session.log_serial() != ui.seen_log {
                     ui.seen_log = session.log_serial();
@@ -1216,7 +2301,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     panel_dirty = true;
                 }
                 if panel_dirty {
-                    refresh_panel(&app, &session);
+                    refresh_panel(&app, &mut session);
                 }
             }
 
@@ -1239,7 +2324,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(frame) = ui.viewport.render(&ui.ctx, size) {
                 app.set_frame(frame);
                 let c = &ui.viewport.camera;
-                app.set_camera(
+                let status = if c.projection == Projection::Perspective {
                     format!(
                         "{:.0} {:.0} {:.0}  yaw {:.0}° pitch {:.0}°  speed {:.0}",
                         c.position.x,
@@ -1249,8 +2334,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         c.pitch_degrees,
                         ui.viewport.speed
                     )
-                    .into(),
-                );
+                } else {
+                    let center = c.position + c.forward() * render::Camera::ORTHO_DISTANCE;
+                    format!(
+                        "{} view · center {:.1} {:.1} {:.1} · {:.1} units tall",
+                        c.projection.name(),
+                        center.x,
+                        center.y,
+                        center.z,
+                        c.ortho_height
+                    )
+                };
+                app.set_camera(status.into());
             }
         }
     });
@@ -1262,8 +2357,471 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn save_ui_snapshot(window: &slint::Window, name: &str) {
+        let image = window.take_snapshot().unwrap();
+        assert!(image.width() > 0 && image.height() > 0);
+        if let Some(directory) = std::env::var_os("HAMMERR_UI_SNAPSHOTS") {
+            let path = PathBuf::from(directory).join(format!("{name}.png"));
+            let mut png = png::Encoder::new(
+                std::fs::File::create(path).unwrap(),
+                image.width(),
+                image.height(),
+            );
+            png.set_color(png::ColorType::Rgba);
+            png.set_depth(png::BitDepth::Eight);
+            png.write_header()
+                .unwrap()
+                .write_image_data(image.as_bytes())
+                .unwrap();
+        }
+    }
+
+    fn assert_dialog_button_visible<C: ComponentHandle>(component: &C, label: &str) {
+        let button =
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(component, label)
+                .next()
+                .unwrap();
+        let position = button.absolute_position();
+        let size = button.size();
+        let window = component.window().size();
+        assert!(size.width > 0.0 && size.height > 0.0);
+        assert!(position.x >= 0.0 && position.y >= 0.0);
+        assert!(
+            position.x + size.width <= window.width as f32 + 1.0,
+            "{label} outside window"
+        );
+        assert!(
+            position.y + size.height <= window.height as f32 + 1.0,
+            "{label} outside window"
+        );
+    }
+
+    #[test]
+    fn material_catalog_and_texture_dialog_render_without_desktop_input() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let material = MaterialWindow::new().unwrap();
+        let mut session = Session::new(mount_game(None));
+        session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "dev/dev_measuregeneric01",
+                false,
+            )
+            .unwrap();
+        session
+            .favorite_material("brick/brickwall001a", true)
+            .unwrap();
+        material.set_material("dev/dev_measuregeneric01".into());
+        refresh_material_catalog(&material, &mut session);
+        refresh_material_window(&material, &mut session);
+        material.show().unwrap();
+        save_ui_snapshot(material.window(), "material-browser");
+        for label in ["Cancel", "Use material", "Next"] {
+            assert_dialog_button_visible(&material, label);
+        }
+        assert!(material.get_total() > 0);
+        let concrete = session
+            .material_catalog("", "category:Concrete", 0, 36)
+            .unwrap();
+        if let Some(first) = concrete.entries.first() {
+            material.set_group("category:Concrete".into());
+            material.set_material(first.name.clone().into());
+            refresh_material_catalog(&material, &mut session);
+            refresh_material_window(&material, &mut session);
+            save_ui_snapshot(material.window(), "materials-grouped");
+            let preview = i_slint_backend_testing::ElementHandle::find_by_element_id(
+                &material,
+                "MaterialWindow::preview-image",
+            )
+            .next()
+            .unwrap();
+            assert!(
+                preview.absolute_position().x + preview.size().width
+                    <= material.window().size().width as f32
+            );
+        }
+        material.set_group("used".into());
+        refresh_material_catalog(&material, &mut session);
+        assert_eq!(material.get_total(), 1);
+        let cancelled = Rc::new(std::cell::Cell::new(false));
+        material.on_cancel({
+            let cancelled = cancelled.clone();
+            move || cancelled.set(true)
+        });
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&material, "Cancel")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(cancelled.get());
+        material.hide().unwrap();
+        let surface = SurfaceWindow::new().unwrap();
+        surface.set_selection_label("Textures on 3 selected faces".into());
+        surface.set_material("dev/dev_measuregeneric01".into());
+        surface.set_preview(
+            session
+                .material_preview("dev/dev_measuregeneric01")
+                .ok()
+                .map(|preview| preview_image(&preview))
+                .unwrap_or_default(),
+        );
+        surface.set_scale_u("0.25".into());
+        surface.set_scale_v("0.25".into());
+        surface.set_shift_u("0".into());
+        surface.set_shift_v("0".into());
+        surface.set_rotation("0".into());
+        surface.set_message("Preview changes before applying, or Cancel to discard.".into());
+        surface.show().unwrap();
+        save_ui_snapshot(surface.window(), "face-textures");
+        for label in ["Cancel", "Preview textures", "Apply textures"] {
+            assert_dialog_button_visible(&surface, label);
+        }
+        surface.hide().unwrap();
+    }
+
+    #[test]
+    fn texture_dialog_buttons_preview_cancel_apply_and_reject_stale_selections() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = SurfaceWindow::new().unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/wall",
+                false,
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let face = map_core::surface::FaceId {
+            solid: id,
+            side: session.document().solid(id).unwrap().sides[0].id,
+        };
+        session.select_faces(&[face], SelectMode::Replace).unwrap();
+        let target = (
+            vec![face],
+            session.document_generation(),
+            session.document().revision(),
+        );
+        let before = session.document().vmf().clone();
+        let session = Rc::new(RefCell::new(session));
+        window.set_material("wood/floor".into());
+        window.set_scale_u("0.5".into());
+        window.set_rotation("45".into());
+        window.on_preview_edit({
+            let (session, window, target) = (session.clone(), window.as_weak(), target.clone());
+            move || {
+                let window = window.unwrap();
+                if let Err(error) =
+                    apply_surface_dialog(&window, &mut session.borrow_mut(), &target, true)
+                {
+                    window.set_message(error.into());
+                }
+            }
+        });
+        window.on_apply({
+            let (session, window, target) = (session.clone(), window.as_weak(), target.clone());
+            move || {
+                let window = window.unwrap();
+                if let Err(error) =
+                    apply_surface_dialog(&window, &mut session.borrow_mut(), &target, false)
+                {
+                    window.set_message(error.into());
+                }
+            }
+        });
+        window.on_cancel({
+            let session = session.clone();
+            move || session.borrow_mut().cancel_face_preview()
+        });
+        window.show().unwrap();
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &window,
+            "Preview textures",
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+        assert!(session.borrow().has_face_preview());
+        assert_eq!(session.borrow().document().vmf(), &before);
+        session
+            .borrow_mut()
+            .edit_faces(
+                Actor::Agent,
+                &[face],
+                map_core::surface::SurfaceEdit {
+                    rotation: Some(90.0),
+                    shift_u: Some(64.0),
+                    ..Default::default()
+                },
+                false,
+                true,
+            )
+            .unwrap();
+        refresh_surface_dialog(&window, &mut session.borrow_mut(), &target);
+        assert_eq!(window.get_rotation(), "90");
+        assert_eq!(window.get_shift_u(), "64");
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Cancel")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(!session.borrow().has_face_preview());
+        assert_eq!(session.borrow().document().vmf(), &before);
+        window.set_material("wood/floor".into());
+        window.invoke_preview_edit();
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::Escape.into(),
+            });
+        assert!(!session.borrow().has_face_preview());
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Apply textures")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(
+            map_core::surface::side(session.borrow().document(), face)
+                .unwrap()
+                .material,
+            "WOOD/FLOOR"
+        );
+        session.borrow_mut().undo(Actor::Agent).unwrap();
+        assert_eq!(session.borrow().document().vmf(), &before);
+        window.invoke_apply();
+        assert!(window.get_message().contains("changed"));
+        refresh_surface_dialog(&window, &mut session.borrow_mut(), &target);
+        assert!(window.get_stale());
+        window.hide().unwrap();
+    }
+
     use slint::Model;
     use source_formats::vmf::Entity;
+
+    #[test]
+    fn transform_controls_apply_usable_defaults_and_shared_selection_operations() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        app.set_transform_x("90".into());
+        app.set_transform_y("-45".into());
+        app.set_transform_z("30".into());
+        app.set_transform_mode(2);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(
+            input_vector([
+                app.get_transform_x(),
+                app.get_transform_y(),
+                app.get_transform_z()
+            ])
+            .unwrap(),
+            DVec3::ONE
+        );
+        app.set_transform_x("2".into());
+        app.set_transform_mode(1);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(
+            input_vector([
+                app.get_transform_x(),
+                app.get_transform_y(),
+                app.get_transform_z()
+            ])
+            .unwrap(),
+            DVec3::ZERO
+        );
+        let mut session = Session::new(Err("no assets needed".into()));
+        let id = session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::new(64.0, 32.0, 16.0),
+                "brick/wall",
+                false,
+            )
+            .unwrap();
+        let session = Rc::new(RefCell::new(session));
+        app.on_apply_transform({
+            let session = session.clone();
+            let app = app.as_weak();
+            move || {
+                let app = app.unwrap();
+                if let Err(message) = apply_selection_transform(&app, &mut session.borrow_mut()) {
+                    app.set_message(message.into());
+                }
+            }
+        });
+        app.set_has_selection(true);
+        app.set_show_transform(true);
+        app.set_can_apply_material(true);
+        app.set_transform_mode(2);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1));
+        app.set_transform_x("2".into());
+        for (pivot_mode, expected) in [
+            (
+                0,
+                (DVec3::new(-32.0, 0.0, 0.0), DVec3::new(96.0, 32.0, 16.0)),
+            ),
+            (1, (DVec3::ZERO, DVec3::new(128.0, 32.0, 16.0))),
+            (
+                2,
+                (DVec3::new(-10.0, 0.0, 0.0), DVec3::new(118.0, 32.0, 16.0)),
+            ),
+        ] {
+            app.set_transform_pivot_mode(pivot_mode);
+            app.set_pivot_x("10".into());
+            app.set_pivot_y("20".into());
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1));
+            let button = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                "Scale selection",
+            )
+            .next()
+            .unwrap();
+            button.invoke_accessible_default_action();
+            assert_eq!(
+                query::bounds(session.borrow().document(), id),
+                Some(expected)
+            );
+            session.borrow_mut().undo(Actor::Agent).unwrap();
+        }
+        let before = session.borrow().document().vmf().clone();
+        app.set_transform_y("0".into());
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Scale selection")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(session.borrow().document().vmf(), &before);
+        assert!(app.get_message().contains("positive"));
+        app.set_transform_pivot_mode(0);
+        app.set_transform_mode(1);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1));
+        app.set_transform_z("90".into());
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Rotate selection")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        let (mins, maxs) = query::bounds(session.borrow().document(), id).unwrap();
+        assert!(mins.abs_diff_eq(DVec3::new(16.0, -16.0, 0.0), 1e-8));
+        assert!(maxs.abs_diff_eq(DVec3::new(48.0, 48.0, 16.0), 1e-8));
+        session.borrow_mut().undo(Actor::Agent).unwrap();
+        app.set_transform_mode(0);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1));
+        app.set_transform_x("0.125".into());
+        app.set_transform_y("-0.25".into());
+        app.set_transform_z("0.5".into());
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Move selection")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(
+            query::bounds(session.borrow().document(), id),
+            Some((
+                DVec3::new(0.125, -0.25, 0.5),
+                DVec3::new(64.125, 31.75, 16.5)
+            ))
+        );
+        app.set_transform_mode(2);
+        slint::platform::update_timers_and_animations();
+        app.set_transform_mode(0);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(
+            input_vector([
+                app.get_transform_x(),
+                app.get_transform_y(),
+                app.get_transform_z()
+            ])
+            .unwrap(),
+            DVec3::ZERO
+        );
+    }
+
+    #[test]
+    fn stale_brush_drags_cannot_create_geometry_in_a_replaced_document() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.set_projection(Actor::User, Projection::Top);
+        let drag = BrushDrag {
+            start: DVec2::ZERO,
+            epoch: session.brush_epoch(),
+            generation: session.document_generation(),
+            revision: session.document().revision(),
+            projection: Projection::Top,
+        };
+        assert!(drag_bounds(&session, drag, DVec2::splat(32.0)).is_ok());
+        session.new_map(Actor::Agent, true).unwrap();
+        assert!(drag_bounds(&session, drag, DVec2::splat(32.0)).is_err());
+        assert!(session.document().vmf().world.solids.is_empty());
+    }
+
+    #[test]
+    fn shared_cancellation_and_settings_invalidate_active_human_drags() {
+        for preview in [false, true] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            session.set_projection(Actor::User, Projection::Top);
+            let drag = BrushDrag {
+                start: DVec2::ZERO,
+                epoch: session.brush_epoch(),
+                generation: session.document_generation(),
+                revision: session.document().revision(),
+                projection: Projection::Top,
+            };
+            if preview {
+                session
+                    .preview_block(DVec3::ZERO, DVec3::splat(32.0))
+                    .unwrap();
+            }
+            assert!(drag_bounds(&session, drag, DVec2::splat(32.0)).is_ok());
+            session.cancel_block_preview();
+            assert!(drag_bounds(&session, drag, DVec2::splat(32.0)).is_err());
+            let drag = BrushDrag {
+                epoch: session.brush_epoch(),
+                ..drag
+            };
+            session
+                .set_spatial(
+                    Actor::Agent,
+                    spatial::Update {
+                        grid_size: Some(8.0),
+                        ..spatial::Update::default()
+                    },
+                )
+                .unwrap();
+            assert!(drag_bounds(&session, drag, DVec2::splat(32.0)).is_err());
+            assert!(session.document().vmf().world.solids.is_empty());
+            assert!(session.document().undo_labels().next().is_none());
+        }
+    }
+
+    #[test]
+    fn a_collapsed_snapped_preview_can_grow_into_a_valid_footprint() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.set_projection(Actor::User, Projection::Top);
+        let drag = BrushDrag {
+            start: DVec2::ZERO,
+            epoch: session.brush_epoch(),
+            generation: session.document_generation(),
+            revision: session.document().revision(),
+            projection: Projection::Top,
+        };
+        session
+            .preview_block(DVec3::ZERO, DVec3::splat(32.0))
+            .unwrap();
+        assert!(drag_bounds(&session, drag, DVec2::ONE).is_err());
+        session.clear_block_preview();
+        assert!(session.block_preview().is_none());
+        let (mins, maxs) = drag_bounds(&session, drag, DVec2::splat(32.0)).unwrap();
+        session.preview_block(mins, maxs).unwrap();
+        assert_eq!(session.block_preview(), Some((mins, maxs)));
+        assert!(session.document().undo_labels().next().is_none());
+    }
 
     #[test]
     fn property_controls_preserve_imported_values_and_show_inherited_defaults() {
@@ -1276,6 +2834,8 @@ mod tests {
                     spawnflags(flags) = [ 1 : "Enabled" : 0 2 : "Special" : 0 ]
                 ]
                 @PointClass base(Base) = light [
+                    angles(angle) : "Orientation" : "0 0 0"
+                    pitch(angle) : "Pitch" : 0
                     style(choices) : "Style" : 0 = [ 0 : "Steady" 1 : "Pulse" ]
                     editor_id(integer) readonly : "Editor ID"
                 ]"#,
@@ -1299,6 +2859,8 @@ mod tests {
         assert!(!flags.flags.row_data(1).unwrap().checked);
         assert_eq!(row("_light").value, "255 255 255 200");
         assert_eq!(row("_light").type_name, "color255");
+        assert!(!row("angles").numeric);
+        assert!(row("pitch").numeric);
         assert!(row("editor_id").read_only);
         assert_eq!(row("custom_key").value, "keep me");
         assert_eq!(row("custom_key").type_name, "string");

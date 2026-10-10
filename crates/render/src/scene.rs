@@ -4,16 +4,21 @@ use std::collections::HashSet;
 
 use glam::{DVec3, Vec3};
 use map_core::query::POINT_ENTITY_HALF_SIZE;
+use map_core::surface::FaceId;
 use map_core::{BrushGeometry, DisplacementMesh, ObjectId, texel_uv};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::{Color, Entity, Solid, Vmf};
 
+use crate::helpers::bulb_model;
 use crate::materials::{MaterialId, MaterialLibrary};
+
+const HELPER_SEGMENTS: usize = 16;
 
 /// Hammer's color for entities whose editor block has none.
 const DEFAULT_ENTITY_COLOR: [u8; 3] = [220, 30, 220];
 const SELECTED_TINT: [u8; 3] = [255, 130, 130];
 const SELECTED_EDGE: [u8; 4] = [255, 64, 64, 255];
+const WIRE_EDGE: [u8; 4] = [151, 169, 191, 255];
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -21,7 +26,7 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
-    /// Tint in RGB; alpha is the blend factor between a material's two layers.
+    /// RGB tint; alpha blends brush layers or marks an emissive helper surface.
     pub color: [u8; 4],
 }
 
@@ -56,18 +61,23 @@ pub struct SceneMesh {
     /// Edges of selected objects, as a line list.
     pub lines: Vec<LineVertex>,
     pub leak_lines: Vec<LineVertex>,
+    pub wire_lines: Vec<LineVertex>,
+    pub tool_wire_lines: Vec<LineVertex>,
     pub mins: Vec3,
     pub maxs: Vec3,
     pub stats: SceneStats,
 }
 
 struct Builder<'a> {
+    selected_faces: &'a HashSet<FaceId>,
     fs: &'a GameFs,
     library: &'a mut MaterialLibrary,
     vertices: Vec<Vertex>,
     /// Indices per material id, concatenated into batches at the end.
     indices: Vec<Vec<u32>>,
     lines: Vec<LineVertex>,
+    wire_lines: Vec<LineVertex>,
+    tool_wire_lines: Vec<LineVertex>,
     stats: SceneStats,
 }
 
@@ -104,13 +114,19 @@ impl Builder<'_> {
             self.stats.invalid_brushes += 1;
             return;
         };
-        let tint = if selected { SELECTED_TINT } else { [255; 3] };
         // Hammer draws only the displaced faces of a brush with displacements.
         let has_displacement = solid.sides.iter().any(|s| s.displacement.is_some());
         for face in &brush.faces {
             let side = &solid.sides[face.side];
+            let selected = selected
+                || self.selected_faces.contains(&FaceId {
+                    solid: solid.id,
+                    side: side.id,
+                });
+            let tint = if selected { SELECTED_TINT } else { [255; 3] };
             let material = self.material(&side.material);
             let info = self.library.get(material);
+            let tool = info.tool;
             let size = DVec3::new(f64::from(info.width), f64::from(info.height), 1.0);
             let uv = |p: DVec3| (texel_uv(side, p) / size.truncate()).as_vec2().to_array();
 
@@ -121,6 +137,12 @@ impl Builder<'_> {
                     };
                     self.stats.displacements += 1;
                     self.add_displacement(material, &mesh, uv, tint);
+                    self.push_wire_loop(
+                        mesh.outline()
+                            .into_iter()
+                            .map(|i| mesh.positions[i].as_vec3()),
+                        tool,
+                    );
                     if selected {
                         self.push_loop(
                             mesh.outline()
@@ -131,6 +153,7 @@ impl Builder<'_> {
                 }
                 (None, true) => {}
                 (None, false) => {
+                    self.push_wire_loop(face.vertices.iter().map(|p| p.as_vec3()), tool);
                     let normal = face.plane.normal.as_vec3().to_array();
                     let first = self.vertices.len() as u32;
                     for &p in &face.vertices {
@@ -150,6 +173,22 @@ impl Builder<'_> {
                     }
                 }
             }
+        }
+    }
+
+    fn push_wire_loop(&mut self, points: impl IntoIterator<Item = Vec3>, tool: bool) {
+        let points: Vec<Vec3> = points.into_iter().collect();
+        let lines = if tool {
+            &mut self.tool_wire_lines
+        } else {
+            &mut self.wire_lines
+        };
+        for (index, &a) in points.iter().enumerate() {
+            let b = points[(index + 1) % points.len()];
+            lines.extend([a, b].map(|point| LineVertex {
+                position: point.to_array(),
+                color: WIRE_EDGE,
+            }));
         }
     }
 
@@ -189,6 +228,9 @@ impl Builder<'_> {
             return;
         };
         self.stats.point_entities += 1;
+        if self.add_light(entity, selected) {
+            return;
+        }
         let [r, g, b] = if selected {
             SELECTED_EDGE[..3].try_into().expect("three channels")
         } else {
@@ -248,6 +290,249 @@ impl Builder<'_> {
         }
         id
     }
+
+    fn helper_triangle(&mut self, points: [Vec3; 3], color: [u8; 3]) {
+        let normal = (points[0] - points[1])
+            .cross(points[2] - points[1])
+            .normalize_or_zero();
+        if normal == Vec3::ZERO {
+            return;
+        }
+        let material = self.material_editor();
+        let first = self.vertices.len() as u32;
+        for point in points {
+            self.push_vertex(Vertex {
+                position: point.to_array(),
+                normal: normal.to_array(),
+                uv: [0.0; 2],
+                color: [color[0], color[1], color[2], 0],
+            });
+        }
+        self.indices[material].extend([first, first + 1, first + 2]);
+    }
+
+    fn helper_line(&mut self, from: Vec3, to: Vec3, color: [u8; 4]) {
+        self.lines.extend([from, to].map(|point| LineVertex {
+            position: point.to_array(),
+            color,
+        }));
+    }
+
+    fn lathe(
+        &mut self,
+        center: Vec3,
+        axis: Vec3,
+        profile: &[(f32, f32)],
+        color: [u8; 3],
+        selected: bool,
+    ) {
+        let right = axis.any_orthonormal_vector();
+        let up = axis.cross(right);
+        let point = |radius: f32, height: f32, segment: usize| {
+            let angle = segment as f32 * std::f32::consts::TAU / HELPER_SEGMENTS as f32;
+            center + axis * height + (right * angle.cos() + up * angle.sin()) * radius
+        };
+        for pair in profile.windows(2) {
+            let [(r0, h0), (r1, h1)] = [pair[0], pair[1]];
+            for segment in 0..HELPER_SEGMENTS {
+                let a = point(r0, h0, segment);
+                let b = point(r0, h0, segment + 1);
+                let c = point(r1, h1, segment + 1);
+                let d = point(r1, h1, segment);
+                self.helper_triangle([a, c, b], color);
+                self.helper_triangle([a, d, c], color);
+                if selected && segment % 4 == 0 {
+                    self.helper_line(a, d, SELECTED_EDGE);
+                }
+            }
+        }
+        if selected {
+            for &(radius, height) in profile.iter().filter(|(radius, _)| *radius > 0.0) {
+                self.push_loop((0..HELPER_SEGMENTS).map(|segment| point(radius, height, segment)));
+            }
+        }
+    }
+
+    fn light_cone(&mut self, center: Vec3, direction: Vec3, angle: f32, color: [u8; 4]) {
+        let length = 96.0;
+        let radius = length * angle.clamp(0.0, 85.0).to_radians().tan();
+        let right = direction.any_orthonormal_vector();
+        let up = direction.cross(right);
+        let point = |segment: usize| {
+            let angle = segment as f32 * std::f32::consts::TAU / HELPER_SEGMENTS as f32;
+            center + direction * length + (right * angle.cos() + up * angle.sin()) * radius
+        };
+        for segment in 0..HELPER_SEGMENTS {
+            self.helper_line(point(segment), point(segment + 1), color);
+            if segment % 4 == 0 {
+                self.helper_line(center, point(segment), color);
+            }
+        }
+    }
+
+    fn add_bulb(&mut self, center: Vec3, color: [u8; 3], selected: bool) {
+        let model = bulb_model();
+        let material = self.library.light_bulb();
+        if self.indices.len() <= material {
+            self.indices.resize_with(material + 1, Vec::new);
+        }
+        let first = self.vertices.len() as u32;
+        for &template in &model.vertices {
+            let tint = if template.color[3] == 255 {
+                color
+            } else {
+                [255; 3]
+            };
+            self.push_vertex(Vertex {
+                position: (center + Vec3::from_array(template.position)).to_array(),
+                color: [tint[0], tint[1], tint[2], template.color[3]],
+                ..template
+            });
+        }
+        self.indices[material].extend(model.indices.iter().map(|&i| first + i));
+        if selected {
+            let lo = model.mins - Vec3::splat(1.0);
+            let hi = model.maxs + Vec3::splat(1.0);
+            for x in [lo.x, hi.x] {
+                for y in [lo.y, hi.y] {
+                    for z in [lo.z, hi.z] {
+                        let corner = Vec3::new(x, y, z);
+                        let sign = (lo + hi) * 0.5 - corner;
+                        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                            self.helper_line(
+                                center + corner,
+                                center + corner + axis * sign.dot(axis).signum() * 4.0,
+                                SELECTED_EDGE,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn add_light(&mut self, entity: &Entity, selected: bool) -> bool {
+        let class = entity.classname().unwrap_or("").to_ascii_lowercase();
+        if !matches!(
+            class.as_str(),
+            "light" | "light_spot" | "light_dynamic" | "light_environment"
+        ) {
+            return false;
+        }
+        let center = entity.origin().expect("point entity origin").as_vec3();
+        let color = light_color(entity);
+        let direction = light_direction(entity);
+        if class == "light_spot" || class == "light_dynamic" {
+            self.lathe(
+                center,
+                direction,
+                &[
+                    (0.0, -10.0),
+                    (5.0, -10.0),
+                    (5.0, -4.0),
+                    (11.0, 4.0),
+                    (11.0, 7.0),
+                ],
+                [110, 118, 132],
+                selected,
+            );
+            self.lathe(
+                center,
+                direction,
+                &[(11.0, 7.0), (0.0, 7.0)],
+                color,
+                selected,
+            );
+            if selected {
+                self.light_cone(
+                    center,
+                    direction,
+                    light_number(entity, "_cone", 45.0),
+                    SELECTED_EDGE,
+                );
+                self.light_cone(
+                    center,
+                    direction,
+                    light_number(entity, "_inner_cone", 30.0),
+                    [color[0], color[1], color[2], 255],
+                );
+            }
+        } else if class == "light_environment" {
+            self.lathe(
+                center,
+                Vec3::Z,
+                &[(0.0, -9.0), (6.0, -6.0), (9.0, 0.0), (6.0, 6.0), (0.0, 9.0)],
+                color,
+                selected,
+            );
+            for ray in [
+                Vec3::X,
+                Vec3::NEG_X,
+                Vec3::Y,
+                Vec3::NEG_Y,
+                Vec3::Z,
+                Vec3::NEG_Z,
+            ] {
+                self.helper_line(
+                    center + ray * 12.0,
+                    center + ray * 18.0,
+                    [color[0], color[1], color[2], 255],
+                );
+            }
+            if selected {
+                let tip = center + direction * 96.0;
+                self.helper_line(center, tip, SELECTED_EDGE);
+                let right = direction.any_orthonormal_vector();
+                for sign in [-1.0, 1.0] {
+                    self.helper_line(
+                        tip,
+                        tip - direction * 12.0 + right * sign * 6.0,
+                        SELECTED_EDGE,
+                    );
+                }
+            }
+        } else {
+            self.add_bulb(center, color, selected);
+        }
+        true
+    }
+}
+
+fn light_number(entity: &Entity, key: &str, default: f32) -> f32 {
+    entity
+        .properties
+        .get(key)
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite())
+        .unwrap_or(default)
+}
+
+fn light_color(entity: &Entity) -> [u8; 3] {
+    let color = entity.properties.get("_light").and_then(|value| {
+        source_formats::fgd::vector(value, 4).or_else(|| source_formats::fgd::vector(value, 3))
+    });
+    color
+        .filter(|color| color[..3].iter().all(|value| (0.0..=255.0).contains(value)))
+        .map_or([255, 240, 200], |values| {
+            std::array::from_fn(|i| values[i].round() as u8)
+        })
+}
+
+fn light_direction(entity: &Entity) -> Vec3 {
+    let angles = entity
+        .properties
+        .get("angles")
+        .and_then(|value| source_formats::fgd::vector(value, 3))
+        .unwrap_or_else(|| vec![0.0; 3]);
+    let pitch = light_number(entity, "pitch", -angles[0].rem_euclid(360.0) as f32)
+        .rem_euclid(360.0)
+        .to_radians();
+    let yaw = (angles[1].rem_euclid(360.0) as f32).to_radians();
+    Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        pitch.sin(),
+    )
 }
 
 impl SceneMesh {
@@ -259,12 +544,25 @@ impl SceneMesh {
         library: &mut MaterialLibrary,
         selected: &HashSet<ObjectId>,
     ) -> Self {
+        Self::build_with_faces(vmf, fs, library, selected, &HashSet::new())
+    }
+
+    pub fn build_with_faces(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selected: &HashSet<ObjectId>,
+        selected_faces: &HashSet<FaceId>,
+    ) -> Self {
         let mut builder = Builder {
+            selected_faces,
             fs,
             library,
             vertices: Vec::new(),
             indices: Vec::new(),
             lines: Vec::new(),
+            wire_lines: Vec::new(),
+            tool_wire_lines: Vec::new(),
             stats: SceneStats::default(),
         };
         for solid in vmf.world.solids.iter().filter(|s| !s.hidden) {
@@ -308,6 +606,8 @@ impl SceneMesh {
             batches,
             lines: builder.lines,
             leak_lines: Vec::new(),
+            wire_lines: builder.wire_lines,
+            tool_wire_lines: builder.tool_wire_lines,
             mins,
             maxs,
             stats,
@@ -323,5 +623,131 @@ impl SceneMesh {
                 color: [255, 32, 32, 255],
             })
             .collect();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn light_mesh(classname: &str, selected: bool) -> SceneMesh {
+        let mut vmf = map_core::Document::empty().vmf().clone();
+        let mut light = Entity::new(1, classname);
+        light.properties.set("origin", "0 0 0");
+        light.properties.set("_light", "255 210 150 450");
+        light.properties.set("angles", "0 90 0");
+        light.properties.set("pitch", "-90");
+        vmf.entities.push(light);
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: vec![],
+        };
+        let selected = if selected {
+            HashSet::from([ObjectId::Entity(1)])
+        } else {
+            HashSet::new()
+        };
+        SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &selected)
+    }
+
+    #[test]
+    fn light_shapes_keep_their_color_when_selected() {
+        for classname in ["light", "light_spot", "light_dynamic", "light_environment"] {
+            let mesh = light_mesh(classname, true);
+            assert_eq!(mesh.stats.point_entities, 1);
+            assert_eq!(mesh.stats.brushes, 0);
+            assert!(mesh.vertices.len() > 24);
+            assert!(
+                mesh.vertices
+                    .iter()
+                    .any(|vertex| vertex.color[..3] == [255, 210, 150])
+            );
+            assert!(mesh.lines.iter().any(|line| line.color == SELECTED_EDGE));
+            assert!(mesh.vertices.iter().all(|vertex| {
+                vertex
+                    .position
+                    .iter()
+                    .chain(&vertex.normal)
+                    .all(|value| value.is_finite())
+            }));
+            assert!(mesh.mins.cmpge(Vec3::splat(-18.0)).all());
+            assert!(mesh.maxs.cmple(Vec3::splat(18.0)).all());
+        }
+    }
+
+    #[test]
+    fn bulb_selection_preserves_geometry_and_only_the_globe_is_tinted() {
+        let plain = light_mesh("light", false);
+        let selected = light_mesh("light", true);
+        assert_eq!(plain.vertices, selected.vertices);
+        assert_eq!(plain.indices, selected.indices);
+        assert!(plain.lines.is_empty());
+        assert!(!selected.lines.is_empty());
+        for vertex in &plain.vertices {
+            let expected = if vertex.color[3] == 255 {
+                [255, 210, 150]
+            } else {
+                [255; 3]
+            };
+            assert_eq!(vertex.color[..3], expected);
+        }
+        assert_eq!(plain.stats.missing_materials, 0);
+    }
+
+    #[test]
+    fn bulb_instances_share_one_material_across_scene_rebuilds() {
+        let mut vmf = map_core::Document::empty().vmf().clone();
+        for (id, origin, color) in [
+            (1, "0 0 0", "255 210 150 450"),
+            (2, "64 0 0", "140 190 255 450"),
+        ] {
+            let mut entity = Entity::new(id, "light");
+            entity.properties.set("origin", origin);
+            entity.properties.set("_light", color);
+            vmf.entities.push(entity);
+        }
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: vec![],
+        };
+        let mut library = MaterialLibrary::default();
+        for _ in 0..2 {
+            let mesh = SceneMesh::build(&vmf, &fs, &mut library, &HashSet::new());
+            assert_eq!(library.len(), 2);
+            assert_eq!(mesh.batches.len(), 1);
+            assert_eq!(mesh.stats.point_entities, 2);
+            assert_eq!(mesh.stats.brushes, 0);
+            let count = bulb_model().vertices.len();
+            for (a, b) in mesh.vertices[..count].iter().zip(&mesh.vertices[count..]) {
+                assert!(
+                    (Vec3::from_array(b.position) - Vec3::from_array(a.position) - Vec3::X * 64.0)
+                        .length()
+                        < 0.0001
+                );
+                if a.color[3] == 255 {
+                    assert_eq!(b.color, [140, 190, 255, 255]);
+                } else {
+                    assert_eq!(a.color, b.color);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn spotlight_cones_follow_source_pitch_and_yaw() {
+        let mesh = light_mesh("light_spot", true);
+        assert!(mesh.lines.iter().any(|line| line.position[2] < -90.0));
+        let unselected = light_mesh("light_spot", false);
+        assert!(unselected.lines.is_empty());
+        let mut entity = Entity::new(1, "light_spot");
+        entity.properties.set("angles", "0 90 0");
+        let direction = light_direction(&entity);
+        assert!((direction - Vec3::Y).length() < 0.001);
+        entity.properties.set("pitch", "-90");
+        assert!((light_direction(&entity) - Vec3::NEG_Z).length() < 0.001);
+        entity.properties.set("_light", "garbage");
+        assert_eq!(light_color(&entity), [255, 240, 200]);
     }
 }

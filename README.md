@@ -24,6 +24,7 @@ and the shared entity inspector and activity panel.*
 | --- | --- |
 | Maps and content | VMF editing and saving; byte-for-byte round trips for unmodified files; game materials from Steam libraries, search paths and VPK archives. |
 | Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, exact movement/rotation/scale, and texture locking. |
+| Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Face materials | Individual face selection, UV offset/scale/rotation, texture fitting, cancellable previews, and a grouped material browser with thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Humans and agents | Shared map, selection, camera, previews and undo history. MCP edits appear live in the editor. |
@@ -89,6 +90,17 @@ Enable **Transform selection** in the inspector for exact XYZ movement,
 world-axis rotation or scaling. Choose the selection center, world origin
 or custom coordinates as the pivot. **Keep textures attached** preserves
 surface UVs. Each application is one undo step for the selected group.
+
+### Brush clipping
+
+Select brushes or a brush entity, then click **Clip selected brushes**.
+Draw a cut in Top, Front or Side, or enter a plane normal and distance.
+Choose **Arrow side**, **Opposite side** or **Both sides**, and optionally
+browse for the cut-face material. **Apply cut** commits the preview in one
+undo step; **Cancel cut** or Escape discards it.
+
+Existing faces keep their texture projections. Brushes the plane does not
+cross stay unchanged. Intersected displacements cannot be clipped yet.
 
 ### Face textures and materials
 
@@ -187,6 +199,7 @@ For example, place a warm light:
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
 | Spatial authoring | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
+| Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `commit_face_preview`, `cancel_face_preview` |
@@ -198,6 +211,11 @@ For example, place a warm light:
 non-destructive previews. Commit or cancel the shared preview from either
 front end. Material browsing and inspector tools return the same catalog,
 labels and control types used by the GUI.
+
+`clip_brushes` accepts a plane normal/distance, three points, or a snapped
+planar line. Use `preview: true` to inspect the shared cut before committing
+or cancelling it. `get_clip_preview` reports the resulting brushes and faces;
+`render_view` and picking use the same preview geometry as the viewport.
 
 </details>
 

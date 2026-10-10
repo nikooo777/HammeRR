@@ -110,6 +110,13 @@ struct Globals {
     eye: [f32; 4],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClipGuide {
+    pub normal: glam::Vec3,
+    pub distance: f32,
+    pub bounds: [glam::Vec3; 2],
+}
+
 /// Per-frame visibility filters, applied without rebuilding the scene.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
@@ -119,6 +126,7 @@ pub struct ViewOptions {
     pub grid_size: f32,
     pub grid_elevation: f32,
     pub block_preview: Option<[glam::Vec3; 2]>,
+    pub clip_preview: Option<ClipGuide>,
 }
 
 impl Default for ViewOptions {
@@ -130,6 +138,7 @@ impl Default for ViewOptions {
             grid_size: 16.0,
             grid_elevation: 0.0,
             block_preview: None,
+            clip_preview: None,
         }
     }
 }

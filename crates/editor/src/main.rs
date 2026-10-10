@@ -114,6 +114,7 @@ struct Ui {
     seen_camera: u64,
     seen_view: u64,
     brush_drag: Option<BrushDrag>,
+    clip_drag: Option<BrushDrag>,
     seen_log: u64,
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
@@ -125,6 +126,7 @@ struct Ui {
     surface_window: Option<SurfaceWindow>,
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     material_for_faces: bool,
+    material_for_clip: bool,
     seen_definitions: u64,
 }
 
@@ -144,6 +146,7 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 }
 
 fn refresh_spatial(app: &AppWindow, session: &Session) {
+    refresh_clip(app, session);
     let settings = session.spatial();
     let projection = session.camera().projection;
     app.set_projection_index(projection.index() as i32);
@@ -174,6 +177,168 @@ fn refresh_spatial(app: &AppWindow, session: &Session) {
             .unwrap_or_default()
             .into(),
     );
+}
+
+fn refresh_clip(app: &AppWindow, session: &Session) {
+    app.set_can_clip(session.can_clip_selection());
+    app.set_clipping(session.clip_tool());
+    app.set_has_clip_preview(session.clip_preview().is_some());
+    if let Some(preview) = session.clip_preview() {
+        app.set_clip_normal_x(preview.plane.normal.x.to_string().into());
+        app.set_clip_normal_y(preview.plane.normal.y.to_string().into());
+        app.set_clip_normal_z(preview.plane.normal.z.to_string().into());
+        app.set_clip_distance(preview.plane.dist.to_string().into());
+        app.set_clip_keep_index(match preview.keep {
+            map_core::clip::Keep::Front => 0,
+            map_core::clip::Keep::Back => 1,
+            map_core::clip::Keep::Both => 2,
+        });
+        app.set_clip_material(preview.material.clone().unwrap_or_default().into());
+        app.set_clip_summary(
+            format!(
+                "{} brushes cut · {} pieces · {} unchanged · preview only",
+                preview.result.cuts.len(),
+                preview
+                    .result
+                    .cuts
+                    .iter()
+                    .map(|cut| cut.solids.len())
+                    .sum::<usize>(),
+                preview.result.unchanged.len()
+            )
+            .into(),
+        );
+    } else {
+        app.set_clip_summary(
+            "Draw a cut or preview a plane · the map stays unchanged until Apply cut".into(),
+        );
+    }
+}
+
+fn clip_keep(app: &AppWindow) -> map_core::clip::Keep {
+    match app.get_clip_keep_index() {
+        0 => map_core::clip::Keep::Front,
+        1 => map_core::clip::Keep::Back,
+        _ => map_core::clip::Keep::Both,
+    }
+}
+
+fn preview_clip(
+    app: &AppWindow,
+    session: &mut Session,
+    plane: map_core::Plane,
+) -> Result<(), String> {
+    let material = app.get_clip_material().trim().to_owned();
+    session.clip_brushes(
+        Actor::User,
+        &session.selected_ids(),
+        plane,
+        clip_keep(app),
+        (!material.is_empty()).then_some(material),
+        true,
+    )?;
+    refresh_clip(app, session);
+    Ok(())
+}
+
+fn preview_clip_plane(app: &AppWindow, session: &mut Session) {
+    let result = input_vector([
+        app.get_clip_normal_x(),
+        app.get_clip_normal_y(),
+        app.get_clip_normal_z(),
+    ])
+    .and_then(|normal| {
+        let dist = app
+            .get_clip_distance()
+            .parse()
+            .map_err(|_| "Enter a numeric plane distance")?;
+        preview_clip(app, session, map_core::Plane { normal, dist })
+    });
+    if let Err(error) = result {
+        session.cancel_clip_preview();
+        refresh_clip(app, session);
+        app.set_message(error.into());
+    }
+}
+
+fn apply_clip(app: &AppWindow, session: &mut Session) {
+    match session.commit_clip_preview(Actor::User) {
+        Ok(result) => app
+            .set_message(format!("Clipped {} brushes in one undo step", result.cuts.len()).into()),
+        Err(error) => app.set_message(error.into()),
+    }
+    refresh_spatial(app, session);
+    refresh_panel(app, session);
+}
+
+fn cancel_clip(app: &AppWindow, session: &mut Session) {
+    session.cancel_clip_preview();
+    drop(session.set_clip_tool(Actor::User, false));
+    refresh_clip(app, session);
+}
+
+fn bind_clip_controls(app: &AppWindow, shared: SharedSession) {
+    app.on_start_clip({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            if let Err(error) = session.set_clip_tool(Actor::User, true) {
+                app.set_message(error.into());
+            }
+            refresh_spatial(&app, &session);
+        }
+    });
+    app.on_preview_clip_plane({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || preview_clip_plane(&app.unwrap(), &mut lock(&shared))
+    });
+    app.on_clip_settings_changed({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            if let Some(plane) = session.clip_preview().map(|preview| preview.plane)
+                && let Err(error) = preview_clip(&app, &mut session, plane)
+            {
+                session.cancel_clip_preview();
+                refresh_clip(&app, &session);
+                app.set_message(error.into());
+            }
+        }
+    });
+    app.on_clip_inputs_changed({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let mut session = lock(&shared);
+            session.cancel_clip_preview();
+            refresh_clip(&app.unwrap(), &session);
+        }
+    });
+    app.on_apply_clip({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || apply_clip(&app.unwrap(), &mut lock(&shared))
+    });
+    app.on_cancel_clip({
+        let app = app.as_weak();
+        move || cancel_clip(&app.unwrap(), &mut lock(&shared))
+    });
+}
+
+fn clip_drag_plane(
+    session: &Session,
+    drag: BrushDrag,
+    end: DVec2,
+) -> Result<map_core::Plane, String> {
+    if !session.clip_tool()
+        || drag.generation != session.document_generation()
+        || drag.revision != session.document().revision()
+        || drag.projection != session.camera().projection
+        || drag.epoch != session.clip_epoch()
+    {
+        return Err("The cut was cancelled or its map/settings changed".into());
+    }
+    session.clip_line_plane(drag.projection, drag.start, end)
 }
 
 fn spatial_changed(app: &AppWindow, ui: &SharedUi) {
@@ -1167,6 +1332,10 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                         window.set_detail(error.into());
                         return;
                     }
+                } else if ui.borrow().material_for_clip {
+                    app.set_clip_material(material);
+                    session.cancel_clip_preview();
+                    refresh_clip(&app, &session);
                 } else if ui.borrow().material_for_faces {
                     if let Some(surface) = &ui.borrow().surface_window {
                         surface.set_material(material.clone());
@@ -1191,13 +1360,16 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     let shared = session_of(ui);
     let mut session = lock(&shared);
     ui.borrow_mut().material_for_faces = key == "@faces";
-    let target = if key.is_empty() || key == "@faces" {
+    ui.borrow_mut().material_for_clip = key == "@clip";
+    let target = if key.is_empty() || key == "@faces" || key == "@clip" {
         None
     } else {
         single_selected_entity(&session)
             .map(|id| (id, key.to_owned(), session.document_generation()))
     };
-    let material = if key == "@faces" {
+    let material = if key == "@clip" {
+        app.get_clip_material().to_string()
+    } else if key == "@faces" {
         ui.borrow()
             .surface_window
             .as_ref()
@@ -1322,6 +1494,7 @@ fn show_color_window(app: &AppWindow, ui: &SharedUi, key: &str) {
 }
 
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
+    refresh_clip(app, session);
     let doc = session.document();
     app.set_map_title(session.title().into());
     app.set_can_undo(doc.undo_labels().next().is_some());
@@ -1681,9 +1854,14 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         return true;
     }
     if key == key_text(Key::Escape) {
+        ui.borrow_mut().clip_drag = None;
         let cancelled = ui.borrow_mut().brush_drag.take().is_some();
         let shared = session_of(ui);
         let mut session = lock(&shared);
+        if session.clip_tool() || session.clip_preview().is_some() {
+            cancel_clip(app, &mut session);
+            return true;
+        }
         if cancelled || session.block_preview().is_some() {
             session.cancel_block_preview();
             return true;
@@ -1822,6 +2000,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_camera: 0,
         seen_view: 0,
         brush_drag: None,
+        clip_drag: None,
         seen_log: 0,
         game_log_window: None,
         last_log_refresh: Instant::now(),
@@ -1833,6 +2012,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_window: None,
         surface_target: None,
         material_for_faces: false,
+        material_for_clip: false,
         seen_definitions: 0,
     }));
 
@@ -1909,6 +2089,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || apply_transform(&app.unwrap(), &ui)
     });
+    bind_clip_controls(&app, session_of(&ui));
     app.on_place_entity({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_entity_window(&app.unwrap(), &ui, false)
@@ -2094,9 +2275,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app = app.unwrap();
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
+            if button != 0 && down && ui.clip_drag.take().is_some() {
+                let mut session = lock(&ui.session);
+                session.cancel_clip_preview();
+                refresh_clip(&app, &session);
+            }
             if button == 0 {
                 let shared = ui.session.clone();
                 let mut session = lock(&shared);
+                if down
+                    && session.clip_tool()
+                    && ui.viewport.camera.projection != Projection::Perspective
+                {
+                    if let Some(start) = plane_coordinates(
+                        ui.viewport.camera,
+                        (x, y),
+                        viewport_size,
+                        session.spatial().elevation,
+                    ) {
+                        session.cancel_clip_preview();
+                        ui.clip_drag = Some(BrushDrag {
+                            start,
+                            epoch: session.clip_epoch(),
+                            generation: session.document_generation(),
+                            revision: session.document().revision(),
+                            projection: ui.viewport.camera.projection,
+                        });
+                    }
+                    return;
+                }
+                if !down && let Some(drag) = ui.clip_drag.take() {
+                    let result = plane_coordinates(
+                        ui.viewport.camera,
+                        (x, y),
+                        viewport_size,
+                        session.spatial().elevation,
+                    )
+                    .ok_or("Viewport has no size".to_owned())
+                    .and_then(|end| clip_drag_plane(&session, drag, end))
+                    .and_then(|plane| preview_clip(&app, &mut session, plane));
+                    if let Err(error) = result {
+                        session.cancel_clip_preview();
+                        refresh_clip(&app, &session);
+                        app.set_message(error.into());
+                    }
+                    return;
+                }
+                if session.clip_tool() {
+                    return;
+                }
                 if down
                     && session.spatial().draw_block
                     && ui.viewport.camera.projection != Projection::Perspective
@@ -2184,6 +2411,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
             ui.viewport.mouse_moved(x, y, size.1);
+            if let Some(drag) = ui.clip_drag {
+                let shared = ui.session.clone();
+                let mut session = lock(&shared);
+                let result = plane_coordinates(
+                    ui.viewport.camera,
+                    (x, y),
+                    size,
+                    session.spatial().elevation,
+                )
+                .ok_or("Viewport has no size".to_owned())
+                .and_then(|end| clip_drag_plane(&session, drag, end))
+                .and_then(|plane| preview_clip(&app, &mut session, plane));
+                if result.is_err() {
+                    session.clear_clip_preview();
+                    refresh_clip(&app, &session);
+                }
+            }
             if let Some(drag) = ui.brush_drag {
                 let shared = ui.session.clone();
                 let mut session = lock(&shared);
@@ -2210,7 +2454,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let width = app.get_viewport_width().max(1.0);
             let height = app.get_viewport_height().max(1.0);
             let ndc = (x * 2.0 / width - 1.0, 1.0 - y * 2.0 / height);
-            ui.borrow_mut().viewport.wheel(delta, ndc, width / height)
+            let mut ui = ui.borrow_mut();
+            if ui.clip_drag.take().is_some() {
+                let mut session = lock(&ui.session);
+                session.cancel_clip_preview();
+                refresh_clip(&app, &session);
+            }
+            ui.viewport.wheel(delta, ndc, width / height)
         }
     });
     app.on_viewport_focus_lost({
@@ -2218,6 +2468,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             ui.borrow_mut().viewport.release_all();
             ui.borrow_mut().brush_drag = None;
+            if ui.borrow_mut().clip_drag.take().is_some() {
+                lock(&session_of(&ui)).cancel_clip_preview();
+            }
             lock(&session_of(&ui)).cancel_block_preview();
             app.unwrap().set_flying(false);
         }
@@ -2239,6 +2492,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let mut session = lock(&ui.session);
                 session.poll_game();
+                if ui
+                    .clip_drag
+                    .is_some_and(|drag| drag.epoch != session.clip_epoch())
+                {
+                    ui.clip_drag = None;
+                }
                 if ui
                     .brush_drag
                     .is_some_and(|drag| drag.epoch != session.brush_epoch())
@@ -2357,6 +2616,154 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_input() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let id = state
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::new(128.0, 96.0, 64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let original = state.document().vmf().clone();
+        let revision = state.document().revision();
+        let shared = Arc::new(Mutex::new(state));
+        let app = AppWindow::new().unwrap();
+        bind_clip_controls(&app, shared.clone());
+        app.on_key({
+            let (app, shared) = (app.as_weak(), shared.clone());
+            move |text, down, _, _| {
+                if down && text == key_text(Key::Escape) {
+                    cancel_clip(&app.unwrap(), &mut lock(&shared));
+                    true
+                } else {
+                    false
+                }
+            }
+        });
+        refresh_panel(&app, &mut lock(&shared));
+        app.show().unwrap();
+        app.window().set_size(slint::PhysicalSize::new(1600, 960));
+        app.window().take_snapshot().unwrap();
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &app,
+            "Clip selected brushes",
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+        assert!(lock(&shared).clip_tool());
+        app.set_clip_distance("64".into());
+        for keep in [0, 1, 2] {
+            app.set_clip_keep_index(keep);
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Preview plane")
+                .next()
+                .unwrap()
+                .invoke_accessible_default_action();
+            let state = lock(&shared);
+            assert_eq!(state.document().vmf(), &original);
+            assert_eq!(state.document().revision(), revision);
+            let ObjectId::Solid(number) = id else {
+                unreachable!()
+            };
+            let shape =
+                map_core::BrushGeometry::from_solid(state.render_document().solid(number).unwrap())
+                    .unwrap();
+            if keep == 0 {
+                assert_eq!(shape.mins.x, 64.0);
+            }
+            if keep == 1 {
+                assert_eq!(shape.maxs.x, 64.0);
+            }
+            assert_eq!(
+                state.render_document().vmf().world.solids.len(),
+                if keep == 2 { 2 } else { 1 }
+            );
+        }
+        save_ui_snapshot(app.window(), "clipping-controls");
+        for label in ["Preview plane", "Apply cut", "Cancel cut"] {
+            assert_dialog_button_visible(&app, label);
+            let button =
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, label)
+                    .next()
+                    .unwrap();
+            assert!(button.absolute_position().x + button.size().width <= 752.5);
+            assert!(button.absolute_position().y + button.size().height <= 306.5);
+        }
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Cancel cut")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(lock(&shared).clip_preview().is_none());
+        assert!(!lock(&shared).clip_tool());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        app.invoke_start_clip();
+        app.invoke_preview_clip_plane();
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: Key::Escape.into(),
+            });
+        assert!(lock(&shared).clip_preview().is_none());
+        assert!(!lock(&shared).clip_tool());
+        app.invoke_start_clip();
+        app.set_clip_normal_x("0".into());
+        app.invoke_preview_clip_plane();
+        assert!(!app.get_has_clip_preview());
+        assert!(app.get_message().contains("nonzero"));
+        app.set_clip_normal_x("1".into());
+        app.invoke_preview_clip_plane();
+        app.invoke_clip_inputs_changed();
+        assert!(!app.get_has_clip_preview());
+        app.invoke_preview_clip_plane();
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Apply cut")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(lock(&shared).document().vmf().world.solids.len(), 2);
+        assert_eq!(lock(&shared).document().undo_labels().count(), 2);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+    }
+
+    #[test]
+    fn stale_cut_gestures_cannot_preview_after_mcp_cancel_or_map_replacement() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        session
+            .create_block(
+                Actor::User,
+                DVec3::splat(-32.0),
+                DVec3::splat(32.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        session.set_clip_tool(Actor::User, true).unwrap();
+        let drag = BrushDrag {
+            start: DVec2::new(-16.0, -32.0),
+            epoch: session.clip_epoch(),
+            generation: session.document_generation(),
+            revision: session.document().revision(),
+            projection: session.camera().projection,
+        };
+        let end = DVec2::new(16.0, 32.0);
+        assert!(clip_drag_plane(&session, drag, end).is_ok());
+        session.cancel_clip_preview();
+        assert!(clip_drag_plane(&session, drag, end).is_err());
+        session.new_map(Actor::Agent, true).unwrap();
+        assert!(clip_drag_plane(&session, drag, end).is_err());
+    }
+
     fn save_ui_snapshot(window: &slint::Window, name: &str) {
         let image = window.take_snapshot().unwrap();
         assert!(image.width() > 0 && image.height() > 0);

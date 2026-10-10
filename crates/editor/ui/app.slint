@@ -560,6 +560,16 @@ export component AppWindow inherits Window {
     in property <bool> has-selection;
     in property <bool> face-mode;
     in property <bool> has-faces;
+    in property <bool> can-clip;
+    in property <bool> clipping;
+    in property <bool> has-clip-preview;
+    in property <string> clip-summary;
+    in-out property <int> clip-keep-index: 2;
+    in-out property <string> clip-normal-x: "1";
+    in-out property <string> clip-normal-y: "0";
+    in-out property <string> clip-normal-z: "0";
+    in-out property <string> clip-distance: "0";
+    in-out property <string> clip-material;
     in property <string> selection-pivot;
     in-out property <bool> show-transform;
     in-out property <int> transform-mode;
@@ -608,6 +618,12 @@ export component AppWindow inherits Window {
     callback projection-changed(int);
     callback spatial-changed();
     callback frame-selection();
+    callback start-clip();
+    callback preview-clip-plane();
+    callback clip-settings-changed();
+    callback clip-inputs-changed();
+    callback apply-clip();
+    callback cancel-clip();
     callback apply-transform();
     callback delete-selection();
     callback apply-material();
@@ -782,7 +798,7 @@ export component AppWindow inherits Window {
                     }
 
                     touch := TouchArea {
-                        mouse-cursor: root.flying ? MouseCursor.move : root.drawing-block && root.projection-index != 0 ? MouseCursor.crosshair : MouseCursor.default;
+                        mouse-cursor: root.flying ? MouseCursor.move : (root.drawing-block || root.clipping) && root.projection-index != 0 ? MouseCursor.crosshair : MouseCursor.default;
                         pointer-event(event) => {
                             if (event.kind == PointerEventKind.down) {
                                 focus.focus();
@@ -856,6 +872,54 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                if root.clipping: Rectangle {
+                    x: 12px;
+                    y: 64px;
+                    width: min(740px, parent.width - 24px);
+                    height: 198px;
+                    background: #20252eee;
+                    border-color: #4c829f;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        Text { text: "Clip brushes · drag a cut line in a planar view, or enter a plane"; color: #d7e5ef; font-size: 13px; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Keep"; color: #c8ccd4; vertical-alignment: center; }
+                            ComboBox {
+                                width: 200px;
+                                model: ["Arrow side", "Opposite side", "Both sides"];
+                                current-index <=> root.clip-keep-index;
+                                selected => { root.clip-settings-changed(); }
+                            }
+                            Text { text: "Cyan arrow points to the front side"; color: #9dd8f1; vertical-alignment: center; }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Normal X"; color: #dc858d; vertical-alignment: center; }
+                            LineEdit { width: 65px; text <=> root.clip-normal-x; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                            Text { text: "Y"; color: #86c9a4; vertical-alignment: center; }
+                            LineEdit { width: 65px; text <=> root.clip-normal-y; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                            Text { text: "Z"; color: #90b1e0; vertical-alignment: center; }
+                            LineEdit { width: 65px; text <=> root.clip-normal-z; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                            Text { text: "Distance · units"; color: #c8ccd4; vertical-alignment: center; }
+                            LineEdit { width: 80px; text <=> root.clip-distance; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                            Button { text: "Preview plane"; clicked => { root.preview-clip-plane(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Cut material"; color: #c8ccd4; vertical-alignment: center; }
+                            LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-material; placeholder-text: "Inherit each brush's material"; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                            Button { text: "Browse…"; clicked => { root.browse-material("@clip"); } }
+                            Button { text: "Apply cut"; enabled: root.has-clip-preview; clicked => { root.apply-clip(); } }
+                            Button { text: "Cancel cut"; clicked => { root.cancel-clip(); } }
+                        }
+                        Text { text: root.clip-summary; color: #9dd8f1; font-size: 12px; wrap: word-wrap; }
+                    }
+                }
+
                 Rectangle {
                     x: 10px;
                     y: parent.height - self.height - 10px;
@@ -917,6 +981,11 @@ export component AppWindow inherits Window {
                     if root.has-selection: CheckBox {
                         text: "Transform selection";
                         checked <=> root.show-transform;
+                    }
+                    Button {
+                        text: "Clip selected brushes";
+                        enabled: root.can-clip && !root.clipping;
+                        clicked => { root.start-clip(); }
                     }
                     if root.has-selection && root.show-transform: VerticalLayout {
                         spacing: 7px;

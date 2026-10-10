@@ -79,6 +79,55 @@ pub(crate) fn overlay_lines(
             }
         }
     }
+    if let Some(guide) = options.clip_preview {
+        let plane = map_core::Plane {
+            normal: guide.normal.as_dvec3(),
+            dist: f64::from(guide.distance),
+        };
+        let mut points = plane.base_winding();
+        let mins = guide.bounds[0].as_dvec3() - glam::DVec3::splat(16.0);
+        let maxs = guide.bounds[1].as_dvec3() + glam::DVec3::splat(16.0);
+        for axis in 0..3 {
+            let mut normal = glam::DVec3::ZERO;
+            normal[axis] = 1.0;
+            points = map_core::Plane {
+                normal,
+                dist: maxs[axis],
+            }
+            .clip_behind(&points);
+            points = map_core::Plane {
+                normal: -normal,
+                dist: -mins[axis],
+            }
+            .clip_behind(&points);
+        }
+        for (a, b) in points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .take(points.len())
+        {
+            line(&mut vertices, a.as_vec3(), b.as_vec3(), PREVIEW_COLOR);
+        }
+        if !points.is_empty() {
+            let center = (points.iter().sum::<glam::DVec3>() / points.len() as f64).as_vec3();
+            let tip = center + guide.normal * 48.0;
+            let wing = guide
+                .normal
+                .cross(camera.forward())
+                .try_normalize()
+                .unwrap_or(camera.right())
+                * 8.0;
+            line(&mut vertices, center, tip, PREVIEW_COLOR);
+            for side in [-wing, wing] {
+                line(
+                    &mut vertices,
+                    tip,
+                    tip - guide.normal * 12.0 + side,
+                    PREVIEW_COLOR,
+                );
+            }
+        }
+    }
     (vertices, grid_count)
 }
 
@@ -116,5 +165,36 @@ mod tests {
         );
         assert_eq!(grid_count, 0);
         assert_eq!(lines.len(), 24);
+    }
+
+    #[test]
+    fn cut_plane_and_arrow_remain_visible_without_the_grid() {
+        for (projection, normal) in [
+            (Projection::Top, Vec3::X),
+            (Projection::Front, Vec3::Z),
+            (Projection::Side, Vec3::Y),
+        ] {
+            let options = ViewOptions {
+                grid_visible: false,
+                clip_preview: Some(crate::ClipGuide {
+                    normal,
+                    distance: 0.0,
+                    bounds: [Vec3::splat(-32.0), Vec3::splat(32.0)],
+                }),
+                ..Default::default()
+            };
+            let camera = Camera::planar(projection, Vec3::ZERO, 512.0);
+            let (lines, grid_count) = overlay_lines(&camera, (800, 600), &options);
+            assert_eq!(grid_count, 0);
+            assert_eq!(lines.len(), 14);
+            assert!(
+                lines
+                    .iter()
+                    .all(|line| Vec3::from_array(line.position).is_finite())
+            );
+            let wings = Vec3::from_array(lines[11].position) - Vec3::from_array(lines[13].position);
+            assert!((wings.length() - 16.0).abs() < 1e-5);
+            assert!(wings.dot(camera.forward()).abs() < 1e-5);
+        }
     }
 }

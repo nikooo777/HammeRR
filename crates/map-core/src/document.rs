@@ -65,6 +65,7 @@ struct Change {
 pub struct Step {
     pub label: String,
     changes: Vec<Change>,
+    world: Option<(Properties, Properties)>,
 }
 
 impl Step {
@@ -233,6 +234,7 @@ impl Document {
         let mut tx = Transaction {
             doc: self,
             touched: Vec::new(),
+            world: None,
         };
         match f(&mut tx) {
             Ok(result) => {
@@ -249,6 +251,9 @@ impl Document {
     /// Returns the undone step.
     pub fn undo(&mut self) -> Option<&Step> {
         let step = self.undo.pop()?;
+        if let Some((before, after)) = &step.world {
+            self.restore_world_properties(before, after);
+        }
         for change in step.changes.iter().rev() {
             self.put(change.id, change.before.clone());
         }
@@ -260,12 +265,26 @@ impl Document {
     /// Returns the redone step.
     pub fn redo(&mut self) -> Option<&Step> {
         let step = self.redo.pop()?;
+        if let Some((before, after)) = &step.world {
+            self.restore_world_properties(after, before);
+        }
         for change in &step.changes {
             self.put(change.id, change.after.clone());
         }
         self.revision += 1;
         self.undo.push(step);
         self.undo.last()
+    }
+
+    fn restore_world_properties(&mut self, target: &Properties, previous: &Properties) {
+        let mut properties = target.clone();
+        // Saves increment mapversion outside the edit history.
+        if target.get("mapversion") == previous.get("mapversion")
+            && let Some(version) = self.vmf.world.properties.get("mapversion")
+        {
+            properties.set("mapversion", version);
+        }
+        self.vmf.world.properties = properties;
     }
 
     fn position(&self, id: ObjectId) -> Option<usize> {
@@ -311,9 +330,16 @@ impl Document {
 pub struct Transaction<'a> {
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
+    world: Option<Properties>,
 }
 
 impl Transaction<'_> {
+    pub fn world_properties_mut(&mut self) -> &mut Properties {
+        self.world
+            .get_or_insert_with(|| self.doc.vmf.world.properties.clone());
+        &mut self.doc.vmf.world.properties
+    }
+
     pub fn vmf(&self) -> &Vmf {
         &self.doc.vmf
     }
@@ -401,15 +427,26 @@ impl Transaction<'_> {
             })
             .filter(|c| c.before != c.after)
             .collect();
-        if changes.is_empty() {
+        let world = self
+            .world
+            .filter(|before| before != &doc.vmf.world.properties)
+            .map(|before| (before, doc.vmf.world.properties.clone()));
+        if changes.is_empty() && world.is_none() {
             return;
         }
-        doc.undo.push(Step { label, changes });
+        doc.undo.push(Step {
+            label,
+            changes,
+            world,
+        });
         doc.redo.clear();
         doc.revision += 1;
     }
 
     fn rollback(self) {
+        if let Some(before) = self.world {
+            self.doc.vmf.world.properties = before;
+        }
         for (id, before) in self.touched.into_iter().rev() {
             self.doc.put(id, before);
         }
@@ -419,6 +456,60 @@ impl Transaction<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn world_undo_after_save_keeps_the_save_version() {
+        let mut doc = Document::empty();
+        doc.edit("sky", |tx| {
+            tx.world_properties_mut().set("skyname", "sky_new");
+            Ok(())
+        })
+        .unwrap();
+        doc.bump_map_version();
+        doc.mark_saved();
+        doc.undo().unwrap();
+        assert_eq!(
+            doc.vmf().world.properties.get("skyname"),
+            Some("sky_day01_01")
+        );
+        assert_eq!(doc.vmf().world.properties.get("mapversion"), Some("1"));
+        doc.redo().unwrap();
+        assert_eq!(doc.vmf().world.properties.get("skyname"), Some("sky_new"));
+        assert_eq!(doc.vmf().world.properties.get("mapversion"), Some("1"));
+    }
+
+    #[test]
+    fn world_and_object_edits_rollback_and_undo_together() {
+        let mut doc = doc_with_entities(1);
+        let before = doc.vmf().clone();
+        let revision = doc.revision();
+        let result: Result<(), EditError> = doc.edit("invalid", |tx| {
+            tx.world_properties_mut().set("skyname", "changed");
+            tx.entity_mut(2)?.properties.set("custom", "value");
+            Err(EditError::Invalid("abort".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(doc.vmf(), &before);
+        assert_eq!(doc.revision(), revision);
+        doc.edit("world and entity", |tx| {
+            tx.world_properties_mut().set("skyname", "changed");
+            tx.entity_mut(2)?.properties.set("custom", "value");
+            Ok(())
+        })
+        .unwrap();
+        let after = doc.vmf().clone();
+        doc.undo().unwrap();
+        assert_eq!(doc.vmf(), &before);
+        doc.redo().unwrap();
+        assert_eq!(doc.vmf(), &after);
+        let revision = doc.revision();
+        doc.edit("noop", |tx| {
+            tx.world_properties_mut();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(doc.revision(), revision);
+    }
 
     fn doc_with_entities(n: u32) -> Document {
         let mut doc = Document::empty();

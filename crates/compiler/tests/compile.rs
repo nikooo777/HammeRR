@@ -411,3 +411,41 @@ fn invalid_brushes_report_the_source_object() {
             .any(|d| d.level == compiler::Level::Error && d.object.as_ref() == Some(&id))
     );
 }
+
+#[test]
+fn world_settings_survive_reload_and_hidden_entities_are_reported_as_omitted() {
+    let mut document = Document::new(common::room());
+    document
+        .edit("world settings and visibility", |tx| {
+            tx.world_properties_mut().set("skyname", "sky_day01_09");
+            tx.world_properties_mut()
+                .set("detailmaterial", "detail/detailsprites");
+            let ObjectId::Entity(hidden) = edit::create_entity(
+                tx,
+                "info_target",
+                Some(DVec3::Z * 64.0),
+                &[("targetname".into(), "hidden_marker".into())],
+                Vec::new(),
+            )?
+            else {
+                panic!()
+            };
+            tx.entity_mut(hidden)?.hidden = true;
+            Ok(())
+        })
+        .unwrap();
+    let vmf = source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.leak.is_none());
+    let bsp = output.bsp.unwrap();
+    let entities = bsp.entities().unwrap();
+    assert!(entities.contains("\"skyname\" \"sky_day01_09\""));
+    assert!(entities.contains("\"detailmaterial\" \"detail/detailsprites\""));
+    assert!(!entities.contains("hidden_marker"));
+    assert!(output.report.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("hidden objects were not compiled")
+    }));
+}

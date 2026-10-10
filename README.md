@@ -29,6 +29,7 @@ and the shared entity inspector and activity panel.*
 | Face materials | Individual face selection, UV offset/scale/rotation, texture fitting, cancellable previews, and a grouped material browser with thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
+| Map management | World settings, mixed-value property batches and default resets; object reports, search, selection, framing and visibility restore. |
 | Humans and agents | Shared map, selection, camera, previews and undo history. MCP edits appear live in the editor. |
 | Build and play | Native BSP compilation, leak detection and viewport paths, CS:S launch controls, and game logs. |
 
@@ -223,6 +224,38 @@ links and arbitrary text expressions require manual inspection.
 
 ![Reference rename preview with exact updates and unchanged references to review](docs/images/entity-rename.png)
 
+### World settings and property batches
+
+**World settings…** edits map-wide values such as the sky. Select several
+entities and open **Edit selected entity properties…** to work on their
+common properties. Mixed values and flags are identified; color and material
+pickers are available. Changing one flag or color component preserves the
+other values on each entity.
+
+Edits are staged until **Apply properties**, then saved as one undo step.
+**Cancel** discards the draft. **Use default** explicitly writes the FGD
+default; **Remove override** deletes the stored key. The inspector distinguishes
+stored values from defaults. Names use **References and rename…**.
+
+### Finding and organizing objects
+
+**Object report…** searches IDs, names, classes and materials, with type and
+visibility filters and optional XYZ region bounds. Select or frame an
+individual result or all matches,
+including results beyond the current page. Selection can replace, add, remove
+or toggle matching objects.
+
+**Hide selected**, **Isolate selected**, **Show selected** and **Show all**
+change saved visibility in one undo step. **Restore visibility** restores
+the previous state, including hidden brushes inside entities. Newly created
+objects keep their current visibility; deleted objects stay deleted.
+**Hidden objects are omitted from compilation**, including imported hidden
+objects. Show them before building if they should appear in the game.
+
+| Property batches | Object report |
+| --- | --- |
+| ![Shared property draft with mixed values, brightness, defaults and Cancel](docs/images/batch-properties.png) | ![Object report with filters, selection modes and visibility actions](docs/images/object-report.png) |
+
 ## MCP
 
 The GUI serves MCP at **`http://127.0.0.1:7377/mcp`**. Connect an agent with:
@@ -280,6 +313,8 @@ For example, place a warm light:
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
 | References and renaming | `get_entity_references`, `begin_entity_rename`, `update_entity_rename`, `commit_entity_rename`, `cancel_entity_rename` |
+| Map reports and visibility | `get_object_report`, `select_object_report`, `set_object_visibility` |
+| World settings and property batches | `get_property_inspector`, `begin_property_edit`, `update_property_edit`, `get_property_edit`, `commit_property_edit`, `cancel_property_edit` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `commit_face_preview`, `cancel_face_preview` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
@@ -321,6 +356,21 @@ the returned preview. If `requires_review` is true, acknowledge it with
 `token`; starting a rename accepts generation/revision guards from inspection.
 Preview rows include the same readable `display` labels and explanations used
 by the UI. `show_details` controls the shared engine-details toggle.
+
+`begin_property_edit` takes `world: true` or entity `ids` (selection by
+default). Update the returned `token` with a `changes` list; each operation
+uses `action: "set"`, `"remove"`, `"default"`, `"flag"` or `"component"`.
+Pass inspection `generation`/`revision` guards when starting from an earlier
+report. Inspect the preview, then commit or cancel. Updates replace the
+pending list;
+failed validation keeps the previous draft. `get_property_inspector` reports
+stored/default values per target and mixed flags.
+
+`get_object_report` accepts a `filter` with `query`, `classname`, `targetname`,
+`material`, `kind`, `hidden` and `within`. `select_object_report` uses the same
+filter across all pages, with optional `frame: true`. `set_object_visibility`
+accepts `hide`, `show`, `isolate`, `show_all` or `restore`. Its result includes
+hidden counts and the compiler's visibility policy.
 
 </details>
 

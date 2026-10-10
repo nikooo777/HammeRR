@@ -21,7 +21,9 @@ use crate::inspector;
 use crate::spatial;
 
 mod clipping;
+mod management;
 pub use clipping::ClipPreview;
+pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
 mod connections;
 pub use connections::{ConnectionDraft, ConnectionFields, ConnectionRecord};
 mod references;
@@ -106,6 +108,9 @@ pub struct Session {
     connection_serial: u64,
     rename_draft: Option<RenameDraft>,
     rename_serial: u64,
+    property_draft: Option<PropertyDraft>,
+    management_serial: u64,
+    visibility_restore: Option<management::VisibilityRestore>,
     area_rule: map_core::region::Match,
     area_mode: SelectMode,
     interaction_epoch: u64,
@@ -213,6 +218,9 @@ impl Session {
             connection_serial: 0,
             rename_draft: None,
             rename_serial: 0,
+            property_draft: None,
+            management_serial: 0,
+            visibility_restore: None,
             area_rule: map_core::region::Match::Intersecting,
             area_mode: SelectMode::Replace,
             interaction_epoch: 0,
@@ -930,6 +938,9 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.property_draft = None;
+        self.management_serial += 1;
+        self.visibility_restore = None;
         self.cancel_connection_edit();
         self.cancel_entity_rename();
         self.camera = Camera::from_vmf(document.vmf()).unwrap_or_else(|| {

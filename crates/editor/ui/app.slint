@@ -819,6 +819,186 @@ component PropertyField inherits VerticalLayout {
     if root.advanced: Button { text: "Remove property"; enabled: root.field.key != "classname" && !root.field.read-only; clicked => { root.removed(); } }
 }
 
+export struct ManagedFieldRow {
+    field: KeyValue,
+    status: string,
+    can-reset: bool,
+}
+
+export component PropertiesWindow inherits Window {
+    title: "Properties - HammeRR";
+    preferred-width: 740px;
+    preferred-height: 780px;
+    in-out property <string> draft-token;
+    in property <string> heading;
+    in property <string> summary;
+    in property <string> message;
+    in property <bool> can-apply;
+    in property <[ManagedFieldRow]> fields;
+    in-out property <string> filter;
+    in-out property <string> custom-key;
+    in-out property <string> custom-value;
+    callback search();
+    callback edit(string, string);
+    callback component-edit(string, int, string);
+    callback flag-edit(string, string, bool);
+    callback reset(string);
+    callback remove(string);
+    callback pick-color(string);
+    callback pick-material(string);
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 12px;
+            Text { text: root.heading; font-size: 23px; font-weight: 600; }
+            Text { text: root.summary; wrap: word-wrap; }
+            LineEdit { text <=> root.filter; placeholder-text: "Find a property…"; edited => { root.search(); } }
+            ListView {
+                for row in root.fields: VerticalLayout {
+                    padding-bottom: 16px; spacing: 6px;
+                    PropertyField {
+                        field: row.field;
+                        edited(value) => { root.edit(row.field.key, value); }
+                        component-edited(index, value) => { root.component-edit(row.field.key, index, value); }
+                        flag-toggled(flag, checked) => { root.flag-edit(row.field.key, flag, checked); }
+                        pick-color => { root.pick-color(row.field.key); }
+                        pick-material => { root.pick-material(row.field.key); }
+                    }
+                    Text { text: row.status; wrap: word-wrap; color: #aab0bb; font-size: 12px; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Use default"; enabled: row.can-reset && !row.field.read-only; clicked => { root.reset(row.field.key); } }
+                        Button { text: "Remove override"; enabled: !row.field.read-only; clicked => { root.remove(row.field.key); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.custom-key; placeholder-text: "Custom property key"; }
+                LineEdit { text <=> root.custom-value; placeholder-text: "Value"; }
+                Button { text: "Stage value"; enabled: root.custom-key != ""; clicked => { root.edit(root.custom-key, root.custom-value); } }
+            }
+            Text { text: root.message; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Apply properties"; enabled: root.can-apply; clicked => { root.apply(); } }
+            }
+        }
+    }
+}
+
+export struct ObjectReportRow { id: string, label: string, detail: string }
+
+export component ReportWindow inherits Window {
+    title: "Object report - HammeRR";
+    preferred-width: 960px; preferred-height: 760px;
+    in-out property <string> query;
+    in-out property <string> classname;
+    in-out property <string> targetname;
+    in-out property <string> material;
+    in-out property <int> kind;
+    in-out property <int> visibility;
+    in-out property <int> page;
+    in-out property <int> selection-mode;
+    in-out property <bool> limit-bounds;
+    in-out property <string> min-x: "-16384";
+    in-out property <string> min-y: "-16384";
+    in-out property <string> min-z: "-16384";
+    in-out property <string> max-x: "16384";
+    in-out property <string> max-y: "16384";
+    in-out property <string> max-z: "16384";
+    in property <float> aspect: 1.6;
+    in-out property <string> generation;
+    in-out property <string> revision;
+    in property <bool> has-next;
+    in property <[ObjectReportRow]> rows;
+    in property <string> summary;
+    in property <string> message;
+    callback search();
+    callback select-result(string, bool);
+    callback select-all(bool);
+    callback visibility-action(string);
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 12px;
+            Text { text: "Find objects"; font-size: 23px; font-weight: 600; }
+            LineEdit { text <=> root.query; placeholder-text: "Search IDs, names, classes and materials…"; edited => { root.page = 0; root.search(); } }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.classname; placeholder-text: "Entity class"; edited => { root.page = 0; root.search(); } }
+                LineEdit { text <=> root.targetname; placeholder-text: "Entity name"; edited => { root.page = 0; root.search(); } }
+                LineEdit { text <=> root.material; placeholder-text: "Material"; edited => { root.page = 0; root.search(); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                ComboBox { model: ["All types", "World brushes", "All entities", "Point entities", "Brush entities"]; current-index <=> root.kind; selected => { root.page = 0; root.search(); } }
+                ComboBox { model: ["Visible and hidden", "Visible", "Hidden"]; current-index <=> root.visibility; selected => { root.page = 0; root.search(); } }
+                Button { text: "Refresh"; clicked => { root.search(); } }
+            }
+            CheckBox { text: "Limit to a map region"; checked <=> root.limit-bounds; toggled => { root.page = 0; root.search(); } }
+            if root.limit-bounds: VerticalLayout {
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Minimum XYZ"; vertical-alignment: center; width: 120px; }
+                    LineEdit { text <=> root.min-x; input-type: decimal; edited => { root.page = 0; root.search(); } }
+                    LineEdit { text <=> root.min-y; input-type: decimal; edited => { root.page = 0; root.search(); } }
+                    LineEdit { text <=> root.min-z; input-type: decimal; edited => { root.page = 0; root.search(); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Maximum XYZ"; vertical-alignment: center; width: 120px; }
+                    LineEdit { text <=> root.max-x; input-type: decimal; edited => { root.page = 0; root.search(); } }
+                    LineEdit { text <=> root.max-y; input-type: decimal; edited => { root.page = 0; root.search(); } }
+                    LineEdit { text <=> root.max-z; input-type: decimal; edited => { root.page = 0; root.search(); } }
+                }
+            }
+            Text { text: root.summary; }
+            ListView {
+                for row in root.rows: VerticalLayout {
+                    spacing: 4px; padding-bottom: 12px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: row.label; horizontal-stretch: 1; vertical-alignment: center; }
+                        Button { text: "Select"; clicked => { root.select-result(row.id, false); } }
+                        Button { text: "Frame"; clicked => { root.select-result(row.id, true); } }
+                    }
+                    Text { text: row.detail; wrap: word-wrap; color: #aab0bb; font-size: 12px; }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.search(); } }
+                Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.search(); } }
+                ComboBox { model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle selection"]; current-index <=> root.selection-mode; }
+                Button { text: "Select all matches"; clicked => { root.select-all(false); } }
+                Button { text: "Frame all matches"; clicked => { root.select-all(true); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Hide selected"; clicked => { root.visibility-action("hide"); } }
+                Button { text: "Isolate selected"; clicked => { root.visibility-action("isolate"); } }
+                Button { text: "Show selected"; clicked => { root.visibility-action("show"); } }
+                Button { text: "Show all"; clicked => { root.visibility-action("show_all"); } }
+                Button { text: "Restore visibility"; clicked => { root.visibility-action("restore"); } }
+            }
+            Text { text: "Hidden objects are saved as hidden and omitted from compilation."; wrap: word-wrap; color: #aab0bb; }
+            Text { text: root.message; wrap: word-wrap; }
+            Button { text: "Close"; clicked => { root.cancel(); } }
+        }
+    }
+}
+
 export struct Activity {
     actor: string,
     text: string,
@@ -980,6 +1160,9 @@ export component AppWindow inherits Window {
     callback place-entity();
     callback edit-connections();
     callback edit-references();
+    callback world-settings();
+    callback batch-properties();
+    callback object-report();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -1440,6 +1623,12 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: "World settings…"; clicked => { root.world-settings(); } }
+                        Button { text: "Object report…"; clicked => { root.object-report(); } }
+                    }
+                    Button { text: "Edit selected entity properties…"; clicked => { root.batch-properties(); } }
                     if root.entity-selected: Button {
                         text: "Connections…";
                         clicked => { root.edit-connections(); }

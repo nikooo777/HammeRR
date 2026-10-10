@@ -28,6 +28,7 @@ and the shared entity inspector and activity panel.*
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Face materials | Individual face selection, UV offset/scale/rotation, texture fitting, cancellable previews, and a grouped material browser with thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
+| Entity logic | Connection creation, editing and deletion; target and input suggestions; incoming links; delay and firing rules; cancellable drafts and undo. |
 | Humans and agents | Shared map, selection, camera, previews and undo history. MCP edits appear live in the editor. |
 | Build and play | Native BSP compilation, leak detection and viewport paths, CS:S launch controls, and game logs. |
 
@@ -168,6 +169,33 @@ Select world brushes and use **Tie to entity…** to create a brush entity.
 agent edits. **Load FGD…** in the class picker loads other definitions;
 custom classes and unknown keys remain editable.
 
+### Entity connections
+
+Select a point or brush entity and open **Connections…**. **Outgoing** lists
+its outputs; **Incoming** shows map connections targeting it and lets you
+edit their source. Click **Add connection** or **Edit connection**, then
+choose an output, target and input. Suggestions use the map's named entities
+and inherited FGD definitions; custom names and I/O are also supported.
+
+Set the parameter, delay in seconds, and **Unlimited**, **Once** or a
+specific firing count. **Apply connection** creates one undo step. **Cancel**,
+Escape or closing the dialog discards unapplied fields. Deletion is undoable.
+MCP can inspect and change the same draft while the dialog is open.
+
+Missing targets, undeclared I/O and parameter type mismatches show warnings.
+Invalid encoding, negative delays and invalid counts prevent Apply. Map edits
+invalidate an open draft, so it cannot overwrite a shifted connection index.
+Incoming links resolve named targets, prefix wildcards and `!self`; other
+procedural targets resolve in game. Renaming an entity currently leaves its
+existing references unchanged.
+
+New connections use CS:S's comma-separated format, so their fields cannot
+contain commas, quotes or control characters. Imported escape-separated
+connections retain their delimiter; other imported records stay untouched
+until explicitly edited or deleted.
+
+![Entity connection form with readable fields, suggestions and Cancel](docs/images/entity-connections.png)
+
 ## MCP
 
 The GUI serves MCP at **`http://127.0.0.1:7377/mcp`**. Connect an agent with:
@@ -223,6 +251,7 @@ For example, place a warm light:
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
+| Entity connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `commit_face_preview`, `cancel_face_preview` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
@@ -249,6 +278,13 @@ can be inspected, applied or cancelled from the editor or MCP.
 override, plus `contained`/`intersecting` and selection rules. Use `preview:
 true` to inspect candidates before applying. Camera overrides leave the user's
 view unchanged; face mode returns stable solid/side IDs.
+
+`begin_connection_edit` starts an addition or edits an outgoing `index`.
+`update_connection_draft` accepts readable fields; `delay` and `times` are
+strings so unfinished values can be shared with the UI. Inspect feedback,
+then commit or cancel. Pass the draft's `token` to guard against another
+operation replacing the form. Starting an edit or deleting supports optional
+`generation` and `revision` guards from `get_entity_connections`.
 
 </details>
 
@@ -304,7 +340,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes I/O connections, more brush tools, displacement
+Editor work ahead includes safe reference renaming, more brush tools, displacement
 editing, model rendering and further texture alignment tools.
 
 ## Project layout

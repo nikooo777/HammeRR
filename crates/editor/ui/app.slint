@@ -5,6 +5,213 @@ export struct EntityClassRow {
     description: string,
 }
 
+export struct ConnectionRow {
+    source: string,
+    index: int,
+    label: string,
+    detail: string,
+    warning: string,
+}
+
+component ConnectionField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <[string]> suggestions;
+    in property <string> help;
+    in-out property <string> value;
+    callback changed();
+    spacing: 4px;
+    Text { text: root.label; font-weight: 600; }
+    HorizontalLayout {
+        spacing: 6px;
+        LineEdit {
+            horizontal-stretch: 1;
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+            accessible-label: root.label;
+            edited => { root.changed(); }
+        }
+        if root.suggestions.length > 1: ComboBox {
+            width: 170px;
+            model: root.suggestions;
+            current-index: 0;
+            accessible-label: root.label + " suggestions";
+            selected(value) => { if self.current-index > 0 { root.value = value; root.changed(); } }
+        }
+    }
+    if root.help != "": Text { text: root.help; wrap: word-wrap; font-size: 12px; }
+}
+
+export component ConnectionWindow inherits Window {
+    title: "Entity Connections - HammeRR";
+    preferred-width: 1040px;
+    preferred-height: 820px;
+    in-out property <string> source-id;
+    in property <string> source-label;
+    in property <string> generation;
+    in property <string> revision;
+    in property <string> draft-token;
+    in property <[ConnectionRow]> outgoing;
+    in property <[ConnectionRow]> incoming;
+    in property <bool> editing;
+    in property <bool> can-apply;
+    in property <string> message;
+    in property <string> warnings;
+    in property <[string]> outputs;
+    in property <[string]> targets;
+    in property <[string]> inputs;
+    in property <string> output-help;
+    in property <string> target-help;
+    in property <string> input-help;
+    in-out property <string> output;
+    in-out property <string> target;
+    in-out property <string> input;
+    in-out property <string> parameter;
+    in-out property <string> delay;
+    in-out property <string> times;
+    in-out property <string> target-filter;
+    in-out property <int> firing-mode;
+    in-out property <int> direction;
+    callback choose(source: string, index: int);
+    callback delete-connection(index: int);
+    callback add();
+    callback fields-changed();
+    callback filter-changed();
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            Text { text: root.source-label; font-size: 20px; font-weight: 600; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 18px;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    width: 450px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ComboBox { model: ["Outgoing", "Incoming"]; current-index <=> root.direction; }
+                        Button { text: "Add connection"; clicked => { root.add(); } }
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        for row in (root.direction == 0 ? root.outgoing : root.incoming): VerticalLayout {
+                            padding-bottom: 12px;
+                            spacing: 4px;
+                            Text { text: row.label; wrap: word-wrap; font-weight: 600; }
+                            Text { text: row.detail; wrap: word-wrap; font-size: 12px; }
+                            if row.warning != "": Text { text: row.warning; wrap: word-wrap; color: #d28b26; font-size: 12px; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Button {
+                                    text: root.direction == 0 ? "Edit connection" : "Edit source connection";
+                                    clicked => { root.choose(row.source, row.index); }
+                                }
+                                if root.direction == 0: Button {
+                                    text: "Delete connection";
+                                    clicked => { root.delete-connection(row.index); }
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.direction == 0 ? root.outgoing.length + " outgoing connections" : root.incoming.length + " incoming connections · choose one to edit its source";
+                        wrap: word-wrap;
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 10px;
+                    if !root.editing: Text { text: "Choose a connection to edit, or add a new one."; wrap: word-wrap; }
+                    if root.editing: VerticalLayout {
+                        spacing: 10px;
+                        ConnectionField {
+                            label: "When this output fires";
+                            value <=> root.output;
+                            suggestions: root.outputs;
+                            help: root.output-help;
+                            placeholder: "Output name";
+                            changed => { root.fields-changed(); }
+                        }
+                        LineEdit {
+                            text <=> root.target-filter;
+                            placeholder-text: "Search map targets by name, class or ID";
+                            input-type: search;
+                            edited => { root.filter-changed(); }
+                        }
+                        ConnectionField {
+                            label: "Send to";
+                            value <=> root.target;
+                            suggestions: root.targets;
+                            help: root.target-help;
+                            placeholder: "Target name, prefix* or !self";
+                            changed => { root.fields-changed(); }
+                        }
+                        ConnectionField {
+                            label: "Run this input";
+                            value <=> root.input;
+                            suggestions: root.inputs;
+                            help: root.input-help;
+                            placeholder: "Input name";
+                            changed => { root.fields-changed(); }
+                        }
+                        ConnectionField {
+                            label: "With parameter";
+                            value <=> root.parameter;
+                            placeholder: "Empty uses the output's value";
+                            changed => { root.fields-changed(); }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Delay (seconds)"; vertical-alignment: center; }
+                            LineEdit {
+                                text <=> root.delay;
+                                input-type: decimal;
+                                accessible-label: "Delay in seconds";
+                                edited => { root.fields-changed(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Fire"; vertical-alignment: center; }
+                            ComboBox {
+                                model: ["Unlimited", "Once", "Specific count"];
+                                current-index <=> root.firing-mode;
+                                selected => {
+                                    root.times = root.firing-mode == 0 ? "-1" : root.firing-mode == 1 ? "1" : "2";
+                                    root.fields-changed();
+                                }
+                            }
+                            if root.firing-mode == 2: LineEdit {
+                                text <=> root.times;
+                                input-type: number;
+                                accessible-label: "Firing count";
+                                edited => { root.fields-changed(); }
+                            }
+                        }
+                    }
+                    Text { text: root.message; wrap: word-wrap; color: root.can-apply ? #388348 : #c47622; }
+                    if root.warnings != "": TextEdit { text: root.warnings; read-only: true; wrap: word-wrap; vertical-stretch: 1; }
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Apply connection"; enabled: root.editing && root.can-apply; clicked => { root.apply(); } }
+            }
+        }
+    }
+}
+
 export component EntityWindow inherits Window {
     title: root.brush-mode ? "Brush Entity - HammeRR" : "Place Entity - HammeRR";
     preferred-width: 900px;
@@ -651,6 +858,7 @@ export component AppWindow inherits Window {
     callback property-removed(key: string);
     callback flag-toggled(key: string, flag: string, checked: bool);
     callback place-entity();
+    callback edit-connections();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -1109,6 +1317,11 @@ export component AppWindow inherits Window {
                             text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : "Scale selection";
                             clicked => { root.apply-transform(); }
                         }
+                    }
+
+                    if root.entity-selected: Button {
+                        text: "Connections…";
+                        clicked => { root.edit-connections(); }
                     }
 
                     if root.entity-selected: CheckBox {

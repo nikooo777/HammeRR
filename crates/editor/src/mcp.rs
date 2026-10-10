@@ -24,7 +24,7 @@ use source_formats::fgd::{Catalog, Class, ClassKind};
 use source_formats::vmf::{Entity, Solid};
 
 use crate::game;
-use crate::session::{Actor, SelectMode, Session};
+use crate::session::{Actor, ConnectionFields, ConnectionRecord, SelectMode, Session};
 
 pub type SharedSession = Arc<Mutex<Session>>;
 
@@ -89,6 +89,11 @@ or cancel_clip_preview. Keep front (arrow side), back, or both; displacements ca
 Discover entity classes with search_entity_classes and get_entity_class. create_entity \
 applies FGD defaults, including light brightness; set_entity_properties validates declared \
 types. Custom classes and keys remain supported. Placed lights are stored in the VMF; \
+get_entity_connections inspects outgoing and incoming links, parsed fields and warnings. \
+get_connection_choices provides map target names and FGD inputs/outputs. Begin a shared form \
+with begin_connection_edit, change fields with update_connection_draft, then commit_connection_edit \
+or cancel_connection_edit. delete_entity_connection removes one outgoing index. Use generation \
+and revision guards when starting an edit or deleting from a previously inspected list. \
 the current compiler still produces fullbright maps without baked lighting. \
 Compile with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
@@ -906,6 +911,73 @@ pub struct EntityArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConnectionArgs {
+    pub id: Option<String>,
+    /// Omit to add a connection; otherwise use the zero-based outgoing index.
+    pub index: Option<usize>,
+    /// Optional stale-map guard; supply both values from get_entity_connections.
+    pub generation: Option<u64>,
+    pub revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConnectionChoicesArgs {
+    pub id: Option<String>,
+    /// Target name, prefix wildcard or !self, to discover matching inputs.
+    pub target: Option<String>,
+    pub query: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConnectionFieldsArgs {
+    /// Optional identity guard from begin_connection_edit; rejects a replaced draft.
+    pub token: Option<u64>,
+    pub output: Option<String>,
+    pub target: Option<String>,
+    pub input: Option<String>,
+    /// Empty forwards the output value. Commas are unavailable in new CS:S connections.
+    pub parameter: Option<String>,
+    /// Seconds; strings allow unfinished numeric drafts shared with the UI.
+    pub delay: Option<String>,
+    /// -1 for unlimited, 1 for once, or a positive firing count.
+    pub times: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConnectionDraftArgs {
+    /// Optional identity guard from begin_connection_edit.
+    pub token: Option<u64>,
+}
+
+fn connection_json(record: ConnectionRecord) -> Value {
+    json!({"source": id_string(ObjectId::Entity(record.source)), "index": record.index,
+        "output": record.raw.output, "raw": record.raw.value,
+        "fields": record.spec.map(|spec| json!({"output":spec.output,"target":spec.target,"input":spec.input,"parameter":spec.parameter,"delay":spec.delay,"times":spec.times})),
+        "targets": record.targets.into_iter().map(|id| id_string(ObjectId::Entity(id))).collect::<Vec<_>>(), "warnings":record.warnings})
+}
+
+fn connection_draft_json(session: &Session) -> Value {
+    let (error, warnings) = session.connection_draft_feedback();
+    session.connection_draft().map_or(Value::Null, |draft| {
+        json!({
+            "source": id_string(ObjectId::Entity(draft.source)), "index":draft.index,"token":draft.token,
+            "fields":draft.fields,"generation":draft.generation,"revision":draft.revision,
+            "error":error,"warnings":warnings
+        })
+    })
+}
+
+fn connection_guard(session: &Session, args: &ConnectionArgs) -> Result<(), String> {
+    match (args.generation, args.revision) {
+        (Some(generation), Some(revision)) => {
+            session.check_connection_snapshot(generation, revision)
+        }
+        (None, None) => Ok(()),
+        _ => Err("Supply both generation and revision for the stale-map guard".into()),
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct StepsArgs {
     /// How many steps (default 1).
     pub steps: Option<usize>,
@@ -1257,6 +1329,7 @@ impl EditorServer {
             "clipping": clip_state(&session),
             "transform": transform_state(&session),
             "area_selection": area_state(&session),
+            "connection_draft": connection_draft_json(&session),
             "face_selection": face_state(&session),
             "world_brushes": vmf.world.solids.len(),
             "point_entities": point_entities,
@@ -1603,6 +1676,146 @@ impl EditorServer {
                         args.classname
                     )
                 })
+        })
+    }
+
+    #[tool(
+        description = "Inspect an entity's outgoing and incoming I/O connections, matching targets and validation warnings. Connection indices are zero-based; use generation/revision to guard edits.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_entity_connections(&self, Parameters(args): Parameters<EntityArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let source = single_entity(&session, args.id.as_deref())?;
+            Ok(
+                json!({"source":id_string(ObjectId::Entity(source)), "generation":session.document_generation(), "revision":session.document().revision(),
+                "outgoing":session.connection_records(source)?.into_iter().map(connection_json).collect::<Vec<_>>(),
+                "incoming":session.incoming_connections(source)?.into_iter().map(connection_json).collect::<Vec<_>>(),
+                "draft":connection_draft_json(&session)}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Browse named map targets and procedural targets, source FGD outputs and the matching target classes' inputs. Suggestions are optional: custom names and I/O remain supported.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_connection_choices(
+        &self,
+        Parameters(args): Parameters<ConnectionChoicesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let source = single_entity(&session, args.id.as_deref())?;
+            let io_json = |io: source_formats::fgd::Io| json!({"name":io.name,"type":io.kind,"description":io.description});
+            Ok(
+                json!({"outputs":session.connection_outputs(source).into_iter().map(io_json).collect::<Vec<_>>(),
+                "inputs":session.connection_inputs(source, args.target.as_deref().unwrap_or_default()).into_iter().map(io_json).collect::<Vec<_>>(),
+                "targets":session.connection_targets(args.query.as_deref().unwrap_or_default()).into_iter().map(|(name,description)| json!({"name":name,"description":description})).collect::<Vec<_>>() }),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Begin a shared, cancellable entity I/O form. Omit index to add; supply an outgoing index to edit. Leaves the map and undo history unchanged."
+    )]
+    fn begin_connection_edit(&self, Parameters(args): Parameters<ConnectionArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            connection_guard(&session, &args)?;
+            let source = single_entity(&session, args.id.as_deref())?;
+            session.begin_connection_edit(source, args.index)?;
+            Ok(connection_draft_json(&session))
+        })
+    }
+
+    #[tool(
+        description = "Change fields in the shared connection draft. Unfinished or invalid values return feedback without editing the map. Delay and firing count are strings; -1 is unlimited."
+    )]
+    fn update_connection_draft(
+        &self,
+        Parameters(args): Parameters<ConnectionFieldsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            if let Some(token) = args.token {
+                session.check_connection_draft(token)?;
+            }
+            let fields = &session
+                .connection_draft()
+                .ok_or("Begin a connection edit first")?
+                .fields;
+            let fields = ConnectionFields {
+                output: args.output.unwrap_or_else(|| fields.output.clone()),
+                target: args.target.unwrap_or_else(|| fields.target.clone()),
+                input: args.input.unwrap_or_else(|| fields.input.clone()),
+                parameter: args.parameter.unwrap_or_else(|| fields.parameter.clone()),
+                delay: args.delay.unwrap_or_else(|| fields.delay.clone()),
+                times: args.times.unwrap_or_else(|| fields.times.clone()),
+            };
+            session.update_connection_draft(fields)?;
+            Ok(connection_draft_json(&session))
+        })
+    }
+
+    #[tool(
+        description = "Apply the shared I/O draft in one undo step. Rejects invalid fields and drafts made stale by map edits; unresolved/custom I/O generates warnings, not rejection."
+    )]
+    fn commit_connection_edit(
+        &self,
+        Parameters(args): Parameters<ConnectionDraftArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            if let Some(token) = args.token {
+                session.check_connection_draft(token)?;
+            }
+            let source = session
+                .connection_draft()
+                .ok_or("Begin a connection edit first")?
+                .source;
+            let index = session.commit_connection_edit(Actor::Agent)?;
+            Ok(connection_json(
+                session
+                    .connection_records(source)?
+                    .into_iter()
+                    .nth(index)
+                    .ok_or("Connection no longer exists")?,
+            ))
+        })
+    }
+
+    #[tool(
+        description = "Discard the shared connection draft without changing the map or undo history."
+    )]
+    fn cancel_connection_edit(
+        &self,
+        Parameters(args): Parameters<ConnectionDraftArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            if let Some(token) = args.token {
+                session.check_connection_draft(token)?;
+            }
+            session.cancel_connection_edit();
+            Ok(json!({"cancelled":true}))
+        })
+    }
+
+    #[tool(
+        description = "Delete one outgoing entity connection by index in one undo step. Supply generation/revision from the inspected list to reject stale indices.",
+        annotations(destructive_hint = true)
+    )]
+    fn delete_entity_connection(&self, Parameters(args): Parameters<ConnectionArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            connection_guard(&session, &args)?;
+            let source = single_entity(&session, args.id.as_deref())?;
+            let index = args
+                .index
+                .ok_or("Choose the outgoing connection index to delete")?;
+            session.delete_entity_connection(Actor::Agent, source, index)?;
+            Ok(json!({"deleted":index,"source":id_string(ObjectId::Entity(source))}))
         })
     }
 

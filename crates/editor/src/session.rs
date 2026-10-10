@@ -22,6 +22,8 @@ use crate::spatial;
 
 mod clipping;
 pub use clipping::ClipPreview;
+mod connections;
+pub use connections::{ConnectionDraft, ConnectionFields, ConnectionRecord};
 mod manipulation;
 pub use manipulation::{AreaPreview, Pointer, TransformDrag, TransformPreview, TransformTool};
 
@@ -97,6 +99,8 @@ pub struct Session {
     transform_preview: Option<TransformPreview>,
     transform_drag: Option<TransformDrag>,
     area_preview: Option<AreaPreview>,
+    connection_draft: Option<ConnectionDraft>,
+    connection_serial: u64,
     area_rule: map_core::region::Match,
     area_mode: SelectMode,
     interaction_epoch: u64,
@@ -200,6 +204,8 @@ impl Session {
             transform_preview: None,
             transform_drag: None,
             area_preview: None,
+            connection_draft: None,
+            connection_serial: 0,
             area_rule: map_core::region::Match::Intersecting,
             area_mode: SelectMode::Replace,
             interaction_epoch: 0,
@@ -917,6 +923,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.cancel_connection_edit();
         self.camera = Camera::from_vmf(document.vmf()).unwrap_or_else(|| {
             let bounds = query::union(
                 document

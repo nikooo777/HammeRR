@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bytemuck = { version = "1.25.2", features = ["derive"] }
+bytemuck.workspace = true
 glam.workspace = true
 map-core.workspace = true
 pollster = "1.0.1"

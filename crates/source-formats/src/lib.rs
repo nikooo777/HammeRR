@@ -1,5 +1,6 @@
 //! Readers and writers for Source engine file formats.
 
+pub mod bsp;
 pub mod gamefs;
 pub mod keyvalues;
 pub mod vmf;

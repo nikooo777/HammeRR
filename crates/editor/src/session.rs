@@ -20,6 +20,9 @@ use crate::game;
 use crate::inspector;
 use crate::spatial;
 
+mod clipping;
+pub use clipping::ClipPreview;
+
 const LOG_LENGTH: usize = 50;
 
 struct FacePreview {
@@ -85,6 +88,9 @@ pub struct Session {
     face_selection: BTreeSet<FaceId>,
     face_mode: bool,
     face_preview: Option<FacePreview>,
+    clip_preview: Option<ClipPreview>,
+    clip_tool: bool,
+    clip_epoch: u64,
     material_index: Option<Vec<String>>,
     material_favorites: BTreeSet<String>,
     material_recent: VecDeque<String>,
@@ -178,6 +184,9 @@ impl Session {
             face_selection: BTreeSet::new(),
             face_mode: false,
             face_preview: None,
+            clip_preview: None,
+            clip_tool: false,
+            clip_epoch: 0,
             material_index: None,
             material_favorites: BTreeSet::new(),
             material_recent: VecDeque::new(),
@@ -348,6 +357,10 @@ impl Session {
     pub fn set_face_mode(&mut self, enabled: bool) {
         if self.face_mode != enabled {
             self.face_mode = enabled;
+            if enabled && self.clip_tool {
+                self.clip_tool = false;
+                self.view_serial += 1;
+            }
             if enabled && self.spatial.draw_block {
                 self.spatial.draw_block = false;
                 self.view_serial += 1;
@@ -383,6 +396,10 @@ impl Session {
         }
         if next != self.face_selection || !self.face_mode || !self.selection.is_empty() {
             self.face_mode = true;
+            if self.clip_tool {
+                self.clip_tool = false;
+                self.view_serial += 1;
+            }
             if self.spatial.draw_block {
                 self.spatial.draw_block = false;
                 self.view_serial += 1;
@@ -475,6 +492,9 @@ impl Session {
                     })
                 })
                 .map_err(|error| error.to_string())?;
+            self.cancel_clip_preview();
+            self.clip_tool = false;
+            self.view_serial += 1;
             self.face_preview = Some(FacePreview { document, edits });
             self.scene_serial += 1;
             Ok(changed)
@@ -857,6 +877,11 @@ impl Session {
     fn changed(&mut self) {
         self.cancel_block_preview();
         self.cancel_face_preview();
+        self.cancel_clip_preview();
+        if self.clip_tool && !self.can_clip_selection() {
+            self.clip_tool = false;
+            self.view_serial += 1;
+        }
         self.scene_serial += 1;
     }
 
@@ -1027,6 +1052,7 @@ impl Session {
         self.saved_cameras[self.camera.projection.index()] = Some(self.camera);
         self.camera = camera;
         self.cancel_block_preview();
+        self.clip_epoch += 1;
         self.camera_serial += 1;
     }
 
@@ -1043,6 +1069,11 @@ impl Session {
             block_preview: self
                 .block_preview
                 .map(|(mins, maxs)| [mins.as_vec3(), maxs.as_vec3()]),
+            clip_preview: self.clip_preview.as_ref().map(|preview| render::ClipGuide {
+                normal: preview.plane.normal.as_vec3(),
+                distance: preview.plane.dist as f32,
+                bounds: preview.bounds.map(|point| point.as_vec3()),
+            }),
             ..self.view
         }
     }
@@ -1139,12 +1170,14 @@ impl Session {
         }
         self.spatial = settings;
         if settings.draw_block {
+            self.clip_tool = false;
             self.set_face_mode(false);
         }
         if settings.draw_block && self.camera.projection == Projection::Perspective {
             self.set_projection(actor, Projection::Top);
         }
         self.cancel_block_preview();
+        self.cancel_clip_preview();
         self.view_serial += 1;
         self.log(
             actor,
@@ -1493,10 +1526,16 @@ impl Session {
     /// The nearest visible object along a ray. Brushes made only of tool
     /// materials can't be picked while tool textures are hidden.
     pub fn pick(&mut self, ray: &Ray) -> Option<Hit> {
+        let document = self
+            .clip_preview
+            .as_ref()
+            .map(|preview| &preview.document)
+            .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
+            .unwrap_or(&self.document);
         let mut hidden = HashSet::new();
         if !self.view.tool_textures {
             let (materials, game) = (&mut self.materials, &self.game);
-            for solid in self.document.vmf().solids() {
+            for solid in document.vmf().solids() {
                 let all_tools = solid.sides.iter().all(|side| {
                     let id = materials.load(game, &side.material);
                     materials.get(id).tool
@@ -1507,18 +1546,34 @@ impl Session {
             }
         }
         if self.face_mode {
-            query::pick_face(&self.document, ray, |s| !hidden.contains(&s.id))
+            query::pick_face(document, ray, |s| !hidden.contains(&s.id))
         } else {
-            query::pick(&self.document, ray, |s| !hidden.contains(&s.id))
+            query::pick(document, ray, |s| !hidden.contains(&s.id))
         }
     }
 
+    pub fn render_document(&self) -> &Document {
+        self.clip_preview
+            .as_ref()
+            .map(|preview| &preview.document)
+            .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
+            .unwrap_or(&self.document)
+    }
+
     pub fn build_scene(&mut self) -> SceneMesh {
-        let selected: HashSet<ObjectId> = self.selection.iter().copied().collect();
+        let selected: HashSet<ObjectId> = self.clip_preview.as_ref().map_or_else(
+            || self.selection.iter().copied().collect(),
+            |preview| preview.result.objects.iter().copied().collect(),
+        );
         let mut mesh = SceneMesh::build_with_faces(
-            self.face_preview
+            self.clip_preview
                 .as_ref()
-                .map_or(self.document.vmf(), |preview| preview.document.vmf()),
+                .map(|preview| preview.document.vmf())
+                .unwrap_or_else(|| {
+                    self.face_preview
+                        .as_ref()
+                        .map_or(self.document.vmf(), |preview| preview.document.vmf())
+                }),
             &self.game,
             &mut self.materials,
             &selected,

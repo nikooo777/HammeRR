@@ -76,6 +76,9 @@ select_faces switches to shared face selection; edit_faces changes material, UVs
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
 provides grouped catalog metadata; set_material_favorite shares browser favorites. \
+clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
+Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview \
+or cancel_clip_preview. Keep front (arrow side), back, or both; displacements cannot be clipped. \
 Discover entity classes with search_entity_classes and get_entity_class. create_entity \
 applies FGD defaults, including light brightness; set_entity_properties validates declared \
 types. Custom classes and keys remain supported. Placed lights are stored in the VMF; \
@@ -658,6 +661,86 @@ pub struct SetMaterialArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ClipLine {
+    pub projection: String,
+    pub start: [f64; 2],
+    pub end: [f64; 2],
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ClipPlane {
+    pub normal: Option<[f64; 3]>,
+    pub distance: Option<f64>,
+    /// Three points in VMF winding: (p0-p1) cross (p2-p1) points toward front.
+    pub points: Option<[[f64; 3]; 3]>,
+    /// A planar cut gesture using the shared grid, snapping and workplane.
+    pub line: Option<ClipLine>,
+}
+
+impl ClipPlane {
+    fn resolve(self, session: &Session) -> Result<Plane, String> {
+        match (self.normal, self.distance, self.points, self.line) {
+            (Some(normal), Some(dist), None, None) => map_core::clip::normalized_plane(Plane {
+                normal: vec3(normal),
+                dist,
+            })
+            .map_err(|error| error.to_string()),
+            (None, None, Some(points), None) => {
+                let points = points.map(vec3);
+                if points.iter().any(|point| !point.is_finite()) {
+                    return Err("Cut points must be finite".into());
+                }
+                let plane = Plane::from_points(points).ok_or("Cut points must not be collinear")?;
+                map_core::clip::normalized_plane(plane).map_err(|error| error.to_string())
+            }
+            (None, None, None, Some(line)) => session.clip_line_plane(
+                Projection::parse(&line.projection)
+                    .ok_or("projection must be top, front or side")?,
+                glam::DVec2::from_array(line.start),
+                glam::DVec2::from_array(line.end),
+            ),
+            _ => Err(
+                "Provide exactly one cut plane: normal + distance, three points, or a planar line"
+                    .into(),
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ClipArgs {
+    pub ids: Option<Vec<String>>,
+    pub plane: ClipPlane,
+    /// front is the arrow/positive-normal side, back the opposite; defaults to both.
+    pub keep: Option<String>,
+    /// New cap material; omitted inherits each source brush's first material.
+    pub material: Option<String>,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ClipToolArgs {
+    pub enabled: bool,
+}
+
+fn clip_result(result: &map_core::clip::ClipResult) -> Value {
+    json!({"cuts": result.cuts.iter().map(|cut| json!({"source": cut.source, "solids": cut.solids})).collect::<Vec<_>>(), "objects": result.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "unchanged": result.unchanged})
+}
+
+fn clip_state(session: &Session) -> Value {
+    json!({"enabled": session.clip_tool(), "preview": session.clip_preview().map(|preview| json!({
+        "plane": {"normal": preview.plane.normal.to_array(), "distance": preview.plane.dist},
+        "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
+        "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
+        "result": clip_result(&preview.result),
+        "pieces": preview.result.cuts.iter().flat_map(|cut| &cut.solids)
+            .filter_map(|id| map_core::surface::solid(&preview.document, *id))
+            .map(solid_detail).collect::<Vec<_>>()
+    }))})
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TieArgs {
     /// World brushes ('solid:<n>'); defaults to the selection.
     pub ids: Option<Vec<String>>,
@@ -1021,6 +1104,7 @@ impl EditorServer {
             "view": {"tool_textures": session.view().tool_textures, "leak_path": session.view().leak_path},
             "spatial": session.spatial(),
             "block_preview": bounds_json(session.block_preview()),
+            "clipping": clip_state(&session),
             "face_selection": face_state(&session),
             "world_brushes": vmf.world.solids.len(),
             "point_entities": point_entities,
@@ -1578,6 +1662,71 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Enable or leave the shared human clipping tool. Enabling needs selected brushes, leaves drawing mode and selects Top when in perspective. Disabling cancels the cut without an edit."
+    )]
+    fn set_clip_tool(&self, Parameters(args): Parameters<ClipToolArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.set_clip_tool(Actor::Agent, args.enabled)?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Clip selected world brushes or brush entities by normal/distance, three VMF-wound points, or a snapped planar line. Keep front (positive-normal arrow side), back or both. Non-crossing brushes stay unchanged; point entities and intersected displacements are rejected atomically. Existing UVs/metadata survive; caps use material or inherit the first source material. preview=true leaves document and undo untouched; inspect with get_clip_preview and render_view, then commit or cancel."
+    )]
+    fn clip_brushes(&self, Parameters(args): Parameters<ClipArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let plane = args.plane.resolve(&session)?;
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let keep = match args.keep.as_deref().unwrap_or("both") {
+                "front" => map_core::clip::Keep::Front,
+                "back" => map_core::clip::Keep::Back,
+                "both" => map_core::clip::Keep::Both,
+                _ => return Err("keep must be front, back or both".into()),
+            };
+            let result = session.clip_brushes(
+                Actor::Agent,
+                &ids,
+                plane,
+                keep,
+                args.material,
+                args.preview,
+            )?;
+            Ok(json!({"result": clip_result(&result), "state": clip_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared clipping tool and cut preview, including normalized plane, keep side, material, result IDs, piece bounds and face projections.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_clip_preview(&self) -> ToolResult {
+        ok(clip_state(&self.session()))
+    }
+
+    #[tool(
+        description = "Apply the current shared cut preview in one undo step. Rejects cancelled or invalidated previews; selects the resulting objects and leaves clipping mode."
+    )]
+    fn commit_clip_preview(&self) -> ToolResult {
+        run(|| {
+            self.session()
+                .commit_clip_preview(Actor::Agent)
+                .map(|result| clip_result(&result))
+        })
+    }
+
+    #[tool(
+        description = "Discard the shared cut preview without changing map or undo history. Invalidates an active human cut gesture; clipping mode remains available for another cut."
+    )]
+    fn cancel_clip_preview(&self) -> ToolResult {
+        let mut session = self.session();
+        session.cancel_clip_preview();
+        ok(clip_state(&session))
+    }
+
+    #[tool(
         description = "Browse the same grouped material catalog as the GUI. Groups include all, used, recent, favorites, folder:<path> and category:<label>. Categories are inferred from path names. Returns group counts after search, paged entries and favorite/used flags. preview_material supplies the matching thumbnail.",
         annotations(read_only_hint = true)
     )]
@@ -1768,7 +1917,8 @@ impl EditorServer {
             "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
-                "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())) } });
+                "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),
+                "clip_preview": view.clip_preview.map(|guide| json!({"normal": guide.normal.to_array(), "distance": guide.distance, "bounds": guide.bounds.map(|point| point.to_array())})) } });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),
@@ -1796,7 +1946,7 @@ impl EditorServer {
             };
             let hit = session.pick(&ray);
             Ok(hit.map_or(json!({ "hit": null }), |hit| {
-                hit_json(session.document(), &hit)
+                hit_json(session.render_document(), &hit)
             }))
         })
     }
@@ -1817,7 +1967,7 @@ impl EditorServer {
             };
             let hit = session.pick(&ray);
             Ok(hit.map_or(json!({ "hit": null }), |hit| {
-                hit_json(session.document(), &hit)
+                hit_json(session.render_document(), &hit)
             }))
         })
     }
@@ -1959,6 +2109,44 @@ mod tests {
             .resolve(&session, 1.0)
             .is_err()
         );
+    }
+
+    #[test]
+    fn clipping_plane_inputs_agree_and_reject_ambiguous_definitions() {
+        let session = Session::new(Err("no assets needed".into()));
+        let spec: ClipPlane =
+            serde_json::from_value(json!({"normal": [3, 4, 5], "distance": 7})).unwrap();
+        let plane = spec.resolve(&session).unwrap();
+        let points = map_core::clip::plane_points(plane).map(|point| point.to_array());
+        let spec: ClipPlane = serde_json::from_value(json!({"points": points})).unwrap();
+        let actual = spec.resolve(&session).unwrap();
+        assert!(actual.normal.abs_diff_eq(plane.normal, 1e-12));
+        assert!((actual.dist - plane.dist).abs() < 1e-12);
+        for projection in ["top", "front", "side"] {
+            let spec: ClipPlane = serde_json::from_value(
+                json!({"line": {"projection": projection, "start": [0, -32], "end": [0, 32]}}),
+            )
+            .unwrap();
+            let actual = spec.resolve(&session).unwrap();
+            let expected = session
+                .clip_line_plane(
+                    Projection::parse(projection).unwrap(),
+                    glam::DVec2::new(0.0, -32.0),
+                    glam::DVec2::new(0.0, 32.0),
+                )
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+        for value in [
+            json!({}),
+            json!({"normal": [1, 0, 0]}),
+            json!({"normal": [1, 0, 0], "distance": 0, "points": points}),
+            json!({"points": [[0, 0, 0], [1, 1, 1], [2, 2, 2]]}),
+            json!({"line": {"projection": "perspective", "start": [0, 0], "end": [32, 32]}}),
+        ] {
+            let spec: ClipPlane = serde_json::from_value(value).unwrap();
+            assert!(spec.resolve(&session).is_err());
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Editor-independent map model.
 
 pub mod brush;
+pub mod clip;
 pub mod displacement;
 pub mod document;
 pub mod edit;

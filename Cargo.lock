@@ -810,6 +810,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "compiler"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "map-core",
+ "source-formats",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4601,6 +4611,7 @@ dependencies = [
 name = "source-formats"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "crc32fast",
  "glam",
  "png",

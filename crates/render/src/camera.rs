@@ -51,8 +51,15 @@ impl Camera {
     }
 
     pub fn forward(&self) -> Vec3 {
-        let (yaw, pitch) = (self.yaw_degrees.to_radians(), self.pitch_degrees.to_radians());
-        Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin())
+        let (yaw, pitch) = (
+            self.yaw_degrees.to_radians(),
+            self.pitch_degrees.to_radians(),
+        );
+        Vec3::new(
+            pitch.cos() * yaw.cos(),
+            pitch.cos() * yaw.sin(),
+            pitch.sin(),
+        )
     }
 
     pub fn right(&self) -> Vec3 {
@@ -65,9 +72,35 @@ impl Camera {
         use glam::camera::rh::{proj::directx, view};
         let view = view::look_at_mat4(self.position, self.position + self.forward(), Vec3::Z);
         // wgpu clip space is Y-up with depth in [0, 1], glam's DirectX convention.
-        let proj =
-            directx::perspective_infinite_reverse(self.fov_y_degrees.to_radians(), aspect, Self::NEAR);
+        let proj = directx::perspective_infinite_reverse(
+            self.fov_y_degrees.to_radians(),
+            aspect,
+            Self::NEAR,
+        );
         proj * view
+    }
+
+    /// Frames a bounding box from `direction` (pointing from the camera
+    /// toward the box) so all of it fits in view.
+    pub fn framing(mins: Vec3, maxs: Vec3, direction: Vec3, fov_y_degrees: f32) -> Self {
+        let center = (mins + maxs) * 0.5;
+        let radius = ((maxs - mins).length() * 0.5).max(16.0);
+        let distance = radius / (fov_y_degrees.to_radians() * 0.5).sin();
+        let mut camera =
+            Self::looking_at(center - direction.normalize_or(Vec3::X) * distance, center);
+        camera.fov_y_degrees = fov_y_degrees;
+        camera
+    }
+
+    /// World-space ray through a viewport point given in normalized device
+    /// coordinates (`-1..1`, +y up).
+    pub fn ray(&self, ndc_x: f32, ndc_y: f32, aspect: f32) -> (Vec3, Vec3) {
+        let forward = self.forward();
+        let right = self.right();
+        let up = right.cross(forward);
+        let half = (self.fov_y_degrees.to_radians() * 0.5).tan();
+        let dir = forward + right * (ndc_x * half * aspect) + up * (ndc_y * half);
+        (self.position, dir.normalize())
     }
 
     /// Moves relative to the view: `amount.x` forward, `.y` right, `.z` up.
@@ -104,5 +137,15 @@ mod tests {
         assert!(up.y > 0.0, "+Z is up on screen");
         let left = vp.project_point3(Vec3::new(100.0, 10.0, 0.0));
         assert!(left.x < 0.0, "+Y is to the left when looking down +X");
+    }
+
+    #[test]
+    fn rays_unproject_through_the_matching_screen_point() {
+        let cam = Camera::looking_at(Vec3::new(10.0, -20.0, 30.0), Vec3::new(200.0, 50.0, 0.0));
+        let aspect = 16.0 / 9.0;
+        let vp = cam.view_projection(aspect);
+        let (origin, dir) = cam.ray(0.3, -0.4, aspect);
+        let projected = vp.project_point3(origin + dir * 500.0);
+        assert!((projected.x - 0.3).abs() < 1e-4 && (projected.y + 0.4).abs() < 1e-4);
     }
 }

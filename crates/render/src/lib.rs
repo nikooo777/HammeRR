@@ -7,5 +7,6 @@ pub mod scene;
 
 pub use camera::Camera;
 pub use gpu::{COLOR_FORMAT, GpuContext, GpuScene, RenderTarget, Renderer, ViewOptions};
+pub use materials::{MaterialId, MaterialLibrary};
 pub use scene::SceneMesh;
 pub use wgpu;

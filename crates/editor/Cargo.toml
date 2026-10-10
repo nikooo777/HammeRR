@@ -6,12 +6,20 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+axum = "0.8.9"
+base64 = "0.23.1"
 glam.workspace = true
 map-core.workspace = true
+png = "0.18.1"
 render.workspace = true
 rfd = "0.17.2"
+rmcp = { version = "3.5.1", features = ["server", "macros", "schemars", "transport-io", "transport-streamable-http-server"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
 source-formats.workspace = true
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "sync", "io-std"] }
 
 [build-dependencies]
 slint-build = "1.18"

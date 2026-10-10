@@ -139,6 +139,17 @@ impl DisplacementMesh {
         let n = self.size;
         (0..n).flat_map(move |i| [i, (n - 1) * n + i, i * n, i * n + n - 1])
     }
+
+    /// The border vertices in order around the grid, without repeating the
+    /// first.
+    pub fn outline(&self) -> Vec<usize> {
+        let n = self.size;
+        let top = 0..n;
+        let right = (1..n).map(|r| r * n + n - 1);
+        let bottom = (0..n - 1).rev().map(|c| (n - 1) * n + c);
+        let left = (1..n - 1).rev().map(|r| r * n);
+        top.chain(right).chain(bottom).chain(left).collect()
+    }
 }
 
 #[cfg(test)]

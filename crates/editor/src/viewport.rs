@@ -4,7 +4,9 @@
 use std::collections::HashSet;
 
 use glam::Vec3;
-use render::{Camera, GpuContext, GpuScene, RenderTarget, Renderer, SceneMesh, ViewOptions};
+use render::{
+    Camera, GpuContext, GpuScene, MaterialLibrary, RenderTarget, Renderer, SceneMesh, ViewOptions,
+};
 use slint::SharedString;
 use slint::platform::Key;
 
@@ -12,6 +14,15 @@ const LOOK_DEGREES_PER_PIXEL: f32 = 0.2;
 const DEFAULT_SPEED: f32 = 600.0;
 const FAST_MULTIPLIER: f32 = 4.0;
 const DOLLY_UNITS_PER_PIXEL: f32 = 2.0;
+/// A left press and release closer than this (logical pixels) is a click.
+const CLICK_SLOP: f32 = 4.0;
+
+/// A left click in the viewport, in normalized device coordinates.
+pub struct Click {
+    pub ndc: (f32, f32),
+    pub aspect: f32,
+    pub control: bool,
+}
 
 pub struct Viewport {
     renderer: Renderer,
@@ -25,30 +36,31 @@ pub struct Viewport {
     held: HashSet<String>,
     looking: bool,
     last_mouse: Option<(f32, f32)>,
+    left_press: Option<(f32, f32)>,
     pub speed: f32,
     dirty: bool,
 }
 
 impl Viewport {
-    pub fn new(ctx: &GpuContext) -> Self {
+    pub fn new(ctx: &GpuContext, camera: Camera) -> Self {
         Self {
             renderer: Renderer::new(ctx),
             scene: None,
-            camera: Camera::looking_at(Vec3::new(-512.0, -512.0, 512.0), Vec3::ZERO),
+            camera,
             options: ViewOptions::default(),
             targets: [None, None],
             next_target: 0,
             held: HashSet::new(),
             looking: false,
             last_mouse: None,
+            left_press: None,
             speed: DEFAULT_SPEED,
             dirty: true,
         }
     }
 
-    pub fn set_scene(&mut self, ctx: &GpuContext, mesh: &SceneMesh, camera: Camera) {
-        self.scene = Some(self.renderer.upload(ctx, mesh));
-        self.camera = camera;
+    pub fn set_scene(&mut self, ctx: &GpuContext, mesh: &SceneMesh, library: &MaterialLibrary) {
+        self.scene = Some(self.renderer.upload(ctx, mesh, library));
         self.dirty = true;
     }
 
@@ -62,8 +74,9 @@ impl Viewport {
 
     /// Returns whether the key is a camera control.
     pub fn key(&mut self, text: &str, down: bool) -> bool {
-        let key = normalize_key(text);
-        let handled = matches!(key.as_str(), "w" | "a" | "s" | "d" | "q" | "e") || key == shift();
+        let key = text.to_lowercase();
+        let handled = matches!(key.as_str(), "w" | "a" | "s" | "d" | "q" | "e")
+            || key == key_text(Key::Shift);
         if handled {
             if down {
                 self.held.insert(key);
@@ -74,10 +87,38 @@ impl Viewport {
         handled
     }
 
-    pub fn mouse_button(&mut self, button: i32, down: bool, x: f32, y: f32) {
-        if button == 1 {
-            self.looking = down;
-            self.last_mouse = down.then_some((x, y));
+    /// Returns a click when the left button is released close to where it
+    /// was pressed.
+    pub fn mouse_button(
+        &mut self,
+        button: i32,
+        down: bool,
+        (x, y): (f32, f32),
+        viewport: (f32, f32),
+        control: bool,
+    ) -> Option<Click> {
+        match (button, down) {
+            (1, _) => {
+                self.looking = down;
+                self.last_mouse = down.then_some((x, y));
+                None
+            }
+            (0, true) => {
+                self.left_press = Some((x, y));
+                None
+            }
+            (0, false) => {
+                let (px, py) = self.left_press.take()?;
+                if (x - px).hypot(y - py) > CLICK_SLOP || viewport.0 <= 0.0 || viewport.1 <= 0.0 {
+                    return None;
+                }
+                Some(Click {
+                    ndc: (2.0 * x / viewport.0 - 1.0, 1.0 - 2.0 * y / viewport.1),
+                    aspect: viewport.0 / viewport.1,
+                    control,
+                })
+            }
+            _ => None,
         }
     }
 
@@ -101,7 +142,8 @@ impl Viewport {
         if self.looking {
             self.speed = (self.speed * 2f32.powf(delta / 240.0)).clamp(25.0, 20_000.0);
         } else {
-            self.camera.fly(Vec3::new(delta * DOLLY_UNITS_PER_PIXEL, 0.0, 0.0));
+            self.camera
+                .fly(Vec3::new(delta * DOLLY_UNITS_PER_PIXEL, 0.0, 0.0));
         }
         self.dirty = true;
     }
@@ -112,20 +154,28 @@ impl Viewport {
         self.held.clear();
         self.looking = false;
         self.last_mouse = None;
+        self.left_press = None;
     }
 
-    /// Advances the camera by `dt` seconds of held movement keys.
-    pub fn update(&mut self, dt: f32) {
+    /// Advances the camera by `dt` seconds of held movement keys. Returns
+    /// whether it moved.
+    pub fn update(&mut self, dt: f32) -> bool {
         let axis = |pos: &str, neg: &str| {
-            f32::from(u8::from(self.held.contains(pos))) - f32::from(u8::from(self.held.contains(neg)))
+            f32::from(u8::from(self.held.contains(pos)))
+                - f32::from(u8::from(self.held.contains(neg)))
         };
         let dir = Vec3::new(axis("w", "s"), axis("d", "a"), axis("e", "q"));
         if dir == Vec3::ZERO {
-            return;
+            return false;
         }
-        let fast = if self.held.contains(&shift()) { FAST_MULTIPLIER } else { 1.0 };
+        let fast = if self.held.contains(&key_text(Key::Shift)) {
+            FAST_MULTIPLIER
+        } else {
+            1.0
+        };
         self.camera.fly(dir.normalize() * self.speed * fast * dt);
         self.dirty = true;
+        true
     }
 
     /// Renders a new frame if anything changed, at `size` physical pixels.
@@ -151,10 +201,6 @@ impl Viewport {
     }
 }
 
-fn shift() -> String {
-    SharedString::from(Key::Shift).to_string()
-}
-
-fn normalize_key(text: &str) -> String {
-    text.to_lowercase()
+pub fn key_text(key: Key) -> String {
+    SharedString::from(key).to_string()
 }

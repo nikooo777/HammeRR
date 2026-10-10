@@ -1,5 +1,7 @@
 //! CPU-side material loading: VMT parameters plus the textures to display.
 
+use std::collections::HashMap;
+
 use source_formats::gamefs::GameFs;
 use source_formats::vmt::{Material, texture_path};
 use source_formats::vtf::Vtf;
@@ -69,5 +71,54 @@ impl MaterialInfo {
             tool: false,
             missing: false,
         }
+    }
+}
+
+/// Index of a material in a [`MaterialLibrary`].
+pub type MaterialId = usize;
+
+/// Materials loaded so far, kept across scene rebuilds so edits only
+/// rebuild geometry. Ids are stable for the library's lifetime.
+#[derive(Debug)]
+pub struct MaterialLibrary {
+    materials: Vec<MaterialInfo>,
+    by_name: HashMap<String, MaterialId>,
+}
+
+impl Default for MaterialLibrary {
+    fn default() -> Self {
+        Self {
+            materials: vec![MaterialInfo::untextured(Self::EDITOR_NAME)],
+            by_name: HashMap::from([(Self::EDITOR_NAME.to_owned(), Self::EDITOR)]),
+        }
+    }
+}
+
+impl MaterialLibrary {
+    /// Flat white, tinted by vertex color: entity boxes and other helpers.
+    pub const EDITOR: MaterialId = 0;
+    const EDITOR_NAME: &str = "__editor/flat";
+
+    pub fn load(&mut self, fs: &GameFs, name: &str) -> MaterialId {
+        let key = name.to_ascii_lowercase();
+        if let Some(&id) = self.by_name.get(&key) {
+            return id;
+        }
+        self.materials.push(MaterialInfo::load(fs, &key));
+        let id = self.materials.len() - 1;
+        self.by_name.insert(key, id);
+        id
+    }
+
+    pub fn get(&self, id: MaterialId) -> &MaterialInfo {
+        &self.materials[id]
+    }
+
+    pub fn len(&self) -> usize {
+        self.materials.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.materials.is_empty()
     }
 }

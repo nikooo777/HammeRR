@@ -816,6 +816,7 @@ dependencies = [
  "glam",
  "map-core",
  "source-formats",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
@@ -1178,6 +1179,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64",
+ "compiler",
  "glam",
  "map-core",
  "png",

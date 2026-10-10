@@ -232,7 +232,7 @@ impl<'a> Map<'a> {
         let geometry = match BrushGeometry::from_solid(solid) {
             Ok(geometry) => geometry,
             Err(error) => {
-                report.diagnostics.push(Diagnostic::warning(
+                report.diagnostics.push(Diagnostic::error(
                     format!("invalid brush: {error}"),
                     Some(object),
                     None,

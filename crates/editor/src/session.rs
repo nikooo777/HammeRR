@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use glam::DVec3;
@@ -45,7 +46,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
-    game: GameFs,
+    game: Arc<GameFs>,
     game_error: Option<String>,
     document: Document,
     path: Option<PathBuf>,
@@ -59,6 +60,38 @@ pub struct Session {
     /// Bumped when the camera is set from outside the viewport.
     camera_serial: u64,
     log_serial: u64,
+    document_generation: u64,
+    compiling: bool,
+}
+
+pub struct CompileRequest {
+    vmf: Vmf,
+    game: Arc<GameFs>,
+    path: PathBuf,
+    generation: u64,
+    revision: u64,
+}
+
+pub struct CompileResult {
+    pub output: compiler::Output,
+    pub path: PathBuf,
+    generation: u64,
+    revision: u64,
+}
+
+impl CompileRequest {
+    pub fn run(self) -> Result<CompileResult, String> {
+        let output = compiler::compile(&self.vmf, &self.game);
+        output
+            .write(&self.path)
+            .map_err(|e| format!("{}: {e}", self.path.display()))?;
+        Ok(CompileResult {
+            output,
+            path: self.path,
+            generation: self.generation,
+            revision: self.revision,
+        })
+    }
 }
 
 impl Session {
@@ -75,7 +108,7 @@ impl Session {
             ),
         };
         Self {
-            game,
+            game: Arc::new(game),
             game_error,
             document: Document::empty(),
             path: None,
@@ -90,6 +123,8 @@ impl Session {
             scene_serial: 1,
             camera_serial: 1,
             log_serial: 0,
+            document_generation: 0,
+            compiling: false,
         }
     }
 
@@ -175,6 +210,7 @@ impl Session {
             })
         });
         self.document = document;
+        self.document_generation += 1;
         self.path = path;
         self.selection.clear();
         self.camera_serial += 1;
@@ -327,6 +363,90 @@ impl Session {
 
     pub fn materials(&self) -> &MaterialLibrary {
         &self.materials
+    }
+
+    pub fn compiling(&self) -> bool {
+        self.compiling
+    }
+
+    pub fn begin_compile(
+        &mut self,
+        actor: Actor,
+        path: Option<&Path>,
+    ) -> Result<CompileRequest, String> {
+        if self.compiling {
+            return Err("a map compilation is already running".into());
+        }
+        let path = path
+            .map(Path::to_owned)
+            .or_else(|| self.path.as_ref().map(|p| p.with_extension("bsp")))
+            .ok_or("save the map first or give a .bsp output path")?;
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("bsp"))
+        {
+            return Err("compile output must be a .bsp file".into());
+        }
+        if self.path.as_deref() == Some(path.as_path()) {
+            return Err("compile output must be distinct from the source map".into());
+        }
+        if let Some(error) = &self.game_error {
+            return Err(error.clone());
+        }
+        let request = CompileRequest {
+            vmf: self.document.vmf().clone(),
+            game: self.game.clone(),
+            path,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+        };
+        self.compiling = true;
+        self.log(actor, "compiling map");
+        Ok(request)
+    }
+
+    pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {
+        self.compiling = false;
+        let message = match result {
+            Err(message) => format!("compile failed: {message}"),
+            Ok(result) if result.output.bsp.is_none() => {
+                let message = result
+                    .output
+                    .report
+                    .diagnostics
+                    .iter()
+                    .find(|d| d.level == compiler::Level::Error)
+                    .map(|d| d.message.as_str())
+                    .unwrap_or("no BSP produced");
+                let pointfile = if result.output.leak.is_some() {
+                    format!(
+                        "; pointfile {}",
+                        result.path.with_extension("lin").display()
+                    )
+                } else {
+                    String::new()
+                };
+                format!("compile failed: {message}{pointfile}")
+            }
+            Ok(result) => {
+                let stale = if result.generation != self.document_generation
+                    || result.revision != self.document.revision()
+                {
+                    " (an earlier snapshot)"
+                } else {
+                    ""
+                };
+                let stats = &result.output.stats;
+                format!(
+                    "compiled {}: {} brushes, {} faces in {:.1?}{stale}",
+                    result.path.display(),
+                    stats.brushes,
+                    stats.faces,
+                    stats.elapsed
+                )
+            }
+        };
+        self.log(actor, message);
     }
 
     /// The nearest visible object along a ray. Brushes made only of tool

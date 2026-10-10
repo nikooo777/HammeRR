@@ -128,12 +128,100 @@ pub(crate) fn overlay_lines(
             }
         }
     }
+    if let Some(guide) = options.transform_handles {
+        let logical_size = (
+            (size.0 as f32 / options.handle_pixel_ratio)
+                .round()
+                .max(1.0) as u32,
+            (size.1 as f32 / options.handle_pixel_ratio)
+                .round()
+                .max(1.0) as u32,
+        );
+        for shape in crate::handles::shapes(camera, logical_size, &guide) {
+            for [a, b] in shape.segments {
+                line(&mut vertices, a, b, shape.color);
+            }
+        }
+    }
+    if let Some(guide) = options.area_preview.filter(|guide| guide.camera == *camera) {
+        let [start, end] = guide.corners;
+        let corners = [
+            start,
+            Vec3::new(end.x, start.y, 0.0).truncate(),
+            end,
+            Vec3::new(start.x, end.y, 0.0).truncate(),
+        ];
+        let depth = if camera.projection == Projection::Perspective {
+            Camera::NEAR * 2.0
+        } else {
+            Camera::ORTHO_DISTANCE
+        };
+        let points = corners.map(|point| {
+            let (origin, direction) = camera.ray(point.x, point.y, guide.aspect);
+            origin + direction * depth / direction.dot(camera.forward())
+        });
+        for index in 0..4 {
+            line(
+                &mut vertices,
+                points[index],
+                points[(index + 1) % 4],
+                if guide.contained {
+                    [100, 219, 155, 255]
+                } else {
+                    PREVIEW_COLOR
+                },
+            );
+        }
+    }
     (vertices, grid_count)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlays_keep_logical_handle_size_and_original_selection_aspect() {
+        let camera = Camera::planar(Projection::Top, Vec3::ZERO, 512.0);
+        let options = ViewOptions {
+            grid_visible: false,
+            transform_handles: Some(crate::handles::Guide {
+                origin: Vec3::ZERO,
+                axes: [Vec3::X, Vec3::Y, Vec3::Z],
+                mode: crate::handles::Mode::Move,
+                active: None,
+            }),
+            ..Default::default()
+        };
+        let (logical, _) = overlay_lines(&camera, (1200, 800), &options);
+        let (physical, _) = overlay_lines(
+            &camera,
+            (2400, 1600),
+            &ViewOptions {
+                handle_pixel_ratio: 2.0,
+                ..options
+            },
+        );
+        assert_eq!(logical, physical);
+        let options = ViewOptions {
+            grid_visible: false,
+            area_preview: Some(crate::AreaGuide {
+                corners: [glam::Vec2::splat(-0.5), glam::Vec2::splat(0.5)],
+                camera,
+                aspect: 2.0,
+                contained: true,
+            }),
+            ..Default::default()
+        };
+        let (lines, count) = overlay_lines(&camera, (1000, 1000), &options);
+        assert_eq!(count, 0);
+        assert_eq!(lines.len(), 8);
+        let left = Vec3::from_array(lines[0].position);
+        assert!((left.x + 256.0).abs() < 1e-4);
+        assert!((left.y + 128.0).abs() < 1e-4);
+        let other = Camera::planar(Projection::Front, Vec3::ZERO, 512.0);
+        assert!(overlay_lines(&other, (1000, 1000), &options).0.is_empty());
+    }
 
     #[test]
     fn grid_stays_bounded_when_fractional_spacing_is_zoomed_out() {

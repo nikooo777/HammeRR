@@ -117,6 +117,14 @@ pub struct ClipGuide {
     pub bounds: [glam::Vec3; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AreaGuide {
+    pub corners: [glam::Vec2; 2],
+    pub camera: Camera,
+    pub aspect: f32,
+    pub contained: bool,
+}
+
 /// Per-frame visibility filters, applied without rebuilding the scene.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
@@ -127,6 +135,9 @@ pub struct ViewOptions {
     pub grid_elevation: f32,
     pub block_preview: Option<[glam::Vec3; 2]>,
     pub clip_preview: Option<ClipGuide>,
+    pub transform_handles: Option<crate::handles::Guide>,
+    pub handle_pixel_ratio: f32,
+    pub area_preview: Option<AreaGuide>,
 }
 
 impl Default for ViewOptions {
@@ -139,6 +150,9 @@ impl Default for ViewOptions {
             grid_elevation: 0.0,
             block_preview: None,
             clip_preview: None,
+            transform_handles: None,
+            handle_pixel_ratio: 1.0,
+            area_preview: None,
         }
     }
 }

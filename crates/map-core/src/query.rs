@@ -180,10 +180,125 @@ pub fn bounds_of(doc: &Document, ids: &[ObjectId]) -> Option<(DVec3, DVec3)> {
     union(ids.iter().filter_map(|&id| bounds(doc, id)))
 }
 
+pub fn local_basis(doc: &Document, id: ObjectId) -> Option<glam::DMat3> {
+    let solid = match id {
+        ObjectId::Solid(id) => doc.solid(id)?,
+        ObjectId::Entity(id) => {
+            let entity = doc.entity(id)?;
+            if entity.solids.is_empty() {
+                let mut angles = entity
+                    .properties
+                    .get("angles")
+                    .and_then(source_formats::vmf::parse_vec3)
+                    .unwrap_or(DVec3::ZERO);
+                if entity.properties.get("angles").is_none()
+                    && let Some(angle) = entity
+                        .properties
+                        .get("angle")
+                        .and_then(|value| value.parse::<f64>().ok())
+                {
+                    angles = match angle {
+                        -1.0 => DVec3::new(-90.0, 0.0, 0.0),
+                        -2.0 => DVec3::new(90.0, 0.0, 0.0),
+                        _ => DVec3::new(0.0, angle, 0.0),
+                    };
+                }
+                if matches!(entity.classname(), Some("light_spot" | "light_environment"))
+                    && let Some(pitch) = entity
+                        .properties
+                        .get("pitch")
+                        .and_then(|value| value.parse::<f64>().ok())
+                {
+                    angles.x = -pitch;
+                }
+                if !angles.is_finite() {
+                    return None;
+                }
+                let radians = angles.map(f64::to_radians);
+                return Some(glam::DMat3::from_quat(glam::DQuat::from_euler(
+                    glam::EulerRot::ZYX,
+                    radians.y,
+                    radians.x,
+                    radians.z,
+                )));
+            }
+            &entity.solids[0]
+        }
+    };
+    let points = solid.sides.first()?.plane.0;
+    let z = Plane::from_points(points)?.normal;
+    let edge = points[1] - points[0];
+    let x = (edge - z * edge.dot(z)).try_normalize()?;
+    let y = z.cross(x).try_normalize()?;
+    Some(glam::DMat3::from_cols(x, y, z))
+}
+
+pub fn bounds_in_basis(
+    doc: &Document,
+    ids: &[ObjectId],
+    basis: glam::DMat3,
+) -> Option<(DVec3, DVec3)> {
+    let inverse = basis.transpose();
+    let mut points = Vec::new();
+    for id in ids {
+        let solids: Vec<_> = match *id {
+            ObjectId::Solid(id) => vec![doc.solid(id)?],
+            ObjectId::Entity(id) => {
+                let entity = doc.entity(id)?;
+                if entity.solids.is_empty() {
+                    let (mins, maxs) = entity_bounds(entity)?;
+                    points.extend((0..8).map(|index| {
+                        DVec3::new(
+                            if index & 1 == 0 { mins.x } else { maxs.x },
+                            if index & 2 == 0 { mins.y } else { maxs.y },
+                            if index & 4 == 0 { mins.z } else { maxs.z },
+                        )
+                    }));
+                }
+                entity.solids.iter().collect()
+            }
+        };
+        for solid in solids {
+            let shape = BrushGeometry::from_solid(solid).ok()?;
+            points.extend(shape.faces.into_iter().flat_map(|face| face.vertices));
+        }
+    }
+    union(points.into_iter().map(|point| {
+        let point = inverse * point;
+        (point, point)
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::edit::{create_block, create_entity};
+
+    #[test]
+    fn local_bounds_use_brush_vertices_after_oblique_rotation() {
+        let mut doc = Document::empty();
+        let id = doc
+            .edit("fixture", |tx| {
+                create_block(tx, DVec3::ZERO, DVec3::new(64.0, 32.0, 16.0), "test")
+            })
+            .unwrap();
+        doc.edit("rotate", |tx| {
+            crate::edit::transform(
+                tx,
+                &[id],
+                crate::edit::Transform {
+                    rotation: DVec3::new(0.0, 0.0, 45.0),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        let basis = local_basis(&doc, id).unwrap();
+        let (mins, maxs) = bounds_in_basis(&doc, &[id], basis).unwrap();
+        assert!((maxs - mins).abs_diff_eq(DVec3::new(64.0, 32.0, 16.0), 1e-8));
+        let (mins, maxs) = bounds_of(&doc, &[id]).unwrap();
+        assert!((maxs - mins).x > 64.0);
+    }
 
     #[test]
     fn picks_the_nearest_object_and_entry_face() {

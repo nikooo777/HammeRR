@@ -41,6 +41,8 @@ impl Session {
             return Ok(());
         }
         self.cancel_clip_preview();
+        self.cancel_transform_preview();
+        self.cancel_area_selection();
         self.clip_tool = enabled;
         if enabled {
             self.spatial.draw_block = false;
@@ -128,6 +130,8 @@ impl Session {
             let (mins, maxs) = map_core::query::bounds_of(&self.document, ids)
                 .ok_or("Selected brushes have no bounds")?;
             self.select(ids, SelectMode::Replace)?;
+            self.cancel_transform_preview();
+            self.cancel_area_selection();
             self.clip_tool = true;
             self.spatial.draw_block = false;
             self.cancel_face_preview();

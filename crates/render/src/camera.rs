@@ -233,11 +233,100 @@ impl Camera {
         point[axis] = elevation;
         Some(point)
     }
+
+    pub fn selection_region(
+        &self,
+        corners: [glam::DVec2; 2],
+        aspect: f64,
+    ) -> map_core::region::Region {
+        let lo = corners[0].min(corners[1]);
+        let hi = corners[0].max(corners[1]);
+        let forward = self.forward().as_dvec3();
+        let right = self.right().as_dvec3();
+        let up = self.up().as_dvec3();
+        let origin = self.position.as_dvec3();
+        let half = if self.projection == Projection::Perspective {
+            (f64::from(self.fov_y_degrees).to_radians() * 0.5).tan()
+        } else {
+            f64::from(self.ortho_height) * 0.5
+        };
+        let point = |x: f64, y: f64, depth: f64| {
+            let span = if self.projection == Projection::Perspective {
+                half * depth
+            } else {
+                half
+            };
+            origin + forward * depth + right * (x * span * aspect) + up * (y * span)
+        };
+        let near = f64::from(Self::NEAR);
+        let far = f64::from(Self::ORTHO_DISTANCE) * 4.0;
+        let front = [(lo.x, lo.y), (hi.x, lo.y), (hi.x, hi.y), (lo.x, hi.y)]
+            .map(|(x, y)| point(x, y, near));
+        let back =
+            [(lo.x, lo.y), (hi.x, lo.y), (hi.x, hi.y), (lo.x, hi.y)].map(|(x, y)| point(x, y, far));
+        let seed = point((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5, (near + far) * 0.5);
+        let mut planes: Vec<_> = [[front[0], front[1], front[2]], [back[0], back[1], back[2]]]
+            .into_iter()
+            .chain((0..4).map(|index| [front[index], front[(index + 1) % 4], back[index]]))
+            .filter_map(map_core::Plane::from_points)
+            .collect();
+        for plane in &mut planes {
+            if plane.distance_to(seed) > 0.0 {
+                plane.normal = -plane.normal;
+                plane.dist = -plane.dist;
+            }
+        }
+        map_core::region::Region { planes, seed }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_frusta_match_rendered_pixels_and_exclude_near_and_far_geometry() {
+        for projection in [
+            Projection::Perspective,
+            Projection::Top,
+            Projection::Front,
+            Projection::Side,
+        ] {
+            let camera = if projection == Projection::Perspective {
+                Camera::looking_at(Vec3::new(-500.0, -600.0, 350.0), Vec3::ZERO)
+            } else {
+                Camera::planar(projection, Vec3::ZERO, 512.0)
+            };
+            let region =
+                camera.selection_region([glam::DVec2::splat(-0.5), glam::DVec2::splat(0.5)], 2.0);
+            assert_eq!(region.planes.len(), 6);
+            let contains = |point| {
+                region
+                    .planes
+                    .iter()
+                    .all(|plane| plane.distance_to(point) <= 1e-3)
+            };
+            for (x, y, expected) in [
+                (0.0, 0.0, true),
+                (0.49, -0.49, true),
+                (0.51, 0.0, false),
+                (0.0, -0.51, false),
+            ] {
+                let (origin, direction) = camera.ray(x, y, 2.0);
+                let point =
+                    origin + direction * (Camera::ORTHO_DISTANCE / direction.dot(camera.forward()));
+                assert_eq!(
+                    contains(point.as_dvec3()),
+                    expected,
+                    "{projection:?} {x} {y}"
+                );
+            }
+            assert!(!contains((camera.position - camera.forward()).as_dvec3()));
+            assert!(!contains(
+                (camera.position + camera.forward() * Camera::ORTHO_DISTANCE * 5.0).as_dvec3()
+            ));
+        }
+    }
 
     #[test]
     fn looking_at_points_the_camera_at_the_target() {

@@ -581,6 +581,14 @@ export component AppWindow inherits Window {
     in-out property <string> pivot-y: "0";
     in-out property <string> pivot-z: "0";
     in-out property <bool> transform-texture-lock: true;
+    in-out property <int> handles-mode-index;
+    in-out property <int> transform-space-index;
+    in-out property <string> rotation-step: "15";
+    in-out property <int> area-rule-index;
+    in-out property <int> area-mode-index;
+    in property <bool> has-transform-preview;
+    in property <bool> has-area-preview;
+    in property <string> interaction-summary;
     changed transform-mode => {
         root.transform-x = root.transform-mode == 2 ? "1" : "0";
         root.transform-y = root.transform-mode == 2 ? "1" : "0";
@@ -625,6 +633,11 @@ export component AppWindow inherits Window {
     callback apply-clip();
     callback cancel-clip();
     callback apply-transform();
+    callback transform-tool-changed();
+    callback area-settings-changed();
+    callback apply-transform-preview();
+    callback apply-area-selection();
+    callback cancel-interaction();
     callback delete-selection();
     callback apply-material();
     callback selection-mode-changed(int);
@@ -848,6 +861,72 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                if !root.drawing-block && !root.clipping: Rectangle {
+                    x: 12px;
+                    y: 64px;
+                    width: min(900px, parent.width - 24px);
+                    height: 44px;
+                    background: #20252eee;
+                    border-color: #394252;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 7px;
+                        spacing: 8px;
+                        ComboBox {
+                            width: 135px;
+                            model: ["Select", "Move handles", "Rotate handles", "Scale handles"];
+                            current-index <=> root.handles-mode-index;
+                            selected => { root.transform-tool-changed(); }
+                        }
+                        if root.handles-mode-index != 0: ComboBox {
+                            width: 125px;
+                            model: ["World axes", "Local axes"];
+                            current-index <=> root.transform-space-index;
+                            selected => { root.transform-tool-changed(); }
+                        }
+                        if root.handles-mode-index != 0: CheckBox {
+                            text: "Texture lock";
+                            checked <=> root.transform-texture-lock;
+                            toggled => { root.transform-tool-changed(); }
+                        }
+                        if root.handles-mode-index == 2: HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Angle snap · °"; color: #c8ccd4; vertical-alignment: center; }
+                            LineEdit { width: 65px; text <=> root.rotation-step; input-type: decimal; accepted => { root.transform-tool-changed(); } }
+                        }
+                        Text { text: "Area"; color: #c8ccd4; vertical-alignment: center; }
+                        ComboBox {
+                            width: 125px;
+                            model: ["Intersects", "Fully inside"];
+                            current-index <=> root.area-rule-index;
+                            selected => { root.area-settings-changed(); }
+                        }
+                        ComboBox {
+                            width: 100px;
+                            model: ["Replace", "Add", "Remove", "Toggle"];
+                            current-index <=> root.area-mode-index;
+                            selected => { root.area-settings-changed(); }
+                        }
+                    }
+                }
+                if root.has-transform-preview || root.has-area-preview: Rectangle {
+                    x: 12px;
+                    y: 118px;
+                    width: min(700px, parent.width - 24px);
+                    height: 46px;
+                    background: #20252eee;
+                    border-color: #4c829f;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 7px;
+                        spacing: 8px;
+                        Text { text: root.interaction-summary; color: #9dd8f1; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { text: root.has-transform-preview ? "Apply transform" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }
+                        Button { text: "Cancel"; clicked => { root.cancel-interaction(); } }
+                    }
+                }
                 if root.drawing-block && root.projection-index != 0: Rectangle {
                     x: 12px;
                     y: 64px;
@@ -929,7 +1008,7 @@ export component AppWindow inherits Window {
                     background: #000000a0;
 
                     hint := Text {
-                        text: root.face-mode ? "Click a face · Ctrl toggles faces · Edit face textures for scale, offset and rotation" : root.projection-index == 0 ? "Click select · Ctrl toggles · right mouse + WASD/QE fly · F frame · arrows nudge · Ctrl+Z/Y/S/D" : "Right mouse drag to pan · wheel zoom · F frame · arrows move in plane · PgUp/PgDn move in depth";
+                        text: root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
                         color: #c8ccd4;
                         font-size: 12px;
                     }
@@ -981,6 +1060,7 @@ export component AppWindow inherits Window {
                     if root.has-selection: CheckBox {
                         text: "Transform selection";
                         checked <=> root.show-transform;
+                        toggled => { if self.checked { root.handles-mode-index = root.transform-mode + 1; root.transform-tool-changed(); } }
                     }
                     Button {
                         text: "Clip selected brushes";
@@ -992,9 +1072,10 @@ export component AppWindow inherits Window {
                         ComboBox {
                             model: ["Move", "Rotate", "Scale"];
                             current-index <=> root.transform-mode;
+                            selected => { root.handles-mode-index = self.current-index + 1; root.transform-tool-changed(); }
                         }
                         Text {
-                            text: root.transform-mode == 0 ? "Offset · units" : root.transform-mode == 1 ? "World-axis rotation · degrees" : "World-axis scale · factors";
+                            text: root.transform-mode == 0 ? "Offset · units" : root.transform-mode == 1 ? (root.transform-space-index == 0 ? "World-axis rotation · degrees" : "Local-axis rotation · degrees") : (root.transform-space-index == 0 ? "World-axis scale · factors" : "Local-axis scale · factors");
                             color: #aab2c2; font-size: 12px;
                         }
                         TransformVector {
@@ -1011,6 +1092,7 @@ export component AppWindow inherits Window {
                                     horizontal-stretch: 1;
                                     model: ["Selection center", "World origin", "Custom"];
                                     current-index <=> root.transform-pivot-mode;
+                                selected => { root.transform-tool-changed(); }
                                 }
                             }
                             if root.transform-pivot-mode == 0: Text { text: root.selection-pivot; color: #8a909c; font-size: 12px; }
@@ -1018,10 +1100,10 @@ export component AppWindow inherits Window {
                                 x-value <=> root.pivot-x;
                                 y-value <=> root.pivot-y;
                                 z-value <=> root.pivot-z;
-                                apply => { root.apply-transform(); }
+                                apply => { root.transform-tool-changed(); }
                             }
                         }
-                        if root.can-apply-material: CheckBox { text: "Keep textures attached"; checked <=> root.transform-texture-lock; }
+                        if root.can-apply-material: CheckBox { text: "Keep textures attached"; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
                         if root.transform-mode == 2: Text { text: "Resizes brushes and spaces entity origins."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                         Button {
                             text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : "Scale selection";

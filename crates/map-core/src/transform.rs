@@ -13,6 +13,7 @@ pub struct Transform {
     pub rotation: DVec3,
     pub scale: DVec3,
     pub pivot: DVec3,
+    pub basis: DMat3,
     pub texture_lock: bool,
 }
 
@@ -23,6 +24,7 @@ impl Default for Transform {
             rotation: DVec3::ZERO,
             scale: DVec3::ONE,
             pivot: DVec3::ZERO,
+            basis: DMat3::IDENTITY,
             texture_lock: true,
         }
     }
@@ -47,17 +49,43 @@ impl Mapping {
             || !transform.rotation.is_finite()
             || !transform.scale.is_finite()
             || !transform.pivot.is_finite()
+            || !transform.basis.is_finite()
             || !transform.scale.cmpgt(DVec3::ZERO).all()
         {
             return Err(invalid(
                 "Transform values must be finite and scale factors must be positive",
             ));
         }
+        if !(transform.basis.transpose() * transform.basis).abs_diff_eq(DMat3::IDENTITY, 1e-8)
+            || (transform.basis.determinant() - 1.0).abs() > 1e-8
+        {
+            return Err(invalid(
+                "Transform basis must be a right-handed orthonormal frame",
+            ));
+        }
         let angles = transform
             .rotation
             .map(|angle| angle.rem_euclid(360.0).to_radians());
-        let rotation = DQuat::from_euler(EulerRot::ZYX, angles.z, angles.y, angles.x);
-        let linear = DMat3::from_quat(rotation) * DMat3::from_diagonal(transform.scale);
+        let local_rotation = DMat3::from_quat(DQuat::from_euler(
+            EulerRot::ZYX,
+            angles.z,
+            angles.y,
+            angles.x,
+        ));
+        let rotation_matrix = if angles == DVec3::ZERO {
+            DMat3::IDENTITY
+        } else {
+            transform.basis * local_rotation * transform.basis.transpose()
+        };
+        let rotation = DQuat::from_mat3(&rotation_matrix);
+        let linear = if transform.scale == DVec3::ONE {
+            rotation_matrix
+        } else {
+            rotation_matrix
+                * transform.basis
+                * DMat3::from_diagonal(transform.scale)
+                * transform.basis.transpose()
+        };
         let inverse_transpose = linear.inverse().transpose();
         let offset = transform.pivot - linear * transform.pivot + transform.translation;
         if !inverse_transpose.is_finite() || !offset.is_finite() {
@@ -360,6 +388,7 @@ mod tests {
                 rotation: DVec3::new(30.0, -20.0, 65.0),
                 scale: DVec3::new(2.0, 0.5, 1.25),
                 pivot: DVec3::new(-19.0, 42.0, 5.0),
+                basis: DMat3::IDENTITY,
                 texture_lock: lock,
             };
             document
@@ -640,6 +669,62 @@ mod tests {
         assert_eq!(new_disp.triangle_tags, old_disp.triangle_tags);
         assert_eq!(new_disp.allowed_verts, old_disp.allowed_verts);
         assert_eq!(new_disp.extra, old_disp.extra);
+    }
+
+    #[test]
+    fn local_frame_scales_and_rotates_geometry_with_locked_uvs() {
+        let mut document = Document::empty();
+        let id = block(&mut document);
+        document
+            .edit("orient", |tx| {
+                transform(
+                    tx,
+                    &[id],
+                    Transform {
+                        rotation: DVec3::new(20.0, 35.0, 40.0),
+                        ..Transform::default()
+                    },
+                )
+            })
+            .unwrap();
+        let before = solid(&document, id).clone();
+        let basis = crate::query::local_basis(&document, id).unwrap();
+        let pivot = DVec3::new(5.0, -8.0, 2.0);
+        let spec = Transform {
+            basis,
+            pivot,
+            scale: DVec3::new(2.0, 0.5, 1.25),
+            rotation: DVec3::new(15.0, -30.0, 10.0),
+            translation: basis.x_axis * 3.0,
+            ..Transform::default()
+        };
+        let mapping = Mapping::new(spec).unwrap();
+        document
+            .edit("local", |tx| transform(tx, &[id], spec))
+            .unwrap();
+        let after = solid(&document, id);
+        for (old, new) in before.sides.iter().zip(&after.sides) {
+            for point in old.plane.0 {
+                let changed = mapping.point(point).unwrap();
+                assert!(
+                    crate::texel_uv(old, point).abs_diff_eq(crate::texel_uv(new, changed), 1e-8)
+                );
+            }
+        }
+        let vmf = document.vmf().clone();
+        assert_eq!(
+            source_formats::vmf::Vmf::parse(&vmf.write(&Default::default())).unwrap(),
+            vmf
+        );
+        document.undo();
+        assert_eq!(solid(&document, id), &before);
+        assert!(
+            Mapping::new(Transform {
+                basis: DMat3::from_diagonal(DVec3::splat(2.0)),
+                ..spec
+            })
+            .is_err()
+        );
     }
 
     #[test]

@@ -72,6 +72,13 @@ frame_selection frames the selection or whole map. draw_block uses plane coordin
 and undo history untouched. Inspect get_map_info.block_preview and cancel with cancel_block_preview. \
 transform_objects applies exact move/rotation/positive scale, with an optional world-space pivot \
 (default: selection bounds center) and texture locking. Rotation is world X/Y/Z, in degrees. \
+space: local uses the first selected object's frame; preview: true creates a shared transform draft. \
+set_transform_tool configures move/rotate/scale handles, pivots and angle snap. Inspect \
+get_transform_handles, begin_transform_drag, then update_transform_drag with total amounts \
+or viewport pointers. Apply with commit_transform_preview or cancel_transform_preview. \
+select_area selects objects or faces through a pixel rectangle in any projection; choose \
+contained/intersecting and replace/add/remove/toggle. Use preview: true, inspect \
+get_area_selection and render_view, then commit_area_selection or cancel_area_selection. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -571,6 +578,149 @@ pub struct TransformArgs {
     pub pivot: Option<[f64; 3]>,
     /// Preserve UV coordinates at corresponding transformed points, including scaling; default true.
     pub texture_lock: Option<bool>,
+    /// world (default) or local; local follows the first selected object's frame.
+    pub space: Option<String>,
+    /// Draft geometry without changing the document or history; commit or cancel separately.
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TransformToolArgs {
+    /// select, move, rotate or scale; omitted preserves the current tool.
+    pub mode: Option<String>,
+    /// world or local.
+    pub space: Option<String>,
+    /// selection, world or custom.
+    pub pivot_mode: Option<String>,
+    pub pivot: Option<[f64; 3]>,
+    pub texture_lock: Option<bool>,
+    /// Rotation snapping in degrees, 0 disables it. Shared Snap also controls snapping.
+    pub angle_step: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PointerArgs {
+    pub position: [f64; 2],
+    pub width: u32,
+    pub height: u32,
+}
+
+impl PointerArgs {
+    fn resolve(self) -> Result<crate::session::Pointer, String> {
+        crate::session::Pointer {
+            position: glam::DVec2::from_array(self.position),
+            size: (self.width, self.height),
+        }
+        .validate()
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BeginTransformArgs {
+    /// x/y/z, xy/xz/yz or view for movement, x/y/z for rotation, x/y/z or uniform for scaling.
+    pub handle: String,
+    /// Optional initial viewport point; omit to drive the handle with numeric amounts.
+    pub pointer: Option<PointerArgs>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UpdateTransformArgs {
+    pub pointer: Option<PointerArgs>,
+    /// Total offset from the start, in units for move, degrees for rotation or positive factor for scale.
+    pub amount: Option<f64>,
+    /// Total offsets along the two plane axes, or screen right/up for the view handle.
+    pub plane_offset: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct HandlesArgs {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub camera: Option<CameraSpec>,
+    /// Optional viewport point to hit-test against the rendered handles.
+    pub point: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AreaOptionsArgs {
+    /// intersecting or contained.
+    pub rule: Option<String>,
+    /// replace, add, remove or toggle.
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AreaArgs {
+    /// Viewport pixels, with origin at the top left; reverse drags are supported.
+    pub start: [f64; 2],
+    pub end: [f64; 2],
+    pub width: u32,
+    pub height: u32,
+    pub camera: Option<CameraSpec>,
+    pub rule: Option<String>,
+    pub mode: Option<String>,
+    /// Preview candidate highlights and rectangle without changing selection or history.
+    #[serde(default)]
+    pub preview: bool,
+}
+
+fn parse_select_mode(value: &str) -> Result<SelectMode, String> {
+    match value {
+        "replace" => Ok(SelectMode::Replace),
+        "add" => Ok(SelectMode::Add),
+        "remove" => Ok(SelectMode::Remove),
+        "toggle" => Ok(SelectMode::Toggle),
+        _ => Err("mode must be replace, add, remove or toggle".into()),
+    }
+}
+
+fn select_mode_name(mode: SelectMode) -> &'static str {
+    match mode {
+        SelectMode::Replace => "replace",
+        SelectMode::Add => "add",
+        SelectMode::Remove => "remove",
+        SelectMode::Toggle => "toggle",
+    }
+}
+
+fn area_rule(value: &str) -> Result<map_core::region::Match, String> {
+    match value {
+        "contained" => Ok(map_core::region::Match::Contained),
+        "intersecting" => Ok(map_core::region::Match::Intersecting),
+        _ => Err("rule must be contained or intersecting".into()),
+    }
+}
+
+fn area_rule_name(rule: map_core::region::Match) -> &'static str {
+    match rule {
+        map_core::region::Match::Contained => "contained",
+        map_core::region::Match::Intersecting => "intersecting",
+    }
+}
+
+fn transform_mode_name(mode: Option<render::handles::Mode>) -> &'static str {
+    match mode {
+        None => "select",
+        Some(render::handles::Mode::Move) => "move",
+        Some(render::handles::Mode::Rotate) => "rotate",
+        Some(render::handles::Mode::Scale) => "scale",
+    }
+}
+
+fn transform_state(session: &Session) -> Value {
+    let tool = session.transform_tool();
+    json!({"settings": {"mode": transform_mode_name(tool.mode), "space": if tool.local {"local"} else {"world"}, "pivot": tool.pivot.map(|pivot| pivot.to_array()), "texture_lock": tool.texture_lock, "angle_step": tool.angle_step},
+        "drag": session.transform_drag().map(|drag| json!({"handle": drag.handle.name(), "mode": transform_mode_name(Some(drag.mode)), "amount": drag.amount.to_array(), "pivot": drag.pivot.to_array(), "basis": drag.basis.to_cols_array_2d(), "camera": camera_json(&drag.camera)})),
+        "preview": session.transform_preview().map(|preview| json!({"ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "bounds": bounds_json(query::bounds_of(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()}))})
+}
+
+fn area_matches(matches: &map_core::region::Selection) -> Value {
+    json!({"objects": matches.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "faces": matches.faces.iter().map(|face| json!({"solid": face.solid, "side": face.side})).collect::<Vec<_>>()})
+}
+
+fn area_state(session: &Session) -> Value {
+    json!({"rule": area_rule_name(session.area_rule()), "mode": select_mode_name(session.area_mode()), "preview": session.area_preview().map(|preview| json!({"start": preview.start.position.to_array(), "end": preview.end.to_array(), "width": preview.start.size.0, "height": preview.start.size.1, "camera": camera_json(&preview.camera), "rule": area_rule_name(preview.rule), "mode": select_mode_name(preview.mode), "selection_mode": if preview.faces {"faces"} else {"objects"}, "matches": area_matches(&preview.matches)}))})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1105,6 +1255,8 @@ impl EditorServer {
             "spatial": session.spatial(),
             "block_preview": bounds_json(session.block_preview()),
             "clipping": clip_state(&session),
+            "transform": transform_state(&session),
+            "area_selection": area_state(&session),
             "face_selection": face_state(&session),
             "world_brushes": vmf.world.solids.len(),
             "point_entities": point_entities,
@@ -1532,25 +1684,45 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Move, rotate and scale objects in one atomic undoable edit. Scale around the pivot, rotate around world X/Y/Z in that order, then translate. Defaults to the selection and its bounds center. Point entities rotate their Source orientation and move with the group; their model size is unchanged. Brush entities transform their geometry and origins. Positive scale factors only; shear and reflection are not implemented."
+        description = "Move, rotate and scale objects in one atomic undoable edit, or create a shared draft with preview=true. Choose world (default) or local space. Scale about the pivot, rotate X/Y/Z in that frame, then translate in that frame. Defaults to selection and its bounds center. Point entities rotate their Source orientation and move with the group; model size stays unchanged. Positive scale only. Inspect get_transform_handles for the shared draft; commit_transform_preview or cancel_transform_preview completes it."
     )]
     fn transform_objects(&self, Parameters(args): Parameters<TransformArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let local = match args.space.as_deref().unwrap_or("world") {
+                "world" => false,
+                "local" => true,
+                _ => return Err("space must be world or local".into()),
+            };
+            let basis = session.transform_basis(&ids, local)?;
             let transform = edit::Transform {
                 translation: args.translation.map(vec3).unwrap_or(DVec3::ZERO),
                 rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
                 scale: args.scale.map(vec3).unwrap_or(DVec3::ONE),
                 texture_lock: args.texture_lock.unwrap_or(true),
+                basis,
                 ..edit::Transform::default()
             };
-            let pivot =
-                session.transform_objects(Actor::Agent, &ids, transform, args.pivot.map(vec3))?;
+            let transform = edit::Transform {
+                translation: basis * transform.translation,
+                ..transform
+            };
+            let pivot = if args.preview {
+                session.preview_transform(Actor::Agent, &ids, transform, args.pivot.map(vec3))?
+            } else {
+                session.transform_objects(Actor::Agent, &ids, transform, args.pivot.map(vec3))?
+            };
+            let document = if args.preview {
+                session.render_document()
+            } else {
+                session.document()
+            };
             Ok(json!({
                 "pivot": point(pivot),
-                "bounds": bounds_json(query::bounds_of(session.document(), &ids)),
-                "objects": ids.iter().map(|&id| summary(session.document(), id)).collect::<Vec<_>>(),
+                "bounds": bounds_json(query::bounds_of(document, &ids)),
+                "objects": ids.iter().map(|&id| summary(document, id)).collect::<Vec<_>>(),
+                "preview": args.preview, "state": transform_state(&session),
             }))
         })
     }
@@ -1724,6 +1896,237 @@ impl EditorServer {
         let mut session = self.session();
         session.cancel_clip_preview();
         ok(clip_state(&session))
+    }
+
+    #[tool(
+        description = "Read or set the shared viewport transform tool: select/move/rotate/scale, world/local axes, selection/world/custom pivot, texture locking and angle snap. Local axes follow the first selected brush's first face or point-entity orientation. Changing controls cancels pending transform/area interactions."
+    )]
+    fn set_transform_tool(&self, Parameters(args): Parameters<TransformToolArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mut tool = session.transform_tool();
+            if let Some(mode) = args.mode {
+                tool.mode = match mode.as_str() {
+                    "select" => None,
+                    "move" => Some(render::handles::Mode::Move),
+                    "rotate" => Some(render::handles::Mode::Rotate),
+                    "scale" => Some(render::handles::Mode::Scale),
+                    _ => return Err("mode must be select, move, rotate or scale".into()),
+                };
+            }
+            if let Some(space) = args.space {
+                tool.local = match space.as_str() {
+                    "world" => false,
+                    "local" => true,
+                    _ => return Err("space must be world or local".into()),
+                };
+            }
+            if let Some(mode) = args.pivot_mode {
+                tool.pivot = match mode.as_str() {
+                    "selection" => None,
+                    "world" => Some(DVec3::ZERO),
+                    "custom" => Some(
+                        args.pivot
+                            .map(vec3)
+                            .or(tool.pivot)
+                            .ok_or("custom pivot needs coordinates")?,
+                    ),
+                    _ => return Err("pivot_mode must be selection, world or custom".into()),
+                };
+            } else if let Some(pivot) = args.pivot {
+                tool.pivot = Some(vec3(pivot));
+            }
+            tool.texture_lock = args.texture_lock.unwrap_or(tool.texture_lock);
+            tool.angle_step = args.angle_step.unwrap_or(tool.angle_step);
+            session.set_transform_tool(Actor::Agent, tool)?;
+            Ok(transform_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared transform settings, gesture and draft, plus the same visible handle paths used by the renderer, in world coordinates and viewport pixels. Optional point hit-tests those paths. Camera overrides inspect a view without moving the user.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_transform_handles(&self, Parameters(args): Parameters<HandlesArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let size = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)?;
+            let guide = session.transform_guide();
+            let shapes = guide.map_or_else(Vec::new, |guide| {
+                render::handles::shapes(&camera, size, &guide)
+            });
+            let picked = if let (Some(guide), Some(point)) = (guide, args.point) {
+                let point = glam::Vec2::new(point[0] as f32, point[1] as f32);
+                if !point.is_finite() {
+                    return Err("Handle point must be finite".into());
+                }
+                render::handles::pick(&camera, size, &guide, point)
+                    .map(render::handles::Handle::name)
+            } else {
+                None
+            };
+            Ok(
+                json!({"state": transform_state(&session), "camera": camera_json(&camera), "width": size.0, "height": size.1, "picked": picked,
+                "origin": guide.map(|guide| guide.origin.to_array()),
+                "handles": shapes.iter().map(|shape| json!({"handle": shape.handle.name(), "color": shape.color, "segments": shape.segments.iter().map(|points| points.map(|point| point.to_array())).collect::<Vec<_>>(), "pixel_segments": shape.segments.iter().filter_map(|points| Some([render::handles::project(&camera, points[0], size)?.to_array(), render::handles::project(&camera, points[1], size)?.to_array()])).collect::<Vec<_>>()})).collect::<Vec<_>>() }),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Begin the shared transform-handle interaction for selected objects. Captures the pivot, axes and original geometry. Supply a pointer for viewport dragging, or omit it for numeric amounts; movement supports axis/plane/view handles, rotation axis rings, scaling axis/uniform handles."
+    )]
+    fn begin_transform_drag(&self, Parameters(args): Parameters<BeginTransformArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let handle =
+                render::handles::Handle::parse(&args.handle).ok_or("Unknown transform handle")?;
+            session.begin_transform_drag(
+                handle,
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+            )?;
+            Ok(transform_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Update the current shared handle preview by pointer or numeric total amount from the drag start. Axis move uses units, rotation degrees, scale a positive factor; plane_offset supplies both plane/view offsets. Shared grid, Snap and angle step apply. Every update starts from the original document; it does not add undo history."
+    )]
+    fn update_transform_drag(
+        &self,
+        Parameters(args): Parameters<UpdateTransformArgs>,
+    ) -> ToolResult {
+        run(|| {
+            if args.amount.is_some() && args.plane_offset.is_some() {
+                return Err("Provide amount or plane_offset, not both".into());
+            }
+            let amount = args
+                .plane_offset
+                .map(glam::DVec2::from_array)
+                .or(args.amount.map(|amount| glam::DVec2::new(amount, 0.0)));
+            let mut session = self.session();
+            session.update_transform_drag(
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+                amount,
+            )?;
+            Ok(transform_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Apply the shared transform preview in one undo step, preserving the selected IDs. Rejects cancelled or invalidated previews. Equivalent to releasing a human handle drag or choosing Apply transform."
+    )]
+    fn commit_transform_preview(&self) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let pivot = session.commit_transform_preview(Actor::Agent)?;
+            Ok(json!({"pivot": pivot.to_array(), "state": transform_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Discard the shared transform preview and active human/agent handle interaction without changing the map or undo history."
+    )]
+    fn cancel_transform_preview(&self) -> ToolResult {
+        let mut session = self.session();
+        session.cancel_transform_preview();
+        ok(transform_state(&session))
+    }
+
+    #[tool(
+        description = "Read or change shared marquee-selection rules: contained/intersecting and replace/add/remove/toggle. Changing options cancels an unfinished area selection."
+    )]
+    fn set_area_selection_options(
+        &self,
+        Parameters(args): Parameters<AreaOptionsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let rule = args
+                .rule
+                .map(|rule| area_rule(&rule))
+                .transpose()?
+                .unwrap_or(session.area_rule());
+            let mode = args
+                .mode
+                .map(|mode| parse_select_mode(&mode))
+                .transpose()?
+                .unwrap_or(session.area_mode());
+            session.set_area_settings(rule, mode);
+            Ok(area_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Select objects or faces through a viewport rectangle, matching the human marquee in perspective/top/front/side views. Uses actual brush/face geometry, point-entity bounds, hidden-object and tool-texture filters; includes geometry through depth. Brush entities select as owners. Contained requires the entire visible object/face inside; intersecting accepts overlap. preview=true leaves selection/history unchanged and shows candidate highlights. Camera overrides do not move the user."
+    )]
+    fn select_area(&self, Parameters(args): Parameters<AreaArgs>) -> ToolResult {
+        run(|| {
+            let pointer = crate::session::Pointer {
+                position: glam::DVec2::from_array(args.start),
+                size: (args.width, args.height),
+            }
+            .validate()?;
+            let mut session = self.session();
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, args.width as f32 / args.height as f32)?;
+            let rule = args
+                .rule
+                .map(|rule| area_rule(&rule))
+                .transpose()?
+                .unwrap_or(session.area_rule());
+            let mode = args
+                .mode
+                .map(|mode| parse_select_mode(&mode))
+                .transpose()?
+                .unwrap_or(session.area_mode());
+            let matches = session.preview_area_selection(
+                Actor::Agent,
+                camera,
+                pointer,
+                glam::DVec2::from_array(args.end),
+                rule,
+                mode,
+            )?;
+            if !args.preview {
+                session.commit_area_selection()?;
+            }
+            Ok(json!({"matches": area_matches(&matches), "state": area_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Inspect shared area-selection options and draft: viewport rectangle, camera, object/face mode and matching IDs.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_area_selection(&self) -> ToolResult {
+        ok(area_state(&self.session()))
+    }
+
+    #[tool(
+        description = "Apply the shared area-selection draft with its replace/add/remove/toggle rule. Selection changes do not add map undo history."
+    )]
+    fn commit_area_selection(&self) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let matches = session.commit_area_selection()?;
+            Ok(json!({"matches": area_matches(&matches), "state": area_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Cancel the shared area-selection draft and invalidate an unfinished human marquee without changing selection or map history."
+    )]
+    fn cancel_area_selection(&self) -> ToolResult {
+        let mut session = self.session();
+        session.cancel_area_selection();
+        ok(area_state(&session))
     }
 
     #[tool(
@@ -1918,7 +2321,9 @@ impl EditorServer {
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
                 "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),
-                "clip_preview": view.clip_preview.map(|guide| json!({"normal": guide.normal.to_array(), "distance": guide.distance, "bounds": guide.bounds.map(|point| point.to_array())})) } });
+                "clip_preview": view.clip_preview.map(|guide| json!({"normal": guide.normal.to_array(), "distance": guide.distance, "bounds": guide.bounds.map(|point| point.to_array())})),
+                "transform_handles": view.transform_handles.map(|guide| json!({"mode": transform_mode_name(Some(guide.mode)), "origin": guide.origin.to_array(), "axes": guide.axes.map(|axis| axis.to_array()), "active": guide.active.map(render::handles::Handle::name)})),
+                "area_preview": view.area_preview.map(|guide| json!({"ndc": guide.corners.map(|point| point.to_array()), "contained": guide.contained, "aspect": guide.aspect, "camera": camera_json(&guide.camera)})) } });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),

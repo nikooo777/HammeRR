@@ -1,5 +1,6 @@
 mod game;
 mod inspector;
+mod interaction;
 mod materials;
 mod mcp;
 mod session;
@@ -21,7 +22,7 @@ use map_core::edit;
 use map_core::query::{self, Ray};
 use mcp::{EditorServer, SharedSession, id_string, lock};
 use render::{GpuContext, Projection};
-use session::{Actor, SelectMode, Session};
+use session::{Actor, Pointer, SelectMode, Session, TransformTool};
 use slint::platform::Key;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use source_formats::fgd::{Catalog, ClassKind};
@@ -115,6 +116,7 @@ struct Ui {
     seen_view: u64,
     brush_drag: Option<BrushDrag>,
     clip_drag: Option<BrushDrag>,
+    interaction: interaction::Interaction,
     seen_log: u64,
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
@@ -146,6 +148,7 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 }
 
 fn refresh_spatial(app: &AppWindow, session: &Session) {
+    refresh_interaction(app, session);
     refresh_clip(app, session);
     let settings = session.spatial();
     let projection = session.camera().projection;
@@ -177,6 +180,177 @@ fn refresh_spatial(app: &AppWindow, session: &Session) {
             .unwrap_or_default()
             .into(),
     );
+}
+
+fn refresh_interaction(app: &AppWindow, session: &Session) {
+    let tool = session.transform_tool();
+    let index = match tool.mode {
+        None => 0,
+        Some(render::handles::Mode::Move) => 1,
+        Some(render::handles::Mode::Rotate) => 2,
+        Some(render::handles::Mode::Scale) => 3,
+    };
+    app.set_handles_mode_index(index);
+    if index > 0 {
+        app.set_transform_mode(index - 1);
+    }
+    app.set_transform_space_index(i32::from(tool.local));
+    app.set_rotation_step(tool.angle_step.to_string().into());
+    app.set_transform_texture_lock(tool.texture_lock);
+    app.set_transform_pivot_mode(match tool.pivot {
+        None => 0,
+        Some(pivot) if pivot == DVec3::ZERO => 1,
+        Some(_) => 2,
+    });
+    if let Some(pivot) = tool.pivot {
+        app.set_pivot_x(pivot.x.to_string().into());
+        app.set_pivot_y(pivot.y.to_string().into());
+        app.set_pivot_z(pivot.z.to_string().into());
+    }
+    app.set_area_rule_index(i32::from(
+        session.area_rule() == map_core::region::Match::Contained,
+    ));
+    app.set_area_mode_index(match session.area_mode() {
+        SelectMode::Replace => 0,
+        SelectMode::Add => 1,
+        SelectMode::Remove => 2,
+        SelectMode::Toggle => 3,
+    });
+    app.set_has_transform_preview(session.transform_preview().is_some());
+    app.set_has_area_preview(session.area_preview().is_some());
+    let summary = if let Some(drag) = session.transform_drag() {
+        let transform = session.transform_preview().map(|preview| preview.transform);
+        match (drag.mode, transform) {
+            (render::handles::Mode::Move, Some(transform)) => format!(
+                "Move · {:.3} {:.3} {:.3} units",
+                transform.translation.x, transform.translation.y, transform.translation.z
+            ),
+            (render::handles::Mode::Rotate, Some(transform)) => format!(
+                "Rotate {} · {:.3}°",
+                drag.handle.name(),
+                transform.rotation[drag.handle.axis().unwrap()]
+            ),
+            (render::handles::Mode::Scale, Some(transform)) => format!(
+                "Scale · {:.3} {:.3} {:.3}",
+                transform.scale.x, transform.scale.y, transform.scale.z
+            ),
+            _ => "Drag to preview · release applies · Esc cancels".into(),
+        }
+    } else if let Some(preview) = session.transform_preview() {
+        format!("{} objects · transform preview", preview.ids.len())
+    } else if let Some(preview) = session.area_preview() {
+        if preview.faces {
+            format!(
+                "{} matching faces · selection preview",
+                preview.matches.faces.len()
+            )
+        } else {
+            format!(
+                "{} matching objects · selection preview",
+                preview.matches.objects.len()
+            )
+        }
+    } else {
+        String::new()
+    };
+    app.set_interaction_summary(summary.into());
+}
+
+fn transform_tool_from_controls(app: &AppWindow) -> Result<TransformTool, String> {
+    let mode = match app.get_handles_mode_index() {
+        0 => None,
+        1 => Some(render::handles::Mode::Move),
+        2 => Some(render::handles::Mode::Rotate),
+        _ => Some(render::handles::Mode::Scale),
+    };
+    let pivot = match app.get_transform_pivot_mode() {
+        0 => None,
+        1 => Some(DVec3::ZERO),
+        _ => Some(input_vector([
+            app.get_pivot_x(),
+            app.get_pivot_y(),
+            app.get_pivot_z(),
+        ])?),
+    };
+    Ok(TransformTool {
+        mode,
+        local: app.get_transform_space_index() == 1,
+        pivot,
+        texture_lock: app.get_transform_texture_lock(),
+        angle_step: app
+            .get_rotation_step()
+            .parse()
+            .map_err(|_| "Enter a numeric angle snap")?,
+    })
+}
+
+fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
+    app.on_transform_tool_changed({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            let result = transform_tool_from_controls(&app)
+                .and_then(|tool| session.set_transform_tool(Actor::User, tool));
+            if let Err(error) = result {
+                app.set_message(error.into());
+            }
+            refresh_spatial(&app, &session);
+        }
+    });
+    app.on_area_settings_changed({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            let rule = if app.get_area_rule_index() == 1 {
+                map_core::region::Match::Contained
+            } else {
+                map_core::region::Match::Intersecting
+            };
+            let mode = match app.get_area_mode_index() {
+                1 => SelectMode::Add,
+                2 => SelectMode::Remove,
+                3 => SelectMode::Toggle,
+                _ => SelectMode::Replace,
+            };
+            session.set_area_settings(rule, mode);
+            refresh_interaction(&app, &session);
+        }
+    });
+    app.on_apply_transform_preview({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            if let Err(error) = session.commit_transform_preview(Actor::User) {
+                app.set_message(error.into());
+            }
+            refresh_panel(&app, &mut session);
+            refresh_interaction(&app, &session);
+        }
+    });
+    app.on_apply_area_selection({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            if let Err(error) = session.commit_area_selection() {
+                app.set_message(error.into());
+            }
+            refresh_panel(&app, &mut session);
+            refresh_interaction(&app, &session);
+        }
+    });
+    app.on_cancel_interaction({
+        let app = app.as_weak();
+        move || {
+            let mut session = lock(&shared);
+            session.cancel_transform_preview();
+            session.cancel_area_selection();
+            refresh_interaction(&app.unwrap(), &session);
+        }
+    });
 }
 
 fn refresh_clip(app: &AppWindow, session: &Session) {
@@ -410,6 +584,11 @@ fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(
         2 => transform.scale = values,
         _ => return Err("Choose Move, Rotate or Scale".into()),
     }
+    transform.basis = session.transform_basis(
+        &session.selected_ids(),
+        app.get_transform_space_index() == 1,
+    )?;
+    transform.translation = transform.basis * transform.translation;
     let pivot = if app.get_transform_mode() == 0 {
         None
     } else {
@@ -425,6 +604,7 @@ fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(
         }
     };
     let ids = session.selected_ids();
+    session.set_transform_tool(Actor::User, transform_tool_from_controls(app)?)?;
     session.transform_objects(Actor::User, &ids, transform, pivot)?;
     Ok(())
 }
@@ -1854,6 +2034,20 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         return true;
     }
     if key == key_text(Key::Escape) {
+        {
+            let mut ui = ui.borrow_mut();
+            let shared = ui.session.clone();
+            let mut session = lock(&shared);
+            if ui.interaction.active()
+                || session.transform_preview().is_some()
+                || session.transform_drag().is_some()
+                || session.area_preview().is_some()
+            {
+                ui.interaction.cancel(&mut session);
+                refresh_interaction(app, &session);
+                return true;
+            }
+        }
         ui.borrow_mut().clip_drag = None;
         let cancelled = ui.borrow_mut().brush_drag.take().is_some();
         let shared = session_of(ui);
@@ -2001,6 +2195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_view: 0,
         brush_drag: None,
         clip_drag: None,
+        interaction: interaction::Interaction::default(),
         seen_log: 0,
         game_log_window: None,
         last_log_refresh: Instant::now(),
@@ -2090,6 +2285,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || apply_transform(&app.unwrap(), &ui)
     });
     bind_clip_controls(&app, session_of(&ui));
+    bind_manipulation_controls(&app, session_of(&ui));
     app.on_place_entity({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_entity_window(&app.unwrap(), &ui, false)
@@ -2275,6 +2471,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app = app.unwrap();
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
+            if button != 0 && down && ui.interaction.active() {
+                let shared = ui.session.clone();
+                ui.interaction.cancel(&mut lock(&shared));
+                refresh_interaction(&app, &lock(&shared));
+            }
             if button != 0 && down && ui.clip_drag.take().is_some() {
                 let mut session = lock(&ui.session);
                 session.cancel_clip_preview();
@@ -2364,6 +2565,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
             }
+            if button == 0 {
+                let shared = ui.session.clone();
+                let mut session = lock(&shared);
+                session.publish_camera(ui.viewport.camera);
+                let pointer = Pointer {
+                    position: DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        viewport_size.0.round().max(1.0) as u32,
+                        viewport_size.1.round().max(1.0) as u32,
+                    ),
+                };
+                let result = if down {
+                    ui.interaction.down(&mut session, pointer, control)
+                } else {
+                    ui.interaction.up(&mut session, pointer)
+                };
+                refresh_interaction(&app, &session);
+                match result {
+                    Ok(true) => {
+                        if !down {
+                            ui.viewport
+                                .mouse_button(button, down, (x, y), viewport_size, control);
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        if !down {
+                            ui.interaction.cancel(&mut session);
+                            ui.viewport
+                                .mouse_button(button, down, (x, y), viewport_size, control);
+                        }
+                        app.set_message(error.into());
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             let click = ui
                 .viewport
                 .mouse_button(button, down, (x, y), viewport_size, control);
@@ -2445,6 +2683,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            let shared = ui.session.clone();
+            let mut session = lock(&shared);
+            let pointer = Pointer {
+                position: DVec2::new(f64::from(x), f64::from(y)),
+                size: (
+                    size.0.round().max(1.0) as u32,
+                    size.1.round().max(1.0) as u32,
+                ),
+            };
+            if let Err(error) = ui.interaction.moved(&mut session, pointer) {
+                app.set_message(error.into());
+            }
+            refresh_interaction(&app, &session);
         }
     });
     app.on_wheel({
@@ -2455,6 +2706,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let height = app.get_viewport_height().max(1.0);
             let ndc = (x * 2.0 / width - 1.0, 1.0 - y * 2.0 / height);
             let mut ui = ui.borrow_mut();
+            if ui.interaction.active() {
+                let shared = ui.session.clone();
+                ui.interaction.cancel(&mut lock(&shared));
+                refresh_interaction(&app, &lock(&shared));
+            }
             if ui.clip_drag.take().is_some() {
                 let mut session = lock(&ui.session);
                 session.cancel_clip_preview();
@@ -2466,6 +2722,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_viewport_focus_lost({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
+            {
+                let mut ui = ui.borrow_mut();
+                if ui.interaction.active() {
+                    let shared = ui.session.clone();
+                    ui.interaction.cancel(&mut lock(&shared));
+                    refresh_interaction(&app.unwrap(), &lock(&shared));
+                }
+            }
             ui.borrow_mut().viewport.release_all();
             ui.borrow_mut().brush_drag = None;
             if ui.borrow_mut().clip_drag.take().is_some() {
@@ -2580,7 +2844,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (app.get_viewport_width() * scale).round() as u32,
                 (app.get_viewport_height() * scale).round() as u32,
             );
-            if let Some(frame) = ui.viewport.render(&ui.ctx, size) {
+            if let Some(frame) = ui.viewport.render(&ui.ctx, size, scale) {
                 app.set_frame(frame);
                 let c = &ui.viewport.camera;
                 let status = if c.projection == Projection::Perspective {
@@ -2616,6 +2880,136 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manipulation_controls_share_agent_previews_and_selection_without_desktop_input() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let id = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::new(64.0, 64.0, 64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let original = state.document().vmf().clone();
+        state.set_camera(render::Camera::planar(
+            Projection::Top,
+            Vec3::new(32.0, 32.0, 32.0),
+            256.0,
+        ));
+        let shared = Arc::new(Mutex::new(state));
+        let app = AppWindow::new().unwrap();
+        bind_manipulation_controls(&app, shared.clone());
+        refresh_panel(&app, &mut lock(&shared));
+        refresh_interaction(&app, &lock(&shared));
+        app.show().unwrap();
+        app.window().set_size(slint::PhysicalSize::new(1600, 960));
+        app.set_handles_mode_index(2);
+        app.set_transform_space_index(1);
+        app.set_rotation_step("22.5".into());
+        app.set_transform_pivot_mode(2);
+        app.set_pivot_x("10".into());
+        app.set_pivot_y("20".into());
+        app.set_pivot_z("30".into());
+        app.invoke_transform_tool_changed();
+        let settings = lock(&shared).transform_tool();
+        assert_eq!(settings.mode, Some(render::handles::Mode::Rotate));
+        assert!(settings.local);
+        assert_eq!(settings.pivot, Some(DVec3::new(10.0, 20.0, 30.0)));
+        assert_eq!(settings.angle_step, 22.5);
+        app.set_rotation_step("-1".into());
+        app.invoke_transform_tool_changed();
+        assert_eq!(lock(&shared).transform_tool(), settings);
+        assert!(app.get_message().contains("rotation snap"));
+        for apply in [false, true] {
+            lock(&shared)
+                .preview_transform(
+                    Actor::Agent,
+                    &[id],
+                    edit::Transform {
+                        translation: DVec3::new(32.0, 0.0, 0.0),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+            refresh_interaction(&app, &lock(&shared));
+            save_ui_snapshot(app.window(), "transform-handles-controls");
+            for label in ["Apply transform", "Cancel"] {
+                assert_dialog_button_visible(&app, label);
+            }
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                if apply { "Apply transform" } else { "Cancel" },
+            )
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+            assert!(!app.get_has_transform_preview());
+            assert_eq!(
+                lock(&shared).document().undo_labels().count(),
+                if apply { 2 } else { 1 }
+            );
+        }
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        app.set_area_rule_index(1);
+        app.set_area_mode_index(1);
+        app.invoke_area_settings_changed();
+        assert_eq!(
+            lock(&shared).area_rule(),
+            map_core::region::Match::Contained
+        );
+        assert_eq!(lock(&shared).area_mode(), SelectMode::Add);
+        lock(&shared).select(&[], SelectMode::Replace).unwrap();
+        for apply in [false, true] {
+            let mut state = lock(&shared);
+            let camera = state.camera();
+            state
+                .preview_area_selection(
+                    Actor::Agent,
+                    camera,
+                    Pointer {
+                        position: DVec2::new(300.0, 300.0),
+                        size: (1000, 1000),
+                    },
+                    DVec2::new(700.0, 700.0),
+                    map_core::region::Match::Contained,
+                    SelectMode::Add,
+                )
+                .unwrap();
+            refresh_interaction(&app, &state);
+            drop(state);
+            save_ui_snapshot(app.window(), "area-selection-controls");
+            for label in ["Apply selection", "Cancel"] {
+                assert_dialog_button_visible(&app, label);
+            }
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                if apply { "Apply selection" } else { "Cancel" },
+            )
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+            assert!(!app.get_has_area_preview());
+            assert_eq!(
+                lock(&shared).selected_ids(),
+                if apply { vec![id] } else { vec![] }
+            );
+            assert_eq!(lock(&shared).document().vmf(), &original);
+            assert_eq!(lock(&shared).document().undo_labels().count(), 1);
+        }
+    }
     #[test]
     fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_input() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(

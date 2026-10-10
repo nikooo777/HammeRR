@@ -23,6 +23,8 @@ over MCP; the activity panel shows who did what.*
   history with the user, and edits show up live.
 - Native BSP compilation with leak detection, pointfiles, detail brushes
   and brush entity models, available in the UI, CLI and MCP.
+- Compile and play in Linux CS:S, inspect game logs, and stop the managed
+  game process. Leak paths appear in the viewport after failed compiles.
 
 ## Agent integration
 
@@ -38,6 +40,9 @@ editing, undo/redo, the camera, `search_materials`, and visual checks:
 `render_view` returns a PNG of any viewpoint and `pick_at_pixel` maps a pixel
 of that image back to an object and face. `compile_map` compiles the current
 snapshot and returns diagnostics, geometry counts and leak paths.
+`run_map` compiles and launches CS:S; `launch_game` launches the latest
+successful compile. `game_log` reads engine output and `stop_game` stops
+the managed client. `set_view` controls tool textures and leak paths.
 
 | `render_view` of a map built entirely by an agent | `render_view` framing an agent-placed block |
 | --- | --- |
@@ -62,6 +67,16 @@ Click **Compile** to build the current map into a `.bsp` beside its VMF.
 Compilation runs in the background and includes unsaved edits. Unsaved
 maps prompt for an output filename.
 
+Click **Run Map** to compile and play the current snapshot in the installed
+Linux CS:S client. **Game Log** shows its console and launcher output;
+**Stop Map** closes the process started by this editor. A changed map must
+be compiled again before launching it. Every launch passes `-insecure`.
+
+Each run uses a uniquely named copy of the BSP and its own log files. The
+copied map is removed when the game exits; logs remain available until the
+next run or editor shutdown. Closing the editor stops its managed game
+process. Existing maps and unrelated game processes are left untouched.
+
 The standalone compiler uses the game's materials and compile flags:
 
 ```sh
@@ -71,6 +86,9 @@ cargo run --release -p compiler --bin hammerr-compile -- map.vmf --game /path/to
 Use `-o /path/to/map.bsp` to choose the output. A leak produces a `.lin`
 pointfile and leaves any existing BSP untouched. Maps need sealed world
 geometry and at least one point entity in open space.
+Leaks also appear as red lines through geometry in the editor and MCP
+renders. The **Leak path** checkbox toggles them. Editing the map hides
+the previous compile's path until the next compilation.
 
 To generate a small room with both player spawns:
 

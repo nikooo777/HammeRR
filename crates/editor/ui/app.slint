@@ -1,4 +1,20 @@
-import { Button, CheckBox, LineEdit, ListView } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+
+export component GameLogWindow inherits Window {
+    title: "CS:S Game Log - HammeRR";
+    preferred-width: 900px;
+    preferred-height: 600px;
+    in property <string> content;
+    VerticalLayout {
+        padding: 12px;
+        TextEdit {
+            text: root.content;
+            read-only: true;
+            font-family: "monospace";
+            wrap: no-wrap;
+        }
+    }
+}
 
 export struct KeyValue {
     key: string,
@@ -45,8 +61,11 @@ export component AppWindow inherits Window {
     in property <bool> can-undo;
     in property <bool> can-redo;
     in property <bool> compiling;
+    in property <bool> launching;
+    in property <bool> game-running;
     in property <bool> has-selection;
     in-out property <bool> show-tools: true;
+    in-out property <bool> show-leak: true;
     in-out property <string> material: "dev/dev_measuregeneric01";
 
     in property <string> selection-title: "Nothing selected";
@@ -62,6 +81,9 @@ export component AppWindow inherits Window {
     callback open-map();
     callback save-map();
     callback compile-map();
+    callback run-map();
+    callback game-log();
+    callback stop-game();
     callback undo();
     callback redo();
     callback create-block();
@@ -113,8 +135,25 @@ export component AppWindow inherits Window {
 
                 Button {
                     text: root.compiling ? "Compiling…" : "Compile";
-                    enabled: !root.compiling;
+                    enabled: !root.compiling && !root.launching;
                     clicked => { root.compile-map(); }
+                }
+
+                Button {
+                    text: root.launching ? "Launching…" : "Run Map";
+                    enabled: !root.compiling && !root.launching && !root.game-running;
+                    clicked => { root.run-map(); }
+                }
+
+                Button {
+                    text: "Game Log";
+                    clicked => { root.game-log(); }
+                }
+
+                Button {
+                    text: "Stop Map";
+                    enabled: root.game-running;
+                    clicked => { root.stop-game(); }
                 }
 
                 ToolbarSeparator { }
@@ -160,6 +199,12 @@ export component AppWindow inherits Window {
                     toggled => {
                         root.options-changed();
                     }
+                }
+
+                CheckBox {
+                    text: "Leak path";
+                    checked <=> root.show-leak;
+                    toggled => { root.options-changed(); }
                 }
 
                 Rectangle {

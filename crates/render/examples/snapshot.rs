@@ -40,6 +40,7 @@ fn main() {
         std::env::args().skip(1).partition(|a| a.starts_with("--"));
     let options = ViewOptions {
         tool_textures: !flags.iter().any(|f| f == "--no-tools"),
+        ..ViewOptions::default()
     };
     let (gameinfo, map, out) = match &args[..] {
         [g, m, o, ..] => (g, m, o),

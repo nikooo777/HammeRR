@@ -21,6 +21,7 @@ serde_json = "1.0.151"
 slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
 source-formats.workspace = true
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "sync", "io-std"] }
+tempfile = "3.27.0"
 
 [build-dependencies]
 slint-build = "1.18"

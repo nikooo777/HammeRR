@@ -14,7 +14,20 @@ use source_formats::gamefs::GameFs;
 use source_formats::keyvalues::WriteOptions;
 use source_formats::vmf::Vmf;
 
+use crate::game;
+
 const LOG_LENGTH: usize = 50;
+
+#[derive(Clone)]
+struct Snapshot {
+    generation: u64,
+    revision: u64,
+}
+
+struct CompiledMap {
+    path: PathBuf,
+    snapshot: Snapshot,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Actor {
@@ -62,6 +75,12 @@ pub struct Session {
     log_serial: u64,
     document_generation: u64,
     compiling: bool,
+    launching: bool,
+    compiled: Option<CompiledMap>,
+    leak: Option<(Snapshot, compiler::Leak)>,
+    game_run: Option<game::Run>,
+    game_exit_reported: bool,
+    closing: bool,
 }
 
 pub struct CompileRequest {
@@ -77,6 +96,17 @@ pub struct CompileResult {
     pub path: PathBuf,
     generation: u64,
     revision: u64,
+}
+
+pub struct LaunchRequest {
+    install: game::Install,
+    bsp: PathBuf,
+}
+
+impl LaunchRequest {
+    pub fn run(self) -> Result<game::Run, String> {
+        game::Run::launch(&self.install, &self.bsp)
+    }
 }
 
 impl CompileRequest {
@@ -125,6 +155,12 @@ impl Session {
             log_serial: 0,
             document_generation: 0,
             compiling: false,
+            launching: false,
+            compiled: None,
+            leak: None,
+            game_run: None,
+            game_exit_reported: false,
+            closing: false,
         }
     }
 
@@ -211,6 +247,8 @@ impl Session {
         });
         self.document = document;
         self.document_generation += 1;
+        self.compiled = None;
+        self.leak = None;
         self.path = path;
         self.selection.clear();
         self.camera_serial += 1;
@@ -369,13 +407,128 @@ impl Session {
         self.compiling
     }
 
+    pub fn launching(&self) -> bool {
+        self.launching
+    }
+
+    fn current_snapshot(&self, snapshot: &Snapshot) -> bool {
+        snapshot.generation == self.document_generation
+            && snapshot.revision == self.document.revision()
+    }
+
+    pub fn leak(&self) -> Option<&compiler::Leak> {
+        self.leak
+            .as_ref()
+            .filter(|(snapshot, _)| self.current_snapshot(snapshot))
+            .map(|(_, leak)| leak)
+    }
+
+    pub fn game_running(&self) -> bool {
+        self.game_run.as_ref().is_some_and(game::Run::running)
+    }
+
+    pub fn begin_launch(&mut self, actor: Actor) -> Result<LaunchRequest, String> {
+        if self.closing {
+            return Err("the editor is closing".into());
+        }
+        if self.launching || self.game_running() {
+            return Err(
+                "CS:S is already launching or running; close it before running another map".into(),
+            );
+        }
+        if self.compiling {
+            return Err("wait for map compilation to finish".into());
+        }
+        let compiled = self
+            .compiled
+            .as_ref()
+            .ok_or("compile the map before launching CS:S")?;
+        if !self.current_snapshot(&compiled.snapshot) {
+            return Err(
+                "the map changed since compilation; compile it again before launching".into(),
+            );
+        }
+        let request = LaunchRequest {
+            install: game::Install::from_game(&self.game)?,
+            bsp: compiled.path.clone(),
+        };
+        self.launching = true;
+        self.log(actor, "launching CS:S");
+        Ok(request)
+    }
+
+    pub fn finish_launch(
+        &mut self,
+        actor: Actor,
+        result: Result<game::Run, String>,
+    ) -> Result<game::Log, String> {
+        self.launching = false;
+        if self.closing {
+            drop(result);
+            return Err("the editor is closing".into());
+        }
+        match result {
+            Ok(run) => {
+                self.game_run = Some(run);
+                self.game_exit_reported = false;
+                self.log(actor, "launched CS:S; open Game Log for engine output");
+                self.game_log(game::DEFAULT_LOG_LINES)
+            }
+            Err(error) => {
+                self.log(actor, format!("game launch failed: {error}"));
+                Err(error)
+            }
+        }
+    }
+
+    pub fn poll_game(&mut self) {
+        if !self.game_exit_reported
+            && let Some(run) = &self.game_run
+            && !run.running()
+        {
+            let status = run.status();
+            self.game_exit_reported = true;
+            self.log(Actor::User, status.label());
+        }
+    }
+
+    pub fn game_log(&mut self, lines: usize) -> Result<game::Log, String> {
+        self.poll_game();
+        self.game_run
+            .as_ref()
+            .ok_or("no game has been launched by HammeRR")?
+            .log(lines)
+    }
+
+    pub fn stop_game(&mut self, actor: Actor) -> Result<(), String> {
+        let run = self
+            .game_run
+            .as_ref()
+            .ok_or("no game has been launched by HammeRR")?;
+        run.stop()?;
+        self.game_exit_reported = true;
+        self.log(actor, "stopped CS:S");
+        Ok(())
+    }
+
+    pub fn shutdown(&mut self) {
+        self.closing = true;
+        self.game_run = None;
+    }
+
     pub fn begin_compile(
         &mut self,
         actor: Actor,
         path: Option<&Path>,
     ) -> Result<CompileRequest, String> {
+        if self.closing {
+            return Err("the editor is closing".into());
+        }
         if self.compiling {
             return Err("a map compilation is already running".into());
+        }
+        if self.launching {
+            return Err("wait for CS:S to finish launching".into());
         }
         let path = path
             .map(Path::to_owned)
@@ -407,6 +560,26 @@ impl Session {
 
     pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {
         self.compiling = false;
+        if let Ok(result) = result {
+            let snapshot = Snapshot {
+                generation: result.generation,
+                revision: result.revision,
+            };
+            if self.current_snapshot(&snapshot) {
+                self.leak = result
+                    .output
+                    .leak
+                    .clone()
+                    .map(|leak| (snapshot.clone(), leak));
+                self.changed();
+            }
+            if result.output.bsp.is_some() {
+                self.compiled = Some(CompiledMap {
+                    path: result.path.clone(),
+                    snapshot,
+                });
+            }
+        }
         let message = match result {
             Err(message) => format!("compile failed: {message}"),
             Ok(result) if result.output.bsp.is_none() => {
@@ -470,12 +643,16 @@ impl Session {
 
     pub fn build_scene(&mut self) -> SceneMesh {
         let selected: HashSet<ObjectId> = self.selection.iter().copied().collect();
-        SceneMesh::build(
+        let mut mesh = SceneMesh::build(
             self.document.vmf(),
             &self.game,
             &mut self.materials,
             &selected,
-        )
+        );
+        if let Some(leak) = self.leak() {
+            mesh.set_leak_path(&leak.points);
+        }
+        mesh
     }
 
     /// Material names (as used in maps) containing `query`, case-insensitive.
@@ -494,5 +671,203 @@ impl Session {
             .filter(|name| name.contains(&query))
             .take(limit)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use map_core::edit;
+
+    fn room() -> Vmf {
+        let mut document = Document::empty();
+        document
+            .edit("room", |tx| {
+                for (mins, maxs) in [
+                    ([-272., -272., -16.], [272., 272., 0.]),
+                    ([-272., -272., 256.], [272., 272., 272.]),
+                    ([-272., -272., 0.], [-256., 272., 256.]),
+                    ([256., -272., 0.], [272., 272., 256.]),
+                    ([-256., -272., 0.], [256., -256., 256.]),
+                    ([-256., 256., 0.], [256., 272., 256.]),
+                ] {
+                    edit::create_block(
+                        tx,
+                        DVec3::from_array(mins),
+                        DVec3::from_array(maxs),
+                        "dev/dev_measuregeneric01",
+                    )?;
+                }
+                edit::create_entity(
+                    tx,
+                    "info_player_terrorist",
+                    Some(DVec3::new(0., 0., 8.)),
+                    &[],
+                    Vec::new(),
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        document.vmf().clone()
+    }
+
+    fn compile(session: &mut Session) -> CompileResult {
+        let result = session.begin_compile(Actor::Agent, None).unwrap().run();
+        session.finish_compile(Actor::Agent, &result);
+        result.unwrap()
+    }
+
+    #[test]
+    fn changed_document_cannot_launch_an_earlier_compile() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let mut session = Session::new(Ok(game));
+        session.replace_document(
+            Document::new(room()),
+            Some(directory.path().join("room.vmf")),
+        );
+        let request = session.begin_compile(Actor::Agent, None).unwrap();
+        assert!(session.begin_compile(Actor::User, None).is_err());
+        session
+            .edit(Actor::User, "add target", |tx| {
+                edit::create_entity(tx, "info_target", None, &[], Vec::new())
+            })
+            .unwrap();
+        let result = request.run();
+        session.finish_compile(Actor::Agent, &result);
+        assert!(result.unwrap().output.bsp.is_some());
+        assert!(
+            session
+                .begin_launch(Actor::Agent)
+                .err()
+                .unwrap()
+                .contains("map changed")
+        );
+        assert!(!session.compiling() && !session.launching());
+    }
+
+    #[test]
+    fn replacing_document_rejects_a_late_compile_result() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let mut session = Session::new(Ok(game));
+        session.replace_document(
+            Document::new(room()),
+            Some(directory.path().join("room.vmf")),
+        );
+        let request = session.begin_compile(Actor::Agent, None).unwrap();
+        session.new_map(Actor::User, true).unwrap();
+        let result = request.run();
+        session.finish_compile(Actor::Agent, &result);
+        assert!(session.begin_launch(Actor::Agent).is_err());
+        assert!(session.leak().is_none());
+        assert!(
+            session
+                .recent_log()
+                .next()
+                .unwrap()
+                .text
+                .contains("earlier snapshot")
+        );
+    }
+
+    #[test]
+    fn leaks_are_drawn_until_the_document_changes() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let mut vmf = room();
+        vmf.world.solids.pop();
+        let mut session = Session::new(Ok(game));
+        session.replace_document(Document::new(vmf), Some(directory.path().join("room.vmf")));
+        let result = compile(&mut session);
+        assert!(result.output.leak.is_some());
+        let lines = session.build_scene().leak_lines;
+        assert_eq!(lines.len(), (session.leak().unwrap().points.len() - 1) * 2);
+        assert!(lines.iter().all(|line| line.color == [255, 32, 32, 255]));
+        let solid = session.document().vmf().world.solids[0].id;
+        session
+            .edit(Actor::User, "move room", |tx| {
+                edit::translate(tx, &[ObjectId::Solid(solid)], DVec3::X, true)
+            })
+            .unwrap();
+        assert!(session.leak().is_none());
+        assert!(session.build_scene().leak_lines.is_empty());
+    }
+
+    #[test]
+    fn duplicate_launches_are_rejected_and_stop_preserves_logs() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let mut session = Session::new(Ok(game));
+        session.replace_document(
+            Document::new(room()),
+            Some(directory.path().join("room.vmf")),
+        );
+        assert!(session.begin_launch(Actor::User).is_err());
+        assert!(compile(&mut session).output.bsp.is_some());
+        let request = session.begin_launch(Actor::Agent).unwrap();
+        assert!(session.begin_launch(Actor::User).is_err());
+        assert!(session.begin_compile(Actor::User, None).is_err());
+        session.finish_launch(Actor::Agent, request.run()).unwrap();
+        assert!(session.game_running());
+        assert!(session.begin_launch(Actor::User).is_err());
+        session.stop_game(Actor::Agent).unwrap();
+        assert!(!session.game_running());
+        assert!(matches!(
+            session.game_log(1).unwrap().status,
+            game::Status::Exited { .. }
+        ));
+        assert!(session.begin_launch(Actor::User).is_ok());
+    }
+
+    #[test]
+    fn shutdown_stops_an_active_game_with_other_session_owners() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let game_dir = game.game_dir.clone();
+        let shared = Arc::new(std::sync::Mutex::new(Session::new(Ok(game))));
+        let other_owner = shared.clone();
+        let mut session = shared.lock().unwrap();
+        session.replace_document(
+            Document::new(room()),
+            Some(directory.path().join("room.vmf")),
+        );
+        compile(&mut session);
+        let request = session.begin_launch(Actor::Agent).unwrap();
+        let log = session.finish_launch(Actor::Agent, request.run()).unwrap();
+        session.shutdown();
+        assert!(!Path::new(&format!("/proc/{}", log.pid)).exists());
+        assert!(
+            !game_dir
+                .join("maps")
+                .join(format!("{}.bsp", log.map))
+                .exists()
+        );
+        assert!(session.game_log(1).is_err());
+        assert!(session.begin_launch(Actor::Agent).is_err());
+        assert!(session.begin_compile(Actor::Agent, None).is_err());
+        drop(session);
+        assert!(!other_owner.lock().unwrap().game_running());
+    }
+
+    #[test]
+    fn shutdown_stops_a_launch_that_finishes_late() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let game_dir = game.game_dir.clone();
+        let mut session = Session::new(Ok(game));
+        session.replace_document(
+            Document::new(room()),
+            Some(directory.path().join("room.vmf")),
+        );
+        compile(&mut session);
+        let request = session.begin_launch(Actor::Agent).unwrap();
+        session.shutdown();
+        assert!(session.launching());
+        let run = request.run().unwrap();
+        let log = run.log(1).unwrap();
+        assert!(session.finish_launch(Actor::Agent, Ok(run)).is_err());
+        assert!(!session.launching() && !session.game_running());
+        assert!(!Path::new(&format!("/proc/{}", log.pid)).exists());
+        assert!(
+            !game_dir
+                .join("maps")
+                .join(format!("{}.bsp", log.map))
+                .exists()
+        );
     }
 }

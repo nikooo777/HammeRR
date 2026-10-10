@@ -22,12 +22,28 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use source_formats::vmf::{Entity, Solid};
 
+use crate::game;
 use crate::session::{Actor, SelectMode, Session};
 
 pub type SharedSession = Arc<Mutex<Session>>;
 
 pub fn lock(session: &Mutex<Session>) -> MutexGuard<'_, Session> {
     session.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub fn launch(session: &SharedSession, actor: Actor) -> Result<game::Log, String> {
+    let request = {
+        let mut state = lock(session);
+        match state.begin_launch(actor) {
+            Ok(request) => request,
+            Err(error) => {
+                state.log(actor, format!("game launch failed: {error}"));
+                return Err(error);
+            }
+        }
+    };
+    let result = request.run();
+    lock(session).finish_launch(actor, result)
 }
 
 const DEFAULT_MATERIAL: &str = "dev/dev_measuregeneric01";
@@ -47,7 +63,10 @@ selection when ids are omitted, and creation tools select what they create.\n\
 Materials are paths under materials/ without extension, e.g. 'tools/toolsnodraw', \
 'tools/toolsskybox', 'dev/dev_measuregeneric01'; find more with search_materials.\n\
 Verify work visually with render_view (focus on objects, or an explicit camera) and \
-pick_at_pixel to identify what is at a point in a rendered image. Save with save_map.";
+pick_at_pixel to identify what is at a point in a rendered image. Save with save_map. \
+Compile with compile_map or compile and play with run_map; inspect engine output with \
+game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
+in the viewport; set_view controls their visibility.";
 
 type ToolResult = Result<CallToolResult, ErrorData>;
 
@@ -444,6 +463,8 @@ pub struct StepsArgs {
 pub struct SetViewArgs {
     /// Draw clip, trigger, nodraw and skybox brushes.
     pub tool_textures: Option<bool>,
+    /// Show the current compilation's leak path through geometry.
+    pub leak_path: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -455,6 +476,7 @@ pub struct RenderArgs {
     pub height: Option<u32>,
     /// Draw tool brushes (nodraw, clip, trigger, skybox). Defaults to the editor setting.
     pub tool_textures: Option<bool>,
+    pub leak_path: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -485,6 +507,22 @@ pub struct SearchMaterialsArgs {
 pub struct CompileArgs {
     /// Output .bsp path; defaults to the current map filename with a .bsp extension.
     pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GameLogArgs {
+    /// Tail lines per log (default 200, maximum 2000).
+    pub lines: Option<usize>,
+}
+
+fn game_log_json(log: &game::Log) -> Value {
+    let (status, exit_code, error) = match &log.status {
+        game::Status::Running => ("running", None, None),
+        game::Status::Exited { code, .. } => ("exited", *code, None),
+        game::Status::Failed(error) => ("failed", None, Some(error.as_str())),
+    };
+    json!({"status": status, "exit_code": exit_code, "error": error, "pid": log.pid,
+        "map": log.map, "console": log.console, "launcher": log.launcher, "truncated": log.truncated})
 }
 
 struct Offscreen {
@@ -577,6 +615,25 @@ impl EditorServer {
         description = "Compile the current map snapshot into a fullbright Source BSP. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks."
     )]
     async fn compile_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
+        self.compile_snapshot(args, false).await
+    }
+
+    #[tool(
+        description = "Compile the current unsaved map snapshot and launch it in the installed Linux CS:S client. Returns compile diagnostics, leak paths, and game process details. Does not save the VMF."
+    )]
+    async fn run_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
+        self.compile_snapshot(args, true).await
+    }
+
+    async fn compile_snapshot(&self, args: CompileArgs, play: bool) -> ToolResult {
+        if play {
+            let session = self.session();
+            if session.game_running() || session.launching() {
+                return fail(
+                    "CS:S is already launching or running; close it before running another map",
+                );
+            }
+        }
         let request = {
             let path = args.path.as_ref().map(PathBuf::from);
             match self.session().begin_compile(Actor::Agent, path.as_deref()) {
@@ -588,18 +645,28 @@ impl EditorServer {
         let worker = tokio::task::spawn_blocking(move || {
             let result = request.run();
             lock(&session).finish_compile(Actor::Agent, &result);
-            result
+            let result = result?;
+            let game = if play && result.output.bsp.is_some() {
+                Some(launch(&session, Actor::Agent)?)
+            } else {
+                None
+            };
+            Ok((result, game))
         })
         .await;
         let result = match worker {
             Ok(result) => result,
             Err(error) => {
-                let result = Err(error.to_string());
-                self.session().finish_compile(Actor::Agent, &result);
-                result
+                let error = error.to_string();
+                let mut session = self.session();
+                session.finish_compile(Actor::Agent, &Err(error.clone()));
+                if play {
+                    let _ = session.finish_launch(Actor::Agent, Err(error.clone()));
+                }
+                Err(error)
             }
         };
-        let result = match result {
+        let (result, game) = match result {
             Ok(result) => result,
             Err(message) => return fail(message),
         };
@@ -616,6 +683,7 @@ impl EditorServer {
             "diagnostics": diagnostics,
             "leak": output.leak.as_ref().map(|leak| json!({ "entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>(), "pointfile": result.path.with_extension("lin").display().to_string() })),
             "stats": { "brushes": output.stats.brushes, "nodes": output.stats.nodes, "leaves": output.stats.leaves, "faces": output.stats.faces, "models": output.stats.models, "elapsed_ms": output.stats.elapsed.as_millis() },
+            "game": game.as_ref().map(game_log_json),
         });
         if output.bsp.is_some() {
             ok(value)
@@ -627,11 +695,55 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Launch the latest successful compile of the current map in Linux CS:S. Rejects outdated compiles and duplicate launches. Use run_map to compile and launch in one call."
+    )]
+    async fn launch_game(&self) -> ToolResult {
+        let session = self.session.clone();
+        let result = tokio::task::spawn_blocking(move || launch(&session, Actor::Agent)).await;
+        match result {
+            Ok(Ok(log)) => ok(game_log_json(&log)),
+            Ok(Err(error)) => fail(error),
+            Err(error) => {
+                let error = error.to_string();
+                let _ = self
+                    .session()
+                    .finish_launch(Actor::Agent, Err(error.clone()));
+                fail(error)
+            }
+        }
+    }
+
+    #[tool(
+        description = "Read bounded tails of the most recent CS:S run's engine console and launcher output, including process status and exit code. Logs remain available after the game exits.",
+        annotations(read_only_hint = true)
+    )]
+    fn game_log(&self, Parameters(args): Parameters<GameLogArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .game_log(args.lines.unwrap_or(game::DEFAULT_LOG_LINES))
+                .map(|log| game_log_json(&log))
+        })
+    }
+
+    #[tool(
+        description = "Stop only the CS:S process launched by this HammeRR session. The game log remains readable afterward."
+    )]
+    async fn stop_game(&self) -> ToolResult {
+        let session = self.session.clone();
+        match tokio::task::spawn_blocking(move || lock(&session).stop_game(Actor::Agent)).await {
+            Ok(Ok(())) => ok(json!({"stopped": true})),
+            Ok(Err(error)) => fail(error),
+            Err(error) => fail(error.to_string()),
+        }
+    }
+
+    #[tool(
         description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera and recent activity by the user and agents.",
         annotations(read_only_hint = true)
     )]
     fn get_map_info(&self) -> ToolResult {
-        let session = self.session();
+        let mut session = self.session();
+        session.poll_game();
         let doc = session.document();
         let vmf = doc.vmf();
         let point_entities = vmf.entities.iter().filter(|e| e.solids.is_empty()).count();
@@ -647,6 +759,11 @@ impl EditorServer {
             "unsaved_changes": doc.is_dirty(),
             "game": session.game().game_dir.display().to_string(),
             "game_error": session.game_error(),
+            "compiling": session.compiling(),
+            "launching": session.launching(),
+            "game_running": session.game_running(),
+            "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
+            "view": {"tool_textures": session.view().tool_textures, "leak_path": session.view().leak_path},
             "world_brushes": vmf.world.solids.len(),
             "point_entities": point_entities,
             "brush_entities": vmf.entities.len() - point_entities,
@@ -1008,7 +1125,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Show or hide tool textures (clip, trigger, nodraw, skybox) in the viewport."
+        description = "Show or hide tool textures and the current compile's leak path in the viewport."
     )]
     fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
@@ -1017,8 +1134,11 @@ impl EditorServer {
             if let Some(tools) = args.tool_textures {
                 view.tool_textures = tools;
             }
+            if let Some(leak) = args.leak_path {
+                view.leak_path = leak;
+            }
             session.set_view(view);
-            Ok(json!({ "tool_textures": view.tool_textures }))
+            Ok(json!({ "tool_textures": view.tool_textures, "leak_path": view.leak_path }))
         })
     }
 
@@ -1067,10 +1187,14 @@ impl EditorServer {
         if let Some(tools) = args.tool_textures {
             view.tool_textures = tools;
         }
+        if let Some(leak) = args.leak_path {
+            view.leak_path = leak;
+        }
         let size = render_size(args.width, args.height);
         let png = self.render_png(&camera, size, view);
         let data = base64::engine::general_purpose::STANDARD.encode(png);
-        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1 });
+        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1,
+            "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path } });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),

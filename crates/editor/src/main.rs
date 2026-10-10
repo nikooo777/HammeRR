@@ -1,3 +1,4 @@
+mod game;
 mod mcp;
 mod session;
 mod steam;
@@ -36,6 +37,22 @@ const DEFAULT_MCP_PORT: u16 = 7377;
 const GRID: f64 = 16.0;
 const BLOCK_SIZE: f64 = 128.0;
 const ACTIVITY_SHOWN: usize = 30;
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+struct ShutdownGuard(SharedSession);
+
+impl Drop for ShutdownGuard {
+    fn drop(&mut self) {
+        lock(&self.0).shutdown();
+        loop {
+            let launching = lock(&self.0).launching();
+            if !launching {
+                break;
+            }
+            std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
+        }
+    }
+}
 
 struct Args {
     map: Option<PathBuf>,
@@ -88,6 +105,8 @@ struct Ui {
     seen_scene: u64,
     seen_camera: u64,
     seen_log: u64,
+    game_log_window: Option<GameLogWindow>,
+    last_log_refresh: Instant,
 }
 
 type SharedUi = Rc<RefCell<Ui>>;
@@ -188,6 +207,8 @@ fn refresh_panel(app: &AppWindow, session: &Session) {
     app.set_can_undo(doc.undo_labels().next().is_some());
     app.set_can_redo(doc.redo_labels().next().is_some());
     app.set_compiling(session.compiling());
+    app.set_launching(session.launching());
+    app.set_game_running(session.game_running());
     app.set_has_selection(!session.selection().is_empty());
     let (title, detail, properties) = selection_summary(session);
     app.set_selection_title(title.into());
@@ -286,7 +307,17 @@ fn save(app: &AppWindow, ui: &SharedUi) {
     .expect("event loop is running");
 }
 
-fn start_compile(app: &AppWindow, session: SharedSession, path: Option<&Path>) {
+fn start_compile(app: &AppWindow, session: SharedSession, path: Option<&Path>, play: bool) {
+    let busy = {
+        let session = lock(&session);
+        session.game_running() || session.launching()
+    };
+    if play && busy {
+        app.set_message(
+            "CS:S is already launching or running; close it before running another map".into(),
+        );
+        return;
+    }
     let request = match lock(&session).begin_compile(Actor::User, path) {
         Ok(request) => request,
         Err(message) => {
@@ -300,16 +331,19 @@ fn start_compile(app: &AppWindow, session: SharedSession, path: Option<&Path>) {
         .spawn(move || {
             let result = request.run();
             lock(&worker_session).finish_compile(Actor::User, &result);
+            if play && result.as_ref().is_ok_and(|r| r.output.bsp.is_some()) {
+                let _ = mcp::launch(&worker_session, Actor::User);
+            }
         });
     if let Err(error) = spawned {
         lock(&session).finish_compile(Actor::User, &Err(error.to_string()));
     }
 }
 
-fn compile_map(app: &AppWindow, ui: &SharedUi) {
+fn compile_map(app: &AppWindow, ui: &SharedUi, play: bool) {
     let session = session_of(ui);
     if lock(&session).path().is_some() {
-        start_compile(app, session, None);
+        start_compile(app, session, None, play);
         return;
     }
     let dialog = rfd::AsyncFileDialog::new()
@@ -322,10 +356,37 @@ fn compile_map(app: &AppWindow, ui: &SharedUi) {
             return;
         };
         if let Some(app) = app.upgrade() {
-            start_compile(&app, session, Some(file.path()));
+            start_compile(&app, session, Some(file.path()), play);
         }
     })
     .expect("event loop is running");
+}
+
+fn show_game_log(app: &AppWindow, ui: &SharedUi) {
+    let session = session_of(ui);
+    let log = match lock(&session).game_log(game::DEFAULT_LOG_LINES) {
+        Ok(log) => log,
+        Err(error) => {
+            app.set_message(error.into());
+            return;
+        }
+    };
+    let mut ui = ui.borrow_mut();
+    if ui.game_log_window.is_none() {
+        match GameLogWindow::new() {
+            Ok(window) => ui.game_log_window = Some(window),
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        }
+    }
+    if let Some(window) = &ui.game_log_window {
+        window.set_content(log.text().into());
+        if let Err(error) = window.show() {
+            app.set_message(error.to_string().into());
+        }
+    }
 }
 
 /// Edits the selection as the user and shows any error in the status bar.
@@ -461,6 +522,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
     let ctx = GpuContext::new()?;
     let session = Arc::new(Mutex::new(Session::new(mount_game(args.gameinfo))));
+    let _shutdown = ShutdownGuard(session.clone());
     let open_message = args
         .map
         .as_ref()
@@ -494,6 +556,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .select()?;
 
     let app = AppWindow::new()?;
+    app.window().on_close_requested(|| {
+        if let Err(error) = slint::quit_event_loop() {
+            eprintln!("could not close editor: {error}");
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
     app.set_mcp_status(mcp_status.into());
     app.set_stats(ctx.adapter.get_info().name.into());
     {
@@ -514,6 +582,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_scene: 0,
         seen_camera: 0,
         seen_log: 0,
+        game_log_window: None,
+        last_log_refresh: Instant::now(),
     }));
 
     app.on_open_map({
@@ -535,7 +605,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     app.on_compile_map({
         let (app, ui) = (app.as_weak(), ui.clone());
-        move || compile_map(&app.unwrap(), &ui)
+        move || compile_map(&app.unwrap(), &ui, false)
+    });
+    app.on_run_map({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || compile_map(&app.unwrap(), &ui, true)
+    });
+    app.on_game_log({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_game_log(&app.unwrap(), &ui)
+    });
+    app.on_stop_game({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if let Err(error) = lock(&session_of(&ui)).stop_game(Actor::User) {
+                app.unwrap().set_message(error.into());
+            }
+        }
     });
     app.on_undo({
         let ui = ui.clone();
@@ -616,11 +702,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_options_changed({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
-            let show_tools = app.unwrap().get_show_tools();
+            let app = app.unwrap();
             let shared = session_of(&ui);
             let mut session = lock(&shared);
             let mut view = session.view();
-            view.tool_textures = show_tools;
+            view.tool_textures = app.get_show_tools();
+            view.leak_path = app.get_show_leak();
             session.set_view(view);
         }
     });
@@ -695,6 +782,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut panel_dirty = false;
             {
                 let mut session = lock(&ui.session);
+                session.poll_game();
                 if session.camera_serial() != ui.seen_camera {
                     ui.seen_camera = session.camera_serial();
                     ui.viewport.camera = session.camera();
@@ -708,6 +796,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.options = session.view();
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
                     app.set_show_tools(session.view().tool_textures);
+                    app.set_show_leak(session.view().leak_path);
                     panel_dirty = true;
                 }
                 if session.log_serial() != ui.seen_log {
@@ -719,6 +808,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if panel_dirty {
                     refresh_panel(&app, &session);
+                }
+            }
+
+            if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
+                ui.last_log_refresh = now;
+                if let Some(window) = &ui.game_log_window {
+                    let text = lock(&ui.session)
+                        .game_log(game::DEFAULT_LOG_LINES)
+                        .map(|log| log.text())
+                        .unwrap_or_else(|error| error);
+                    window.set_content(text.into());
                 }
             }
 

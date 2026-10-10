@@ -2,6 +2,7 @@ mod connection_ui;
 mod game;
 mod inspector;
 mod interaction;
+mod management_ui;
 mod materials;
 mod mcp;
 mod rename_ui;
@@ -125,6 +126,9 @@ struct Ui {
     entity_window: Option<EntityWindow>,
     connection_window: Option<ConnectionWindow>,
     seen_connections: (u64, u64, u64),
+    properties_window: Option<PropertiesWindow>,
+    report_window: Option<ReportWindow>,
+    seen_management: (u64, u64, u64),
     rename_window: Option<RenameWindow>,
     seen_rename: (u64, u64, u64),
     color_window: Option<ColorWindow>,
@@ -1429,6 +1433,83 @@ fn show_connection_window(app: &AppWindow, ui: &SharedUi) {
     }
 }
 
+fn show_properties_window(app: &AppWindow, ui: &SharedUi, world: bool) {
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    let target = if world {
+        session::PropertyTarget::World
+    } else {
+        let ids = session
+            .selected_ids()
+            .into_iter()
+            .map(|id| match id {
+                ObjectId::Entity(id) => Ok(id),
+                _ => Err("Select entities to edit their common properties."),
+            })
+            .collect::<Result<Vec<_>, _>>();
+        match ids {
+            Ok(ids) => session::PropertyTarget::Entities(ids),
+            Err(error) => {
+                app.set_message(error.into());
+                return;
+            }
+        }
+    };
+    if ui.borrow().properties_window.is_none() {
+        let result = PropertiesWindow::new().and_then(|window| {
+            management_ui::bind_properties(&window, &shared)?;
+            Ok(window)
+        });
+        match result {
+            Ok(window) => ui.borrow_mut().properties_window = Some(window),
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        }
+    }
+    if session
+        .property_draft()
+        .is_none_or(|draft| draft.target != target)
+        && let Err(error) = session.begin_property_edit(target)
+    {
+        app.set_message(error.into());
+        return;
+    }
+    let window = ui
+        .borrow()
+        .properties_window
+        .as_ref()
+        .unwrap()
+        .clone_strong();
+    management_ui::refresh_properties(&window, &session);
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
+fn show_report_window(app: &AppWindow, ui: &SharedUi) {
+    let shared = session_of(ui);
+    if ui.borrow().report_window.is_none() {
+        match ReportWindow::new() {
+            Ok(window) => {
+                management_ui::bind_report(&window, &shared);
+                ui.borrow_mut().report_window = Some(window);
+            }
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        }
+    }
+    let window = ui.borrow().report_window.as_ref().unwrap().clone_strong();
+    window.set_aspect((app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01));
+    management_ui::refresh_report(&window, &lock(&shared));
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
 fn show_rename_window(app: &AppWindow, ui: &SharedUi, name: Option<String>) {
     let shared = session_of(ui);
     let mut session = lock(&shared);
@@ -2284,6 +2365,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         entity_window: None,
         connection_window: None,
         seen_connections: (0, 0, 0),
+        properties_window: None,
+        report_window: None,
+        seen_management: (0, 0, 0),
         rename_window: None,
         seen_rename: (0, 0, 0),
         color_window: None,
@@ -2406,6 +2490,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_selection_mode_changed({
         let ui = ui.clone();
         move |mode| lock(&session_of(&ui)).set_face_mode(mode == 1)
+    });
+    app.on_world_settings({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_properties_window(&app.unwrap(), &ui, true)
+    });
+    app.on_batch_properties({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_properties_window(&app.unwrap(), &ui, false)
+    });
+    app.on_object_report({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_report_window(&app.unwrap(), &ui)
     });
     app.on_edit_connections({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -2932,6 +3028,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && window.window().is_visible()
                     {
                         connection_ui::refresh(window, &session);
+                    }
+                }
+                let management = (
+                    session.management_serial(),
+                    session.scene_serial(),
+                    session.definitions_serial(),
+                );
+                if management != ui.seen_management {
+                    ui.seen_management = management;
+                    if let Some(window) = &ui.properties_window
+                        && window.window().is_visible()
+                    {
+                        management_ui::refresh_properties(window, &session);
+                    }
+                    if let Some(window) = &ui.report_window
+                        && window.window().is_visible()
+                    {
+                        management_ui::refresh_report(window, &session);
                     }
                 }
                 let rename = (
@@ -3558,6 +3672,145 @@ mod tests {
         assert!(lock(&shared).rename_draft().is_none());
         assert!(!window.window().is_visible());
         assert_eq!(lock(&shared).document().vmf(), &original);
+    }
+
+    #[test]
+    fn management_controls_stage_cancel_apply_and_report_without_desktop_input() {
+        use slint::Model;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("test assets".into()));
+        session.set_definitions(
+            Actor::Agent,
+            Catalog::parse(
+                r#"
+@PointClass = light [
+    _light(color255) : "Light color" : "255 255 255 200"
+    style(choices) : "Appearance" : 0 = [ 0 : "Normal" 1 : "Flicker" ]
+    spawnflags(flags) = [ 1 : "Initially dark" : 0 ]
+]
+"#,
+            )
+            .unwrap(),
+        );
+        let mut ids = Vec::new();
+        for (i, value) in ["255 190 100 300", "100 170 255 600"].iter().enumerate() {
+            let ObjectId::Entity(id) = session
+                .create_entity(
+                    Actor::Agent,
+                    "light",
+                    Some(DVec3::new(i as f64 * 100.0, 0.0, 64.0)),
+                    BTreeMap::from([("_light".into(), value.to_string())]),
+                )
+                .unwrap()
+            else {
+                panic!()
+            };
+            ids.push(id);
+        }
+        let before = session.document().vmf().clone();
+        session
+            .begin_property_edit(session::PropertyTarget::Entities(ids.clone()))
+            .unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let window = PropertiesWindow::new().unwrap();
+        management_ui::bind_properties(&window, &shared).unwrap();
+        management_ui::refresh_properties(&window, &lock(&shared));
+        window.show().unwrap();
+        window.invoke_component_edit("_light".into(), 3, "450".into());
+        assert!(window.get_can_apply());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert!(
+            window
+                .get_fields()
+                .iter()
+                .any(|row| row.status.contains("Mixed"))
+        );
+        save_ui_snapshot(window.window(), "batch-properties");
+        for label in ["Cancel", "Apply properties"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_cancel();
+        assert!(lock(&shared).property_draft().is_none());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        lock(&shared)
+            .begin_property_edit(session::PropertyTarget::Entities(ids.clone()))
+            .unwrap();
+        management_ui::refresh_properties(&window, &lock(&shared));
+        window.invoke_edit("style".into(), "1".into());
+        window.invoke_apply();
+        assert_eq!(
+            lock(&shared)
+                .document()
+                .entity(ids[1])
+                .unwrap()
+                .properties
+                .get("style"),
+            Some("1")
+        );
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        lock(&shared)
+            .begin_property_edit(session::PropertyTarget::World)
+            .unwrap();
+        management_ui::refresh_properties(&window, &lock(&shared));
+        let old = window.get_draft_token();
+        lock(&shared)
+            .begin_property_edit(session::PropertyTarget::Entities(ids.clone()))
+            .unwrap();
+        window.invoke_edit("skyname".into(), "sky_bad".into());
+        assert!(window.get_message().contains("replaced"));
+        window.set_draft_token(old);
+        window.invoke_cancel();
+        assert!(lock(&shared).property_draft().is_some());
+        let report = ReportWindow::new().unwrap();
+        management_ui::bind_report(&report, &shared);
+        report.set_classname("light".into());
+        report.invoke_search();
+        assert_eq!(report.get_rows().row_count(), 2);
+        report.set_limit_bounds(true);
+        report.set_min_x("80".into());
+        report.set_max_x("120".into());
+        report.invoke_search();
+        assert_eq!(report.get_rows().row_count(), 1);
+        report.invoke_select_all(false);
+        assert_eq!(lock(&shared).selected_ids(), [ObjectId::Entity(ids[1])]);
+        report.set_min_x("oops".into());
+        report.invoke_search();
+        assert_eq!(report.get_rows().row_count(), 0);
+        report.set_limit_bounds(false);
+        report.invoke_search();
+        report.invoke_select_all(true);
+        assert_eq!(lock(&shared).selected_ids().len(), 2);
+        report.invoke_visibility_action("hide".into());
+        report.set_visibility(2);
+        report.invoke_search();
+        assert_eq!(report.get_rows().row_count(), 2);
+        report.show().unwrap();
+        save_ui_snapshot(report.window(), "object-report");
+        for label in [
+            "Close",
+            "Show all",
+            "Restore visibility",
+            "Select all matches",
+        ] {
+            assert_dialog_button_visible(&report, label);
+        }
+        report.invoke_visibility_action("restore".into());
+        assert_eq!(report.get_rows().row_count(), 0);
+        report.set_visibility(0);
+        report.invoke_search();
+        let id = report.get_rows().row_data(0).unwrap().id;
+        lock(&shared).new_map(Actor::Agent, true).unwrap();
+        report.invoke_select_result(id, false);
+        assert!(report.get_message().contains("Map changed"));
+        assert!(lock(&shared).selected_ids().is_empty());
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {

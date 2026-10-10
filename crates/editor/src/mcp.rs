@@ -24,7 +24,10 @@ use source_formats::fgd::{Catalog, Class, ClassKind};
 use source_formats::vmf::{Entity, Solid};
 
 use crate::game;
-use crate::session::{Actor, ConnectionFields, ConnectionRecord, SelectMode, Session};
+use crate::session::{
+    Actor, ConnectionFields, ConnectionRecord, ObjectFilter, PropertyChange, PropertyTarget,
+    SelectMode, Session,
+};
 
 pub type SharedSession = Arc<Mutex<Session>>;
 
@@ -98,7 +101,14 @@ get_entity_references also inspects FGD property links, parent references and in
 Use begin_entity_rename, update_entity_rename, commit_entity_rename or cancel_entity_rename \
 for safe naming: exact links update atomically, shared names require rename_group, and \
 unchanged ambiguous references require accept_review after inspecting the preview. \
-the current compiler still produces fullbright maps without baked lighting. \
+get_property_inspector reports world or common entity fields, stored/default values and mixed flags. \
+Use begin_property_edit (world:true or entity ids), update_property_edit with a changes list, \
+then commit_property_edit or cancel_property_edit using the returned token. Default resets \
+write the FGD value; remove deletes the override. All targets apply in one undo step. \
+get_object_report searches names/classes/materials/types/visibility/bounds; select_object_report \
+selects all matches and can frame them. set_object_visibility hides/shows/isolates/restores \
+saved VMF visibility. Hidden objects and child brushes are OMITTED from compilation. \
+The current compiler still produces fullbright maps without baked lighting. \
 Compile with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
 in the viewport; set_view controls their visibility.";
@@ -440,6 +450,10 @@ pub struct SaveMapArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FindArgs {
+    /// Free text across IDs, class, name and materials.
+    pub query: Option<String>,
+    /// Filter stored VMF visibility.
+    pub hidden: Option<bool>,
     /// Case-insensitive substring of the entity classname (e.g. 'info_player', 'func_').
     pub classname: Option<String>,
     /// Case-insensitive substring of targetname.
@@ -453,6 +467,85 @@ pub struct FindArgs {
     /// Maximum results (default 50, at most 500).
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PropertyTargetArgs {
+    /// World settings when true. Otherwise use entity IDs or the selection.
+    #[serde(default)]
+    pub world: bool,
+    pub ids: Option<Vec<String>>,
+    /// Optional guards from get_property_inspector or get_object_report.
+    pub generation: Option<u64>,
+    pub revision: Option<u64>,
+}
+
+impl PropertyTargetArgs {
+    fn target(self, session: &Session) -> Result<PropertyTarget, String> {
+        if self
+            .generation
+            .is_some_and(|value| value != session.document_generation())
+            || self
+                .revision
+                .is_some_and(|value| value != session.document().revision())
+        {
+            return Err("Map changed; inspect properties again".into());
+        }
+        if self.world {
+            if self.ids.is_some() {
+                return Err("Use world or entity IDs, not both".into());
+            }
+            return Ok(PropertyTarget::World);
+        }
+        let ids = ids_or_selection(session, self.ids.as_deref())?
+            .into_iter()
+            .map(|id| match id {
+                ObjectId::Entity(id) => Ok(id),
+                _ => {
+                    Err("Property batches require entities; use world=true for map settings".into())
+                }
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(PropertyTarget::Entities(ids))
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PropertyEditArgs {
+    pub token: u64,
+    /// Replaces the pending change list. Nothing is written until commit.
+    pub changes: Vec<PropertyChange>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PropertyTokenArgs {
+    pub token: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct VisibilityArgs {
+    /// hide, show, isolate, show_all or restore. Hidden objects are NOT compiled.
+    pub action: String,
+    /// Defaults to selection for hide/show/isolate. Omit for show_all/restore.
+    pub ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReportArgs {
+    #[serde(default)]
+    pub filter: ObjectFilter,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SelectReportArgs {
+    #[serde(default)]
+    pub filter: ObjectFilter,
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub frame: bool,
+    pub aspect: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1405,6 +1498,8 @@ impl EditorServer {
             "area_selection": area_state(&session),
             "connection_draft": connection_draft_json(&session),
             "rename_draft": rename_draft_json(&session),
+            "property_draft": session.property_draft(),
+            "visibility": session.visibility_state(),
             "face_selection": face_state(&session),
             "world_brushes": vmf.world.solids.len(),
             "point_entities": point_entities,
@@ -1455,65 +1550,161 @@ impl EditorServer {
         annotations(read_only_hint = true)
     )]
     fn find_objects(&self, Parameters(args): Parameters<FindArgs>) -> ToolResult {
-        let session = self.session();
-        let doc = session.document();
-        let lower = |s: &Option<String>| s.as_ref().map(|s| s.to_ascii_lowercase());
-        let (classname, targetname, material) = (
-            lower(&args.classname),
-            lower(&args.targetname),
-            lower(&args.material),
-        );
-        let contains = |value: Option<&str>, needle: &Option<String>| {
-            needle
-                .as_ref()
-                .is_none_or(|n| value.is_some_and(|v| v.to_ascii_lowercase().contains(n)))
-        };
-        let matches = |id: ObjectId| -> bool {
-            let (solids, entity): (Vec<&Solid>, Option<&Entity>) = match id {
-                ObjectId::Solid(n) => (doc.solid(n).into_iter().collect(), None),
-                ObjectId::Entity(n) => match doc.entity(n) {
-                    Some(e) => (e.solids.iter().collect(), Some(e)),
-                    None => return false,
-                },
-            };
-            let kind_ok = args.kind.as_deref().is_none_or(|k| match k {
-                "solid" => entity.is_none(),
-                "entity" => entity.is_some(),
-                "point_entity" => entity.is_some_and(|e| e.solids.is_empty()),
-                "brush_entity" => entity.is_some_and(|e| !e.solids.is_empty()),
-                _ => false,
-            });
-            let names_ok = if classname.is_some() || targetname.is_some() {
-                entity.is_some_and(|e| {
-                    contains(e.classname(), &classname)
-                        && contains(e.properties.get("targetname"), &targetname)
+        run(|| {
+            let session = self.session();
+            let found = session.object_report(&ObjectFilter {
+                query: args.query,
+                hidden: args.hidden,
+                classname: args.classname,
+                targetname: args.targetname,
+                material: args.material,
+                kind: args.kind,
+                within: args.within,
+            })?;
+            let offset = args.offset.unwrap_or(0);
+            let objects = found
+                .iter()
+                .skip(offset)
+                .take(args.limit.unwrap_or(50).min(500))
+                .map(|row| {
+                    let mut value = summary(session.document(), row.object);
+                    value["hidden"] = json!(row.hidden);
+                    value["hidden_brushes"] = json!(row.hidden_brushes);
+                    value
                 })
+                .collect::<Vec<_>>();
+            Ok(json!({"total":found.len(), "offset":offset, "objects":objects}))
+        })
+    }
+
+    #[tool(
+        description = "Searchable object report with IDs, type, class, name, materials, visibility and bounds. Same filters as the human Object report. Default page 100, maximum 500.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_object_report(&self, Parameters(args): Parameters<ReportArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let rows = session.object_report(&args.filter)?;
+            let offset = args.offset.unwrap_or(0);
+            Ok(
+                json!({"total":rows.len(), "offset":offset, "objects":rows.iter().skip(offset).take(args.limit.unwrap_or(100).min(500)).collect::<Vec<_>>(), "visibility":session.visibility_state(), "generation":session.document_generation(), "revision":session.document().revision()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Select ALL matching report objects, including results beyond a page. Optionally frame the resulting selection. Uses shared report filters and replace/add/remove/toggle selection."
+    )]
+    fn select_object_report(&self, Parameters(args): Parameters<SelectReportArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let count = session.select_report(
+                Actor::Agent,
+                &args.filter,
+                parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?,
+                args.frame,
+                args.aspect.unwrap_or(1.6),
+            )?;
+            Ok(
+                json!({"matched":count, "selection":session.selected_ids().into_iter().map(id_string).collect::<Vec<_>>()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Hide, show, isolate, show all or restore previous visibility, in one undo step. Saved VMF hidden state includes nested brushes. Hidden objects are omitted by the compiler. Restore keeps newly created objects and ignores deleted ones."
+    )]
+    fn set_object_visibility(&self, Parameters(args): Parameters<VisibilityArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = if ["show_all", "restore"].contains(&args.action.as_str()) {
+                args.ids
+                    .as_deref()
+                    .map(parse_ids)
+                    .transpose()?
+                    .unwrap_or_default()
             } else {
-                true
+                ids_or_selection(&session, args.ids.as_deref())?
             };
-            let material_ok = material.as_ref().is_none_or(|m| {
-                solids.iter().any(|s| {
-                    s.sides
-                        .iter()
-                        .any(|f| f.material.to_ascii_lowercase().contains(m))
-                })
-            });
-            let within_ok = args.within.is_none_or(|[lo, hi]| {
-                query::bounds(doc, id)
-                    .is_some_and(|(a, b)| a.cmple(vec3(hi)).all() && b.cmpge(vec3(lo)).all())
-            });
-            kind_ok && names_ok && material_ok && within_ok
-        };
-        let found: Vec<ObjectId> = doc.objects().filter(|&id| matches(id)).collect();
-        let limit = args.limit.unwrap_or(50).min(500);
-        let offset = args.offset.unwrap_or(0);
-        let page: Vec<Value> = found
-            .iter()
-            .skip(offset)
-            .take(limit)
-            .map(|&id| summary(doc, id))
-            .collect();
-        ok(json!({ "total": found.len(), "offset": offset, "objects": page }))
+            session.set_visibility(Actor::Agent, &args.action, &ids)?;
+            Ok(session.visibility_state())
+        })
+    }
+
+    #[tool(
+        description = "Inspect world settings or common entity properties with typed controls, mixed values, individual stored values, FGD defaults and mixed flags. Absent values are reported separately from explicit overrides.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_property_inspector(
+        &self,
+        Parameters(args): Parameters<PropertyTargetArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let report = session.inspect_properties(args.target(&session)?)?;
+            serde_json::to_value(report).map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Begin a shared cancellable property draft for world settings or selected entities. Returns a token required by update/commit/cancel. Replaces any previous property draft."
+    )]
+    fn begin_property_edit(&self, Parameters(args): Parameters<PropertyTargetArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let target = args.target(&session)?;
+            session.begin_property_edit(target)?;
+            Ok(
+                json!({"draft":session.property_draft(), "preview":session.preview_property_edit()?}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Replace pending property changes and validate every target before accepting. set writes a value; remove deletes the override; default explicitly writes the FGD default; flag changes one declared bit preserving others; component edits one vector/color component. Names use the dedicated safe rename workflow. No map mutation until commit."
+    )]
+    fn update_property_edit(&self, Parameters(args): Parameters<PropertyEditArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.update_property_edit(args.token, args.changes)?;
+            Ok(
+                json!({"draft":session.property_draft(), "preview":session.preview_property_edit()?}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Read the shared property draft and preview; a stale map/FGD draft returns an error.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_property_edit(&self) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            Ok(
+                json!({"draft":session.property_draft(), "preview":session.preview_property_edit()?}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Apply the property draft as one undoable edit. Rejects stale tokens, map revisions, map replacement and changed entity definitions."
+    )]
+    fn commit_property_edit(&self, Parameters(args): Parameters<PropertyTokenArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .commit_property_edit(Actor::Agent, args.token)?;
+            Ok(json!({"applied":true}))
+        })
+    }
+
+    #[tool(
+        description = "Discard the shared property draft without changing the map or undo history. A replaced draft cannot be cancelled by an old token."
+    )]
+    fn cancel_property_edit(&self, Parameters(args): Parameters<PropertyTokenArgs>) -> ToolResult {
+        run(|| {
+            self.session().cancel_property_edit(args.token)?;
+            Ok(json!({"cancelled":true}))
+        })
     }
 
     #[tool(

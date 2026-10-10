@@ -55,6 +55,7 @@ pub struct SceneMesh {
     pub batches: Vec<Batch>,
     /// Edges of selected objects, as a line list.
     pub lines: Vec<LineVertex>,
+    pub leak_lines: Vec<LineVertex>,
     pub mins: Vec3,
     pub maxs: Vec3,
     pub stats: SceneStats,
@@ -306,9 +307,21 @@ impl SceneMesh {
             indices,
             batches,
             lines: builder.lines,
+            leak_lines: Vec::new(),
             mins,
             maxs,
             stats,
         }
+    }
+
+    pub fn set_leak_path(&mut self, points: &[DVec3]) {
+        self.leak_lines = points
+            .windows(2)
+            .flat_map(|pair| pair.iter())
+            .map(|p| LineVertex {
+                position: p.as_vec3().to_array(),
+                color: [255, 32, 32, 255],
+            })
+            .collect();
     }
 }

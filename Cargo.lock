@@ -1192,6 +1192,7 @@ dependencies = [
  "slint",
  "slint-build",
  "source-formats",
+ "tempfile",
  "tokio",
 ]
 

@@ -113,12 +113,14 @@ struct Globals {
 #[derive(Clone, Copy, Debug)]
 pub struct ViewOptions {
     pub tool_textures: bool,
+    pub leak_path: bool,
 }
 
 impl Default for ViewOptions {
     fn default() -> Self {
         Self {
             tool_textures: true,
+            leak_path: true,
         }
     }
 }
@@ -136,6 +138,7 @@ pub struct GpuScene {
     opaque: Vec<DrawBatch>,
     translucent: Vec<DrawBatch>,
     lines: Option<(wgpu::Buffer, u32)>,
+    leak_lines: Option<(wgpu::Buffer, u32)>,
 }
 
 pub struct Renderer {
@@ -370,6 +373,14 @@ impl Renderer {
             );
             (lines, mesh.lines.len() as u32)
         });
+        let leak_lines = (!mesh.leak_lines.is_empty()).then(|| {
+            let lines = buffer(
+                "leak path",
+                bytemuck::cast_slice(&mesh.leak_lines),
+                wgpu::BufferUsages::VERTEX,
+            );
+            (lines, mesh.leak_lines.len() as u32)
+        });
 
         let (mut opaque, mut translucent) = (Vec::new(), Vec::new());
         for &batch in &mesh.batches {
@@ -391,6 +402,7 @@ impl Renderer {
             opaque,
             translucent,
             lines,
+            leak_lines,
         }
     }
 
@@ -553,6 +565,13 @@ impl Renderer {
                 }
             }
             if let Some((lines, count)) = &scene.lines {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, lines.slice(..));
+                pass.draw(0..*count, 0..1);
+            }
+            if options.leak_path
+                && let Some((lines, count)) = &scene.leak_lines
+            {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_vertex_buffer(0, lines.slice(..));
                 pass.draw(0..*count, 0..1);

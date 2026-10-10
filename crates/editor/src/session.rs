@@ -22,6 +22,8 @@ use crate::spatial;
 
 mod clipping;
 pub use clipping::ClipPreview;
+mod manipulation;
+pub use manipulation::{AreaPreview, Pointer, TransformDrag, TransformPreview, TransformTool};
 
 const LOG_LENGTH: usize = 50;
 
@@ -91,6 +93,13 @@ pub struct Session {
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
+    transform_tool: TransformTool,
+    transform_preview: Option<TransformPreview>,
+    transform_drag: Option<TransformDrag>,
+    area_preview: Option<AreaPreview>,
+    area_rule: map_core::region::Match,
+    area_mode: SelectMode,
+    interaction_epoch: u64,
     material_index: Option<Vec<String>>,
     material_favorites: BTreeSet<String>,
     material_recent: VecDeque<String>,
@@ -187,6 +196,13 @@ impl Session {
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
+            transform_tool: TransformTool::default(),
+            transform_preview: None,
+            transform_drag: None,
+            area_preview: None,
+            area_rule: map_core::region::Match::Intersecting,
+            area_mode: SelectMode::Replace,
+            interaction_epoch: 0,
             material_index: None,
             material_favorites: BTreeSet::new(),
             material_recent: VecDeque::new(),
@@ -494,6 +510,8 @@ impl Session {
                 .map_err(|error| error.to_string())?;
             self.cancel_clip_preview();
             self.clip_tool = false;
+            self.cancel_transform_preview();
+            self.cancel_area_selection();
             self.view_serial += 1;
             self.face_preview = Some(FacePreview { document, edits });
             self.scene_serial += 1;
@@ -878,6 +896,9 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_face_preview();
         self.cancel_clip_preview();
+        self.cancel_transform_preview();
+        self.cancel_area_selection();
+        self.view_serial += 1;
         if self.clip_tool && !self.can_clip_selection() {
             self.clip_tool = false;
             self.view_serial += 1;
@@ -1053,11 +1074,15 @@ impl Session {
         self.camera = camera;
         self.cancel_block_preview();
         self.clip_epoch += 1;
+        self.interaction_camera_changed();
         self.camera_serial += 1;
     }
 
     /// Records the viewport's own camera movement.
     pub fn publish_camera(&mut self, camera: Camera) {
+        if self.camera != camera {
+            self.interaction_camera_changed();
+        }
         self.camera = camera;
     }
 
@@ -1074,11 +1099,29 @@ impl Session {
                 distance: preview.plane.dist as f32,
                 bounds: preview.bounds.map(|point| point.as_vec3()),
             }),
+            transform_handles: self.transform_guide(),
+            area_preview: self.area_preview.as_ref().map(|preview| render::AreaGuide {
+                corners: [
+                    preview.start.ndc().as_vec2(),
+                    Pointer {
+                        position: preview.end,
+                        ..preview.start
+                    }
+                    .ndc()
+                    .as_vec2(),
+                ],
+                contained: preview.rule == map_core::region::Match::Contained,
+                camera: preview.camera,
+                aspect: preview.start.size.0 as f32 / preview.start.size.1 as f32,
+            }),
             ..self.view
         }
     }
 
     pub fn set_view(&mut self, view: ViewOptions) {
+        if self.view.tool_textures != view.tool_textures {
+            self.cancel_area_selection();
+        }
         self.view = view;
         self.view_serial += 1;
     }
@@ -1178,6 +1221,8 @@ impl Session {
         }
         self.cancel_block_preview();
         self.cancel_clip_preview();
+        self.cancel_transform_preview();
+        self.cancel_area_selection();
         self.view_serial += 1;
         self.log(
             actor,
@@ -1526,10 +1571,21 @@ impl Session {
     /// The nearest visible object along a ray. Brushes made only of tool
     /// materials can't be picked while tool textures are hidden.
     pub fn pick(&mut self, ray: &Ray) -> Option<Hit> {
+        let hidden = self.hidden_tool_brushes();
+        let document = self.render_document();
+        if self.face_mode {
+            query::pick_face(document, ray, |s| !hidden.contains(&s.id))
+        } else {
+            query::pick(document, ray, |s| !hidden.contains(&s.id))
+        }
+    }
+
+    fn hidden_tool_brushes(&mut self) -> HashSet<u32> {
         let document = self
-            .clip_preview
+            .transform_preview
             .as_ref()
             .map(|preview| &preview.document)
+            .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
             .unwrap_or(&self.document);
         let mut hidden = HashSet::new();
@@ -1545,17 +1601,14 @@ impl Session {
                 }
             }
         }
-        if self.face_mode {
-            query::pick_face(document, ray, |s| !hidden.contains(&s.id))
-        } else {
-            query::pick(document, ray, |s| !hidden.contains(&s.id))
-        }
+        hidden
     }
 
     pub fn render_document(&self) -> &Document {
-        self.clip_preview
+        self.transform_preview
             .as_ref()
             .map(|preview| &preview.document)
+            .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
             .unwrap_or(&self.document)
     }
@@ -1565,19 +1618,41 @@ impl Session {
             || self.selection.iter().copied().collect(),
             |preview| preview.result.objects.iter().copied().collect(),
         );
+        let selected = self
+            .area_preview
+            .as_ref()
+            .map_or(selected.clone(), |preview| {
+                manipulation::combined_selection(&selected, &preview.matches.objects, preview.mode)
+            });
+        let selected_faces: HashSet<FaceId> = self.face_selection.iter().copied().collect();
+        let selected_faces = self.area_preview.as_ref().map_or_else(
+            || selected_faces.clone(),
+            |preview| {
+                manipulation::combined_selection(
+                    &selected_faces,
+                    &preview.matches.faces,
+                    preview.mode,
+                )
+            },
+        );
         let mut mesh = SceneMesh::build_with_faces(
-            self.clip_preview
+            self.transform_preview
                 .as_ref()
                 .map(|preview| preview.document.vmf())
                 .unwrap_or_else(|| {
-                    self.face_preview
+                    self.clip_preview
                         .as_ref()
-                        .map_or(self.document.vmf(), |preview| preview.document.vmf())
+                        .map(|preview| preview.document.vmf())
+                        .unwrap_or_else(|| {
+                            self.face_preview
+                                .as_ref()
+                                .map_or(self.document.vmf(), |preview| preview.document.vmf())
+                        })
                 }),
             &self.game,
             &mut self.materials,
             &selected,
-            &self.face_selection.iter().copied().collect(),
+            &selected_faces,
         );
         if let Some(leak) = self.leak() {
             mesh.set_leak_path(&leak.points);

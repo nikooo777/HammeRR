@@ -34,6 +34,7 @@ pub struct Viewport {
     /// time is what makes it repaint.
     targets: [Option<RenderTarget>; 2],
     next_target: usize,
+    pixel_ratio: f32,
     held: HashSet<String>,
     looking: bool,
     last_mouse: Option<(f32, f32)>,
@@ -51,6 +52,7 @@ impl Viewport {
             options: ViewOptions::default(),
             targets: [None, None],
             next_target: 0,
+            pixel_ratio: 1.0,
             held: HashSet::new(),
             looking: false,
             last_mouse: None,
@@ -199,10 +201,15 @@ impl Viewport {
     }
 
     /// Renders a new frame if anything changed, at `size` physical pixels.
-    pub fn render(&mut self, ctx: &GpuContext, size: (u32, u32)) -> Option<slint::Image> {
+    pub fn render(
+        &mut self,
+        ctx: &GpuContext,
+        size: (u32, u32),
+        pixel_ratio: f32,
+    ) -> Option<slint::Image> {
         let size = (size.0.max(1), size.1.max(1));
         let resized = self.targets[0].as_ref().is_none_or(|t| t.size() != size);
-        if !self.dirty && !resized {
+        if !self.dirty && !resized && self.pixel_ratio == pixel_ratio {
             return None;
         }
         let scene = self.scene.as_ref()?;
@@ -213,9 +220,14 @@ impl Viewport {
             ];
         }
         let target = self.targets[self.next_target].as_ref()?;
+        let options = ViewOptions {
+            handle_pixel_ratio: pixel_ratio,
+            ..self.options
+        };
         self.renderer
-            .render(ctx, scene, &self.camera, &self.options, &target.view, size);
+            .render(ctx, scene, &self.camera, &options, &target.view, size);
         self.next_target ^= 1;
+        self.pixel_ratio = pixel_ratio;
         self.dirty = false;
         slint::Image::try_from(target.texture.clone()).ok()
     }

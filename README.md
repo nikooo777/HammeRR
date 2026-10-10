@@ -23,7 +23,8 @@ and the shared entity inspector and activity panel.*
 | Area | Available now |
 | --- | --- |
 | Maps and content | VMF editing and saving; byte-for-byte round trips for unmodified files; game materials from Steam libraries, search paths and VPK archives. |
-| Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, exact movement/rotation/scale, and texture locking. |
+| Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
+| Selection | Object and face marquee selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Face materials | Individual face selection, UV offset/scale/rotation, texture fitting, cancellable previews, and a grouped material browser with thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
@@ -71,6 +72,8 @@ cargo test --workspace
 | Pan / zoom in planar views | Right-drag / mouse wheel; zoom follows the cursor. |
 | Frame selection or map | **Frame · F**; frames the map when nothing is selected. |
 | Select / toggle selection | Click / Ctrl+click. |
+| Select an area | Left-drag away from a handle; choose **Intersects** or **Fully inside** and a selection rule. Ctrl+drag toggles. |
+| Transform with handles | Choose **Move handles**, **Rotate handles** or **Scale handles**; drag a handle and release to apply. Escape cancels. |
 | Nudge selection | Arrows and PgUp/PgDn; Shift uses at most one unit. |
 | Duplicate / delete | Ctrl+D / Del. |
 | Undo / redo | Ctrl+Z / Ctrl+Y. |
@@ -86,10 +89,27 @@ then drag a footprint. The preview shows snapped dimensions; releasing
 places the brush in one undo step. Escape cancels, and **Done** returns to
 selection. **Add brush** places a default block in perspective.
 
-Enable **Transform selection** in the inspector for exact XYZ movement,
-world-axis rotation or scaling. Choose the selection center, world origin
-or custom coordinates as the pivot. **Keep textures attached** preserves
-surface UVs. Each application is one undo step for the selected group.
+Choose a handle tool above the viewport for movement arrows and plane handles,
+rotation rings, or axis and uniform scale handles. **World axes** and **Local
+axes** control the frame; local axes follow the first selected object's brush
+orientation or entity angles. **Snap** uses the grid for relative movement and
+scaled dimensions, and **Angle snap** sets rotation increments. Releasing a
+drag applies one undo step; Escape or **Cancel** discards the draft.
+
+Enable **Transform selection** in the inspector for exact XYZ inputs. Choose
+the selection center, world origin or custom coordinates as the pivot. These
+settings also control handles. **Keep textures attached** preserves surface
+UVs. Numeric transforms remain exact, independent of grid snapping.
+
+Area selection works in perspective, Top, Front and Side, for objects or
+faces. It includes geometry through the view's depth and skips hidden brushes
+and hidden tool materials. A brush entity is selected as a whole. **Fully
+inside** requires all its visible brushes to fit; **Intersects** accepts any
+intersection. Selection previews highlight candidates without changing the
+map or adding undo history.
+
+Imported terrain uses its supporting brush faces for area queries. Volume
+and paint selection are still pending.
 
 ### Brush clipping
 
@@ -199,6 +219,8 @@ For example, place a warm light:
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
 | Spatial authoring | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
+| Transform handles and previews | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
+| Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
@@ -216,6 +238,17 @@ labels and control types used by the GUI.
 planar line. Use `preview: true` to inspect the shared cut before committing
 or cancelling it. `get_clip_preview` reports the resulting brushes and faces;
 `render_view` and picking use the same preview geometry as the viewport.
+
+`transform_objects` accepts `space: "world"` or `"local"` and `preview: true`.
+Handle tools support numeric amounts and viewport pointers, with updates
+measured from the gesture's start. `get_transform_handles` returns the rendered
+paths in world coordinates and pixels, and can hit-test a pixel. Shared drafts
+can be inspected, applied or cancelled from the editor or MCP.
+
+`select_area` takes pixel corners, viewport dimensions and an optional camera
+override, plus `contained`/`intersecting` and selection rules. Use `preview:
+true` to inspect candidates before applying. Camera overrides leave the user's
+view unchanged; face mode returns stable solid/side IDs.
 
 </details>
 

@@ -44,6 +44,7 @@ export component AppWindow inherits Window {
     in property <bool> flying;
     in property <bool> can-undo;
     in property <bool> can-redo;
+    in property <bool> compiling;
     in property <bool> has-selection;
     in-out property <bool> show-tools: true;
     in-out property <string> material: "dev/dev_measuregeneric01";
@@ -60,6 +61,7 @@ export component AppWindow inherits Window {
     callback new-map();
     callback open-map();
     callback save-map();
+    callback compile-map();
     callback undo();
     callback redo();
     callback create-block();
@@ -107,6 +109,12 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.save-map();
                     }
+                }
+
+                Button {
+                    text: root.compiling ? "Compiling…" : "Compile";
+                    enabled: !root.compiling;
+                    clicked => { root.compile-map(); }
                 }
 
                 ToolbarSeparator { }

@@ -5,8 +5,15 @@ description = "Compiles VMF maps into Source engine BSP files"
 edition.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "hammerr-compile"
+path = "src/main.rs"
+
 [dependencies]
 glam.workspace = true
 map-core.workspace = true
 source-formats.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -187,6 +187,7 @@ fn refresh_panel(app: &AppWindow, session: &Session) {
     app.set_map_title(session.title().into());
     app.set_can_undo(doc.undo_labels().next().is_some());
     app.set_can_redo(doc.redo_labels().next().is_some());
+    app.set_compiling(session.compiling());
     app.set_has_selection(!session.selection().is_empty());
     let (title, detail, properties) = selection_summary(session);
     app.set_selection_title(title.into());
@@ -280,6 +281,48 @@ fn save(app: &AppWindow, ui: &SharedUi) {
         let result = lock(&session_of(&ui)).save(Actor::User, Some(file.path()));
         if let Some(app) = app.upgrade() {
             report(&app, result.map(|p| format!("Saved {}", p.display())));
+        }
+    })
+    .expect("event loop is running");
+}
+
+fn start_compile(app: &AppWindow, session: SharedSession, path: Option<&Path>) {
+    let request = match lock(&session).begin_compile(Actor::User, path) {
+        Ok(request) => request,
+        Err(message) => {
+            app.set_message(message.into());
+            return;
+        }
+    };
+    let worker_session = session.clone();
+    let spawned = std::thread::Builder::new()
+        .name("map-compile".into())
+        .spawn(move || {
+            let result = request.run();
+            lock(&worker_session).finish_compile(Actor::User, &result);
+        });
+    if let Err(error) = spawned {
+        lock(&session).finish_compile(Actor::User, &Err(error.to_string()));
+    }
+}
+
+fn compile_map(app: &AppWindow, ui: &SharedUi) {
+    let session = session_of(ui);
+    if lock(&session).path().is_some() {
+        start_compile(app, session, None);
+        return;
+    }
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Compile map")
+        .set_file_name("untitled.bsp")
+        .add_filter("Source map", &["bsp"]);
+    let app = app.as_weak();
+    slint::spawn_local(async move {
+        let Some(file) = dialog.save_file().await else {
+            return;
+        };
+        if let Some(app) = app.upgrade() {
+            start_compile(&app, session, Some(file.path()));
         }
     })
     .expect("event loop is running");
@@ -489,6 +532,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_save_map({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || save(&app.unwrap(), &ui)
+    });
+    app.on_compile_map({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || compile_map(&app.unwrap(), &ui)
     });
     app.on_undo({
         let ui = ui.clone();

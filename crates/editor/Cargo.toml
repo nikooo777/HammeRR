@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+compiler = { path = "../compiler" }
 axum = "0.8.9"
 base64 = "0.23.1"
 glam.workspace = true

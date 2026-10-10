@@ -1,0 +1,75 @@
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use compiler::{Level, compile};
+use source_formats::gamefs::GameFs;
+use source_formats::vmf::Vmf;
+
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>]";
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = std::env::args_os().skip(1);
+    let mut map = None;
+    let mut game = None;
+    let mut destination = None;
+    while let Some(arg) = args.next() {
+        match arg.to_str() {
+            Some("--game") => game = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
+            Some("-o" | "--output") => destination = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
+            Some("-h" | "--help") => {
+                println!("{USAGE}");
+                return Ok(());
+            }
+            Some(flag) if flag.starts_with('-') => return Err(USAGE.into()),
+            _ if map.is_none() => map = Some(PathBuf::from(arg)),
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let map = map.ok_or(USAGE)?;
+    let game = game.ok_or(USAGE)?;
+    let path = destination.unwrap_or_else(|| map.with_extension("bsp"));
+    if path == map
+        || !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("bsp"))
+    {
+        return Err("output must be a .bsp file distinct from the source map".into());
+    }
+    let vmf = Vmf::parse(&std::fs::read_to_string(&map)?)?;
+    let fs = GameFs::from_gameinfo(game)?;
+    let output = compile(&vmf, &fs);
+    for diagnostic in &output.report.diagnostics {
+        let level = match diagnostic.level {
+            Level::Info => "info",
+            Level::Warning => "warning",
+            Level::Error => "error",
+        };
+        let object = diagnostic.object.as_deref().unwrap_or("map");
+        eprintln!("{level}: {object}: {}", diagnostic.message);
+    }
+    if !output.write(&path)? {
+        return Err("compilation failed; no BSP written".into());
+    }
+    let stats = &output.stats;
+    println!(
+        "{}: {} brushes, {} nodes, {} leaves, {} faces, {} models in {:.1?}",
+        path.display(),
+        stats.brushes,
+        stats.nodes,
+        stats.leaves,
+        stats.faces,
+        stats.models,
+        stats.elapsed
+    );
+    Ok(())
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}

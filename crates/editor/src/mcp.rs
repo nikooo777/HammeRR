@@ -481,6 +481,12 @@ pub struct SearchMaterialsArgs {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CompileArgs {
+    /// Output .bsp path; defaults to the current map filename with a .bsp extension.
+    pub path: Option<String>,
+}
+
 struct Offscreen {
     ctx: GpuContext,
     renderer: Renderer,
@@ -567,6 +573,59 @@ fn single_entity(session: &Session, id: Option<&str>) -> Result<u32, String> {
 
 #[tool_router]
 impl EditorServer {
+    #[tool(
+        description = "Compile the current map snapshot into a fullbright Source BSP. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks."
+    )]
+    async fn compile_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
+        let request = {
+            let path = args.path.as_ref().map(PathBuf::from);
+            match self.session().begin_compile(Actor::Agent, path.as_deref()) {
+                Ok(request) => request,
+                Err(message) => return fail(message),
+            }
+        };
+        let session = self.session.clone();
+        let worker = tokio::task::spawn_blocking(move || {
+            let result = request.run();
+            lock(&session).finish_compile(Actor::Agent, &result);
+            result
+        })
+        .await;
+        let result = match worker {
+            Ok(result) => result,
+            Err(error) => {
+                let result = Err(error.to_string());
+                self.session().finish_compile(Actor::Agent, &result);
+                result
+            }
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(message) => return fail(message),
+        };
+        let output = result.output;
+        let diagnostics: Vec<Value> = output.report.diagnostics.iter().map(|d| json!({
+            "level": match d.level { compiler::Level::Info => "info", compiler::Level::Warning => "warning", compiler::Level::Error => "error" },
+            "message": d.message,
+            "object": d.object,
+            "position": d.position.map(point),
+        })).collect();
+        let value = json!({
+            "success": output.bsp.is_some(),
+            "bsp": output.bsp.as_ref().map(|_| result.path.display().to_string()),
+            "diagnostics": diagnostics,
+            "leak": output.leak.as_ref().map(|leak| json!({ "entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>(), "pointfile": result.path.with_extension("lin").display().to_string() })),
+            "stats": { "brushes": output.stats.brushes, "nodes": output.stats.nodes, "leaves": output.stats.leaves, "faces": output.stats.faces, "models": output.stats.models, "elapsed_ms": output.stats.elapsed.as_millis() },
+        });
+        if output.bsp.is_some() {
+            ok(value)
+        } else {
+            Ok(CallToolResult::error(vec![ContentBlock::text(
+                value.to_string(),
+            )]))
+        }
+    }
+
     #[tool(
         description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera and recent activity by the user and agents.",
         annotations(read_only_hint = true)

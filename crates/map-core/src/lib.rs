@@ -2,6 +2,7 @@
 
 pub mod brush;
 pub mod clip;
+pub mod connections;
 pub mod displacement;
 pub mod document;
 pub mod edit;

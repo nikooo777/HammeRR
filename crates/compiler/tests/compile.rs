@@ -1,5 +1,51 @@
 mod common;
 
+#[test]
+fn authored_io_survives_vmf_reload_and_bsp_emission() {
+    let mut document = map_core::Document::new(common::room());
+    document
+        .edit("logic", |tx| {
+            let source = map_core::edit::create_entity(
+                tx,
+                "logic_relay",
+                Some(glam::DVec3::new(0.0, 0.0, 64.0)),
+                &[("targetname".into(), "relay".into())],
+                Vec::new(),
+            )?;
+            let map_core::ObjectId::Entity(source) = source else {
+                panic!()
+            };
+            for (delay, times) in [(0.0, -1), (0.75, 1)] {
+                map_core::connections::set(
+                    tx,
+                    source,
+                    None,
+                    &map_core::connections::Spec {
+                        output: "OnTrigger".into(),
+                        target: "!self".into(),
+                        input: "Enable".into(),
+                        parameter: String::new(),
+                        delay,
+                        times,
+                    },
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let saved = document.vmf().write(&Default::default());
+    let vmf = source_formats::vmf::Vmf::parse(&saved).unwrap();
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.leak.is_none());
+    let bsp = output.bsp.unwrap();
+    let bsp = source_formats::bsp::Bsp::parse(&bsp.to_bytes()).unwrap();
+    let entities = bsp.entities().unwrap();
+    assert_eq!(entities.matches("\"OnTrigger\"").count(), 2);
+    assert!(entities.contains("\"!self,Enable,,0,-1\""));
+    assert!(entities.contains("\"!self,Enable,,0.75,1\""));
+}
+
 use glam::DVec3;
 use map_core::{Document, ObjectId, edit};
 use source_formats::bsp::{

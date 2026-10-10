@@ -1,3 +1,4 @@
+mod connection_ui;
 mod game;
 mod inspector;
 mod interaction;
@@ -121,6 +122,8 @@ struct Ui {
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
     entity_window: Option<EntityWindow>,
+    connection_window: Option<ConnectionWindow>,
+    seen_connections: (u64, u64, u64),
     color_window: Option<ColorWindow>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
@@ -1392,6 +1395,37 @@ fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
     }
 }
 
+fn show_connection_window(app: &AppWindow, ui: &SharedUi) {
+    let shared = session_of(ui);
+    let session = lock(&shared);
+    let Some(source) = single_selected_entity(&session) else {
+        app.set_message("Select an entity to inspect its connections.".into());
+        return;
+    };
+    if ui.borrow().connection_window.is_none() {
+        let window = match ConnectionWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        };
+        connection_ui::bind(&window, &shared);
+        ui.borrow_mut().connection_window = Some(window);
+    }
+    let window = ui
+        .borrow()
+        .connection_window
+        .as_ref()
+        .unwrap()
+        .clone_strong();
+    window.set_source_id(id_string(ObjectId::Entity(source)).into());
+    connection_ui::refresh(&window, &session);
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
 fn refresh_material_catalog(window: &MaterialWindow, session: &mut Session) {
     let catalog = match session.material_catalog(
         &window.get_filter(),
@@ -2200,6 +2234,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         game_log_window: None,
         last_log_refresh: Instant::now(),
         entity_window: None,
+        connection_window: None,
+        seen_connections: (0, 0, 0),
         color_window: None,
         color_target: None,
         material_window: None,
@@ -2320,6 +2356,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_selection_mode_changed({
         let ui = ui.clone();
         move |mode| lock(&session_of(&ui)).set_face_mode(mode == 1)
+    });
+    app.on_edit_connections({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || show_connection_window(&app.unwrap(), &ui)
     });
     app.on_edit_face_textures({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -2823,6 +2863,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     panel_dirty = true;
                 }
+                let connections = (
+                    session.connection_serial(),
+                    session.scene_serial(),
+                    session.definitions_serial(),
+                );
+                if connections != ui.seen_connections {
+                    ui.seen_connections = connections;
+                    if let Some(window) = &ui.connection_window
+                        && window.window().is_visible()
+                    {
+                        connection_ui::refresh(window, &session);
+                    }
+                }
                 if panel_dirty {
                     refresh_panel(&app, &mut session);
                 }
@@ -3156,6 +3209,105 @@ mod tests {
         assert!(clip_drag_plane(&session, drag, end).is_err());
         session.new_map(Actor::Agent, true).unwrap();
         assert!(clip_drag_plane(&session, drag, end).is_err());
+    }
+
+    #[test]
+    fn connection_controls_share_agent_drafts_and_reject_stale_forms() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.set_definitions(Actor::Agent, Catalog::parse(r#"
+@PointClass = logic_relay [ targetname(string) : "Name" input Trigger(void) : "Trigger the relay" output OnTrigger(void) : "Fires when triggered" ]
+"#).unwrap());
+        let ObjectId::Entity(source) = session
+            .create_entity(
+                Actor::Agent,
+                "logic_relay",
+                Some(DVec3::ZERO),
+                BTreeMap::from([("targetname".into(), "courtyard_relay".into())]),
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let original = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let window = ConnectionWindow::new().unwrap();
+        connection_ui::bind(&window, &shared);
+        window.set_source_id(id_string(ObjectId::Entity(source)).into());
+        connection_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Add connection")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        window.set_target("!self".into());
+        window.set_input("Trigger".into());
+        window.set_delay("0.25".into());
+        window.set_times("1".into());
+        window.invoke_fields_changed();
+        assert!(window.get_can_apply());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        assert_eq!(
+            lock(&shared).connection_draft().unwrap().fields.delay,
+            "0.25"
+        );
+        save_ui_snapshot(window.window(), "entity-connections");
+        assert_dialog_button_visible(&window, "Cancel");
+        assert_dialog_button_visible(&window, "Apply connection");
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &window,
+            "Apply connection",
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+        assert_eq!(lock(&shared).connection_records(source).unwrap().len(), 1);
+        assert_eq!(lock(&shared).incoming_connections(source).unwrap().len(), 1);
+        window.invoke_choose(id_string(ObjectId::Entity(source)).into(), 0);
+        save_ui_snapshot(window.window(), "entity-connections-edit");
+        let old_token = lock(&shared).connection_draft().unwrap().token;
+        lock(&shared).begin_connection_edit(source, None).unwrap();
+        window.invoke_apply();
+        assert!(window.get_message().contains("draft changed"));
+        assert_ne!(lock(&shared).connection_draft().unwrap().token, old_token);
+        assert_eq!(lock(&shared).connection_records(source).unwrap().len(), 1);
+        window.set_target("!self".into());
+        window.set_input("Trigger".into());
+        window.set_delay("-1".into());
+        window.invoke_fields_changed();
+        assert!(!window.get_can_apply());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).connection_records(source).unwrap().len(), 1);
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Cancel")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(lock(&shared).connection_draft().is_none());
+        window.show().unwrap();
+        connection_ui::refresh(&window, &lock(&shared));
+        window.invoke_add();
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: Key::Escape.into(),
+            });
+        assert!(lock(&shared).connection_draft().is_none());
+        assert!(!window.window().is_visible());
+        window.show().unwrap();
+        connection_ui::refresh(&window, &lock(&shared));
+        window.invoke_delete_connection(0);
+        assert!(lock(&shared).connection_records(source).unwrap().is_empty());
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).connection_records(source).unwrap().len(), 1);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {

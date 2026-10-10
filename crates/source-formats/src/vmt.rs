@@ -151,7 +151,9 @@ impl Material {
             "%compilesky",
             "%compiletrigger",
         ];
-        INVISIBLE.iter().any(|k| self.get(k).is_some_and(|v| v.trim() != "0"))
+        INVISIBLE
+            .iter()
+            .any(|k| self.get(k).is_some_and(|v| v.trim() != "0"))
             || self.shader == "sky"
     }
 }

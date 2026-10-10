@@ -14,7 +14,15 @@ pub fn format_number(value: f64) -> String {
 }
 
 fn push_number(out: &mut String, value: f64) {
+    let value = if value == 0.0 { 0.0 } else { value };
     write!(out, "{value}").expect("writing to a String cannot fail");
+}
+
+/// Formats `x y z`, as used by entity keys like `origin`.
+pub fn format_vec3(v: DVec3) -> String {
+    let mut out = String::new();
+    push_vec3(&mut out, v);
+    out
 }
 
 fn push_vec3(out: &mut String, v: DVec3) {

@@ -17,10 +17,26 @@ over MCP; the activity panel shows who did what.*
   (VMT materials, VTF textures), finding CS:S through the Steam libraries.
 - wgpu viewport with textures, translucency and alpha test, selection
   highlights and fly camera.
+- Switchable perspective, top, front and side views with a visible grid,
+  fractional snapping, cursor-centered zoom and selection framing.
+- Draw brushes in planar views with a footprint preview, elevation and depth;
+  each placement is one undoable edit shared with MCP.
+- Exact numeric movement, rotation and scale with pivots and texture locking.
+- Select individual brush faces and edit their material, texture offset,
+  scale and rotation, or fit one tile to each face. Preview, apply and cancel
+  through the UI or MCP, with one-step undo.
+- Material thumbnails grouped by folder and category, with search, paging,
+  map-used materials, recent applications and session-local favorites.
+- Cancel buttons and Escape dismissal in entity, color, material and texture
+  dialogs; cancelling texture previews leaves the map and history unchanged.
 - Undoable editing: blocks, entities, key/values, move with texture lock,
   duplicate, delete, materials, tie to entity / move to world.
 - FGD entity classes with inherited defaults, class search, typed properties,
   choices and spawn flags. Humans and agents can place lights and spawns.
+- Detailed bulb models, spotlight and sunlight shapes with color and
+  direction helpers.
+  Readable property controls include color pickers, brightness sliders,
+  separate position/rotation inputs, and searchable material previews.
 - Built-in MCP server. Agents share the map, selection, camera and undo
   history with the user, and edits show up live.
 - Native BSP compilation with leak detection, pointfiles, detail brushes
@@ -50,6 +66,23 @@ returns their defaults, property types, choices, flags and I/O signatures.
 `load_entity_definitions` loads an FGD and its includes for both front ends.
 `create_entity`, `set_entity_properties`, `tie_to_entity` and `move_to_world`
 use the same creation and validation operations as the GUI.
+`get_entity_inspector` returns the panel's labels, common/advanced fields
+and control types. `set_entity_color` changes RGB and optional brightness;
+`set_entity_component` edits one coordinate or brightness component.
+`preview_material` returns a texture thumbnail and material details from
+the same loader used by **Browse materials…**.
+`set_spatial_settings` controls grid spacing, snapping, workplane and brush
+depth. `set_camera` selects perspective/top/front/side and `frame_selection`
+frames the current selection or map. `draw_block` previews or creates a
+snapped footprint; `cancel_block_preview` clears it without an edit.
+`transform_objects` moves, rotates and scales a selection atomically, with
+an optional pivot and texture locking.
+`set_selection_mode`, `select_faces` and `get_face_selection` share face
+selection and highlighting with the GUI. `edit_faces` assigns materials and
+changes UV parameters, with optional fitting and a non-destructive preview.
+`commit_face_preview` applies that preview; `cancel_face_preview` discards it.
+`browse_materials` exposes groups, counts and paged material metadata;
+`set_material_favorite` manages the same favorites shown in the browser.
 
 For example, an agent can place a warm light with:
 
@@ -63,7 +96,7 @@ For example, an agent can place a warm light with:
 
 ## Building and running
 
-Requires Rust 1.88+ and a Vulkan-capable GPU.
+Requires Rust 1.92+ and a Vulkan-capable GPU.
 
 ```sh
 cargo run --release -p editor -- [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port N | --no-mcp] [--headless]
@@ -74,14 +107,70 @@ Fly with the right mouse button held and WASD/QE. Click selects, Ctrl+click
 toggles, arrows and PgUp/PgDn nudge, Ctrl+D duplicates, Del deletes,
 Ctrl+Z/Y undo and redo.
 
+Choose **Top · XY**, **Front · XZ** or **Side · YZ** in the viewport controls.
+Right-drag pans and the wheel zooms around the cursor. **Frame · F** frames
+the selection, or the whole map when nothing is selected. **Grid** accepts
+spacing from 0.125 to 4096 units; **Snap** and **Show grid** are independent.
+Arrows move in the displayed plane and PgUp/PgDn move along its depth axis,
+using the current grid step; Shift uses at most one unit.
+
+Click **Draw brush**, enter **Start Z/Y/X** and **Depth Z/Y/X**, then drag a
+footprint. The preview shows its snapped dimensions; releasing places it,
+and Esc cancels the drag. **Done** returns to selection. The perspective
+**Add brush** button still places a default block.
+
+Select objects and enable **Transform selection** in the inspector for exact
+XYZ movement, world-axis rotation or positive scale factors. Rotation and
+scale use the selection center, world origin or custom coordinates as a
+pivot. **Keep textures attached** preserves surface UVs. Each application
+is one undo step; point entities move and rotate with the group.
+
+Choose **Faces · materials & textures** in the selection panel, then click
+a surface; Ctrl+click toggles additional faces. **Apply** assigns a material
+to the chosen faces. **Edit face textures…** offers horizontal/vertical
+offsets and scales, rotation and **Fit one texture tile to each face**.
+Blank fields preserve each face's current value when selections are mixed.
+**Preview textures** shows a draft; **Apply textures** records one undo step.
+**Cancel**, Escape or closing the texture dialog discards the preview.
+Changing the selection or map invalidates an obsolete preview.
+
+**Browse materials…** shows thumbnail pages with folder/category groups and
+map-used, recently applied and favorite materials. Categories are inferred
+from material paths; favorites and recent applications last for the session.
+Selecting a thumbnail only chooses a candidate. **Use material** accepts it;
+**Cancel** leaves the previous choice unchanged. Texture fitting uses actual
+material dimensions and rejects materials whose texture cannot be loaded.
+
+| Grouped material browser | Face texture controls |
+| --- | --- |
+| ![Material thumbnails, categories and favorites](docs/images/material-browser.png) | ![Face material, offset, scale, rotation and preview controls](docs/images/face-textures.png) |
+
 ## Entities
 
 Click **Entity…** in the selection panel to search point classes and place
 an entity at the shown coordinates. The position starts 128 units in front
-of the camera, snapped to grid 16; MCP uses the same position when `origin`
-is omitted. New entities receive inherited FGD defaults. Select the entity
+of the perspective camera, or at the planar view's center and workplane
+elevation, using the shared snapping settings. MCP uses the same position
+when `origin` is omitted. New entities receive inherited FGD defaults. Select the entity
 to edit its properties, choose enumerated values and toggle spawn flags.
 Invalid typed values are rejected without changing the map.
+
+Common settings appear first, with descriptions behind **?** buttons.
+**Advanced properties** reveals engine keys, types, stored values and
+custom fields. Light colors have a swatch and picker; brightness has a
+slider and an exact numeric input. Position and rotation have separate
+component inputs. Selected spotlights show inner and outer cone guides.
+
+Point lights use a bundled [CC0 bulb model by Josh Dean, Poly Haven](https://polyhaven.com/a/lightbulb_led),
+with a colored globe, textured body and threaded metal base. These editor
+markers appear in both the viewport and MCP renders; they add no game
+models or geometry to the exported map. Asset provenance and regeneration
+details are in [SOURCE.txt](crates/render/assets/lightbulb/SOURCE.txt).
+
+Select a brush and click **Browse materials…** to search game materials
+and preview the selected texture. **Use material** chooses the material;
+**Apply** paints the selected brushes. Entity material fields apply the
+chosen value to that property.
 
 Select world brushes and click **Tie to entity…** to make a brush entity.
 Select a brush entity and click **Move to world** to return its brushes.

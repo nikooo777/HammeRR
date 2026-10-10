@@ -1,11 +1,13 @@
 struct Globals {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,
+    eye: vec4<f32>,
 }
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
 struct MaterialParams {
     flags: vec4<f32>,
+    helper: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -14,6 +16,8 @@ struct MaterialParams {
 @group(1) @binding(1) var blend_texture: texture_2d<f32>;
 @group(1) @binding(2) var texture_sampler: sampler;
 @group(1) @binding(3) var<uniform> material: MaterialParams;
+@group(1) @binding(4) var normal_texture: texture_2d<f32>;
+@group(1) @binding(5) var surface_texture: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -27,6 +31,7 @@ struct VertexOut {
     @location(0) uv: vec2<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) world_position: vec3<f32>,
 }
 
 @vertex
@@ -36,6 +41,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.uv = v.uv;
     out.normal = v.normal;
     out.color = v.color;
+    out.world_position = v.position;
     return out;
 }
 
@@ -43,6 +49,12 @@ fn vs_main(v: VertexIn) -> VertexOut {
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var texel = textureSample(base_texture, texture_sampler, in.uv);
     let second = textureSample(blend_texture, texture_sampler, in.uv);
+    let mapped_normal = textureSample(normal_texture, texture_sampler, in.uv).xyz * 2.0 - 1.0;
+    let surface = textureSample(surface_texture, texture_sampler, in.uv).xyz;
+    let dx = dpdx(in.world_position);
+    let dy = dpdy(in.world_position);
+    let uv_dx = dpdx(in.uv);
+    let uv_dy = dpdy(in.uv);
     if material.flags.y > 0.5 {
         texel = mix(texel, second, in.color.a);
     }
@@ -58,6 +70,28 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let n = normalize(in.normal);
     let shade = 0.55 + 0.45 * clamp(dot(n, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
     let alpha = select(1.0, texel.a, material.flags.z > 0.5);
+    if material.helper.x > 0.5 {
+        var helper_normal = n;
+        let determinant = uv_dx.x * uv_dy.y - uv_dx.y * uv_dy.x;
+        if abs(determinant) > 0.00000001 {
+            let tangent = normalize((dx * uv_dy.y - dy * uv_dx.y) / determinant);
+            let bitangent = normalize((dy * uv_dx.x - dx * uv_dy.x) / determinant);
+            helper_normal = normalize(tangent * mapped_normal.x + bitangent * mapped_normal.y + n * mapped_normal.z);
+        }
+        let base = texel.rgb * in.color.rgb;
+        let light = globals.light_dir.xyz;
+        let view = normalize(globals.eye.xyz - in.world_position);
+        let halfway = normalize(light + view);
+        let roughness = clamp(surface.y, 0.12, 1.0);
+        let metallic = surface.z;
+        let diffuse = (0.5 + 0.5 * max(dot(helper_normal, light), 0.0)) * (0.7 + 0.3 * surface.x);
+        let gloss = pow(max(dot(helper_normal, halfway), 0.0), mix(128.0, 8.0, roughness));
+        let reflection = mix(vec3<f32>(0.08), base, metallic) * gloss;
+        let shaded = base * diffuse + reflection;
+        let globe = mix(base, in.color.rgb, 0.7) * (0.7 + 0.3 * max(dot(helper_normal, light), 0.0));
+        let highlight = 0.15 * pow(max(dot(helper_normal, halfway), 0.0), 64.0);
+        return vec4<f32>(mix(shaded, globe + vec3<f32>(highlight), in.color.a), 1.0);
+    }
     return vec4<f32>(texel.rgb * in.color.rgb * shade, alpha);
 }
 

@@ -6,6 +6,8 @@ use source_formats::gamefs::GameFs;
 use source_formats::vmt::{Material, texture_path};
 use source_formats::vtf::Vtf;
 
+use crate::helpers::{HelperMaterial, bulb_material};
+
 /// Texture size assumed for UV mapping when a material can't be loaded.
 const FALLBACK_SIZE: u32 = 128;
 
@@ -25,6 +27,7 @@ pub struct MaterialInfo {
     pub tool: bool,
     /// Neither the VMT nor its texture could be found.
     pub missing: bool,
+    pub(crate) helper: Option<&'static HelperMaterial>,
 }
 
 impl MaterialInfo {
@@ -46,6 +49,7 @@ impl MaterialInfo {
             .map_or((FALLBACK_SIZE, FALLBACK_SIZE), |v| (v.width, v.height));
 
         Self {
+            helper: None,
             missing: base.is_none(),
             alpha_test: material.as_ref().is_some_and(Material::alpha_test),
             translucent: material.as_ref().is_some_and(Material::translucent),
@@ -61,6 +65,7 @@ impl MaterialInfo {
     /// A flat-colored material for editor helpers such as entity boxes.
     pub fn untextured(name: &str) -> Self {
         Self {
+            helper: None,
             name: name.to_owned(),
             base: None,
             blend: None,
@@ -98,6 +103,21 @@ impl MaterialLibrary {
     /// Flat white, tinted by vertex color: entity boxes and other helpers.
     pub const EDITOR: MaterialId = 0;
     const EDITOR_NAME: &str = "__editor/flat";
+
+    pub(crate) fn light_bulb(&mut self) -> MaterialId {
+        const NAME: &str = "__editor/lightbulb";
+        if let Some(&id) = self.by_name.get(NAME) {
+            return id;
+        }
+        let mut material = MaterialInfo::untextured(NAME);
+        material.helper = Some(bulb_material());
+        material.width = 512;
+        material.height = 512;
+        let id = self.materials.len();
+        self.materials.push(material);
+        self.by_name.insert(NAME.to_owned(), id);
+        id
+    }
 
     pub fn load(&mut self, fs: &GameFs, name: &str) -> MaterialId {
         let key = name.to_ascii_lowercase();

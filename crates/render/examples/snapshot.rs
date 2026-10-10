@@ -32,6 +32,7 @@ fn parse_camera(arg: &str) -> Camera {
         yaw_degrees: yaw,
         pitch_degrees: pitch,
         fov_y_degrees: 75.0,
+        ..Camera::looking_at(Vec3::ZERO, Vec3::X)
     }
 }
 

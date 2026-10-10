@@ -8,6 +8,7 @@ use crate::{BrushGeometry, Plane};
 
 /// Half the edge length of the box that represents a point entity.
 pub const POINT_ENTITY_HALF_SIZE: f64 = 8.0;
+pub const LIGHT_ENTITY_HALF_SIZE: f64 = 18.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ray {
@@ -70,6 +71,19 @@ pub fn point_entity_bounds(origin: DVec3) -> (DVec3, DVec3) {
 /// The nearest visible object along the ray. `include_solid` filters brushes,
 /// e.g. to skip tool brushes while they're hidden.
 pub fn pick(doc: &Document, ray: &Ray, include_solid: impl Fn(&Solid) -> bool) -> Option<Hit> {
+    pick_with_points(doc, ray, include_solid, true)
+}
+
+pub fn pick_face(doc: &Document, ray: &Ray, include_solid: impl Fn(&Solid) -> bool) -> Option<Hit> {
+    pick_with_points(doc, ray, include_solid, false)
+}
+
+fn pick_with_points(
+    doc: &Document,
+    ray: &Ray,
+    include_solid: impl Fn(&Solid) -> bool,
+    include_points: bool,
+) -> Option<Hit> {
     let ray = Ray {
         origin: ray.origin,
         direction: ray.direction.normalize(),
@@ -88,10 +102,10 @@ pub fn pick(doc: &Document, ray: &Ray, include_solid: impl Fn(&Solid) -> bool) -
         })
     };
     let test_point_entity = |entity: &Entity| {
-        if !entity.solids.is_empty() {
+        if !include_points || !entity.solids.is_empty() {
             return None;
         }
-        let (mins, maxs) = point_entity_bounds(entity.origin()?);
+        let (mins, maxs) = entity_bounds(entity)?;
         let t = ray_box(&ray, mins, maxs)?;
         Some(Hit {
             object: ObjectId::Entity(entity.id),
@@ -132,6 +146,18 @@ pub fn solid_bounds(solid: &Solid) -> Option<(DVec3, DVec3)> {
 
 pub fn entity_bounds(entity: &Entity) -> Option<(DVec3, DVec3)> {
     if entity.solids.is_empty() {
+        if matches!(
+            entity
+                .classname()
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .as_str(),
+            "light" | "light_spot" | "light_dynamic" | "light_environment"
+        ) {
+            let origin = entity.origin()?;
+            let half = DVec3::splat(LIGHT_ENTITY_HALF_SIZE);
+            return Some((origin - half, origin + half));
+        }
         return entity.origin().map(point_entity_bounds);
     }
     union(entity.solids.iter().filter_map(solid_bounds))
@@ -214,6 +240,13 @@ mod tests {
             direction: DVec3::Z,
         };
         assert_eq!(pick(&doc, &up, |_| true).unwrap().object, ent);
+        let blocker = doc
+            .edit("helper", |tx| {
+                create_entity(tx, "light", Some(DVec3::new(50.0, 0.0, 0.0)), &[], vec![])
+            })
+            .unwrap();
+        assert_eq!(pick(&doc, &along_x, |_| true).unwrap().object, blocker);
+        assert_eq!(pick_face(&doc, &along_x, |_| true).unwrap().object, near);
     }
 
     #[test]
@@ -228,5 +261,27 @@ mod tests {
             direction: DVec3::X,
         };
         assert_eq!(pick(&doc, &ray, |_| true), None);
+    }
+
+    #[test]
+    fn light_helpers_can_be_picked_outside_the_old_cube() {
+        let mut doc = Document::empty();
+        let id = doc
+            .edit("light", |tx| {
+                create_entity(tx, "light_spot", Some(DVec3::ZERO), &[], vec![])
+            })
+            .unwrap();
+        let ray = Ray {
+            origin: DVec3::new(15.0, -100.0, 0.0),
+            direction: DVec3::Y,
+        };
+        assert_eq!(pick(&doc, &ray, |_| true).unwrap().object, id);
+        assert_eq!(
+            bounds(&doc, id),
+            Some((
+                DVec3::splat(-LIGHT_ENTITY_HALF_SIZE),
+                DVec3::splat(LIGHT_ENTITY_HALF_SIZE)
+            ))
+        );
     }
 }

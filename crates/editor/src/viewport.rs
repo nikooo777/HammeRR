@@ -5,7 +5,8 @@ use std::collections::HashSet;
 
 use glam::Vec3;
 use render::{
-    Camera, GpuContext, GpuScene, MaterialLibrary, RenderTarget, Renderer, SceneMesh, ViewOptions,
+    Camera, GpuContext, GpuScene, MaterialLibrary, Projection, RenderTarget, Renderer, SceneMesh,
+    ViewOptions,
 };
 use slint::SharedString;
 use slint::platform::Key;
@@ -75,7 +76,9 @@ impl Viewport {
     /// Returns whether the key is a camera control.
     pub fn key(&mut self, text: &str, down: bool) -> bool {
         let key = text.to_lowercase();
-        let handled = matches!(key.as_str(), "w" | "a" | "s" | "d" | "q" | "e")
+        let handled = matches!(key.as_str(), "w" | "a" | "s" | "d")
+            || (self.camera.projection == Projection::Perspective
+                && matches!(key.as_str(), "q" | "e"))
             || key == key_text(Key::Shift);
         if handled {
             if down {
@@ -122,15 +125,21 @@ impl Viewport {
         }
     }
 
-    pub fn mouse_moved(&mut self, x: f32, y: f32) {
+    pub fn mouse_moved(&mut self, x: f32, y: f32, height: f32) {
         if !self.looking {
             return;
         }
         if let Some((lx, ly)) = self.last_mouse {
             let (dx, dy) = (x - lx, y - ly);
             if dx != 0.0 || dy != 0.0 {
-                self.camera
-                    .look(-dx * LOOK_DEGREES_PER_PIXEL, -dy * LOOK_DEGREES_PER_PIXEL);
+                if self.camera.projection == Projection::Perspective {
+                    self.camera
+                        .look(-dx * LOOK_DEGREES_PER_PIXEL, -dy * LOOK_DEGREES_PER_PIXEL);
+                } else {
+                    let units = self.camera.ortho_height / height.max(1.0);
+                    self.camera.position +=
+                        (-self.camera.right() * dx + self.camera.up() * dy) * units;
+                }
                 self.dirty = true;
             }
         }
@@ -138,8 +147,14 @@ impl Viewport {
     }
 
     /// Wheel dollies the camera, or changes fly speed while looking.
-    pub fn wheel(&mut self, delta: f32) {
-        if self.looking {
+    pub fn wheel(&mut self, delta: f32, ndc: (f32, f32), aspect: f32) {
+        if self.camera.projection != Projection::Perspective {
+            let before = self.camera.plane_point(ndc, aspect, 0.0).unwrap();
+            self.camera.ortho_height = (self.camera.ortho_height * 2f32.powf(-delta / 480.0))
+                .clamp(Camera::MIN_ORTHO_HEIGHT, Camera::MAX_ORTHO_HEIGHT);
+            let after = self.camera.plane_point(ndc, aspect, 0.0).unwrap();
+            self.camera.position += before - after;
+        } else if self.looking {
             self.speed = (self.speed * 2f32.powf(delta / 240.0)).clamp(25.0, 20_000.0);
         } else {
             self.camera
@@ -173,7 +188,12 @@ impl Viewport {
         } else {
             1.0
         };
-        self.camera.fly(dir.normalize() * self.speed * fast * dt);
+        let amount = dir.normalize() * self.speed * fast * dt;
+        if self.camera.projection == Projection::Perspective {
+            self.camera.fly(amount);
+        } else {
+            self.camera.position += self.camera.up() * amount.x + self.camera.right() * amount.y;
+        }
         self.dirty = true;
         true
     }

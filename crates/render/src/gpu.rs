@@ -5,7 +5,7 @@ use std::mem::size_of;
 use source_formats::vtf::{ImageFormat, Vtf};
 use wgpu::util::DeviceExt;
 
-use crate::camera::Camera;
+use crate::camera::{Camera, Projection};
 use crate::materials::{MaterialId, MaterialInfo, MaterialLibrary};
 use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 
@@ -107,13 +107,18 @@ impl RenderTarget {
 struct Globals {
     view_proj: [[f32; 4]; 4],
     light_dir: [f32; 4],
+    eye: [f32; 4],
 }
 
 /// Per-frame visibility filters, applied without rebuilding the scene.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
     pub tool_textures: bool,
     pub leak_path: bool,
+    pub grid_visible: bool,
+    pub grid_size: f32,
+    pub grid_elevation: f32,
+    pub block_preview: Option<[glam::Vec3; 2]>,
 }
 
 impl Default for ViewOptions {
@@ -121,6 +126,10 @@ impl Default for ViewOptions {
         Self {
             tool_textures: true,
             leak_path: true,
+            grid_visible: true,
+            grid_size: 16.0,
+            grid_elevation: 0.0,
+            block_preview: None,
         }
     }
 }
@@ -129,6 +138,7 @@ impl Default for ViewOptions {
 struct DrawBatch {
     batch: Batch,
     tool: bool,
+    helper: bool,
 }
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
@@ -139,6 +149,8 @@ pub struct GpuScene {
     translucent: Vec<DrawBatch>,
     lines: Option<(wgpu::Buffer, u32)>,
     leak_lines: Option<(wgpu::Buffer, u32)>,
+    wire_lines: Option<(wgpu::Buffer, u32)>,
+    tool_wire_lines: Option<(wgpu::Buffer, u32)>,
 }
 
 pub struct Renderer {
@@ -154,6 +166,7 @@ pub struct Renderer {
     white: wgpu::Texture,
     missing: wgpu::Texture,
     depth: Option<(wgpu::TextureView, (u32, u32))>,
+    overlay: wgpu::Buffer,
 }
 
 impl Renderer {
@@ -202,6 +215,8 @@ impl Renderer {
                     count: None,
                 },
                 uniform_entry(3, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(4),
+                texture_entry(5),
             ],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -330,6 +345,12 @@ impl Renderer {
             white: solid_texture(ctx, [255, 255, 255, 255]),
             missing: checkerboard_texture(ctx),
             depth: None,
+            overlay: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("spatial overlays"),
+                size: 65_536,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
         }
     }
 
@@ -383,12 +404,27 @@ impl Renderer {
         });
 
         let (mut opaque, mut translucent) = (Vec::new(), Vec::new());
+        let wire_buffer = |label, lines: &[LineVertex]| {
+            (!lines.is_empty()).then(|| {
+                (
+                    buffer(
+                        label,
+                        bytemuck::cast_slice(lines),
+                        wgpu::BufferUsages::VERTEX,
+                    ),
+                    lines.len() as u32,
+                )
+            })
+        };
+        let wire_lines = wire_buffer("brush wireframes", &mesh.wire_lines);
+        let tool_wire_lines = wire_buffer("tool brush wireframes", &mesh.tool_wire_lines);
         for &batch in &mesh.batches {
             self.ensure_material(ctx, library, batch.material);
             let info = library.get(batch.material);
             let draw = DrawBatch {
                 batch,
                 tool: info.tool,
+                helper: batch.material == MaterialLibrary::EDITOR || info.helper.is_some(),
             };
             if info.translucent {
                 translucent.push(draw);
@@ -403,6 +439,8 @@ impl Renderer {
             translucent,
             lines,
             leak_lines,
+            wire_lines,
+            tool_wire_lines,
         }
     }
 
@@ -417,11 +455,12 @@ impl Renderer {
 
     fn material_bind_group(&self, ctx: &GpuContext, info: &MaterialInfo) -> wgpu::BindGroup {
         let (white, missing) = (&self.white, &self.missing);
-        let untextured = info.base.is_none() && !info.missing;
-        let base = match &info.base {
-            Some(vtf) => upload_vtf(ctx, vtf).unwrap_or_else(|| missing.clone()),
-            None if untextured => white.clone(),
-            None => missing.clone(),
+        let untextured = info.base.is_none() && info.helper.is_none() && !info.missing;
+        let base = match (info.helper, &info.base) {
+            (Some(helper), _) => upload_helper_texture(ctx, &helper.diffuse, true),
+            (_, Some(vtf)) => upload_vtf(ctx, vtf).unwrap_or_else(|| missing.clone()),
+            (_, None) if untextured => white.clone(),
+            (_, None) => missing.clone(),
         };
         let blend = info
             .blend
@@ -434,6 +473,10 @@ impl Renderer {
             flag(info.blend.is_some()),
             flag(info.translucent),
             flag(untextured),
+            flag(info.helper.is_some()),
+            0.0,
+            0.0,
+            0.0,
         ];
         let params = ctx
             .device
@@ -444,6 +487,20 @@ impl Renderer {
             });
         let base_view = base.create_view(&Default::default());
         let blend_view = blend.create_view(&Default::default());
+        let normal = info
+            .helper
+            .map(|helper| upload_helper_texture(ctx, &helper.normal, false));
+        let surface = info
+            .helper
+            .map(|helper| upload_helper_texture(ctx, &helper.surface, false));
+        let normal_view = normal
+            .as_ref()
+            .unwrap_or(white)
+            .create_view(&Default::default());
+        let surface_view = surface
+            .as_ref()
+            .unwrap_or(white)
+            .create_view(&Default::default());
         ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&info.name),
             layout: &self.material_layout,
@@ -463,6 +520,14 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&surface_view),
                 },
             ],
         })
@@ -509,9 +574,15 @@ impl Renderer {
         let globals = Globals {
             view_proj: camera.view_projection(aspect).to_cols_array_2d(),
             light_dir: light.extend(0.0).to_array(),
+            eye: camera.position.extend(1.0).to_array(),
         };
         ctx.queue
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        let (overlay, grid_count) = crate::grid::overlay_lines(camera, size, options);
+        if !overlay.is_empty() {
+            ctx.queue
+                .write_buffer(&self.overlay, 0, bytemuck::cast_slice(&overlay));
+        }
 
         let mut encoder = ctx
             .device
@@ -541,6 +612,11 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            if grid_count > 0 {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, self.overlay.slice(..));
+                pass.draw(0..grid_count as u32, 0..1);
+            }
             pass.set_vertex_buffer(0, scene.vertices.slice(..));
             pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
             for (pipeline, batches) in [
@@ -549,6 +625,9 @@ impl Renderer {
             ] {
                 pass.set_pipeline(pipeline);
                 for draw in batches {
+                    if camera.projection != Projection::Perspective && !draw.helper {
+                        continue;
+                    }
                     if !options.tool_textures && draw.tool {
                         continue;
                     }
@@ -564,10 +643,26 @@ impl Renderer {
                     );
                 }
             }
+            if camera.projection != Projection::Perspective {
+                for lines in [&scene.wire_lines, &scene.tool_wire_lines]
+                    .into_iter()
+                    .take(if options.tool_textures { 2 } else { 1 })
+                    .flatten()
+                {
+                    pass.set_pipeline(&self.line_pipeline);
+                    pass.set_vertex_buffer(0, lines.0.slice(..));
+                    pass.draw(0..lines.1, 0..1);
+                }
+            }
             if let Some((lines, count)) = &scene.lines {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_vertex_buffer(0, lines.slice(..));
                 pass.draw(0..*count, 0..1);
+            }
+            if overlay.len() > grid_count {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, self.overlay.slice(..));
+                pass.draw(grid_count as u32..overlay.len() as u32, 0..1);
             }
             if options.leak_path
                 && let Some((lines, count)) = &scene.leak_lines
@@ -756,6 +851,38 @@ fn upload_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
 fn solid_texture(ctx: &GpuContext, rgba: [u8; 4]) -> wgpu::Texture {
     let texture = texture_2d(ctx, "solid", (1, 1), 1, wgpu::TextureFormat::Rgba8UnormSrgb);
     write_mip(ctx, &texture, 0, &rgba, 4, 1, (1, 1));
+    texture
+}
+
+fn upload_helper_texture(
+    ctx: &GpuContext,
+    mips: &[source_formats::vtf::RgbaImage],
+    srgb: bool,
+) -> wgpu::Texture {
+    let first = &mips[0];
+    let format = if srgb {
+        wgpu::TextureFormat::Rgba8UnormSrgb
+    } else {
+        wgpu::TextureFormat::Rgba8Unorm
+    };
+    let texture = texture_2d(
+        ctx,
+        "helper",
+        (first.width, first.height),
+        mips.len() as u32,
+        format,
+    );
+    for (level, image) in mips.iter().enumerate() {
+        write_mip(
+            ctx,
+            &texture,
+            level as u32,
+            &image.pixels,
+            image.width * 4,
+            image.height,
+            (image.width, image.height),
+        );
+    }
     texture
 }
 

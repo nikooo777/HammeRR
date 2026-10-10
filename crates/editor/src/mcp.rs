@@ -13,7 +13,7 @@ use glam::{DVec3, Vec3};
 use map_core::edit::{self, FaceTarget};
 use map_core::query::{self, Hit, Ray};
 use map_core::{Document, ObjectId, Plane};
-use render::{Camera, GpuContext, GpuScene, Renderer, ViewOptions};
+use render::{Camera, GpuContext, GpuScene, Projection, Renderer, ViewOptions};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerCapabilities, ServerConfig};
@@ -57,7 +57,8 @@ The user has the same map open in an editor window and sees every change live; a
 are undoable and share the user's undo history.\n\
 Coordinates: Z is up, units are Hammer units (about an inch). A player is 32x32x72 \
 (crouched 36), steps are up to 18 high, doors are typically 56x112, walls 8-16 thick. \
-Keep brush coordinates on a grid (16, 8 or 1) and inside +-16384.\n\
+Keep brush coordinates inside +-16384. set_spatial_settings configures the shared grid \
+(0.125 to 4096 units), snapping, workplane elevation and brush depth.\n\
 Objects are addressed as 'solid:<id>' (world brushes) and 'entity:<id>' (point or brush \
 entities; a brush entity owns its brushes). Tools that take ids default to the current \
 selection when ids are omitted, and creation tools select what they create.\n\
@@ -65,6 +66,16 @@ Materials are paths under materials/ without extension, e.g. 'tools/toolsnodraw'
 'tools/toolsskybox', 'dev/dev_measuregeneric01'; find more with search_materials.\n\
 Verify work visually with render_view (focus on objects, or an explicit camera) and \
 pick_at_pixel to identify what is at a point in a rendered image. Save with save_map. \
+set_camera selects perspective/top/front/side; planar cameras accept center and ortho_height. \
+frame_selection frames the selection or whole map. draw_block uses plane coordinates \
+(top XY, front XZ, side YZ), shared snapping and depth; preview=true leaves the map \
+and undo history untouched. Inspect get_map_info.block_preview and cancel with cancel_block_preview. \
+transform_objects applies exact move/rotation/positive scale, with an optional world-space pivot \
+(default: selection bounds center) and texture locking. Rotation is world X/Y/Z, in degrees. \
+select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
+Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
+get_face_selection inspects selected faces and pending texture changes. browse_materials \
+provides grouped catalog metadata; set_material_favorite shares browser favorites. \
 Discover entity classes with search_entity_classes and get_entity_class. create_entity \
 applies FGD defaults, including light brightness; set_entity_properties validates declared \
 types. Custom classes and keys remain supported. Placed lights are stored in the VMF; \
@@ -200,6 +211,9 @@ fn solid_detail(solid: &Solid) -> Value {
                 "plane": side.plane.0.map(point),
                 "uaxis": side.u_axis.to_string(),
                 "vaxis": side.v_axis.to_string(),
+                "rotation": side.rotation,
+                "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
+                "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale,
                 "displacement": side.displacement.as_ref().map(|d| d.power),
             })
         })
@@ -225,7 +239,11 @@ fn entity_detail(entity: &Entity) -> Value {
     let brushes: Vec<Value> = entity
         .solids
         .iter()
-        .map(|s| json!({ "solid": s.id, "bounds": bounds_json(query::solid_bounds(s)), "materials": materials_of([s]) }))
+        .map(|s| {
+            let mut brush = solid_detail(s);
+            brush["materials"] = json!(materials_of([s]));
+            brush
+        })
         .collect();
     json!({ "properties": properties, "connections": connections, "brushes": brushes })
 }
@@ -275,11 +293,20 @@ fn camera_json(camera: &Camera) -> Value {
         "pitch": round(f64::from(camera.pitch_degrees)),
         "fov": round(f64::from(camera.fov_y_degrees)),
         "forward": point(camera.forward().as_dvec3()),
+        "projection": camera.projection.name(),
+        "ortho_height": camera.ortho_height,
+        "center": (camera.projection != Projection::Perspective).then(|| point((camera.position + camera.forward() * Camera::ORTHO_DISTANCE).as_dvec3())),
     })
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct CameraSpec {
+    /// "perspective", "top" (XY), "front" (XZ), or "side" (YZ).
+    pub projection: Option<String>,
+    /// Vertical span in Hammer units for a planar view, from 1 to 131072.
+    pub ortho_height: Option<f32>,
+    /// World-space center for a planar view; use position for perspective.
+    pub center: Option<[f32; 3]>,
     /// Frame these objects (ids). Viewed from the editor camera's direction.
     pub focus: Option<Vec<String>>,
     /// Eye position [x, y, z].
@@ -296,8 +323,34 @@ pub struct CameraSpec {
 
 impl CameraSpec {
     /// Starts from the editor camera and applies the given overrides.
-    fn resolve(&self, session: &Session) -> Result<Camera, String> {
-        let mut camera = session.camera();
+    fn resolve(&self, session: &Session, aspect: f32) -> Result<Camera, String> {
+        if [self.fov, self.yaw, self.pitch, self.ortho_height]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.is_finite())
+            || [self.position, self.center, self.look_at]
+                .into_iter()
+                .flatten()
+                .any(|point| !Vec3::from_array(point).is_finite())
+        {
+            return Err("Camera coordinates and angles must be finite".into());
+        }
+        let mut camera = if let Some(projection) = &self.projection {
+            session.camera_for_projection(
+                Projection::parse(projection)
+                    .ok_or("projection must be perspective, top, front or side")?,
+            )
+        } else {
+            session.camera()
+        };
+        if let Some(height) = self.ortho_height {
+            if !height.is_finite()
+                || !(Camera::MIN_ORTHO_HEIGHT..=Camera::MAX_ORTHO_HEIGHT).contains(&height)
+            {
+                return Err("ortho_height must be between 1 and 131072 units".into());
+            }
+            camera.ortho_height = height;
+        }
         if let Some(fov) = self.fov {
             camera.fov_y_degrees = fov.clamp(10.0, 150.0);
         }
@@ -305,15 +358,30 @@ impl CameraSpec {
             let ids = parse_ids(focus)?;
             let (lo, hi) =
                 query::bounds_of(session.document(), &ids).ok_or("focus objects have no bounds")?;
-            return Ok(Camera::framing(
-                lo.as_vec3(),
-                hi.as_vec3(),
-                camera.forward(),
-                camera.fov_y_degrees,
-            ));
+            return Ok(camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect));
+        }
+        if let Some(center) = self.center {
+            if camera.projection == Projection::Perspective || self.position.is_some() {
+                return Err(
+                    "center requires a planar view and cannot be combined with position".into(),
+                );
+            }
+            camera = Camera::planar(
+                camera.projection,
+                Vec3::from_array(center),
+                camera.ortho_height,
+            );
         }
         if let Some(p) = self.position {
             camera.position = Vec3::from_array(p);
+        }
+        if camera.projection != Projection::Perspective {
+            if self.look_at.is_some() || self.yaw.is_some() || self.pitch.is_some() {
+                return Err(
+                    "Planar views have fixed axes; use center, position and ortho_height".into(),
+                );
+            }
+            return Ok(camera);
         }
         if let Some(target) = self.look_at {
             let fov = camera.fov_y_degrees;
@@ -390,12 +458,36 @@ pub struct CreateBlockArgs {
     pub size: Option<[f64; 3]>,
     /// Material for all faces (default dev/dev_measuregeneric01).
     pub material: Option<String>,
+    /// Snap corners using the shared grid settings; omitted preserves exact coordinates.
+    #[serde(default)]
+    pub snap: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DrawBlockArgs {
+    /// First footprint corner in plane coordinates: XY for top, XZ for front, YZ for side.
+    pub start: [f64; 2],
+    pub end: [f64; 2],
+    /// "top", "front", or "side"; omitted uses the current viewport projection.
+    pub projection: Option<String>,
+    pub elevation: Option<f64>,
+    pub depth: Option<f64>,
+    pub material: Option<String>,
+    /// Show a non-mutating brush preview instead of creating it.
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct FrameArgs {
+    /// Viewport width divided by height; defaults to 1 for conservative framing.
+    pub aspect: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateEntityArgs {
     pub classname: String,
-    /// Position [x, y, z]. Overrides properties.origin; otherwise defaults to 128 units in front of the camera, snapped to grid 16.
+    /// Position [x, y, z]. Overrides properties.origin; otherwise uses the current workplane or a point ahead of the camera, with the shared snapping settings.
     pub origin: Option<[f64; 3]>,
     /// Extra key/values, e.g. {"targetname": "door1", "angles": "0 90 0"}.
     pub properties: Option<BTreeMap<String, String>>,
@@ -463,6 +555,22 @@ pub struct MoveArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TransformArgs {
+    /// Object IDs; omitted uses the shared selection. Repeated IDs are applied once.
+    pub ids: Option<Vec<String>>,
+    /// Exact world offset [dx, dy, dz], applied last; defaults to zero.
+    pub translation: Option<[f64; 3]>,
+    /// Right-handed degrees around world [X, Y, Z], applied X then Y then Z; defaults to zero.
+    pub rotation: Option<[f64; 3]>,
+    /// Positive world-axis factors [sx, sy, sz], applied before rotation; defaults to [1,1,1].
+    pub scale: Option<[f64; 3]>,
+    /// World pivot [x,y,z]; omitted uses the combined selection bounds center.
+    pub pivot: Option<[f64; 3]>,
+    /// Preserve UV coordinates at corresponding transformed points, including scaling; default true.
+    pub texture_lock: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DuplicateArgs {
     pub ids: Option<Vec<String>>,
     /// Offset of the copies [dx, dy, dz].
@@ -473,6 +581,70 @@ pub struct DuplicateArgs {
 pub struct FaceRef {
     pub solid: u32,
     pub side: u32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SelectionModeArgs {
+    pub mode: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SelectFacesArgs {
+    pub faces: Vec<FaceRef>,
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EditFacesArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub material: Option<String>,
+    pub shift_u: Option<f64>,
+    pub shift_v: Option<f64>,
+    pub scale_u: Option<f64>,
+    pub scale_v: Option<f64>,
+    pub rotation: Option<f64>,
+    pub fit: Option<bool>,
+    pub preview: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BrowseMaterialsArgs {
+    pub query: Option<String>,
+    pub group: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct FavoriteMaterialArgs {
+    pub material: String,
+    pub favorite: bool,
+}
+
+fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
+    map_core::surface::FaceId {
+        solid: face.solid,
+        side: face.side,
+    }
+}
+
+fn face_state(session: &Session) -> Value {
+    json!({"mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
+        "preview_faces": session.preview_faces().into_iter().filter_map(|face| {
+            let side = session.preview_side(face)?;
+            Some(json!({"solid": face.solid, "side": face.side, "material": side.material,
+                "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
+                "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
+                "uaxis": side.u_axis.to_string(), "vaxis": side.v_axis.to_string()}))
+        }).collect::<Vec<_>>(),
+        "faces": session.selected_faces().into_iter().filter_map(|face| {
+            let side = map_core::surface::side(session.document(), face)?;
+            Some(json!({"solid": face.solid, "side": face.side, "owner": session.document().owner_of_solid(face.solid).map(id_string),
+                "material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
+                "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
+                "uaxis": side.u_axis.to_string(), "vaxis": side.v_axis.to_string(),
+                "preview": session.preview_side(face).map(|side| json!({"material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset, "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation}))}))
+        }).collect::<Vec<_>>()})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -548,6 +720,41 @@ pub struct SearchMaterialsArgs {
     pub query: String,
     /// Maximum results (default 50).
     pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct InspectorArgs {
+    /// Entity id; defaults to the single selected entity.
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EntityColorArgs {
+    /// Entity id; defaults to the single selected entity.
+    pub id: Option<String>,
+    /// FGD color key, e.g. _light, _ambient or rendercolor.
+    pub key: String,
+    /// Red, green and blue channels in the range 0..255.
+    pub color: [u8; 3],
+    /// Nonnegative brightness; omitted preserves the existing component.
+    pub intensity: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MaterialPreviewArgs {
+    /// Material path without materials/ or .vmt, e.g. concrete/concretefloor001a.
+    pub material: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct EntityComponentArgs {
+    pub id: Option<String>,
+    /// Vector or color property key.
+    pub key: String,
+    /// Zero-based component; 0..2 for position/rotation/RGB, 3 for brightness.
+    pub index: usize,
+    /// Numeric component value, preserving the other components exactly.
+    pub value: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -812,6 +1019,9 @@ impl EditorServer {
             "game_running": session.game_running(),
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
             "view": {"tool_textures": session.view().tool_textures, "leak_path": session.view().leak_path},
+            "spatial": session.spatial(),
+            "block_preview": bounds_json(session.block_preview()),
+            "face_selection": face_state(&session),
             "world_brushes": vmf.world.solids.len(),
             "point_entities": point_entities,
             "brush_entities": vmf.entities.len() - point_entities,
@@ -939,6 +1149,46 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Inspect an entity using the same human-readable labels, common/advanced fields, typed controls, colors, brightness and choices as the property panel.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_entity_inspector(&self, Parameters(args): Parameters<InspectorArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let id = single_entity(&session, args.id.as_deref())?;
+            let inspector = session.entity_inspector(id)?;
+            serde_json::to_value(inspector).map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Set an entity color and optional brightness using the same color picker operation as the GUI. Supports color255 and normalized color1; preserves brightness when omitted."
+    )]
+    fn set_entity_color(&self, Parameters(args): Parameters<EntityColorArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let id = single_entity(&session, args.id.as_deref())?;
+            session.set_entity_color(Actor::Agent, id, &args.key, args.color, args.intensity)?;
+            detail(session.document(), ObjectId::Entity(id))
+        })
+    }
+
+    #[tool(
+        description = "Edit one position, rotation, color or brightness component while preserving the others. Uses the same operation as the GUI component inputs."
+    )]
+    fn set_entity_component(
+        &self,
+        Parameters(args): Parameters<EntityComponentArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let id = single_entity(&session, args.id.as_deref())?;
+            session.set_entity_component(Actor::Agent, id, &args.key, args.index, &args.value)?;
+            detail(session.document(), ObjectId::Entity(id))
+        })
+    }
+
+    #[tool(
         description = "Change the selection, which the user sees highlighted and which other tools default to."
     )]
     fn select(&self, Parameters(args): Parameters<SelectArgs>) -> ToolResult {
@@ -971,6 +1221,7 @@ impl EditorServer {
         let doc = session.document();
         ok(json!({
             "objects": ids.iter().map(|&id| summary(doc, id)).collect::<Vec<_>>(),
+            "face_selection": face_state(&session),
             "bounds": bounds_json(query::bounds_of(doc, &ids)),
         }))
     }
@@ -989,12 +1240,68 @@ impl EditorServer {
             };
             let material = args.material.as_deref().unwrap_or(DEFAULT_MATERIAL);
             let mut session = self.session();
-            let id = session.edit(Actor::Agent, "create block", |tx| {
-                edit::create_block(tx, mins, maxs, material)
-            })?;
-            session.select(&[id], SelectMode::Replace)?;
+            let id = session.create_block(Actor::Agent, mins, maxs, material, args.snap)?;
             Ok(summary(session.document(), id))
         })
+    }
+
+    #[tool(
+        description = "Inspect or change shared grid, snapping, workplane elevation, brush depth and the planar drawing tool. Changes are validated atomically; omitted values are preserved."
+    )]
+    fn set_spatial_settings(
+        &self,
+        Parameters(args): Parameters<crate::spatial::Update>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.set_spatial(Actor::Agent, args)?;
+            Ok(json!(session.spatial()))
+        })
+    }
+
+    #[tool(
+        description = "Draw a brush footprint in top/front/side plane coordinates, using shared snapping, elevation and depth. Set preview=true to inspect the result in render_view without changing the document; repeat with preview=false to create it."
+    )]
+    fn draw_block(&self, Parameters(args): Parameters<DrawBlockArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let projection = args
+                .projection
+                .as_deref()
+                .map(|value| Projection::parse(value).ok_or("Invalid projection"))
+                .transpose()?
+                .unwrap_or(session.camera().projection);
+            let (mins, maxs) = session.drawn_block_bounds(
+                projection,
+                glam::DVec2::from_array(args.start),
+                glam::DVec2::from_array(args.end),
+                args.elevation,
+                args.depth,
+            )?;
+            if args.preview {
+                session.preview_block(mins, maxs)?;
+                Ok(
+                    json!({ "preview": true, "bounds": bounds_json(Some((mins, maxs))), "spatial": session.spatial() }),
+                )
+            } else {
+                let id = session.create_block(
+                    Actor::Agent,
+                    mins,
+                    maxs,
+                    args.material.as_deref().unwrap_or(DEFAULT_MATERIAL),
+                    false,
+                )?;
+                Ok(summary(session.document(), id))
+            }
+        })
+    }
+
+    #[tool(
+        description = "Cancel the current brush preview without changing the map or undo history."
+    )]
+    fn cancel_block_preview(&self) -> ToolResult {
+        self.session().cancel_block_preview();
+        ok(json!({ "cancelled": true }))
     }
 
     #[tool(
@@ -1141,6 +1448,30 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Move, rotate and scale objects in one atomic undoable edit. Scale around the pivot, rotate around world X/Y/Z in that order, then translate. Defaults to the selection and its bounds center. Point entities rotate their Source orientation and move with the group; their model size is unchanged. Brush entities transform their geometry and origins. Positive scale factors only; shear and reflection are not implemented."
+    )]
+    fn transform_objects(&self, Parameters(args): Parameters<TransformArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let transform = edit::Transform {
+                translation: args.translation.map(vec3).unwrap_or(DVec3::ZERO),
+                rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
+                scale: args.scale.map(vec3).unwrap_or(DVec3::ONE),
+                texture_lock: args.texture_lock.unwrap_or(true),
+                ..edit::Transform::default()
+            };
+            let pivot =
+                session.transform_objects(Actor::Agent, &ids, transform, args.pivot.map(vec3))?;
+            Ok(json!({
+                "pivot": point(pivot),
+                "bounds": bounds_json(query::bounds_of(session.document(), &ids)),
+                "objects": ids.iter().map(|&id| summary(session.document(), id)).collect::<Vec<_>>(),
+            }))
+        })
+    }
+
+    #[tool(
         description = "Copy objects with an offset and select the copies (defaults to the selection)."
     )]
     fn duplicate_objects(&self, Parameters(args): Parameters<DuplicateArgs>) -> ToolResult {
@@ -1159,6 +1490,124 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Switch the shared viewport selection mode: objects or faces. Clears the previous selection and cancels obsolete previews."
+    )]
+    fn set_selection_mode(&self, Parameters(args): Parameters<SelectionModeArgs>) -> ToolResult {
+        run(|| {
+            let enabled = match args.mode.as_str() {
+                "objects" => false,
+                "faces" => true,
+                _ => return Err("mode must be objects or faces".into()),
+            };
+            self.session().set_face_mode(enabled);
+            Ok(json!({"mode": args.mode}))
+        })
+    }
+
+    #[tool(
+        description = "Select individual brush faces using solid and side IDs from picking or object inspection. Shared with the user's face selection; replace/add/remove/toggle modes. Validates the whole batch."
+    )]
+    fn select_faces(&self, Parameters(args): Parameters<SelectFacesArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mode = match args.mode.as_deref().unwrap_or("replace") {
+                "replace" => SelectMode::Replace,
+                "add" => SelectMode::Add,
+                "remove" => SelectMode::Remove,
+                "toggle" => SelectMode::Toggle,
+                _ => return Err("mode must be replace, add, remove or toggle".into()),
+            };
+            session.select_faces(&args.faces.iter().map(face_id).collect::<Vec<_>>(), mode)?;
+            Ok(face_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Inspect shared selected faces, texture parameters, owners and active preview. Face IDs work for world brushes and brushes inside entities.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_face_selection(&self) -> ToolResult {
+        ok(face_state(&self.session()))
+    }
+
+    #[tool(
+        description = "Edit materials and texture offsets (texels), scales (world units per texel) and absolute rotation (degrees about the face normal). Omitted values preserve each face's original value. Omitted faces use shared face selection. Fit maps one material tile onto each face's projected bounds using actual texture dimensions. Preview renders a draft without changing the map or undo history; commit or cancel it with the preview tools. Atomic, undoable when applied."
+    )]
+    fn edit_faces(&self, Parameters(args): Parameters<EditFacesArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let changed = session.edit_faces(
+                Actor::Agent,
+                &faces,
+                map_core::surface::SurfaceEdit {
+                    material: args.material,
+                    shift_u: args.shift_u,
+                    shift_v: args.shift_v,
+                    scale_u: args.scale_u,
+                    scale_v: args.scale_v,
+                    rotation: args.rotation,
+                    fit: None,
+                },
+                args.fit.unwrap_or(false),
+                args.preview.unwrap_or(false),
+            )?;
+            Ok(json!({"faces_changed": changed, "state": face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Apply the current shared face-texture preview in one undo step. Fails if edits, document replacement or selection changes have invalidated it."
+    )]
+    fn commit_face_preview(&self) -> ToolResult {
+        run(|| {
+            let changed = self.session().commit_face_preview(Actor::Agent)?;
+            Ok(json!({"faces_changed": changed}))
+        })
+    }
+
+    #[tool(
+        description = "Cancel the shared face-texture preview, restoring the viewport without changing the document or undo/redo history. Equivalent to the texture dialog's Cancel button."
+    )]
+    fn cancel_face_preview(&self) -> ToolResult {
+        self.session().cancel_face_preview();
+        ok(json!({"preview": false}))
+    }
+
+    #[tool(
+        description = "Browse the same grouped material catalog as the GUI. Groups include all, used, recent, favorites, folder:<path> and category:<label>. Categories are inferred from path names. Returns group counts after search, paged entries and favorite/used flags. preview_material supplies the matching thumbnail.",
+        annotations(read_only_hint = true)
+    )]
+    fn browse_materials(&self, Parameters(args): Parameters<BrowseMaterialsArgs>) -> ToolResult {
+        run(|| {
+            let catalog = self.session().material_catalog(
+                args.query.as_deref().unwrap_or(""),
+                args.group.as_deref().unwrap_or("all"),
+                args.offset.unwrap_or(0),
+                args.limit.unwrap_or(36),
+            )?;
+            serde_json::to_value(catalog).map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Add or remove a material in the shared session's favorites, also visible in the GUI catalog. Favorites and recent applications are session-local."
+    )]
+    fn set_material_favorite(
+        &self,
+        Parameters(args): Parameters<FavoriteMaterialArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .favorite_material(&args.material, args.favorite)?;
+            Ok(json!({"material": args.material, "favorite": args.favorite}))
+        })
+    }
+
+    #[tool(
         description = "Apply a material to whole objects or to individual faces (defaults to the selection)."
     )]
     fn set_material(&self, Parameters(args): Parameters<SetMaterialArgs>) -> ToolResult {
@@ -1173,17 +1622,20 @@ impl EditorServer {
                     side: f.side,
                 })
                 .collect();
-            if args.ids.is_some() || targets.is_empty() {
+            if args.ids.is_some() {
                 targets.extend(
                     ids_or_selection(&session, args.ids.as_deref())?
                         .into_iter()
                         .map(FaceTarget::Object),
                 );
             }
-            let changed =
-                session.edit(Actor::Agent, &format!("apply {}", args.material), |tx| {
-                    edit::set_material(tx, &targets, &args.material)
-                })?;
+            if args.ids.is_none() && args.faces.is_none() {
+                targets = session.material_targets();
+            }
+            if targets.is_empty() {
+                return Err("select objects or faces to apply a material".into());
+            }
+            let changed = session.apply_material(Actor::Agent, &targets, &args.material)?;
             Ok(json!({ "faces_changed": changed }))
         })
     }
@@ -1260,12 +1712,27 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Move the user's viewport camera, e.g. to show them something (focus on ids, or position + look_at)."
+        description = "Frame the current selection, or the whole map when nothing is selected, preserving the perspective/top/front/side projection."
+    )]
+    fn frame_selection(&self, Parameters(args): Parameters<FrameArgs>) -> ToolResult {
+        run(|| {
+            let aspect = args.aspect.unwrap_or(1.0);
+            if !aspect.is_finite() || aspect <= 0.0 {
+                return Err("aspect must be positive and finite".into());
+            }
+            let mut session = self.session();
+            session.frame_selection(Actor::Agent, aspect)?;
+            Ok(camera_json(&session.camera()))
+        })
+    }
+
+    #[tool(
+        description = "Move the user's viewport camera or switch perspective/top/front/side. Perspective supports position + look_at; planar views support center + ortho_height. Pass focus to frame object IDs."
     )]
     fn set_camera(&self, Parameters(spec): Parameters<CameraSpec>) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let camera = spec.resolve(&session)?;
+            let camera = spec.resolve(&session, 1.0)?;
             session.set_camera(camera);
             session.log(Actor::Agent, "moved the camera");
             Ok(camera_json(&camera))
@@ -1273,13 +1740,18 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Render the map to a PNG with the editor's renderer (textured, selection highlighted in red). Defaults to the user's view; pass camera.focus to frame objects.",
+        description = "Render the map to a PNG with the editor's renderer: textured perspective or planar brush wireframes, entity helpers, grid and shared brush preview. Selection is highlighted in red. Defaults to the user's view; pass camera.focus to frame objects.",
         annotations(read_only_hint = true)
     )]
     fn render_view(&self, Parameters(args): Parameters<RenderArgs>) -> ToolResult {
+        let size = render_size(args.width, args.height);
         let (camera, mut view) = {
             let session = self.session();
-            match args.camera.unwrap_or_default().resolve(&session) {
+            match args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)
+            {
                 Ok(camera) => (camera, session.view()),
                 Err(message) => return fail(message),
             }
@@ -1290,11 +1762,13 @@ impl EditorServer {
         if let Some(leak) = args.leak_path {
             view.leak_path = leak;
         }
-        let size = render_size(args.width, args.height);
         let png = self.render_png(&camera, size, view);
         let data = base64::engine::general_purpose::STANDARD.encode(png);
         let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1,
-            "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path } });
+            "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path,
+                "grid_visible": view.grid_visible, "grid_size": view.grid_size,
+                "grid_elevation": view.grid_elevation,
+                "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())) } });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),
@@ -1308,8 +1782,11 @@ impl EditorServer {
     fn pick_at_pixel(&self, Parameters(args): Parameters<PickArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let camera = args.camera.unwrap_or_default().resolve(&session)?;
             let (w, h) = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, w as f32 / h as f32)?;
             let ndc_x = 2.0 * (args.x + 0.5) / w as f32 - 1.0;
             let ndc_y = 1.0 - 2.0 * (args.y + 0.5) / h as f32;
             let (origin, direction) = camera.ray(ndc_x, ndc_y, w as f32 / h as f32);
@@ -1354,6 +1831,35 @@ impl EditorServer {
             .session()
             .search_materials(&args.query, args.limit.unwrap_or(50));
         ok(json!({ "materials": names }))
+    }
+
+    #[tool(
+        description = "Preview a game material as a PNG, with its name, original dimensions, tool status and missing-texture status. Uses the same thumbnail as the GUI material picker.",
+        annotations(read_only_hint = true)
+    )]
+    fn preview_material(&self, Parameters(args): Parameters<MaterialPreviewArgs>) -> ToolResult {
+        let preview = match self.session().material_preview(&args.material) {
+            Ok(preview) => preview,
+            Err(error) => return fail(error),
+        };
+        let mut content = vec![ContentBlock::text(json!({"material": preview.name, "width": preview.width, "height": preview.height, "missing": preview.missing, "tool": preview.tool}).to_string())];
+        if let Some(image) = preview.image {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), image.width, image.height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let result = encoder
+                .write_header()
+                .and_then(|mut writer| writer.write_image_data(&image.pixels));
+            if let Err(error) = result {
+                return fail(error.to_string());
+            }
+            content.push(ContentBlock::image(
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                "image/png",
+            ));
+        }
+        Ok(CallToolResult::success(content))
     }
 }
 
@@ -1420,6 +1926,40 @@ pub fn serve_stdio(server: EditorServer) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn planar_camera_overrides_do_not_change_the_shared_view() {
+        let session = Session::new(Err("no assets needed".into()));
+        let original = session.camera();
+        let spec = CameraSpec {
+            projection: Some("top".into()),
+            center: Some([10.0, -20.0, 0.0]),
+            ortho_height: Some(256.0),
+            ..CameraSpec::default()
+        };
+        let camera = spec.resolve(&session, 1.0).unwrap();
+        assert_eq!(camera.projection, Projection::Top);
+        assert_eq!(camera.ortho_height, 256.0);
+        assert_eq!(camera.position.x, 10.0);
+        assert_eq!(camera.position.y, -20.0);
+        assert_eq!(session.camera(), original);
+        assert!(
+            CameraSpec {
+                pitch: Some(20.0),
+                ..spec
+            }
+            .resolve(&session, 1.0)
+            .is_err()
+        );
+        assert!(
+            CameraSpec {
+                position: Some([f32::NAN, 0.0, 0.0]),
+                ..CameraSpec::default()
+            }
+            .resolve(&session, 1.0)
+            .is_err()
+        );
+    }
 
     #[test]
     fn ids_round_trip() {

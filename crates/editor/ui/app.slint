@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
     classname: string,
@@ -22,54 +22,67 @@ export component EntityWindow inherits Window {
     callback class-selected();
     callback create();
     callback load-fgd();
+    callback cancel();
 
-    VerticalLayout {
-        padding: 12px;
-        spacing: 10px;
-        HorizontalLayout {
-            LineEdit {
-                placeholder-text: "Search classes or descriptions";
-                input-type: search;
-                text <=> root.filter;
-                edited => { root.filter-changed(); }
-            }
-            Button { text: "Load FGD…"; clicked => { root.load-fgd(); } }
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
-        HorizontalLayout {
-            spacing: 12px;
-            vertical-stretch: 1;
-            ListView {
-                width: 280px;
-                for class in root.classes: VerticalLayout {
-                    padding-bottom: 4px;
-                    Button {
-                        text: class.classname;
-                        clicked => {
-                            root.classname = class.classname;
-                            root.class-selected();
+        VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+            HorizontalLayout {
+                LineEdit {
+                    placeholder-text: "Search classes or descriptions";
+                    input-type: search;
+                    text <=> root.filter;
+                    edited => { root.filter-changed(); }
+                }
+                Button { text: "Load FGD…"; clicked => { root.load-fgd(); } }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                vertical-stretch: 1;
+                ListView {
+                    width: 280px;
+                    for class in root.classes: VerticalLayout {
+                        padding-bottom: 4px;
+                        Button {
+                            text: class.classname;
+                            clicked => {
+                                root.classname = class.classname;
+                                root.class-selected();
+                            }
                         }
                     }
                 }
+                TextEdit { text: root.definition; read-only: true; wrap: word-wrap; }
             }
-            TextEdit { text: root.definition; read-only: true; wrap: word-wrap; }
-        }
-        LineEdit {
-            placeholder-text: "Classname (custom classes are supported)";
-            text <=> root.classname;
-            edited => { root.class-selected(); }
-        }
-        if !root.brush-mode: HorizontalLayout {
-            spacing: 6px;
-            Text { text: "Position"; vertical-alignment: center; }
-            LineEdit { text <=> root.origin-x; placeholder-text: "X"; }
-            LineEdit { text <=> root.origin-y; placeholder-text: "Y"; }
-            LineEdit { text <=> root.origin-z; placeholder-text: "Z"; }
-        }
-        Text { text: root.message; wrap: word-wrap; }
-        Button {
-            text: root.brush-mode ? "Tie selected brushes to entity" : "Place entity";
-            enabled: root.classname != "";
-            clicked => { root.create(); }
+            LineEdit {
+                placeholder-text: "Classname (custom classes are supported)";
+                text <=> root.classname;
+                edited => { root.class-selected(); }
+            }
+            if !root.brush-mode: HorizontalLayout {
+                spacing: 6px;
+                Text { text: "Position"; vertical-alignment: center; }
+                LineEdit { text <=> root.origin-x; placeholder-text: "X"; }
+                LineEdit { text <=> root.origin-y; placeholder-text: "Y"; }
+                LineEdit { text <=> root.origin-z; placeholder-text: "Z"; }
+            }
+            Text { text: root.message; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button {
+                    text: root.brush-mode ? "Tie selected brushes to entity" : "Place entity";
+                    enabled: root.classname != "";
+                    clicked => { root.create(); }
+                }
+            }
         }
     }
 }
@@ -85,13 +98,23 @@ export component GameLogWindow inherits Window {
     preferred-width: 900px;
     preferred-height: 600px;
     in property <string> content;
-    VerticalLayout {
-        padding: 12px;
-        TextEdit {
-            text: root.content;
-            read-only: true;
-            font-family: "monospace";
-            wrap: no-wrap;
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 12px;
+            TextEdit {
+                text: root.content;
+                read-only: true;
+                font-family: "monospace";
+                wrap: no-wrap;
+            }
+            Button { text: "Close"; clicked => { root.cancel(); } }
         }
     }
 }
@@ -102,11 +125,371 @@ export struct KeyValue {
     label: string,
     description: string,
     type-name: string,
+    numeric: bool,
     read-only: bool,
     choices: [string],
     choice-values: [string],
     choice-index: int,
     flags: [EntityFlag],
+    control: string,
+    advanced: bool,
+    components: [string],
+    component-labels: [string],
+    swatch: color,
+    has-intensity: bool,
+    intensity: string,
+    intensity-value: float,
+    number-value: float,
+    minimum: float,
+    maximum: float,
+}
+
+export component ColorWindow inherits Window {
+    title: "Choose Color - HammeRR";
+    width: 500px;
+    height: 490px;
+    in property <string> field-label;
+    in-out property <int> red;
+    in-out property <int> green;
+    in-out property <int> blue;
+    in property <bool> has-intensity;
+    in-out property <string> intensity;
+    in-out property <float> brightness;
+    in property <string> message;
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            alignment: start;
+            Text { text: root.field-label; font-size: 18px; }
+            Rectangle { height: 70px; background: rgb(root.red, root.green, root.blue); border-radius: 6px; }
+            HorizontalLayout {
+                spacing: 8px;
+                for preset in [#ffd296, #ffffff, #8cbeff, #ff7070, #8aff9c, #000000]: Rectangle {
+                    height: 30px;
+                    background: preset;
+                    border-radius: 4px;
+                    TouchArea { clicked => { root.red = preset.red; root.green = preset.green; root.blue = preset.blue; } }
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 45px; text: "Red"; vertical-alignment: center; }
+                Slider { minimum: 0; maximum: 255; value: root.red; changed(value) => { root.red = round(value); } }
+                SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.red; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 45px; text: "Green"; vertical-alignment: center; }
+                Slider { minimum: 0; maximum: 255; value: root.green; changed(value) => { root.green = round(value); } }
+                SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.green; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 45px; text: "Blue"; vertical-alignment: center; }
+                Slider { minimum: 0; maximum: 255; value: root.blue; changed(value) => { root.blue = round(value); } }
+                SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.blue; }
+            }
+            if root.has-intensity: VerticalLayout {
+                spacing: 6px;
+                Text { text: "Brightness"; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Slider { minimum: 0; maximum: max(1000, root.brightness); value: root.brightness; released(value) => { root.brightness = value; root.intensity = "\{value}"; } }
+                    LineEdit { width: 100px; text <=> root.intensity; input-type: decimal; }
+                }
+            }
+            Text { text: root.message; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Apply color"; clicked => { root.apply(); } }
+            }
+        }
+    }
+}
+
+export struct MaterialGroup { id: string, label: string }
+export struct MaterialTile { name: string, preview: image, favorite: bool }
+export struct MaterialTileRow { tiles: [MaterialTile] }
+
+export component MaterialWindow inherits Window {
+    title: "Choose Material - HammeRR";
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    in-out property <string> filter;
+    in-out property <string> material;
+    in-out property <string> group: "all";
+    in-out property <int> offset;
+    in property <[MaterialGroup]> groups;
+    in property <[MaterialTileRow]> rows;
+    in property <int> total;
+    in property <string> catalog-label;
+    in property <bool> favorite;
+    in property <image> preview;
+    in property <string> detail;
+    in property <bool> available;
+    callback search();
+    callback preview-material();
+    callback use-material();
+    callback toggle-favorite();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            LineEdit { placeholder-text: "Search materials across folders and categories"; text <=> root.filter; edited => { root.offset = 0; root.search(); } }
+            HorizontalLayout {
+                spacing: 16px;
+                vertical-stretch: 1;
+                ListView {
+                    width: 210px;
+                    for group in root.groups: Button {
+                        text: group.label;
+                        enabled: root.group != group.id;
+                        clicked => { root.group = group.id; root.offset = 0; root.search(); }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: root.catalog-label; }
+                    ListView {
+                        vertical-stretch: 1;
+                        for row in root.rows: HorizontalLayout {
+                            spacing: 8px;
+                            padding-bottom: 8px;
+                            for tile in row.tiles: Rectangle {
+                                width: 165px;
+                                height: 170px;
+                                background: root.material == tile.name ? #344653 : #252a33;
+                                border-radius: 6px;
+                                accessible-role: button;
+                                accessible-label: tile.name;
+                                accessible-action-default => { root.material = tile.name; root.preview-material(); }
+                                VerticalLayout {
+                                    padding: 8px;
+                                    spacing: 6px;
+                                    Image { height: 110px; source: tile.preview; image-fit: contain; }
+                                    Text { text: (tile.favorite ? "★ " : "") + tile.name; wrap: word-wrap; font-size: 11px; }
+                                }
+                                TouchArea { clicked => { root.material = tile.name; root.preview-material(); } }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous"; enabled: root.offset > 0; clicked => { root.offset = max(0, root.offset - 36); root.search(); } }
+                        Button { text: "Next"; enabled: root.offset + 36 < root.total; clicked => { root.offset += 36; root.search(); } }
+                    }
+                }
+                VerticalLayout {
+                    width: 230px;
+                    spacing: 10px;
+                    Rectangle {
+                        height: 220px;
+                        background: #292c35;
+                        preview-image := Image { width: parent.width; height: parent.height; source: root.preview; image-fit: contain; }
+                        if !root.available: Text { text: "No texture preview"; horizontal-alignment: center; vertical-alignment: center; color: #aab0bb; }
+                    }
+                    Text { text: root.detail; wrap: word-wrap; }
+                    Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+            LineEdit { text <=> root.material; placeholder-text: "Material path"; accepted => { root.preview-material(); } }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Use material"; enabled: root.material != ""; clicked => { root.use-material(); } }
+            }
+        }
+    }
+}
+
+export component SurfaceWindow inherits Window {
+    title: "Edit Face Textures - HammeRR";
+    preferred-width: 560px;
+    preferred-height: 600px;
+    in property <string> selection-label;
+    in property <string> message;
+    in property <bool> stale;
+    in-out property <string> material;
+    in property <image> preview;
+    in-out property <string> shift-u;
+    in-out property <string> shift-v;
+    in-out property <string> scale-u;
+    in-out property <string> scale-v;
+    in-out property <string> rotation;
+    in-out property <bool> fit;
+    callback browse();
+    callback preview-edit();
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 14px;
+            Text { text: root.selection-label; font-size: 18px; }
+            Text { text: "Blank fields keep each face's current value."; color: #969ca8; }
+            HorizontalLayout {
+                spacing: 12px;
+                Image { width: 80px; height: 80px; source: root.preview; image-fit: contain; }
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "Material"; }
+                    LineEdit { text <=> root.material; placeholder-text: "Mixed · keep current materials"; }
+                    Button { text: "Browse materials…"; clicked => { root.browse(); } }
+                }
+            }
+            Text { text: "Offset · texture pixels"; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Horizontal"; vertical-alignment: center; }
+                LineEdit { text <=> root.shift-u; input-type: decimal; placeholder-text: "Keep"; }
+                Text { text: "Vertical"; vertical-alignment: center; }
+                LineEdit { text <=> root.shift-v; input-type: decimal; placeholder-text: "Keep"; }
+            }
+            Text { text: "Scale · world units per texture pixel"; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Horizontal"; vertical-alignment: center; }
+                LineEdit { text <=> root.scale-u; input-type: decimal; placeholder-text: "Keep"; }
+                Text { text: "Vertical"; vertical-alignment: center; }
+                LineEdit { text <=> root.scale-v; input-type: decimal; placeholder-text: "Keep"; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Rotation · degrees"; vertical-alignment: center; }
+                LineEdit { text <=> root.rotation; input-type: decimal; placeholder-text: "Keep"; }
+            }
+            Slider {
+                minimum: -180; maximum: 180;
+                value: root.rotation == "" ? 0 : root.rotation.to-float();
+                released(value) => { root.rotation = "\{round(value)}"; }
+            }
+            CheckBox { text: "Fit one texture tile to each face"; checked <=> root.fit; }
+            Text { text: root.message; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Preview textures"; enabled: !root.stale; clicked => { root.preview-edit(); } }
+                Button { text: "Apply textures"; enabled: !root.stale; clicked => { root.apply(); } }
+            }
+        }
+    }
+}
+
+component PropertyField inherits VerticalLayout {
+    in property <KeyValue> field;
+    in property <bool> advanced;
+    property <bool> show-help;
+    callback edited(string);
+    callback component-edited(int, string);
+    callback removed();
+    callback flag-toggled(string, bool);
+    callback pick-color();
+    callback pick-material();
+    spacing: 5px;
+    padding-bottom: 12px;
+    HorizontalLayout {
+        Text { text: root.field.label; color: #d8dce4; vertical-alignment: center; horizontal-stretch: 1; }
+        if root.field.description != "": Button { text: "?"; width: 24px; clicked => { root.show-help = !root.show-help; } }
+    }
+    if root.advanced: Text { text: root.field.key + " · " + root.field.type-name; color: #8a909c; font-size: 11px; }
+    if root.field.control == "choices": ComboBox {
+        model: root.field.choices;
+        current-index: root.field.choice-index;
+        enabled: !root.field.read-only;
+        selected => { root.edited(root.field.choice-values[self.current-index]); }
+    }
+    if root.field.control == "boolean": CheckBox {
+        text: "Enabled";
+        checked: root.field.value == "1";
+        enabled: !root.field.read-only;
+        toggled => { root.edited(self.checked ? "1" : "0"); }
+    }
+    if root.field.control == "flags": VerticalLayout {
+        spacing: 3px;
+        for flag in root.field.flags: CheckBox {
+            text: flag.label;
+            checked: flag.checked;
+            enabled: !root.field.read-only;
+            toggled => { root.flag-toggled(flag.value, self.checked); }
+        }
+    }
+    if root.field.control == "vector": HorizontalLayout {
+        spacing: 6px;
+        for component[index] in root.field.components: VerticalLayout {
+            spacing: 3px;
+            width: (parent.width - 12px) / 3;
+            Text { text: root.field.component-labels[index]; color: #8a909c; font-size: 11px; }
+            LineEdit { min-width: 0px; text: component; input-type: decimal; enabled: !root.field.read-only; accepted(value) => { root.component-edited(index, value); } }
+        }
+    }
+    if root.field.control == "color": VerticalLayout {
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { width: 38px; height: 30px; background: root.field.swatch; border-radius: 4px; TouchArea { enabled: !root.field.read-only; clicked => { root.pick-color(); } } }
+            Button { text: "Choose color…"; horizontal-stretch: 1; enabled: !root.field.read-only; clicked => { root.pick-color(); } }
+        }
+        if root.field.has-intensity: VerticalLayout {
+            spacing: 5px;
+            Text { text: "Brightness"; color: #aab0bb; }
+            HorizontalLayout {
+                spacing: 8px;
+                Slider { minimum: 0; maximum: max(1000, root.field.intensity-value); value: root.field.intensity-value; enabled: !root.field.read-only; released(value) => { root.component-edited(3, "\{value}"); } }
+                LineEdit { width: 90px; text: root.field.intensity; input-type: decimal; enabled: !root.field.read-only; accepted(value) => { root.component-edited(3, value); } }
+            }
+        }
+    }
+    if root.field.control == "slider": Slider {
+        value: root.field.number-value;
+        minimum: root.field.minimum;
+        maximum: root.field.maximum;
+        enabled: !root.field.read-only;
+        released(value) => { root.edited(root.field.type-name == "integer" ? "\{round(value)}" : "\{value}"); }
+    }
+    if root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "material": HorizontalLayout {
+        spacing: 6px;
+        LineEdit {
+            horizontal-stretch: 1;
+            text: root.field.value;
+            enabled: !root.field.read-only;
+            input-type: root.field.numeric ? InputType.decimal : InputType.text;
+            accepted(value) => { root.edited(value); }
+        }
+        if root.field.control == "material": Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-material(); } }
+    }
+    if root.show-help: Text { text: root.field.description; wrap: word-wrap; color: #8a909c; font-size: 12px; }
+    if root.advanced && (root.field.control == "color" || root.field.control == "vector" || root.field.control == "flags"): LineEdit {
+        text: root.field.value;
+        placeholder-text: "Stored value";
+        enabled: !root.field.read-only;
+        accepted(value) => { root.edited(value); }
+    }
+    if root.advanced: Button { text: "Remove property"; enabled: root.field.key != "classname" && !root.field.read-only; clicked => { root.removed(); } }
 }
 
 export struct Activity {
@@ -131,6 +514,20 @@ component ToolbarSeparator inherits Rectangle {
     background: #2c3038;
 }
 
+component TransformVector inherits HorizontalLayout {
+    in-out property <string> x-value: "0";
+    in-out property <string> y-value: "0";
+    in-out property <string> z-value: "0";
+    callback apply();
+    spacing: 7px;
+    Text { text: "X"; color: #dc858d; vertical-alignment: center; }
+    LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.x-value; input-type: decimal; accepted => { root.apply(); } }
+    Text { text: "Y"; color: #86c9a4; vertical-alignment: center; }
+    LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.y-value; input-type: decimal; accepted => { root.apply(); } }
+    Text { text: "Z"; color: #90b1e0; vertical-alignment: center; }
+    LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.z-value; input-type: decimal; accepted => { root.apply(); } }
+}
+
 export component AppWindow inherits Window {
     title: root.map-title + " - HammeRR";
     preferred-width: 1600px;
@@ -146,12 +543,39 @@ export component AppWindow inherits Window {
     in property <string> camera;
     in property <string> mcp-status;
     in property <bool> flying;
+    in property <int> projection-index;
+    in property <string> workplane-axis: "Z";
+    in property <string> brush-preview;
+    in-out property <string> grid-size: "16";
+    in-out property <bool> grid-visible: true;
+    in-out property <bool> snap-grid: true;
+    in-out property <bool> drawing-block;
+    in-out property <string> brush-elevation: "0";
+    in-out property <string> brush-depth: "128";
     in property <bool> can-undo;
     in property <bool> can-redo;
     in property <bool> compiling;
     in property <bool> launching;
     in property <bool> game-running;
     in property <bool> has-selection;
+    in property <bool> face-mode;
+    in property <bool> has-faces;
+    in property <string> selection-pivot;
+    in-out property <bool> show-transform;
+    in-out property <int> transform-mode;
+    in-out property <int> transform-pivot-mode;
+    in-out property <string> transform-x: "0";
+    in-out property <string> transform-y: "0";
+    in-out property <string> transform-z: "0";
+    in-out property <string> pivot-x: "0";
+    in-out property <string> pivot-y: "0";
+    in-out property <string> pivot-z: "0";
+    in-out property <bool> transform-texture-lock: true;
+    changed transform-mode => {
+        root.transform-x = root.transform-mode == 2 ? "1" : "0";
+        root.transform-y = root.transform-mode == 2 ? "1" : "0";
+        root.transform-z = root.transform-mode == 2 ? "1" : "0";
+    }
     in-out property <bool> show-tools: true;
     in-out property <bool> show-leak: true;
     in-out property <string> material: "dev/dev_measuregeneric01";
@@ -162,6 +586,10 @@ export component AppWindow inherits Window {
     in property <bool> brush-entity-selected;
     in property <bool> can-tie;
     in property <[KeyValue]> entity-properties;
+    in-out property <bool> advanced-properties;
+    in property <image> material-preview;
+    in property <bool> has-material-preview;
+    in property <bool> can-apply-material;
     in property <[Activity]> activity;
 
     out property <length> viewport-width: viewport.width;
@@ -177,8 +605,18 @@ export component AppWindow inherits Window {
     callback undo();
     callback redo();
     callback create-block();
+    callback projection-changed(int);
+    callback spatial-changed();
+    callback frame-selection();
+    callback apply-transform();
     callback delete-selection();
     callback apply-material();
+    callback selection-mode-changed(int);
+    callback edit-face-textures();
+    callback browse-material(key: string);
+    callback material-changed();
+    callback pick-color(key: string);
+    callback property-component-edited(key: string, index: int, value: string);
     callback options-changed();
     callback property-edited(key: string, value: string);
     callback property-removed(key: string);
@@ -191,7 +629,7 @@ export component AppWindow inherits Window {
     // button: 0 = left, 1 = right, 2 = middle
     callback mouse-button(button: int, down: bool, x: length, y: length, control: bool);
     callback mouse-moved(x: length, y: length);
-    callback wheel(delta: length);
+    callback wheel(delta: length, x: length, y: length);
     callback viewport-focus-lost();
 
     VerticalLayout {
@@ -271,7 +709,7 @@ export component AppWindow inherits Window {
                 ToolbarSeparator { }
 
                 Button {
-                    text: "Block";
+                    text: root.projection-index == 0 ? "Add brush" : root.drawing-block ? "Select objects" : "Draw brush";
                     clicked => {
                         root.create-block();
                     }
@@ -344,7 +782,7 @@ export component AppWindow inherits Window {
                     }
 
                     touch := TouchArea {
-                        mouse-cursor: root.flying ? MouseCursor.move : MouseCursor.default;
+                        mouse-cursor: root.flying ? MouseCursor.move : root.drawing-block && root.projection-index != 0 ? MouseCursor.crosshair : MouseCursor.default;
                         pointer-event(event) => {
                             if (event.kind == PointerEventKind.down) {
                                 focus.focus();
@@ -362,9 +800,59 @@ export component AppWindow inherits Window {
                             root.mouse-moved(self.mouse-x, self.mouse-y);
                         }
                         scroll-event(event) => {
-                            root.wheel(event.delta-y);
+                            root.wheel(event.delta-y, self.mouse-x, self.mouse-y);
                             accept
                         }
+                    }
+                }
+
+                Rectangle {
+                    x: 12px;
+                    y: 12px;
+                    width: min(680px, parent.width - 24px);
+                    height: 42px;
+                    background: #20252eee;
+                    border-color: #394252;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 7px;
+                        spacing: 8px;
+                        ComboBox {
+                            width: 150px;
+                            model: ["Perspective", "Top · XY", "Front · XZ", "Side · YZ"];
+                            current-index: root.projection-index;
+                            selected => { root.projection-changed(self.current-index); }
+                        }
+                        Button { text: "Frame · F"; clicked => { root.frame-selection(); } }
+                        Text { text: "Grid"; vertical-alignment: center; color: #c8ccd4; }
+                        LineEdit { width: 65px; text <=> root.grid-size; input-type: decimal; accepted => { root.spatial-changed(); } }
+                        CheckBox { text: "Snap"; checked <=> root.snap-grid; toggled => { root.spatial-changed(); } }
+                        CheckBox { text: "Show grid"; checked <=> root.grid-visible; toggled => { root.spatial-changed(); } }
+                    }
+                }
+
+                if root.drawing-block && root.projection-index != 0: Rectangle {
+                    x: 12px;
+                    y: 64px;
+                    width: min(570px, parent.width - 24px);
+                    height: 74px;
+                    background: #20252eee;
+                    border-color: #4c829f;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Start " + root.workplane-axis; color: #c8ccd4; vertical-alignment: center; }
+                            LineEdit { width: 85px; text <=> root.brush-elevation; input-type: decimal; accepted => { root.spatial-changed(); } }
+                            Text { text: "Depth " + root.workplane-axis; color: #c8ccd4; vertical-alignment: center; }
+                            LineEdit { width: 85px; text <=> root.brush-depth; input-type: decimal; accepted => { root.spatial-changed(); } }
+                            Button { text: "Done"; clicked => { root.create-block(); } }
+                        }
+                        Text { text: root.brush-preview == "" ? "Drag a footprint to place a brush · Esc cancels" : root.brush-preview; color: #9dd8f1; font-size: 12px; }
                     }
                 }
 
@@ -377,7 +865,7 @@ export component AppWindow inherits Window {
                     background: #000000a0;
 
                     hint := Text {
-                        text: "Click select (Ctrl toggles) · hold right mouse to look · WASD/QE fly · arrows/PgUp/PgDn nudge · Del · Ctrl+Z/Y/S/D";
+                        text: root.face-mode ? "Click a face · Ctrl toggles faces · Edit face textures for scale, offset and rotation" : root.projection-index == 0 ? "Click select · Ctrl toggles · right mouse + WASD/QE fly · F frame · arrows nudge · Ctrl+Z/Y/S/D" : "Right mouse drag to pan · wheel zoom · F frame · arrows move in plane · PgUp/PgDn move in depth";
                         color: #c8ccd4;
                         font-size: 12px;
                     }
@@ -385,7 +873,7 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                width: 340px;
+                width: 360px;
                 background: #16181d;
 
                 VerticalLayout {
@@ -394,6 +882,11 @@ export component AppWindow inherits Window {
 
                     SectionTitle {
                         text: "SELECTION";
+                    }
+                    ComboBox {
+                        model: ["Objects", "Faces · materials & textures"];
+                        current-index: root.face-mode ? 1 : 0;
+                        selected => { root.selection-mode-changed(self.current-index); }
                     }
 
                     HorizontalLayout {
@@ -421,68 +914,80 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
 
-                    if root.entity-selected: ListView {
-                        min-height: 120px;
-                        vertical-stretch: 1;
-
-                        for row in root.entity-properties: VerticalLayout {
-                            spacing: 3px;
-                            padding-bottom: 8px;
-                            Text {
-                                text: row.label + " · " + row.key + " (" + row.type-name + ")";
-                                color: #aab0bb;
-                                font-size: 11px;
-                                overflow: elide;
-                            }
+                    if root.has-selection: CheckBox {
+                        text: "Transform selection";
+                        checked <=> root.show-transform;
+                    }
+                    if root.has-selection && root.show-transform: VerticalLayout {
+                        spacing: 7px;
+                        ComboBox {
+                            model: ["Move", "Rotate", "Scale"];
+                            current-index <=> root.transform-mode;
+                        }
+                        Text {
+                            text: root.transform-mode == 0 ? "Offset · units" : root.transform-mode == 1 ? "World-axis rotation · degrees" : "World-axis scale · factors";
+                            color: #aab2c2; font-size: 12px;
+                        }
+                        TransformVector {
+                            x-value <=> root.transform-x;
+                            y-value <=> root.transform-y;
+                            z-value <=> root.transform-z;
+                            apply => { root.apply-transform(); }
+                        }
+                        if root.transform-mode != 0: VerticalLayout {
+                            spacing: 6px;
                             HorizontalLayout {
-                                spacing: 6px;
-                                if row.choices.length > 0: ComboBox {
+                                Text { text: "Pivot"; color: #c8ccd4; vertical-alignment: center; }
+                                ComboBox {
                                     horizontal-stretch: 1;
-                                    model: row.choices;
-                                    current-index: row.choice-index;
-                                    enabled: !row.read-only;
-                                    selected => { root.property-edited(row.key, row.choice-values[self.current-index]); }
-                                }
-                                if row.choices.length == 0: LineEdit {
-                                    horizontal-stretch: 1;
-                                    text: row.value;
-                                    enabled: !row.read-only;
-                                    input-type: row.type-name == "integer" || row.type-name == "float" || row.type-name == "angle" ? InputType.decimal : InputType.text;
-                                    accepted(text) => { root.property-edited(row.key, text); }
-                                }
-                                Button {
-                                    text: "×";
-                                    width: 28px;
-                                    enabled: row.key != "classname" && !row.read-only;
-                                    clicked => { root.property-removed(row.key); }
+                                    model: ["Selection center", "World origin", "Custom"];
+                                    current-index <=> root.transform-pivot-mode;
                                 }
                             }
-                            for flag in row.flags: CheckBox {
-                                text: flag.label;
-                                checked: flag.checked;
-                                enabled: !row.read-only;
-                                toggled => { root.flag-toggled(row.key, flag.value, self.checked); }
+                            if root.transform-pivot-mode == 0: Text { text: root.selection-pivot; color: #8a909c; font-size: 12px; }
+                            if root.transform-pivot-mode == 2: TransformVector {
+                                x-value <=> root.pivot-x;
+                                y-value <=> root.pivot-y;
+                                z-value <=> root.pivot-z;
+                                apply => { root.apply-transform(); }
                             }
-                            if row.description != "": Text {
-                                text: row.description;
-                                color: #8a909c;
-                                font-size: 11px;
-                                wrap: word-wrap;
+                        }
+                        if root.can-apply-material: CheckBox { text: "Keep textures attached"; checked <=> root.transform-texture-lock; }
+                        if root.transform-mode == 2: Text { text: "Resizes brushes and spaces entity origins."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
+                        Button {
+                            text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : "Scale selection";
+                            clicked => { root.apply-transform(); }
+                        }
+                    }
+
+                    if root.entity-selected: CheckBox {
+                        text: "Advanced properties";
+                        checked <=> root.advanced-properties;
+                    }
+
+                    if root.entity-selected: ListView {
+                        min-height: 180px;
+                        vertical-stretch: 1;
+                        for row in root.entity-properties: VerticalLayout {
+                            if !row.advanced || root.advanced-properties: PropertyField {
+                                field: row;
+                                advanced: root.advanced-properties;
+                                edited(value) => { root.property-edited(row.key, value); }
+                                component-edited(index, value) => { root.property-component-edited(row.key, index, value); }
+                                removed => { root.property-removed(row.key); }
+                                flag-toggled(flag, checked) => { root.flag-toggled(row.key, flag, checked); }
+                                pick-color => { root.pick-color(row.key); }
+                                pick-material => { root.browse-material(row.key); }
                             }
                         }
                     }
 
-                    if root.entity-selected: HorizontalLayout {
+                    if root.entity-selected && root.advanced-properties: HorizontalLayout {
                         spacing: 6px;
-
-                        new-key := LineEdit {
-                            width: 110px;
-                            placeholder-text: "key";
-                        }
-
+                        new-key := LineEdit { width: 110px; placeholder-text: "Property key"; }
                         new-value := LineEdit {
                             horizontal-stretch: 1;
-                            placeholder-text: "value";
+                            placeholder-text: "Value";
                             accepted(text) => {
                                 root.property-edited(new-key.text, text);
                                 new-key.text = "";
@@ -495,27 +1000,24 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                     }
 
-                    SectionTitle {
-                        text: "MATERIAL";
-                    }
-
-                    HorizontalLayout {
-                        spacing: 6px;
-
-                        LineEdit {
-                            horizontal-stretch: 1;
-                            text <=> root.material;
-                            accepted => {
-                                root.apply-material();
-                            }
+                    if root.can-apply-material: VerticalLayout {
+                        spacing: 8px;
+                        SectionTitle { text: root.face-mode ? "FACE MATERIAL" : "BRUSH MATERIAL"; }
+                        if root.has-faces: Button { text: "Edit face textures…"; clicked => { root.edit-face-textures(); } }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            if root.has-material-preview: Image { width: 64px; height: 64px; source: root.material-preview; image-fit: contain; }
+                            Text { text: root.material; wrap: word-wrap; color: #c8ccd4; horizontal-stretch: 1; }
                         }
-
-                        Button {
-                            text: "Apply";
-                            enabled: root.has-selection;
-                            clicked => {
-                                root.apply-material();
-                            }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button { text: "Browse materials…"; clicked => { root.browse-material(""); } }
+                            Button { text: "Apply"; clicked => { root.apply-material(); } }
+                        }
+                        LineEdit {
+                            text <=> root.material;
+                            placeholder-text: "Material path";
+                            accepted => { root.material-changed(); root.apply-material(); }
                         }
                     }
 
@@ -524,7 +1026,7 @@ export component AppWindow inherits Window {
                     }
 
                     ListView {
-                        height: 200px;
+                        height: 100px;
 
                         for entry in root.activity: HorizontalLayout {
                             spacing: 6px;

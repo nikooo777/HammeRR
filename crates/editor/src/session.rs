@@ -6,18 +6,35 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use map_core::query::{self, Hit, Ray};
+use map_core::surface::{self, FaceId, SurfaceEdit};
 use map_core::{Document, EditError, ObjectId, Transaction};
-use render::{Camera, MaterialLibrary, SceneMesh, ViewOptions};
+use render::{Camera, MaterialLibrary, Projection, SceneMesh, ViewOptions};
 use source_formats::fgd::{self, Catalog, ClassKind};
 use source_formats::gamefs::GameFs;
 use source_formats::keyvalues::WriteOptions;
 use source_formats::vmf::Vmf;
 
 use crate::game;
+use crate::inspector;
+use crate::spatial;
 
 const LOG_LENGTH: usize = 50;
+
+struct FacePreview {
+    document: Document,
+    edits: Vec<(FaceId, SurfaceEdit)>,
+}
+
+pub struct MaterialPreview {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub missing: bool,
+    pub tool: bool,
+    pub image: Option<source_formats::vtf::RgbaImage>,
+}
 
 #[derive(Clone)]
 struct Snapshot {
@@ -65,8 +82,19 @@ pub struct Session {
     document: Document,
     path: Option<PathBuf>,
     selection: BTreeSet<ObjectId>,
+    face_selection: BTreeSet<FaceId>,
+    face_mode: bool,
+    face_preview: Option<FacePreview>,
+    material_index: Option<Vec<String>>,
+    material_favorites: BTreeSet<String>,
+    material_recent: VecDeque<String>,
     camera: Camera,
     view: ViewOptions,
+    spatial: spatial::Settings,
+    saved_cameras: [Option<Camera>; 4],
+    block_preview: Option<(DVec3, DVec3)>,
+    brush_epoch: u64,
+    view_serial: u64,
     materials: MaterialLibrary,
     log: VecDeque<LogEntry>,
     /// Bumped whenever what the viewport shows changes, except the camera.
@@ -147,11 +175,22 @@ impl Session {
             document: Document::empty(),
             path: None,
             selection: BTreeSet::new(),
+            face_selection: BTreeSet::new(),
+            face_mode: false,
+            face_preview: None,
+            material_index: None,
+            material_favorites: BTreeSet::new(),
+            material_recent: VecDeque::new(),
             camera: Camera::looking_at(
                 DVec3::new(-512.0, -512.0, 384.0).as_vec3(),
                 glam::Vec3::ZERO,
             ),
             view: ViewOptions::default(),
+            spatial: spatial::Settings::default(),
+            saved_cameras: [None; 4],
+            block_preview: None,
+            brush_epoch: 0,
+            view_serial: 1,
             materials: MaterialLibrary::default(),
             log: VecDeque::new(),
             scene_serial: 1,
@@ -181,6 +220,358 @@ impl Session {
 
     pub fn definitions(&self) -> &Catalog {
         &self.definitions
+    }
+
+    pub fn document_generation(&self) -> u64 {
+        self.document_generation
+    }
+
+    pub fn entity_inspector(&self, id: u32) -> Result<inspector::Inspector, String> {
+        let entity = self
+            .document
+            .entity(id)
+            .ok_or_else(|| format!("no entity:{id}"))?;
+        let class = entity
+            .classname()
+            .and_then(|name| self.definitions.class(name));
+        Ok(inspector::inspect(entity, class))
+    }
+
+    pub fn set_entity_color(
+        &mut self,
+        actor: Actor,
+        id: u32,
+        key: &str,
+        color: [u8; 3],
+        intensity: Option<f64>,
+    ) -> Result<(), String> {
+        let inspector = self.entity_inspector(id)?;
+        let field = inspector
+            .properties
+            .iter()
+            .find(|field| field.key.eq_ignore_ascii_case(key))
+            .ok_or_else(|| format!("unknown color property {key}"))?;
+        if !matches!(field.kind.as_str(), "color255" | "color1") {
+            return Err(format!("{key} is not a color property"));
+        }
+        if intensity.is_some_and(|value| !value.is_finite() || value < 0.0) {
+            return Err("brightness must be a finite, nonnegative number".into());
+        }
+        if field.kind == "color1" && intensity.is_some() {
+            return Err("normalized colors have no brightness component".into());
+        }
+        let scale = if field.kind == "color1" { 255.0 } else { 1.0 };
+        let mut values: Vec<String> = color
+            .iter()
+            .map(|value| (f64::from(*value) / scale).to_string())
+            .collect();
+        if let Some(intensity) = intensity.or(field.intensity) {
+            values.push(intensity.to_string());
+        }
+        self.set_entity_properties(actor, id, &[(key.into(), Some(values.join(" ")))])
+    }
+
+    pub fn apply_material(
+        &mut self,
+        actor: Actor,
+        targets: &[map_core::edit::FaceTarget],
+        material: &str,
+    ) -> Result<usize, String> {
+        let changed = self.edit(actor, &format!("apply {material}"), |tx| {
+            map_core::edit::set_material(tx, targets, material)
+        })?;
+        if changed > 0 {
+            self.remember_material(material);
+        }
+        Ok(changed)
+    }
+
+    fn remember_material(&mut self, material: &str) {
+        self.view_serial += 1;
+        let material = material.trim().to_ascii_lowercase();
+        self.material_recent.retain(|name| *name != material);
+        self.material_recent.push_front(material);
+        self.material_recent.truncate(32);
+    }
+
+    pub fn material_catalog(
+        &mut self,
+        query: &str,
+        group: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<crate::materials::Catalog, String> {
+        if self.material_index.is_none() {
+            self.material_index = Some(self.search_materials("", usize::MAX));
+        }
+        let used = self
+            .document
+            .vmf()
+            .solids()
+            .flat_map(|solid| &solid.sides)
+            .map(|side| side.material.to_ascii_lowercase())
+            .collect();
+        crate::materials::browse(
+            self.material_index.as_ref().unwrap(),
+            &used,
+            &self.material_favorites,
+            &self.material_recent,
+            query,
+            group,
+            (offset, limit),
+        )
+    }
+
+    pub fn favorite_material(&mut self, material: &str, favorite: bool) -> Result<(), String> {
+        if material.trim().is_empty() {
+            return Err("material must not be empty".into());
+        }
+        let name = material.trim().to_ascii_lowercase();
+        if favorite {
+            self.material_favorites.insert(name);
+        } else {
+            self.material_favorites.remove(&name);
+        }
+        self.view_serial += 1;
+        Ok(())
+    }
+
+    pub fn is_material_favorite(&self, material: &str) -> bool {
+        self.material_favorites
+            .contains(&material.trim().to_ascii_lowercase())
+    }
+
+    pub fn face_mode(&self) -> bool {
+        self.face_mode
+    }
+
+    pub fn set_face_mode(&mut self, enabled: bool) {
+        if self.face_mode != enabled {
+            self.face_mode = enabled;
+            if enabled && self.spatial.draw_block {
+                self.spatial.draw_block = false;
+                self.view_serial += 1;
+            }
+            self.selection.clear();
+            self.face_selection.clear();
+            self.changed();
+        }
+    }
+
+    pub fn selected_faces(&self) -> Vec<FaceId> {
+        self.face_selection.iter().copied().collect()
+    }
+
+    pub fn select_faces(&mut self, faces: &[FaceId], mode: SelectMode) -> Result<(), String> {
+        for face in faces {
+            if surface::side(&self.document, *face).is_none() {
+                return Err(format!("solid {} has no side {}", face.solid, face.side));
+            }
+        }
+        let mut next = self.face_selection.clone();
+        match mode {
+            SelectMode::Replace => next = faces.iter().copied().collect(),
+            SelectMode::Add => next.extend(faces),
+            SelectMode::Remove => faces.iter().for_each(|face| {
+                next.remove(face);
+            }),
+            SelectMode::Toggle => faces.iter().for_each(|face| {
+                if !next.remove(face) {
+                    next.insert(*face);
+                }
+            }),
+        }
+        if next != self.face_selection || !self.face_mode || !self.selection.is_empty() {
+            self.face_mode = true;
+            if self.spatial.draw_block {
+                self.spatial.draw_block = false;
+                self.view_serial += 1;
+            }
+            self.selection.clear();
+            self.face_selection = next;
+            self.changed();
+        }
+        Ok(())
+    }
+
+    pub fn material_targets(&self) -> Vec<map_core::edit::FaceTarget> {
+        if self.face_mode {
+            self.face_selection
+                .iter()
+                .map(|face| map_core::edit::FaceTarget::Side {
+                    solid: face.solid,
+                    side: face.side,
+                })
+                .collect()
+        } else {
+            self.selected_ids()
+                .into_iter()
+                .map(map_core::edit::FaceTarget::Object)
+                .collect()
+        }
+    }
+
+    pub fn has_face_preview(&self) -> bool {
+        self.face_preview.is_some()
+    }
+
+    pub fn preview_side(&self, face: FaceId) -> Option<&source_formats::vmf::Side> {
+        surface::side(&self.face_preview.as_ref()?.document, face)
+    }
+
+    pub fn preview_faces(&self) -> Vec<FaceId> {
+        self.face_preview
+            .as_ref()
+            .map(|preview| preview.edits.iter().map(|(face, _)| *face).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn face_preview_document(&self) -> Option<&Document> {
+        self.face_preview.as_ref().map(|preview| &preview.document)
+    }
+
+    pub fn cancel_face_preview(&mut self) {
+        if self.face_preview.take().is_some() {
+            self.scene_serial += 1;
+        }
+    }
+
+    pub fn edit_faces(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        patch: SurfaceEdit,
+        fit: bool,
+        preview: bool,
+    ) -> Result<usize, String> {
+        if faces.is_empty() {
+            return Err("select at least one face".into());
+        }
+        let mut edits = Vec::new();
+        for face in faces.iter().copied().collect::<BTreeSet<_>>() {
+            let side = surface::side(&self.document, face)
+                .ok_or_else(|| format!("solid {} has no side {}", face.solid, face.side))?;
+            let name = patch
+                .material
+                .as_deref()
+                .unwrap_or(&side.material)
+                .to_owned();
+            let mut patch = patch.clone();
+            if fit {
+                let material = self.material_preview(&name)?;
+                if material.missing {
+                    return Err(format!("cannot fit {name}: texture dimensions unavailable"));
+                }
+                patch.fit = Some([material.width, material.height]);
+            }
+            edits.push((face, patch));
+        }
+        if preview {
+            let mut document = self.document.clone();
+            let changed = document
+                .edit("preview face textures", |tx| {
+                    edits.iter().try_fold(0, |count, (face, patch)| {
+                        surface::edit_faces(tx, &[*face], patch).map(|changed| count + changed)
+                    })
+                })
+                .map_err(|error| error.to_string())?;
+            self.face_preview = Some(FacePreview { document, edits });
+            self.scene_serial += 1;
+            Ok(changed)
+        } else {
+            self.apply_face_edits(actor, edits)
+        }
+    }
+
+    fn apply_face_edits(
+        &mut self,
+        actor: Actor,
+        edits: Vec<(FaceId, SurfaceEdit)>,
+    ) -> Result<usize, String> {
+        let changed = self.edit(actor, "edit face textures", |tx| {
+            edits.iter().try_fold(0, |count, (face, patch)| {
+                surface::edit_faces(tx, &[*face], patch).map(|changed| count + changed)
+            })
+        })?;
+        self.cancel_face_preview();
+        if changed > 0 {
+            for (_, patch) in edits {
+                if let Some(material) = patch.material {
+                    self.remember_material(&material);
+                }
+            }
+        }
+        Ok(changed)
+    }
+
+    pub fn commit_face_preview(&mut self, actor: Actor) -> Result<usize, String> {
+        let preview = self.face_preview.take().ok_or("no face preview to apply")?;
+        self.scene_serial += 1;
+        self.apply_face_edits(actor, preview.edits)
+    }
+
+    pub fn set_entity_component(
+        &mut self,
+        actor: Actor,
+        id: u32,
+        key: &str,
+        index: usize,
+        value: &str,
+    ) -> Result<(), String> {
+        let inspector = self.entity_inspector(id)?;
+        let field = inspector
+            .properties
+            .iter()
+            .find(|field| field.key.eq_ignore_ascii_case(key))
+            .ok_or_else(|| format!("unknown property {key}"))?;
+        if !matches!(
+            field.control,
+            inspector::Control::Vector | inspector::Control::Color
+        ) {
+            return Err(format!("{key} has no editable components"));
+        }
+        let mut components: Vec<String> =
+            field.value.split_whitespace().map(str::to_owned).collect();
+        let component = components
+            .get_mut(index)
+            .ok_or_else(|| format!("invalid component {index} for {key}"))?;
+        let number = value.parse::<f64>().map_err(|error| error.to_string())?;
+        if !number.is_finite() {
+            return Err("component must be finite".into());
+        }
+        if field.control == inspector::Control::Color {
+            let max = if field.kind == "color1" { 1.0 } else { 255.0 };
+            if number < 0.0
+                || index < 3 && (number > max || field.kind == "color255" && number.fract() != 0.0)
+            {
+                return Err("color component is out of range".into());
+            }
+        }
+        *component = value.into();
+        self.set_entity_properties(actor, id, &[(key.into(), Some(components.join(" ")))])
+    }
+
+    pub fn material_preview(&mut self, name: &str) -> Result<MaterialPreview, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("material name must not be empty".into());
+        }
+        let id = self.materials.load(&self.game, name);
+        let material = self.materials.get(id);
+        let image = material
+            .base
+            .as_ref()
+            .map(|texture| texture.decode_rgba8(texture.mip_for_size(256), 0, 0))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        Ok(MaterialPreview {
+            name: material.name.clone(),
+            width: material.width,
+            height: material.height,
+            missing: material.missing,
+            tool: material.tool,
+            image,
+        })
     }
 
     pub fn search_entity_classes(
@@ -224,8 +615,12 @@ impl Session {
     }
 
     pub fn placement_origin(&self) -> DVec3 {
-        let position = (self.camera.position + self.camera.forward() * 128.0).as_dvec3();
-        (position / 16.0).round() * 16.0
+        let position = self
+            .camera
+            .plane_point((0.0, 0.0), 1.0, self.spatial.elevation as f32)
+            .unwrap_or(self.camera.position + self.camera.forward() * 128.0)
+            .as_dvec3();
+        self.spatial.snap_point(position)
     }
 
     fn entity_properties(
@@ -460,6 +855,8 @@ impl Session {
     }
 
     fn changed(&mut self) {
+        self.cancel_block_preview();
+        self.cancel_face_preview();
         self.scene_serial += 1;
     }
 
@@ -485,11 +882,13 @@ impl Session {
             })
         });
         self.document = document;
+        self.saved_cameras = [None; 4];
         self.document_generation += 1;
         self.compiled = None;
         self.leak = None;
         self.path = path;
         self.selection.clear();
+        self.face_selection.clear();
         self.camera_serial += 1;
         self.changed();
     }
@@ -581,6 +980,8 @@ impl Session {
     fn prune_selection(&mut self) {
         let doc = &self.document;
         self.selection.retain(|&id| doc.contains(id));
+        self.face_selection
+            .retain(|face| surface::side(doc, *face).is_some());
     }
 
     pub fn selection(&self) -> &BTreeSet<ObjectId> {
@@ -596,6 +997,9 @@ impl Session {
             return Err(format!("{missing} does not exist"));
         }
         let before = self.selection.clone();
+        let was_face_mode = self.face_mode;
+        self.face_mode = false;
+        self.face_selection.clear();
         match mode {
             SelectMode::Replace => self.selection = ids.iter().copied().collect(),
             SelectMode::Add => self.selection.extend(ids),
@@ -608,7 +1012,7 @@ impl Session {
                 }
             }),
         }
-        if self.selection != before {
+        if self.selection != before || was_face_mode {
             self.changed();
         }
         Ok(())
@@ -620,7 +1024,9 @@ impl Session {
 
     /// Moves the viewport camera from outside the viewport.
     pub fn set_camera(&mut self, camera: Camera) {
+        self.saved_cameras[self.camera.projection.index()] = Some(self.camera);
         self.camera = camera;
+        self.cancel_block_preview();
         self.camera_serial += 1;
     }
 
@@ -630,12 +1036,235 @@ impl Session {
     }
 
     pub fn view(&self) -> ViewOptions {
-        self.view
+        ViewOptions {
+            grid_size: self.spatial.grid_size as f32,
+            grid_visible: self.spatial.grid_visible,
+            grid_elevation: self.spatial.elevation as f32,
+            block_preview: self
+                .block_preview
+                .map(|(mins, maxs)| [mins.as_vec3(), maxs.as_vec3()]),
+            ..self.view
+        }
     }
 
     pub fn set_view(&mut self, view: ViewOptions) {
         self.view = view;
-        self.changed();
+        self.view_serial += 1;
+    }
+
+    pub fn view_serial(&self) -> u64 {
+        self.view_serial
+    }
+
+    pub fn camera_for_projection(&self, projection: Projection) -> Camera {
+        if projection == self.camera.projection {
+            return self.camera;
+        }
+        if let Some(camera) = self.saved_cameras[projection.index()] {
+            return camera;
+        }
+        let bounds = self.selection_bounds().or_else(|| {
+            query::union(
+                self.document
+                    .objects()
+                    .filter_map(|id| query::bounds(&self.document, id)),
+            )
+        });
+        let (mins, maxs) = bounds.unwrap_or((DVec3::splat(-384.0), DVec3::splat(384.0)));
+        if projection == Projection::Perspective {
+            Camera::overview(mins.as_vec3(), maxs.as_vec3())
+        } else {
+            Camera::planar(
+                projection,
+                ((mins + maxs) * 0.5).as_vec3(),
+                ((maxs - mins).max_element() as f32 * 1.2).max(512.0),
+            )
+        }
+    }
+
+    pub fn set_projection(&mut self, actor: Actor, projection: Projection) {
+        self.set_camera(self.camera_for_projection(projection));
+        self.log(actor, format!("{} view", projection.name()));
+    }
+
+    pub fn frame_selection(&mut self, actor: Actor, aspect: f32) -> Result<(), String> {
+        if !aspect.is_finite() || aspect <= 0.0 {
+            return Err("Viewport aspect must be positive and finite".into());
+        }
+        let bounds = if self.selection.is_empty() && self.face_selection.is_empty() {
+            query::union(
+                self.document
+                    .objects()
+                    .filter_map(|id| query::bounds(&self.document, id)),
+            )
+        } else {
+            self.selection_bounds()
+        };
+        let (mins, maxs) = bounds.ok_or("No objects to frame")?;
+        self.set_camera(
+            self.camera
+                .frame_bounds(mins.as_vec3(), maxs.as_vec3(), aspect.max(0.01)),
+        );
+        self.log(actor, "framed objects");
+        Ok(())
+    }
+
+    fn selection_bounds(&self) -> Option<(DVec3, DVec3)> {
+        if !self.face_mode {
+            return query::bounds_of(&self.document, &self.selected_ids());
+        }
+        query::union(self.face_selection.iter().filter_map(|selected| {
+            let solid = surface::solid(&self.document, selected.solid)?;
+            let index = solid
+                .sides
+                .iter()
+                .position(|side| side.id == selected.side)?;
+            let brush = map_core::BrushGeometry::from_solid(solid).ok()?;
+            let face = brush.faces.iter().find(|face| face.side == index)?;
+            Some(face.vertices.iter().fold(
+                (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+                |(lo, hi), point| (lo.min(*point), hi.max(*point)),
+            ))
+        }))
+    }
+
+    pub fn spatial(&self) -> spatial::Settings {
+        self.spatial
+    }
+
+    pub fn set_spatial(&mut self, actor: Actor, update: spatial::Update) -> Result<(), String> {
+        let settings = self.spatial.updated(update)?;
+        if settings == self.spatial {
+            return Ok(());
+        }
+        self.spatial = settings;
+        if settings.draw_block {
+            self.set_face_mode(false);
+        }
+        if settings.draw_block && self.camera.projection == Projection::Perspective {
+            self.set_projection(actor, Projection::Top);
+        }
+        self.cancel_block_preview();
+        self.view_serial += 1;
+        self.log(
+            actor,
+            format!(
+                "grid {} · snapping {} · brush depth {}",
+                settings.grid_size,
+                if settings.snap { "on" } else { "off" },
+                settings.depth
+            ),
+        );
+        Ok(())
+    }
+
+    pub fn block_preview(&self) -> Option<(DVec3, DVec3)> {
+        self.block_preview
+    }
+
+    pub fn preview_block(&mut self, mins: DVec3, maxs: DVec3) -> Result<(), String> {
+        spatial::validate_bounds(mins, maxs)?;
+        if self.block_preview != Some((mins, maxs)) {
+            self.block_preview = Some((mins, maxs));
+            self.view_serial += 1;
+        }
+        Ok(())
+    }
+
+    pub fn cancel_block_preview(&mut self) {
+        self.brush_epoch += 1;
+        self.clear_block_preview();
+    }
+
+    pub fn clear_block_preview(&mut self) {
+        if self.block_preview.take().is_some() {
+            self.view_serial += 1;
+        }
+    }
+
+    pub fn brush_epoch(&self) -> u64 {
+        self.brush_epoch
+    }
+
+    pub fn drawn_block_bounds(
+        &self,
+        projection: Projection,
+        start: DVec2,
+        end: DVec2,
+        elevation: Option<f64>,
+        depth: Option<f64>,
+    ) -> Result<(DVec3, DVec3), String> {
+        let settings = self.spatial.updated(spatial::Update {
+            elevation,
+            depth,
+            ..spatial::Update::default()
+        })?;
+        settings.block_bounds(projection, start, end)
+    }
+
+    pub fn create_block(
+        &mut self,
+        actor: Actor,
+        mins: DVec3,
+        maxs: DVec3,
+        material: &str,
+        snap: bool,
+    ) -> Result<ObjectId, String> {
+        let (mins, maxs) = if snap {
+            (self.spatial.snap_point(mins), self.spatial.snap_point(maxs))
+        } else {
+            (mins, maxs)
+        };
+        spatial::validate_bounds(mins, maxs)?;
+        let id = self.edit(actor, "create block", |tx| {
+            map_core::edit::create_block(tx, mins, maxs, material)
+        })?;
+        self.select(&[id], SelectMode::Replace)?;
+        Ok(id)
+    }
+
+    pub fn selection_pivot(&self, ids: &[ObjectId]) -> Result<DVec3, String> {
+        if ids.is_empty() {
+            return Err("Select objects to transform".into());
+        }
+        for &id in ids {
+            if !self.document.contains(id) {
+                return Err(format!("{id} does not exist"));
+            }
+        }
+        let (mins, maxs) =
+            query::bounds_of(&self.document, ids).ok_or("Selected objects have no valid bounds")?;
+        Ok((mins + maxs) * 0.5)
+    }
+
+    pub fn transform_objects(
+        &mut self,
+        actor: Actor,
+        ids: &[ObjectId],
+        mut transform: map_core::edit::Transform,
+        pivot: Option<DVec3>,
+    ) -> Result<DVec3, String> {
+        let center = self.selection_pivot(ids)?;
+        transform.pivot = pivot.unwrap_or(center);
+        let ids: Vec<_> = ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let operation = if transform.rotation == DVec3::ZERO && transform.scale == DVec3::ONE {
+            "move"
+        } else if transform.translation == DVec3::ZERO && transform.scale == DVec3::ONE {
+            "rotate"
+        } else if transform.translation == DVec3::ZERO && transform.rotation == DVec3::ZERO {
+            "scale"
+        } else {
+            "transform"
+        };
+        self.edit(actor, &format!("{operation} {} objects", ids.len()), |tx| {
+            map_core::edit::transform(tx, &ids, transform)
+        })?;
+        Ok(transform.pivot)
     }
 
     pub fn materials(&self) -> &MaterialLibrary {
@@ -877,16 +1506,23 @@ impl Session {
                 }
             }
         }
-        query::pick(&self.document, ray, |s| !hidden.contains(&s.id))
+        if self.face_mode {
+            query::pick_face(&self.document, ray, |s| !hidden.contains(&s.id))
+        } else {
+            query::pick(&self.document, ray, |s| !hidden.contains(&s.id))
+        }
     }
 
     pub fn build_scene(&mut self) -> SceneMesh {
         let selected: HashSet<ObjectId> = self.selection.iter().copied().collect();
-        let mut mesh = SceneMesh::build(
-            self.document.vmf(),
+        let mut mesh = SceneMesh::build_with_faces(
+            self.face_preview
+                .as_ref()
+                .map_or(self.document.vmf(), |preview| preview.document.vmf()),
             &self.game,
             &mut self.materials,
             &selected,
+            &self.face_selection.iter().copied().collect(),
         );
         if let Some(leak) = self.leak() {
             mesh.set_leak_path(&leak.points);
@@ -916,11 +1552,358 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn face_selection_previews_cancellation_and_undo_are_shared_and_atomic() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let face = FaceId {
+            solid: id,
+            side: session.document().solid(id).unwrap().sides[0].id,
+        };
+        let before = session.document().vmf().clone();
+        let revision = session.document().revision();
+        session.select_faces(&[face], SelectMode::Replace).unwrap();
+        assert!(session.face_mode());
+        assert!(session.selection().is_empty());
+        session.select_faces(&[face], SelectMode::Add).unwrap();
+        assert_eq!(session.selected_faces(), [face]);
+        assert!(
+            session
+                .select_faces(
+                    &[
+                        face,
+                        FaceId {
+                            solid: id,
+                            side: u32::MAX
+                        }
+                    ],
+                    SelectMode::Replace
+                )
+                .is_err()
+        );
+        assert_eq!(session.selected_faces(), [face]);
+        let patch = SurfaceEdit {
+            material: Some("wood/test".into()),
+            shift_u: Some(13.5),
+            ..Default::default()
+        };
+        session
+            .edit_faces(Actor::User, &[face], patch.clone(), false, true)
+            .unwrap();
+        assert!(session.has_face_preview());
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.document().revision(), revision);
+        let mesh = session.build_scene();
+        assert_eq!(mesh.lines.len(), 8);
+        assert!(
+            mesh.batches
+                .iter()
+                .any(|batch| session.materials().get(batch.material).name == "wood/test")
+        );
+        session.cancel_face_preview();
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.document().revision(), revision);
+        session
+            .edit_faces(Actor::Agent, &[face], patch.clone(), false, true)
+            .unwrap();
+        session.commit_face_preview(Actor::User).unwrap();
+        assert_eq!(session.document().revision(), revision + 1);
+        assert_eq!(
+            surface::side(session.document(), face)
+                .unwrap()
+                .u_axis
+                .offset,
+            13.5
+        );
+        assert!(!session.has_face_preview());
+        session.undo(Actor::Agent).unwrap();
+        assert_eq!(session.document().vmf(), &before);
+        session.redo(Actor::User).unwrap();
+        let after = session.document().vmf().clone();
+        session
+            .edit_faces(
+                Actor::Agent,
+                &[face],
+                SurfaceEdit {
+                    shift_u: Some(-25.0),
+                    ..Default::default()
+                },
+                false,
+                true,
+            )
+            .unwrap();
+        session.select_faces(&[], SelectMode::Replace).unwrap();
+        assert!(!session.has_face_preview());
+        assert!(session.commit_face_preview(Actor::Agent).is_err());
+        assert_eq!(session.document().vmf(), &after);
+        session
+            .edit_faces(Actor::Agent, &[face], patch, false, true)
+            .unwrap();
+        session.new_map(Actor::Agent, true).unwrap();
+        assert!(session.selected_faces().is_empty());
+        assert!(!session.has_face_preview());
+    }
+
+    #[test]
+    fn selection_transforms_share_geometry_pivots_and_single_step_undo() {
+        let mut results = Vec::new();
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let id = session
+                .create_block(
+                    actor,
+                    DVec3::ZERO,
+                    DVec3::new(64.0, 32.0, 16.0),
+                    "brick/wall",
+                    false,
+                )
+                .unwrap();
+            let before = session.document().vmf().clone();
+            let undo_count = session.document().undo_labels().count();
+            session
+                .preview_block(DVec3::ZERO, DVec3::splat(16.0))
+                .unwrap();
+            let pivot = session
+                .transform_objects(
+                    actor,
+                    &[id, id],
+                    edit::Transform {
+                        translation: DVec3::new(8.0, -8.0, 4.0),
+                        rotation: DVec3::new(0.0, 0.0, 90.0),
+                        scale: DVec3::new(2.0, 1.0, 0.5),
+                        ..edit::Transform::default()
+                    },
+                    None,
+                )
+                .unwrap();
+            assert_eq!(pivot, DVec3::new(32.0, 16.0, 8.0));
+            let (mins, maxs) = query::bounds(session.document(), id).unwrap();
+            assert!(mins.abs_diff_eq(DVec3::new(24.0, -56.0, 8.0), 1e-8));
+            assert!(maxs.abs_diff_eq(DVec3::new(56.0, 72.0, 16.0), 1e-8));
+            assert_eq!(session.document().undo_labels().count(), undo_count + 1);
+            assert!(session.block_preview().is_none());
+            assert_eq!(session.selected_ids(), [id]);
+            results.push(session.document().vmf().clone());
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &before);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document().vmf(), results.last().unwrap());
+            session.undo(actor).unwrap();
+            let pivot = session
+                .transform_objects(
+                    actor,
+                    &[id],
+                    edit::Transform {
+                        scale: DVec3::splat(2.0),
+                        ..edit::Transform::default()
+                    },
+                    Some(DVec3::ZERO),
+                )
+                .unwrap();
+            assert_eq!(pivot, DVec3::ZERO);
+            assert_eq!(
+                query::bounds(session.document(), id),
+                Some((DVec3::ZERO, DVec3::new(128.0, 64.0, 32.0)))
+            );
+        }
+        assert_eq!(
+            results[0].world.solids[0].sides,
+            results[1].world.solids[0].sides
+        );
+    }
+
+    #[test]
+    fn rejected_transforms_preserve_document_history_and_preview() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        let id = session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(32.0),
+                "brick/wall",
+                false,
+            )
+            .unwrap();
+        session
+            .preview_block(DVec3::ZERO, DVec3::splat(16.0))
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let serial = session.scene_serial();
+        let count = session.document().undo_labels().count();
+        for (ids, transform, pivot) in [
+            (
+                vec![id],
+                edit::Transform {
+                    scale: DVec3::new(1.0, 0.0, 1.0),
+                    ..edit::Transform::default()
+                },
+                None,
+            ),
+            (
+                vec![id],
+                edit::Transform::default(),
+                Some(DVec3::splat(f64::NAN)),
+            ),
+            (
+                vec![id, ObjectId::Solid(u32::MAX)],
+                edit::Transform {
+                    translation: DVec3::X,
+                    ..edit::Transform::default()
+                },
+                None,
+            ),
+            (vec![], edit::Transform::default(), None),
+        ] {
+            assert!(
+                session
+                    .transform_objects(Actor::Agent, &ids, transform, pivot)
+                    .is_err()
+            );
+            assert_eq!(session.document().vmf(), &before);
+            assert_eq!(session.scene_serial(), serial);
+            assert_eq!(session.document().undo_labels().count(), count);
+            assert!(session.block_preview().is_some());
+        }
+    }
+
+    #[test]
+    fn spatial_edits_match_for_humans_and_agents_and_previews_do_not_modify_maps() {
+        let mut brush_faces = Vec::new();
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            session
+                .set_spatial(
+                    actor,
+                    spatial::Update {
+                        grid_size: Some(0.25),
+                        elevation: Some(-8.0),
+                        depth: Some(2.0),
+                        draw_block: Some(true),
+                        ..spatial::Update::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(session.camera().projection, Projection::Top);
+            let revision = session.document().revision();
+            let serial = session.scene_serial();
+            let (mins, maxs) = session
+                .drawn_block_bounds(
+                    Projection::Front,
+                    DVec2::new(9.12, 4.13),
+                    DVec2::new(-1.13, -3.12),
+                    None,
+                    None,
+                )
+                .unwrap();
+            session.preview_block(mins, maxs).unwrap();
+            assert_eq!(session.document().revision(), revision);
+            assert_eq!(session.scene_serial(), serial);
+            assert_eq!(session.document().undo_labels().count(), 0);
+            assert!(session.view().block_preview.is_some());
+            let id = session
+                .create_block(actor, mins, maxs, "tools/toolsnodraw", false)
+                .unwrap();
+            assert_eq!(query::bounds(session.document(), id), Some((mins, maxs)));
+            assert!(session.block_preview().is_none());
+            assert_eq!(session.document().undo_labels().count(), 1);
+            brush_faces.push(session.document().vmf().world.solids[0].sides.clone());
+            session.undo(actor).unwrap();
+            assert!(session.document().vmf().world.solids.is_empty());
+            session.redo(actor).unwrap();
+            assert_eq!(query::bounds(session.document(), id), Some((mins, maxs)));
+        }
+        assert_eq!(brush_faces[0], brush_faces[1]);
+    }
+
+    #[test]
+    fn settings_validation_is_atomic_and_projection_switches_restore_camera_state() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        let settings = session.spatial();
+        let revision = session.document().revision();
+        assert!(
+            session
+                .set_spatial(
+                    Actor::Agent,
+                    spatial::Update {
+                        snap: Some(false),
+                        grid_size: Some(0.0),
+                        ..spatial::Update::default()
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(settings, session.spatial());
+        assert_eq!(revision, session.document().revision());
+        let perspective = session.camera();
+        session.set_projection(Actor::User, Projection::Top);
+        let top = Camera::planar(Projection::Top, glam::Vec3::new(10.0, -20.0, 0.0), 256.0);
+        session.publish_camera(top);
+        session.set_projection(Actor::Agent, Projection::Front);
+        session.set_projection(Actor::User, Projection::Top);
+        assert_eq!(session.camera(), top);
+        session.set_projection(Actor::User, Projection::Perspective);
+        assert_eq!(session.camera(), perspective);
+        let serial = session.scene_serial();
+        let view = session.view();
+        session.set_view(ViewOptions {
+            tool_textures: false,
+            ..view
+        });
+        assert_eq!(session.scene_serial(), serial);
+        assert!(!session.view().tool_textures);
+    }
+
+    #[test]
+    fn replacing_or_editing_the_map_invalidates_brush_previews() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        session
+            .preview_block(DVec3::ZERO, DVec3::splat(32.0))
+            .unwrap();
+        session.new_map(Actor::Agent, true).unwrap();
+        assert!(session.block_preview().is_none());
+        session
+            .preview_block(DVec3::ZERO, DVec3::splat(32.0))
+            .unwrap();
+        assert!(
+            session
+                .create_block(
+                    Actor::User,
+                    DVec3::ZERO,
+                    DVec3::ZERO,
+                    "tools/toolsnodraw",
+                    false
+                )
+                .is_err()
+        );
+        assert_eq!(session.document().undo_labels().count(), 0);
+        session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(32.0),
+                "tools/toolsnodraw",
+                false,
+            )
+            .unwrap();
+        assert!(session.block_preview().is_none());
+    }
     use map_core::edit;
 
     const ENTITY_FGD: &str = r#"
         @BaseClass = LightValues [
             _light(color255) : "Brightness" : "255 240 220 250"
+            angles(angle) : "Orientation" : "0 0 0"
             style(choices) : "Style" : 0 = [ 0 : "Steady" 1 : "Pulse" ]
             spawnflags(flags) = [ 1 : "Enabled" : 1 ]
             editor_id(integer) readonly : "Editor ID"
@@ -928,6 +1911,137 @@ mod tests {
         @PointClass base(LightValues) = light []
         @SolidClass = func_detail []
     "#;
+
+    #[test]
+    fn color_and_component_controls_share_validation_and_undo() {
+        let mut results = Vec::new();
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no game required".into()));
+            session.set_definitions(actor, Catalog::parse(ENTITY_FGD).unwrap());
+            let ObjectId::Entity(id) = session
+                .create_entity(
+                    actor,
+                    "light",
+                    Some(DVec3::new(1.0, 2.0, 3.0)),
+                    BTreeMap::new(),
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            session
+                .set_entity_color(actor, id, "_light", [140, 190, 255], None)
+                .unwrap();
+            assert_eq!(
+                session
+                    .document()
+                    .entity(id)
+                    .unwrap()
+                    .properties
+                    .get("_light"),
+                Some("140 190 255 250")
+            );
+            session
+                .set_entity_component(actor, id, "_light", 3, "450.5")
+                .unwrap();
+            session
+                .set_entity_component(actor, id, "origin", 1, "-22.125")
+                .unwrap();
+            assert_eq!(
+                session
+                    .document()
+                    .entity(id)
+                    .unwrap()
+                    .properties
+                    .get("origin"),
+                Some("1 -22.125 3")
+            );
+            let before = session.document().entity(id).unwrap().clone();
+            assert!(
+                session
+                    .set_entity_color(actor, id, "_light", [255; 3], Some(-1.0))
+                    .is_err()
+            );
+            assert!(
+                session
+                    .set_entity_color(actor, id, "_light", [255; 3], Some(f64::NAN))
+                    .is_err()
+            );
+            assert!(
+                session
+                    .set_entity_component(actor, id, "origin", 3, "9")
+                    .is_err()
+            );
+            assert!(
+                session
+                    .set_entity_component(actor, id, "origin", 0, "NaN")
+                    .is_err()
+            );
+            assert!(
+                session
+                    .set_entity_component(actor, id, "_light", 0, "999")
+                    .is_err()
+            );
+            assert!(
+                session
+                    .set_entity_component(actor, id, "_light", 3, "-1")
+                    .is_err()
+            );
+            assert_eq!(session.document().entity(id).unwrap(), &before);
+            session.undo(actor);
+            assert_eq!(
+                session
+                    .document()
+                    .entity(id)
+                    .unwrap()
+                    .properties
+                    .get("origin"),
+                Some("1 2 3")
+            );
+            session.redo(actor);
+            results.push(session.document().entity(id).unwrap().clone());
+        }
+        assert_eq!(results[0], results[1]);
+    }
+
+    #[test]
+    fn normalized_colors_and_missing_previews_are_safe() {
+        let mut session = Session::new(Err("no game required".into()));
+        session.set_definitions(Actor::User, Catalog::parse(r#"@PointClass = info_target [ tint(color1) : "Tint" : "1 1 1" locked(color255) readonly : "Locked" : "255 255 255" ]"#).unwrap());
+        let ObjectId::Entity(id) = session
+            .create_entity(Actor::User, "info_target", None, BTreeMap::new())
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        session
+            .set_entity_color(Actor::User, id, "tint", [0, 255, 0], None)
+            .unwrap();
+        assert_eq!(
+            session
+                .document()
+                .entity(id)
+                .unwrap()
+                .properties
+                .get("tint"),
+            Some("0 1 0")
+        );
+        assert!(
+            session
+                .set_entity_color(Actor::User, id, "tint", [255; 3], Some(1.0))
+                .is_err()
+        );
+        assert!(
+            session
+                .set_entity_color(Actor::User, id, "locked", [0; 3], None)
+                .is_err()
+        );
+        let revision = session.document().revision();
+        let preview = session.material_preview("missing/wall").unwrap();
+        assert!(preview.missing);
+        assert!(preview.image.is_none());
+        assert_eq!(session.document().revision(), revision);
+    }
 
     #[test]
     fn humans_and_agents_create_the_same_lights_with_defaults() {
@@ -940,7 +2054,10 @@ mod tests {
                     actor,
                     "LIGHT",
                     Some(DVec3::new(16., 32., 96.)),
-                    BTreeMap::from([("targetname".into(), "test_light".into())]),
+                    BTreeMap::from([
+                        ("targetname".into(), "test_light".into()),
+                        ("angles".into(), "0 90 0".into()),
+                    ]),
                 )
                 .unwrap();
             let ObjectId::Entity(id) = id else { panic!() };
@@ -984,6 +2101,7 @@ mod tests {
             ("_light", "300 0 0 250"),
             ("style", "99"),
             ("origin", "0 NaN 0"),
+            ("angles", "90"),
             ("editor_id", "2"),
             ("classname", "func_detail"),
         ] {
@@ -1007,6 +2125,7 @@ mod tests {
                 id,
                 &[
                     ("classname".into(), Some("LIGHT".into())),
+                    ("angles".into(), Some("0 180 0".into())),
                     ("_light".into(), Some("128 96 64 500".into())),
                     ("style".into(), Some("1".into())),
                     ("spawnflags".into(), Some("1025".into())),
@@ -1015,6 +2134,7 @@ mod tests {
             .unwrap();
         let entity = session.document().entity(id).unwrap();
         assert_eq!(entity.classname(), Some("light"));
+        assert_eq!(entity.properties.get("angles"), Some("0 180 0"));
         assert_eq!(entity.properties.get("_light"), Some("128 96 64 500"));
         assert_eq!(entity.properties.get("custom_key"), Some("keep me"));
         assert_eq!(entity.properties.get("spawnflags"), Some("1025"));

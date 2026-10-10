@@ -50,15 +50,10 @@ pub fn format_vec3_bracketed(v: DVec3) -> String {
 
 pub fn parse_vec3_list(s: &str) -> Option<Vec<DVec3>> {
     let numbers = parse_numbers(s)?;
-    if numbers.len() % 3 != 0 {
+    let (triples, []) = numbers.as_chunks::<3>() else {
         return None;
-    }
-    Some(
-        numbers
-            .chunks_exact(3)
-            .map(|c| DVec3::new(c[0], c[1], c[2]))
-            .collect(),
-    )
+    };
+    Some(triples.iter().map(|&c| DVec3::from_array(c)).collect())
 }
 
 pub fn format_vec3_list(values: &[DVec3]) -> String {

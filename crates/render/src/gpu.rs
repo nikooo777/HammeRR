@@ -9,7 +9,7 @@ use crate::camera::Camera;
 use crate::materials::MaterialInfo;
 use crate::scene::{Batch, SceneMesh, Vertex};
 
-/// Slint can display render targets in this format.
+/// The view format the pipelines render into; see [`RenderTarget`].
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Linear-space clear color; a dark slate like most modern editors.
@@ -61,6 +61,44 @@ impl GpuContext {
         self.device
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+    }
+}
+
+/// A colour target that Slint can display. Slint composites in sRGB space,
+/// so the texture is plain `Rgba8Unorm` holding sRGB-encoded bytes, written
+/// through an sRGB view that does the encoding.
+pub struct RenderTarget {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
+impl RenderTarget {
+    pub fn new(ctx: &GpuContext, width: u32, height: u32) -> Self {
+        let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("render target"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[COLOR_FORMAT],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(COLOR_FORMAT),
+            ..Default::default()
+        });
+        Self { texture, view }
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.texture.width(), self.texture.height())
     }
 }
 
@@ -425,28 +463,9 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Vec<u8> {
-        let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("offscreen"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: COLOR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        self.render(
-            ctx,
-            scene,
-            camera,
-            options,
-            &texture.create_view(&Default::default()),
-            (width, height),
-        );
+        let target = RenderTarget::new(ctx, width, height);
+        self.render(ctx, scene, camera, options, &target.view, (width, height));
+        let texture = target.texture;
 
         let row = width * 4;
         let padded_row = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
@@ -550,7 +569,7 @@ fn upload_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
         ImageFormat::Dxt5 => Some((wgpu::TextureFormat::Bc3RgbaUnormSrgb, 16)),
         _ => None,
     }
-    .filter(|_| ctx.supports_bc() && vtf.width % 4 == 0 && vtf.height % 4 == 0);
+    .filter(|_| ctx.supports_bc() && vtf.width.is_multiple_of(4) && vtf.height.is_multiple_of(4));
     let mips = u32::from(vtf.mip_count);
     let size = (vtf.width, vtf.height);
 

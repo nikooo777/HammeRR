@@ -1,0 +1,164 @@
+import { Button, CheckBox } from "std-widgets.slint";
+
+component StatusText inherits Text {
+    color: #8a909c;
+    vertical-alignment: center;
+    font-size: 12px;
+}
+
+export component AppWindow inherits Window {
+    title: root.map-name == "" ? "Map Editor" : root.map-name + " - Map Editor";
+    preferred-width: 1600px;
+    preferred-height: 960px;
+    background: #111317;
+    default-font-size: 13px;
+    forward-focus: focus;
+
+    in property <image> frame;
+    in property <string> map-name;
+    in property <string> message;
+    in property <string> stats;
+    in property <string> camera;
+    in property <bool> flying;
+    in-out property <bool> show-tools: true;
+    out property <length> viewport-width: viewport.width;
+    out property <length> viewport-height: viewport.height;
+
+    callback open-map();
+    callback options-changed();
+    // Returns whether the key was handled.
+    callback key(text: string, down: bool) -> bool;
+    // button: 0 = left, 1 = right, 2 = middle
+    callback mouse-button(button: int, down: bool, x: length, y: length);
+    callback mouse-moved(x: length, y: length);
+    callback wheel(delta: length);
+    callback viewport-focus-lost();
+
+    VerticalLayout {
+        Rectangle {
+            height: 44px;
+            background: #1a1d23;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 12px;
+                alignment: start;
+
+                Button {
+                    text: "Open map…";
+                    clicked => {
+                        root.open-map();
+                    }
+                }
+
+                CheckBox {
+                    text: "Tool textures";
+                    checked <=> root.show-tools;
+                    toggled => {
+                        root.options-changed();
+                    }
+                }
+            }
+        }
+
+        viewport := Rectangle {
+            vertical-stretch: 1;
+            background: #08090b;
+
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.frame;
+                image-fit: fill;
+            }
+
+            focus := FocusScope {
+                key-pressed(event) => {
+                    if (event.modifiers.control && event.text == "o") {
+                        root.open-map();
+                        return accept;
+                    }
+                    root.key(event.text, true) ? EventResult.accept : EventResult.reject
+                }
+                key-released(event) => {
+                    root.key(event.text, false) ? EventResult.accept : EventResult.reject
+                }
+                focus-lost => {
+                    root.viewport-focus-lost();
+                }
+
+                touch := TouchArea {
+                    mouse-cursor: root.flying ? MouseCursor.move : MouseCursor.default;
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            focus.focus();
+                        }
+                        if (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
+                            root.mouse-button(
+                                event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.right ? 1 : 2,
+                                event.kind == PointerEventKind.down,
+                                self.mouse-x,
+                                self.mouse-y);
+                        }
+                    }
+                    moved => {
+                        root.mouse-moved(self.mouse-x, self.mouse-y);
+                    }
+                    scroll-event(event) => {
+                        root.wheel(event.delta-y);
+                        accept
+                    }
+                }
+            }
+
+            if root.map-name == "": Text {
+                text: "Open a .vmf map to start (Ctrl+O)";
+                color: #6c7280;
+                font-size: 16px;
+            }
+
+            if root.map-name != "": Rectangle {
+                x: 10px;
+                y: parent.height - self.height - 10px;
+                width: hint.preferred-width + 16px;
+                height: hint.preferred-height + 10px;
+                border-radius: 4px;
+                background: #000000a0;
+
+                hint := Text {
+                    text: "Hold right mouse to look · WASD move · Q/E down/up · Shift fast · wheel dolly (speed while looking)";
+                    color: #c8ccd4;
+                    font-size: 12px;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 26px;
+            background: #1a1d23;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 20px;
+
+                StatusText {
+                    text: root.message;
+                    color: #c8ccd4;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+
+                StatusText {
+                    text: root.stats;
+                }
+
+                StatusText {
+                    text: root.camera;
+                    font-family: "monospace";
+                }
+            }
+        }
+    }
+}

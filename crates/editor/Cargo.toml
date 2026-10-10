@@ -1,0 +1,17 @@
+[package]
+name = "editor"
+version = "0.1.0"
+description = "Map editor for Source engine games"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+glam.workspace = true
+map-core.workspace = true
+render.workspace = true
+rfd = "0.17.2"
+slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
+source-formats.workspace = true
+
+[build-dependencies]
+slint-build = "1.18"

@@ -4,13 +4,20 @@ members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 glam = "0.34.1"
 thiserror = "2.0.21"
 source-formats = { path = "crates/source-formats" }
 map-core = { path = "crates/map-core" }
+render = { path = "crates/render" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
 
 [profile.test]
 opt-level = 2

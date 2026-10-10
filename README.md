@@ -1,250 +1,270 @@
 # HammeRR
 
-A Linux-native map editor for Counter-Strike: Source, written in Rust as a
-modern replacement for Hammer++. It reads and writes Hammer's VMF format,
-renders maps with the game's own materials, and exposes every editing
-feature to AI agents over MCP.
+**A modern, AI-first Source map editor for Linux.**
 
-![The editor with sdk_de_cbble open](docs/images/editor.png)
+HammeRR is written in Rust for Counter-Strike: Source. It reads and writes
+Hammer's VMF format, renders the game's own materials, and gives humans and
+AI agents the same editing operations through a shared session and MCP.
 
-*sdk_de_cbble in HammeRR. The crate in the courtyard was placed by an agent
-over MCP; the activity panel shows who did what.*
+The aim is a new editor with integrated tooling and a modern interface.
+Development is active; see [current limitations](#status) before compiling
+maps for play.
+
+![Current editor showing an MCP-built courtyard and the light inspector](docs/images/editor.png)
+
+*A courtyard built through MCP, with textured brushes, detailed light helpers,
+and the shared entity inspector and activity panel.*
+
+[Features](#features) · [Quick start](#quick-start) · [Editing](#editing) ·
+[MCP](#mcp) · [Compile and play](#compile-and-play) · [Status](#status)
 
 ## Features
 
-- Opens, edits and saves VMF files; unmodified files round-trip byte for byte.
-- Loads game content from `gameinfo.txt` search paths and VPK archives
-  (VMT materials, VTF textures), finding CS:S through the Steam libraries.
-- wgpu viewport with textures, translucency and alpha test, selection
-  highlights and fly camera.
-- Switchable perspective, top, front and side views with a visible grid,
-  fractional snapping, cursor-centered zoom and selection framing.
-- Draw brushes in planar views with a footprint preview, elevation and depth;
-  each placement is one undoable edit shared with MCP.
-- Exact numeric movement, rotation and scale with pivots and texture locking.
-- Select individual brush faces and edit their material, texture offset,
-  scale and rotation, or fit one tile to each face. Preview, apply and cancel
-  through the UI or MCP, with one-step undo.
-- Material thumbnails grouped by folder and category, with search, paging,
-  map-used materials, recent applications and session-local favorites.
-- Cancel buttons and Escape dismissal in entity, color, material and texture
-  dialogs; cancelling texture previews leaves the map and history unchanged.
-- Undoable editing: blocks, entities, key/values, move with texture lock,
-  duplicate, delete, materials, tie to entity / move to world.
-- FGD entity classes with inherited defaults, class search, typed properties,
-  choices and spawn flags. Humans and agents can place lights and spawns.
-- Detailed bulb models, spotlight and sunlight shapes with color and
-  direction helpers.
-  Readable property controls include color pickers, brightness sliders,
-  separate position/rotation inputs, and searchable material previews.
-- Built-in MCP server. Agents share the map, selection, camera and undo
-  history with the user, and edits show up live.
-- Native BSP compilation with leak detection, pointfiles, detail brushes
-  and brush entity models, available in the UI, CLI and MCP.
-- Compile and play in Linux CS:S, inspect game logs, and stop the managed
-  game process. Leak paths appear in the viewport after failed compiles.
-
-## Agent integration
-
-The GUI serves MCP at `http://127.0.0.1:7377/mcp`; `--headless` serves it
-over stdio without a window.
-
-```json
-{ "mcpServers": { "hammerr": { "url": "http://127.0.0.1:7377/mcp" } } }
-```
-
-Tools cover files, queries (`find_objects`, `get_objects`), selection,
-editing, undo/redo, the camera, `search_materials`, and visual checks:
-`render_view` returns a PNG of any viewpoint and `pick_at_pixel` maps a pixel
-of that image back to an object and face. `compile_map` compiles the current
-snapshot and returns diagnostics, geometry counts and leak paths.
-`run_map` compiles and launches CS:S; `launch_game` launches the latest
-successful compile. `game_log` reads engine output and `stop_game` stops
-the managed client. `set_view` controls tool textures and leak paths.
-`search_entity_classes` finds point and brush classes; `get_entity_class`
-returns their defaults, property types, choices, flags and I/O signatures.
-`load_entity_definitions` loads an FGD and its includes for both front ends.
-`create_entity`, `set_entity_properties`, `tie_to_entity` and `move_to_world`
-use the same creation and validation operations as the GUI.
-`get_entity_inspector` returns the panel's labels, common/advanced fields
-and control types. `set_entity_color` changes RGB and optional brightness;
-`set_entity_component` edits one coordinate or brightness component.
-`preview_material` returns a texture thumbnail and material details from
-the same loader used by **Browse materials…**.
-`set_spatial_settings` controls grid spacing, snapping, workplane and brush
-depth. `set_camera` selects perspective/top/front/side and `frame_selection`
-frames the current selection or map. `draw_block` previews or creates a
-snapped footprint; `cancel_block_preview` clears it without an edit.
-`transform_objects` moves, rotates and scales a selection atomically, with
-an optional pivot and texture locking.
-`set_selection_mode`, `select_faces` and `get_face_selection` share face
-selection and highlighting with the GUI. `edit_faces` assigns materials and
-changes UV parameters, with optional fitting and a non-destructive preview.
-`commit_face_preview` applies that preview; `cancel_face_preview` discards it.
-`browse_materials` exposes groups, counts and paged material metadata;
-`set_material_favorite` manages the same favorites shown in the browser.
-
-For example, an agent can place a warm light with:
-
-```json
-{ "name": "create_entity", "arguments": { "classname": "light", "origin": [0, 0, 128], "properties": { "_light": "255 220 180 400" } } }
-```
-
-| `render_view` of a map built entirely by an agent | `render_view` framing an agent-placed block |
+| Area | Available now |
 | --- | --- |
-| ![Agent-built test map](docs/images/agent-render.png) | ![Agent-placed block in de_cbble](docs/images/agent-block.png) |
+| Maps and content | VMF editing and saving; byte-for-byte round trips for unmodified files; game materials from Steam libraries, search paths and VPK archives. |
+| Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, exact movement/rotation/scale, and texture locking. |
+| Face materials | Individual face selection, UV offset/scale/rotation, texture fitting, cancellable previews, and a grouped material browser with thumbnails. |
+| Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
+| Humans and agents | Shared map, selection, camera, previews and undo history. MCP edits appear live in the editor. |
+| Build and play | Native BSP compilation, leak detection and viewport paths, CS:S launch controls, and game logs. |
 
-## Building and running
+## Quick start
 
-Requires Rust 1.92+ and a Vulkan-capable GPU.
+Requires **Rust 1.92+** and a **Vulkan-capable GPU**. Install Counter-Strike:
+Source to use its materials; HammeRR discovers the game through Steam.
 
 ```sh
-cargo run --release -p editor -- [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port N | --no-mcp] [--headless]
+cargo build --release -p editor
+./target/release/editor path/to/map.vmf
+```
+
+Omit the filename to start an empty map. The editor also discovers the
+installed CS:S SDK entity definitions.
+
+<details>
+<summary>Launch options</summary>
+
+| Option | Purpose |
+| --- | --- |
+| `--game <gameinfo.txt>` | Use a specific game content installation. |
+| `--fgd <file.fgd>` | Load another entity definition file and its includes. |
+| `--mcp-port <port>` | Change the HTTP MCP port; the default is `7377`. |
+| `--no-mcp` | Run the GUI without the MCP server. |
+| `--headless` | Serve MCP over stdio without opening a window. |
+
+```sh
 cargo test --workspace
 ```
 
-Fly with the right mouse button held and WASD/QE. Click selects, Ctrl+click
-toggles, arrows and PgUp/PgDn nudge, Ctrl+D duplicates, Del deletes,
-Ctrl+Z/Y undo and redo.
+</details>
 
-Choose **Top · XY**, **Front · XZ** or **Side · YZ** in the viewport controls.
-Right-drag pans and the wheel zooms around the cursor. **Frame · F** frames
-the selection, or the whole map when nothing is selected. **Grid** accepts
-spacing from 0.125 to 4096 units; **Snap** and **Show grid** are independent.
-Arrows move in the displayed plane and PgUp/PgDn move along its depth axis,
-using the current grid step; Shift uses at most one unit.
+## Editing
 
-Click **Draw brush**, enter **Start Z/Y/X** and **Depth Z/Y/X**, then drag a
-footprint. The preview shows its snapped dimensions; releasing places it,
-and Esc cancels the drag. **Done** returns to selection. The perspective
-**Add brush** button still places a default block.
+### Navigation and selection
 
-Select objects and enable **Transform selection** in the inspector for exact
-XYZ movement, world-axis rotation or positive scale factors. Rotation and
-scale use the selection center, world origin or custom coordinates as a
-pivot. **Keep textures attached** preserves surface UVs. Each application
-is one undo step; point entities move and rotate with the group.
+| Action | Control |
+| --- | --- |
+| Fly in perspective | Hold right mouse; move with WASD and Q/E. |
+| Change projection | Choose **Perspective**, **Top · XY**, **Front · XZ** or **Side · YZ**. |
+| Pan / zoom in planar views | Right-drag / mouse wheel; zoom follows the cursor. |
+| Frame selection or map | **Frame · F**; frames the map when nothing is selected. |
+| Select / toggle selection | Click / Ctrl+click. |
+| Nudge selection | Arrows and PgUp/PgDn; Shift uses at most one unit. |
+| Duplicate / delete | Ctrl+D / Del. |
+| Undo / redo | Ctrl+Z / Ctrl+Y. |
 
-Choose **Faces · materials & textures** in the selection panel, then click
-a surface; Ctrl+click toggles additional faces. **Apply** assigns a material
-to the chosen faces. **Edit face textures…** offers horizontal/vertical
-offsets and scales, rotation and **Fit one texture tile to each face**.
-Blank fields preserve each face's current value when selections are mixed.
-**Preview textures** shows a draft; **Apply textures** records one undo step.
-**Cancel**, Escape or closing the texture dialog discards the preview.
-Changing the selection or map invalidates an obsolete preview.
+**Grid** accepts spacing from 0.125 to 4096 units. **Snap** and **Show grid**
+are independent. In planar views, arrows move within the displayed plane;
+PgUp/PgDn move along its depth axis.
 
-**Browse materials…** shows thumbnail pages with folder/category groups and
-map-used, recently applied and favorite materials. Categories are inferred
-from material paths; favorites and recent applications last for the session.
-Selecting a thumbnail only chooses a candidate. **Use material** accepts it;
-**Cancel** leaves the previous choice unchanged. Texture fitting uses actual
-material dimensions and rejects materials whose texture cannot be loaded.
+### Brushes and transforms
 
-| Grouped material browser | Face texture controls |
+In a planar view, click **Draw brush**, set **Start Z/Y/X** and **Depth Z/Y/X**,
+then drag a footprint. The preview shows snapped dimensions; releasing
+places the brush in one undo step. Escape cancels, and **Done** returns to
+selection. **Add brush** places a default block in perspective.
+
+Enable **Transform selection** in the inspector for exact XYZ movement,
+world-axis rotation or scaling. Choose the selection center, world origin
+or custom coordinates as the pivot. **Keep textures attached** preserves
+surface UVs. Each application is one undo step for the selected group.
+
+### Face textures and materials
+
+Choose **Faces · materials & textures**, then select surfaces with click
+and Ctrl+click. **Apply** assigns the chosen material to those faces.
+**Edit face textures…** controls offsets, scales, rotation and one-tile
+fitting. **Preview textures** shows a draft; **Apply textures** commits it
+in one undo step. **Cancel**, Escape or closing the dialog discards it.
+
+**Browse materials…** offers thumbnail pages, a larger preview, search,
+folder/category groups, and map-used, recent and favorite materials.
+Choosing a thumbnail selects a candidate; **Use material** accepts it.
+**Cancel** keeps the previous choice.
+
+| Material browser | Face texture controls |
 | --- | --- |
 | ![Material thumbnails, categories and favorites](docs/images/material-browser.png) | ![Face material, offset, scale, rotation and preview controls](docs/images/face-textures.png) |
 
-## Entities
+Blank texture fields preserve existing values when selections are mixed.
+Fitting uses the material's real dimensions. Categories are inferred from
+material paths; favorites and recent applications last for the session.
 
-Click **Entity…** in the selection panel to search point classes and place
-an entity at the shown coordinates. The position starts 128 units in front
-of the perspective camera, or at the planar view's center and workplane
-elevation, using the shared snapping settings. MCP uses the same position
-when `origin` is omitted. New entities receive inherited FGD defaults. Select the entity
-to edit its properties, choose enumerated values and toggle spawn flags.
-Invalid typed values are rejected without changing the map.
+### Entities and lights
 
-Common settings appear first, with descriptions behind **?** buttons.
-**Advanced properties** reveals engine keys, types, stored values and
-custom fields. Light colors have a swatch and picker; brightness has a
-slider and an exact numeric input. Position and rotation have separate
-component inputs. Selected spotlights show inner and outer cone guides.
+Click **Entity…** to search point classes and place lights, spawns or other
+entities. The initial position uses the camera or planar workplane and
+shared snapping settings. Select an entity to edit its typed properties,
+choose enumerated values and toggle spawn flags. Invalid values leave the
+map unchanged.
 
-Point lights use a bundled [CC0 bulb model by Josh Dean, Poly Haven](https://polyhaven.com/a/lightbulb_led),
-with a colored globe, textured body and threaded metal base. These editor
-markers appear in both the viewport and MCP renders; they add no game
-models or geometry to the exported map. Asset provenance and regeneration
-details are in [SOURCE.txt](crates/render/assets/lightbulb/SOURCE.txt).
+The inspector puts common settings first: position and rotation components,
+color pickers, brightness sliders, numeric inputs and material previews.
+**?** shows descriptions; **Advanced properties** exposes engine keys and
+custom fields. Entity, color, material and texture dialogs all have Cancel
+buttons and Escape dismissal.
 
-Select a brush and click **Browse materials…** to search game materials
-and preview the selected texture. **Use material** chooses the material;
-**Apply** paints the selected brushes. Entity material fields apply the
-chosen value to that property.
+Point lights use a bundled [CC0 bulb model by Josh Dean / Poly Haven](https://polyhaven.com/a/lightbulb_led).
+Spotlights and sunlight have direction helpers; selected spotlights show
+cone guides. These are editor markers, visible in both the viewport and MCP
+renders. They add no models or geometry to the exported map. See
+[asset provenance](crates/render/assets/lightbulb/SOURCE.txt).
 
-Select world brushes and click **Tie to entity…** to make a brush entity.
-Select a brush entity and click **Move to world** to return its brushes.
-These operations share the map's undo history with agent edits.
+Select world brushes and use **Tie to entity…** to create a brush entity.
+**Move to world** converts it back. Both operations share undo history with
+agent edits. **Load FGD…** in the class picker loads other definitions;
+custom classes and unknown keys remain editable.
 
-The editor discovers `cstrike.fgd` in the game directory or installed
-Source SDK. Use `--fgd` or **Load FGD…** in the class picker for another
-definition file. Custom classes and keys remain editable, and loading
-definitions preserves existing map data. Definitions are read from your
-installation; game assets are not bundled.
+## MCP
 
-Lights are saved to VMF and carried into BSP entities. The compiler
-currently produces fullbright maps; placed lights will affect baked
-lighting once lighting compilation is implemented.
+The GUI serves MCP at **`http://127.0.0.1:7377/mcp`**. Connect an agent with:
 
-## Compiling maps
-
-Click **Compile** to build the current map into a `.bsp` beside its VMF.
-Compilation runs in the background and includes unsaved edits. Unsaved
-maps prompt for an output filename.
-
-Click **Run Map** to compile and play the current snapshot in the installed
-Linux CS:S client. **Game Log** shows its console and launcher output;
-**Stop Map** closes the process started by this editor. A changed map must
-be compiled again before launching it. Every launch passes `-insecure`.
-
-Each run uses a uniquely named copy of the BSP and its own log files. The
-copied map is removed when the game exits; logs remain available until the
-next run or editor shutdown. Closing the editor stops its managed game
-process. Existing maps and unrelated game processes are left untouched.
-
-The standalone compiler uses the game's materials and compile flags:
-
-```sh
-cargo run --release -p compiler --bin hammerr-compile -- map.vmf --game /path/to/cstrike/gameinfo.txt
+```json
+{
+  "mcpServers": {
+    "hammerr": {
+      "url": "http://127.0.0.1:7377/mcp"
+    }
+  }
+}
 ```
 
-Use `-o /path/to/map.bsp` to choose the output. A leak produces a `.lin`
-pointfile and leaves any existing BSP untouched. Maps need sealed world
-geometry and at least one point entity in open space.
-Leaks also appear as red lines through geometry in the editor and MCP
-renders. The **Leak path** checkbox toggles them. Editing the map hides
-the previous compile's path until the next compilation.
+For an isolated session without a window:
 
-To generate a small room with both player spawns:
+```sh
+./target/release/editor path/to/map.vmf --headless
+```
+
+Human controls and MCP calls use the same Session operations. Agents can
+build geometry, place lights, edit individual faces, preview changes,
+compile maps and launch the game. `render_view` returns a PNG from any
+viewpoint; `pick_at_pixel` resolves a rendered pixel to an object and face.
+
+For example, place a warm light:
+
+```json
+{
+  "name": "create_entity",
+  "arguments": {
+    "classname": "light",
+    "origin": [0, 0, 128],
+    "properties": { "_light": "255 220 180 400" }
+  }
+}
+```
+
+| Courtyard built through MCP | Face selection and fitted crate textures |
+| --- | --- |
+| ![MCP render of textured walls, stairs, crates and light helpers](docs/images/agent-render.png) | ![MCP close-up of stacked crates with one face selected](docs/images/agent-block.png) |
+
+<details>
+<summary>Tool reference by task</summary>
+
+| Task | Tools |
+| --- | --- |
+| Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `find_objects`, `get_objects` |
+| Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
+| Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
+| Spatial authoring | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
+| Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
+| Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
+| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `commit_face_preview`, `cancel_face_preview` |
+| Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
+| Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
+| Compile and play | `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
+
+`edit_faces` supports material, UV offsets/scales, rotation, fitting and
+non-destructive previews. Commit or cancel the shared preview from either
+front end. Material browsing and inspector tools return the same catalog,
+labels and control types used by the GUI.
+
+</details>
+
+## Compile and play
+
+| Control | Behavior |
+| --- | --- |
+| **Compile** | Build the current snapshot, including unsaved edits, into a BSP beside the VMF. Unsaved maps prompt for an output filename. |
+| **Run Map** | Compile and launch the snapshot in the installed Linux CS:S client with `-insecure`. |
+| **Game Log** | Read console and launcher output. |
+| **Stop Map** | Stop the game process started by this editor. |
+| **Leak path** | Toggle the red leak path drawn through geometry after a failed compile. |
+
+Compilation runs in the background. Maps need sealed world geometry and
+at least one point entity in open space. A leak produces a `.lin` pointfile
+and preserves any existing BSP. Editing hides the previous leak path until
+the next compilation.
+
+Each game run uses a uniquely named BSP copy and its own logs. The copy is
+removed when the game exits; logs remain until the next run or editor
+shutdown. Closing the editor stops its managed game process. Existing maps
+and unrelated game processes remain untouched.
+
+<details>
+<summary>Standalone compiler and room example</summary>
+
+```sh
+cargo run --release -p compiler --bin hammerr-compile -- \
+  map.vmf --game /path/to/cstrike/gameinfo.txt
+```
+
+Use `-o /path/to/map.bsp` to choose the output. To generate a sealed room
+with both player spawns:
 
 ```sh
 cargo run -p compiler --example room -- room.vmf
 ```
 
-Copy the compiled BSP to `cstrike/maps/` and run `map room` in the CS:S
-console. This room has been compiled and loaded in the Linux CS:S client,
-with a player spawned inside and fullbright rendering enabled by the engine.
+After compiling, copy the BSP to `cstrike/maps/` and run `map room` in the
+CS:S console. The room has been compiled and loaded in Linux CS:S with a
+player spawned inside and fullbright rendering enabled by the engine.
 
-## Layout
-
-| Crate | Role |
-| --- | --- |
-| `source-formats` | KeyValues, VMF, FGD, VPK, VTF, VMT, BSP, game filesystem |
-| `map-core` | Brush geometry, displacements, undoable document, edit operations, picking |
-| `render` | wgpu renderer, materials, camera, offscreen snapshots |
-| `editor` | Slint UI, shared session, MCP server |
-| `compiler` | Native VMF to BSP compiler and `hammerr-compile` CLI |
+</details>
 
 ## Status
 
-The compiler produces experimental fullbright BSP v20 maps with a single
-visibility cluster. VVIS, VRAD, physics collision, water volumes,
-displacements, static props, areaportals, overlays, cubemaps and origin
-brushes remain unfinished. Unsupported geometry is reported in diagnostics.
-The BSP reader/writer is verified against the stock CS:S maps.
+**The compiler is experimental.** It produces fullbright BSP v20 maps with
+a single visibility cluster. Lights are saved in VMF and carried into BSP
+entities; baked lighting is still pending.
 
-Planned editor work: I/O connections, brush tools, 2D views, displacement
-editing and model rendering.
+VVIS, VRAD, physics collision, water volumes, compiled displacements,
+static props, areaportals, overlays, cubemaps and origin brushes remain
+unfinished. Unsupported geometry is reported in diagnostics. The BSP
+reader/writer is verified against stock CS:S maps.
+
+Editor work ahead includes I/O connections, more brush tools, displacement
+editing, model rendering and further texture alignment tools.
+
+## Project layout
+
+| Crate | Responsibility |
+| --- | --- |
+| `source-formats` | Valve file formats and the game filesystem. |
+| `map-core` | Geometry, displacements, undoable documents, edits and picking. |
+| `render` | wgpu renderer, materials, camera and offscreen snapshots. |
+| `editor` | Slint UI, shared Session and MCP server. |
+| `compiler` | Native VMF-to-BSP compilation and the `hammerr-compile` CLI. |
 
 This is a clean-room project: no Valve or Hammer++ code is used.
 Counter-Strike: Source and its assets are not included.

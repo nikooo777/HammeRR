@@ -35,7 +35,7 @@ const DEFAULT_RENDER_SIZE: (u32, u32) = (1024, 576);
 const MAX_RENDER_SIDE: u32 = 2048;
 
 const INSTRUCTIONS: &str = "\
-Map editor for Counter-Strike: Source (Valve Source engine, Hammer-compatible VMF files). \
+HammeRR, a map editor for Counter-Strike: Source (Valve Source engine, Hammer-compatible VMF files). \
 The user has the same map open in an editor window and sees every change live; all edits \
 are undoable and share the user's undo history.\n\
 Coordinates: Z is up, units are Hammer units (about an inch). A player is 32x32x72 \
@@ -438,6 +438,12 @@ pub struct EntityArgs {
 pub struct StepsArgs {
     /// How many steps (default 1).
     pub steps: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetViewArgs {
+    /// Draw clip, trigger, nodraw and skybox brushes.
+    pub tool_textures: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -942,6 +948,21 @@ impl EditorServer {
         ok(json!({ "undone": undone }))
     }
 
+    #[tool(
+        description = "Show or hide tool textures (clip, trigger, nodraw, skybox) in the viewport."
+    )]
+    fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mut view = session.view();
+            if let Some(tools) = args.tool_textures {
+                view.tool_textures = tools;
+            }
+            session.set_view(view);
+            Ok(json!({ "tool_textures": view.tool_textures }))
+        })
+    }
+
     #[tool(description = "Redo undone steps.")]
     fn redo(&self, Parameters(args): Parameters<StepsArgs>) -> ToolResult {
         let mut session = self.session();
@@ -1057,6 +1078,10 @@ impl EditorServer {
 impl ServerHandler for EditorServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(rmcp::model::Implementation::new(
+                "hammerr",
+                env!("CARGO_PKG_VERSION"),
+            ))
             .with_instructions(INSTRUCTIONS)
     }
 }

@@ -1,4 +1,4 @@
-# hammerpp
+# HammeRR
 
 A Linux-native map editor for Counter-Strike: Source, written in Rust as a
 modern replacement for Hammer++. It reads and writes Hammer's VMF format,
@@ -7,8 +7,8 @@ feature to AI agents over MCP.
 
 ![The editor with sdk_de_cbble open](docs/images/editor.png)
 
-*sdk_de_cbble in the editor. The selected block was placed by an agent over
-MCP; the activity panel shows who did what.*
+*sdk_de_cbble in HammeRR. The crate in the courtyard was placed by an agent
+over MCP; the activity panel shows who did what.*
 
 ## Features
 
@@ -28,7 +28,7 @@ The GUI serves MCP at `http://127.0.0.1:7377/mcp`; `--headless` serves it
 over stdio without a window.
 
 ```json
-{ "mcpServers": { "hammer": { "url": "http://127.0.0.1:7377/mcp" } } }
+{ "mcpServers": { "hammerr": { "url": "http://127.0.0.1:7377/mcp" } } }
 ```
 
 Tools cover files, queries (`find_objects`, `get_objects`), selection,

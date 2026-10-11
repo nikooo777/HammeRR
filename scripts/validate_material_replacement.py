@@ -25,6 +25,7 @@ def preserved_map(client):
             original["transform"]["preview"],
             original["area_selection"]["preview"],
             original.get("volume_selection", {}).get("preview"),
+            original.get("paint_selection", {}).get("preview"),
             original["block_preview"],
             original["spatial"]["draw_block"],
             original["connection_draft"],
@@ -37,6 +38,7 @@ def preserved_map(client):
             original["launching"],
             original["game_running"],
             client.call("get_material_search"),
+            client.call("get_surface_sample")["sample"],
         ]
     ), "Idle session without previews or reports required"
     original_hash = (
@@ -83,6 +85,28 @@ def preserved_map(client):
             },
         )
         client.call("set_view", original["view"])
+        transform = original["transform"]["settings"]
+        client.call(
+            "set_transform_tool",
+            {
+                **transform,
+                "pivot_mode": "custom"
+                if transform["pivot"] is not None
+                else "selection",
+            },
+        )
+        client.call(
+            "set_area_selection_options",
+            {key: original["area_selection"][key] for key in ["mode", "rule"]},
+        )
+        if "paint_selection" in original:
+            client.call(
+                "set_paint_tool",
+                {
+                    key: original["paint_selection"][key]
+                    for key in ["enabled", "radius"]
+                },
+            )
         restored = client.call("get_map_info")
         for key in [
             "path",
@@ -96,8 +120,12 @@ def preserved_map(client):
             "undo",
             "redo",
             "face_selection",
+            "transform",
+            "area_selection",
         ]:
             assert restored[key] == original[key], f"Restore {key}"
+        if "paint_selection" in original:
+            assert restored["paint_selection"] == original["paint_selection"]
         if original_hash:
             assert (
                 hashlib.sha256(Path(original["path"]).read_bytes()).hexdigest()

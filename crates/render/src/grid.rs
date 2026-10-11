@@ -173,12 +173,78 @@ pub(crate) fn overlay_lines(
             );
         }
     }
+    if let Some(guide) = options
+        .paint_preview
+        .filter(|guide| guide.camera == *camera)
+    {
+        let depth = if camera.projection == Projection::Perspective {
+            Camera::NEAR * 2.0
+        } else {
+            Camera::ORTHO_DISTANCE
+        };
+        let point = |angle: f32| {
+            let pixel = guide.center + glam::Vec2::new(angle.cos(), angle.sin()) * guide.radius;
+            let (origin, direction) = camera.ray(
+                2.0 * pixel.x / guide.size.0 as f32 - 1.0,
+                1.0 - 2.0 * pixel.y / guide.size.1 as f32,
+                guide.size.0 as f32 / guide.size.1 as f32,
+            );
+            origin + direction * depth / direction.dot(camera.forward())
+        };
+        for segment in 0..48 {
+            line(
+                &mut vertices,
+                point(segment as f32 * std::f32::consts::TAU / 48.0),
+                point((segment + 1) as f32 * std::f32::consts::TAU / 48.0),
+                [255, 214, 110, 255],
+            );
+        }
+    }
     (vertices, grid_count)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paint_outline_keeps_pixel_radius_in_every_projection() {
+        for projection in [
+            Projection::Top,
+            Projection::Front,
+            Projection::Side,
+            Projection::Perspective,
+        ] {
+            let mut camera = Camera::looking_at(Vec3::new(-300.0, -400.0, 250.0), Vec3::ZERO);
+            if projection != Projection::Perspective {
+                camera = Camera::planar(projection, Vec3::ZERO, 512.0);
+            }
+            let size = (800, 600);
+            let center = glam::Vec2::new(340.0, 290.0);
+            let options = ViewOptions {
+                grid_visible: false,
+                paint_preview: Some(crate::PaintGuide {
+                    center,
+                    radius: 24.0,
+                    size,
+                    camera,
+                }),
+                ..Default::default()
+            };
+            let (lines, count) = overlay_lines(&camera, size, &options);
+            assert_eq!(count, 0);
+            assert_eq!(lines.len(), 96);
+            for vertex in &lines {
+                let pixel =
+                    crate::handles::project(&camera, Vec3::from_array(vertex.position), size)
+                        .unwrap();
+                assert!((pixel.distance(center) - 24.0).abs() < 0.02);
+            }
+            assert_eq!(lines, overlay_lines(&camera, (1600, 1200), &options).0);
+            camera.position.x += 1.0;
+            assert!(overlay_lines(&camera, size, &options).0.is_empty());
+        }
+    }
 
     #[test]
     fn overlays_keep_logical_handle_size_and_original_selection_aspect() {

@@ -25,7 +25,7 @@ and the shared entity inspector and activity panel.*
 | Maps and content | VMF editing and saving; byte-for-byte round trips for unmodified files; game materials from Steam libraries, search paths and VPK archives. |
 | Viewport and brushes | Textured, flat, wireframe and diagnostic modes in every projection; grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
-| Selection | Object and face marquee or 3D volume selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
+| Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
@@ -85,6 +85,7 @@ cargo test --workspace -j 8
 | Save / return to a camera | **Saved views…** beside Frame. |
 | Select / toggle selection | Click / Ctrl+click. |
 | Select an area | Left-drag away from a handle; choose **Intersects** or **Fully inside** and a selection rule. Ctrl+drag toggles. |
+| Paint a selection | Choose **Paint selection**, adjust the pixel radius, then drag across visible objects or faces. Release applies; Escape or **Cancel** discards the stroke. |
 | Transform with handles | Choose **Move handles**, **Rotate handles** or **Scale handles**; drag a handle and release to apply. Escape cancels. |
 | Nudge selection | Arrows and PgUp/PgDn; Shift uses at most one unit. |
 | Duplicate / delete | Ctrl+D / Del. |
@@ -160,12 +161,22 @@ or map bounds, choose objects or faces and a selection rule, then **Preview
 matches**. The blue box and highlights survive camera changes; **Frame box**
 shows the region. **Select matches** applies it; **Cancel** leaves selection alone.
 
-Imported terrain uses its supporting brush faces for region queries. Paint
-selection is still pending.
+Choose **Paint selection** for a circular brush that selects the nearest visible
+object or face at each sample. **Radius** uses screen pixels; the same selection
+rules apply, and Ctrl temporarily toggles. Repeated passes count each hit once.
+The shared preview shows matching geometry and a brush outline. Release or
+**Apply selection** commits it; **Cancel** leaves the selection alone.
+
+Strokes sample a fixed 2-pixel lattice and interpolate between pointer updates.
+Tiny features between samples can be missed. Hidden objects and tool brushes
+are skipped; face strokes ignore point helpers. Imported terrain uses its
+supporting brush faces for selection queries.
 
 | Volume controls | Shared region preview |
 | --- | --- |
 | ![Volume bounds, match rules and cancellation](docs/images/volume-selection.png) | ![Blue volume guide and matching brush](docs/images/volume-preview.png) |
+
+![Paint selection with a pixel-radius brush, candidate highlights and Apply/Cancel](docs/images/paint-selection.png)
 
 ### Brush clipping
 
@@ -501,6 +512,7 @@ For example, place a warm light:
 | Spatial authoring | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles and previews | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
+| Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -551,6 +563,7 @@ python -B scripts/validate_face_lighting.py --output /tmp/hammerr-lighting-check
 python -B scripts/validate_material_replacement.py --output /tmp/hammerr-material-check
 python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
 python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-check
+python -B scripts/validate_paint_selection.py --output /tmp/hammerr-paint-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
@@ -582,6 +595,16 @@ or `faces`), a match rule and a combination mode. Use `preview: true`, inspect
 the paginated matches, then pass the returned preview token to commit, cancel
 or frame. Camera changes preserve the box; map, selection and visibility
 changes invalidate its candidates.
+
+`begin_paint_selection` takes a `pointer` with `position`, `width` and `height`,
+an optional camera, radius, selection mode and combination rule. Extend its
+path with `update_paint_selection` and ordered pixel `points`. Inspect the
+returned token, paginated matches and work limits, then commit or cancel.
+Camera, selection, map and visibility changes invalidate the stroke. Invalid
+or over-budget updates preserve the previous preview. A stroke accepts up to
+256 points, 32,768 new samples and 1,048,576 pixel visits per update, with
+262,144 samples total.
+Selection strokes add no map undo step.
 
 `save_camera_view` stores the current shared camera under `name`; `replace_id`
 updates an existing view. Pass both `generation` and `revision` from
@@ -696,7 +719,7 @@ unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes broader map checks, vertex and edge editing,
-displacement tools, model rendering, paint strokes and chained texture seams.
+displacement tools, model rendering, texture paint strokes and chained texture seams.
 
 ## Project layout
 

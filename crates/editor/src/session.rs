@@ -26,6 +26,7 @@ pub mod compilation;
 pub mod context;
 mod management;
 pub mod material_search;
+pub mod paint;
 pub mod primitives;
 mod recovery;
 pub mod saved_views;
@@ -127,6 +128,7 @@ pub struct Session {
     transform_preview: Option<TransformPreview>,
     transform_drag: Option<TransformDrag>,
     area_preview: Option<AreaPreview>,
+    paint: paint::State,
     volume: volume::State,
     connection_draft: Option<ConnectionDraft>,
     connection_serial: u64,
@@ -216,6 +218,7 @@ impl Session {
             transform_preview: None,
             transform_drag: None,
             area_preview: None,
+            paint: paint::State::default(),
             volume: volume::State::default(),
             connection_draft: None,
             connection_serial: 0,
@@ -1210,6 +1213,12 @@ impl Session {
                 camera: preview.camera,
                 aspect: preview.start.size.0 as f32 / preview.start.size.1 as f32,
             }),
+            paint_preview: self.paint_stroke().map(|stroke| render::PaintGuide {
+                center: stroke.cursor.as_vec2(),
+                radius: stroke.spec.radius as f32,
+                size: stroke.spec.pointer.size,
+                camera: stroke.spec.camera,
+            }),
             ..self.view
         }
     }
@@ -1310,6 +1319,7 @@ impl Session {
         }
         self.spatial = settings;
         if settings.draw_block {
+            self.paint.enabled = false;
             self.clip_tool = false;
             self.set_face_mode(false);
         }
@@ -1673,6 +1683,29 @@ impl Session {
                         &selected,
                         &preview.matches.objects,
                         preview.spec.mode,
+                    ),
+                    HashSet::new(),
+                )
+            }
+        } else {
+            (selected, selected_faces)
+        };
+        let (selected, selected_faces) = if let Some(stroke) = self.paint_stroke() {
+            if stroke.spec.faces {
+                (
+                    HashSet::new(),
+                    manipulation::combined_selection(
+                        &selected_faces,
+                        &stroke.faces.iter().copied().collect::<Vec<_>>(),
+                        stroke.spec.mode,
+                    ),
+                )
+            } else {
+                (
+                    manipulation::combined_selection(
+                        &selected,
+                        &stroke.objects.iter().copied().collect::<Vec<_>>(),
+                        stroke.spec.mode,
                     ),
                     HashSet::new(),
                 )

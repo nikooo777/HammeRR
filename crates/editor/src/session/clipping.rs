@@ -47,6 +47,7 @@ impl Session {
         self.cancel_area_selection();
         self.clip_tool = enabled;
         if enabled {
+            self.paint.enabled = false;
             self.spatial.draw_block = false;
             self.cancel_block_preview();
             self.cancel_face_preview();

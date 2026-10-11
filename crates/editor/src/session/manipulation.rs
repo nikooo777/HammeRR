@@ -232,12 +232,13 @@ impl Session {
         {
             return Err("Pivot must be finite and rotation snap between 0 and 180 degrees".into());
         }
-        if tool == self.transform_tool {
+        if tool == self.transform_tool && !self.paint.enabled {
             return Ok(());
         }
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.transform_tool = tool;
+        self.paint.enabled = false;
         if tool.mode.is_some() {
             self.clip_tool = false;
             self.cancel_clip_preview();
@@ -654,6 +655,7 @@ impl Session {
     }
 
     pub fn cancel_area_selection(&mut self) {
+        self.clear_paint_stroke();
         self.interaction_epoch += 1;
         if self.area_preview.take().is_some() {
             self.scene_serial += 1;

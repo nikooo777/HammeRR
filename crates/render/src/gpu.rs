@@ -191,6 +191,14 @@ pub struct AreaGuide {
     pub contained: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaintGuide {
+    pub center: glam::Vec2,
+    pub radius: f32,
+    pub size: (u32, u32),
+    pub camera: Camera,
+}
+
 /// Per-frame visibility filters, applied without rebuilding the scene.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
@@ -206,6 +214,7 @@ pub struct ViewOptions {
     pub transform_handles: Option<crate::handles::Guide>,
     pub handle_pixel_ratio: f32,
     pub area_preview: Option<AreaGuide>,
+    pub paint_preview: Option<PaintGuide>,
 }
 
 impl Default for ViewOptions {
@@ -223,6 +232,7 @@ impl Default for ViewOptions {
             transform_handles: None,
             handle_pixel_ratio: 1.0,
             area_preview: None,
+            paint_preview: None,
         }
     }
 }

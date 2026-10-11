@@ -14,6 +14,46 @@ pub const MAX_VIEWPORT: u32 = 16_384;
 pub const MIN_RADIUS: f64 = 2.0;
 pub const MAX_RADIUS: f64 = 64.0;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Operation {
+    #[default]
+    Selection,
+    Material,
+    Projection,
+}
+
+impl Operation {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Selection => "selection",
+            Self::Material => "material",
+            Self::Projection => "projection",
+        }
+    }
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "selection" => Ok(Self::Selection),
+            "material" => Ok(Self::Material),
+            "projection" => Ok(Self::Projection),
+            _ => Err("Paint operation must be selection, material or projection".into()),
+        }
+    }
+    fn texture_mode(self) -> Option<surface::PaintMode> {
+        match self {
+            Self::Selection => None,
+            Self::Material => Some(surface::PaintMode::Material),
+            Self::Projection => Some(surface::PaintMode::Projection),
+        }
+    }
+}
+
+pub struct TextureDraft {
+    pub sample: surface::SurfaceSample,
+    pub document: Document,
+    pub changed: usize,
+    edits: Vec<(FaceId, SurfaceEdit)>,
+}
+
 #[derive(Clone, Copy)]
 pub struct Spec {
     pub camera: Camera,
@@ -26,6 +66,8 @@ pub struct Spec {
 pub struct Stroke {
     pub token: u64,
     pub spec: Spec,
+    pub operation: Operation,
+    pub texture: Option<TextureDraft>,
     pub cursor: DVec2,
     pub objects: BTreeSet<ObjectId>,
     pub faces: BTreeSet<FaceId>,
@@ -39,8 +81,9 @@ pub struct Stroke {
 pub struct State {
     pub enabled: bool,
     pub radius: f64,
+    pub operation: Operation,
     serial: u64,
-    stroke: Option<Stroke>,
+    pub(super) stroke: Option<Stroke>,
 }
 
 impl Default for State {
@@ -48,6 +91,7 @@ impl Default for State {
         Self {
             enabled: false,
             radius: 12.0,
+            operation: Operation::Selection,
             serial: 0,
             stroke: None,
         }
@@ -158,6 +202,10 @@ impl Session {
     pub fn paint_enabled(&self) -> bool {
         self.paint.enabled
     }
+    pub fn paint_operation(&self) -> Operation {
+        self.paint.operation
+    }
+
     pub fn paint_radius(&self) -> f64 {
         self.paint.radius
     }
@@ -171,8 +219,21 @@ impl Session {
         enabled: bool,
         radius: f64,
     ) -> Result<(), String> {
+        self.set_paint_operation(actor, enabled, radius, Operation::Selection)
+    }
+
+    pub fn set_paint_operation(
+        &mut self,
+        actor: Actor,
+        enabled: bool,
+        radius: f64,
+        operation: Operation,
+    ) -> Result<(), String> {
         validate_radius(radius)?;
-        if self.paint.enabled == enabled && self.paint.radius == radius {
+        if self.paint.enabled == enabled
+            && self.paint.radius == radius
+            && self.paint.operation == operation
+        {
             return Ok(());
         }
         self.cancel_area_selection();
@@ -189,13 +250,14 @@ impl Session {
         }
         self.paint.enabled = enabled;
         self.paint.radius = radius;
+        self.paint.operation = operation;
         self.view_serial += 1;
         self.log(
             actor,
             if enabled {
-                "paint selection enabled"
+                "paint brush enabled"
             } else {
-                "paint selection disabled"
+                "paint brush disabled"
             },
         );
         Ok(())
@@ -223,6 +285,28 @@ impl Session {
     }
 
     pub fn begin_paint_selection(&mut self, spec: Spec) -> Result<u64, String> {
+        self.begin_stroke(spec, Operation::Selection)
+    }
+
+    pub fn begin_texture_stroke(
+        &mut self,
+        spec: Spec,
+        operation: Operation,
+    ) -> Result<u64, String> {
+        if operation.texture_mode().is_none() {
+            return Err("Texture strokes require material or projection mode".into());
+        }
+        self.begin_stroke(
+            Spec {
+                faces: true,
+                mode: SelectMode::Replace,
+                ..spec
+            },
+            operation,
+        )
+    }
+
+    fn begin_stroke(&mut self, spec: Spec, operation: Operation) -> Result<u64, String> {
         validate_pointer(spec.pointer)?;
         validate_radius(spec.radius)?;
         if !spec.camera.position.is_finite()
@@ -246,6 +330,41 @@ impl Session {
         {
             return Err("Start a paint stroke inside the viewport".into());
         }
+        let hidden = self.hidden_tool_brushes();
+        let picker = Picker::new(
+            &self.document,
+            |solid| !hidden.contains(&solid.id),
+            !spec.faces,
+        );
+        let token = self.paint.serial + 1;
+        let texture = if operation.texture_mode().is_some() {
+            Some(TextureDraft {
+                sample: self
+                    .surface_sample
+                    .clone()
+                    .ok_or("Select one source face and sample its texture first")?,
+                document: Document::new(self.document.vmf().clone()),
+                changed: 0,
+                edits: Vec::new(),
+            })
+        } else {
+            None
+        };
+        let mut stroke = Stroke {
+            token,
+            spec,
+            operation,
+            texture,
+            cursor: spec.pointer.position,
+            objects: BTreeSet::new(),
+            faces: BTreeSet::new(),
+            samples: HashSet::new(),
+            picker,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+            shared_camera: self.camera,
+        };
+        update_stroke(&mut stroke, &self.document, &[spec.pointer.position])?;
         self.cancel_area_selection();
         self.cancel_block_preview();
         self.cancel_face_preview();
@@ -255,102 +374,61 @@ impl Session {
         self.cancel_transform_preview();
         self.clip_tool = false;
         self.spatial.draw_block = false;
-        let hidden = self.hidden_tool_brushes();
-        let picker = Picker::new(
-            &self.document,
-            |solid| !hidden.contains(&solid.id),
-            !spec.faces,
-        );
         self.paint.enabled = true;
         self.paint.radius = spec.radius;
+        self.paint.operation = operation;
         self.transform_tool.mode = None;
-        self.paint.serial += 1;
-        let token = self.paint.serial;
-        self.paint.stroke = Some(Stroke {
-            token,
-            spec,
-            cursor: spec.pointer.position,
-            objects: BTreeSet::new(),
-            faces: BTreeSet::new(),
-            samples: HashSet::new(),
-            picker,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-            shared_camera: self.camera,
-        });
+        self.paint.serial = token;
+        self.paint.stroke = Some(stroke);
         self.scene_serial += 1;
-        self.update_paint_selection(token, &[spec.pointer.position])?;
+        self.view_serial += 1;
         Ok(token)
     }
 
     pub fn update_paint_selection(&mut self, token: u64, points: &[DVec2]) -> Result<(), String> {
         let stroke = self.checked_paint_stroke(token)?;
-        if points.is_empty() || points.len() > MAX_POINTS {
-            return Err(format!("Supply 1–{MAX_POINTS} pointer samples"));
+        if stroke.operation != Operation::Selection {
+            return Err("Use update_texture_stroke for a texture stroke".into());
         }
-        let mut pending = BTreeSet::new();
-        let mut visits = 0;
-        let mut previous = stroke.cursor;
-        for &point in points {
-            validate_pointer(Pointer {
-                position: point,
-                ..stroke.spec.pointer
-            })?;
-            capsule_samples(
-                previous,
-                point,
-                stroke.spec.pointer.size,
-                stroke.spec.radius,
-                &stroke.samples,
-                &mut pending,
-                &mut visits,
-            )?;
-            previous = point;
+        self.update_active_stroke(token, points)
+    }
+
+    pub fn update_texture_stroke(&mut self, token: u64, points: &[DVec2]) -> Result<(), String> {
+        if self.checked_paint_stroke(token)?.texture.is_none() {
+            return Err("This is a selection stroke".into());
         }
-        let mut objects = stroke.objects.clone();
-        let mut faces = stroke.faces.clone();
-        for &(x, y) in &pending {
-            let pointer = Pointer {
-                position: DVec2::new(
-                    f64::from(x * SAMPLE_SPACING) + 0.5,
-                    f64::from(y * SAMPLE_SPACING) + 0.5,
-                ),
-                ..stroke.spec.pointer
-            };
-            let ndc = pointer.ndc();
-            let (origin, direction) = stroke.spec.camera.ray(
-                ndc.x as f32,
-                ndc.y as f32,
-                pointer.size.0 as f32 / pointer.size.1 as f32,
-            );
-            if let Some(hit) = stroke.picker.pick(&Ray {
-                origin: origin.as_dvec3(),
-                direction: direction.as_dvec3(),
-            }) {
-                if stroke.spec.faces {
-                    if let (Some(solid), Some(side)) = (hit.solid, hit.side) {
-                        faces.insert(FaceId { solid, side });
-                    }
-                } else {
-                    objects.insert(hit.object);
-                }
-            }
-            if objects.len() + faces.len() > MAX_MATCHES {
-                return Err(format!(
-                    "Paint stroke supports at most {MAX_MATCHES} matches. Apply or cancel it, then start another."
-                ));
-            }
-        }
-        let stroke = self.paint.stroke.as_mut().unwrap();
-        let matches_changed = stroke.objects != objects || stroke.faces != faces;
-        stroke.objects = objects;
-        stroke.faces = faces;
-        stroke.samples.extend(pending);
-        stroke.cursor = previous;
-        if matches_changed {
+        self.update_active_stroke(token, points)
+    }
+
+    pub fn update_active_stroke(&mut self, token: u64, points: &[DVec2]) -> Result<(), String> {
+        self.checked_paint_stroke(token)?;
+        let changed = update_stroke(self.paint.stroke.as_mut().unwrap(), &self.document, points)?;
+        if changed {
             self.scene_serial += 1;
         }
         self.view_serial += 1;
+        Ok(())
+    }
+
+    pub fn commit_texture_stroke(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
+        if self.checked_paint_stroke(token)?.texture.is_none() {
+            return Err("This is a selection stroke".into());
+        }
+        let texture = self.paint.stroke.take().unwrap().texture.unwrap();
+        self.scene_serial += 1;
+        self.view_serial += 1;
+        if texture.changed == 0 {
+            return Ok(0);
+        }
+        self.apply_face_edits(actor, texture.edits)
+    }
+
+    pub fn commit_active_stroke(&mut self, actor: Actor, token: u64) -> Result<(), String> {
+        if self.checked_paint_stroke(token)?.texture.is_some() {
+            self.commit_texture_stroke(actor, token)?;
+        } else {
+            self.commit_paint_selection(actor, token)?;
+        }
         Ok(())
     }
 
@@ -359,7 +437,9 @@ impl Session {
         actor: Actor,
         token: u64,
     ) -> Result<Selection, String> {
-        self.checked_paint_stroke(token)?;
+        if self.checked_paint_stroke(token)?.operation != Operation::Selection {
+            return Err("Use commit_texture_stroke for a texture stroke".into());
+        }
         let stroke = self.paint.stroke.take().unwrap();
         let matches = Selection {
             objects: stroke.objects.into_iter().collect(),
@@ -382,6 +462,13 @@ impl Session {
         Ok(matches)
     }
 
+    pub fn cancel_texture_stroke(&mut self, token: u64) -> Result<(), String> {
+        if self.checked_paint_stroke(token)?.texture.is_none() {
+            return Err("This is a selection stroke".into());
+        }
+        self.cancel_paint_selection(token)
+    }
+
     pub fn cancel_paint_selection(&mut self, token: u64) -> Result<(), String> {
         self.checked_paint_stroke(token)?;
         self.clear_paint_stroke();
@@ -390,6 +477,7 @@ impl Session {
 
     pub fn paint_selection_json(&self, offset: usize, limit: usize) -> Value {
         let preview = self.paint_stroke().map(|stroke| json!({
+            "operation":stroke.operation.name(), "texture":stroke.texture.as_ref().map(|texture|json!({"material":texture.sample.material,"source":{"solid":texture.sample.face.solid,"side":texture.sample.face.side},"faces_changed":texture.changed})),
             "token":stroke.token.to_string(), "radius":stroke.spec.radius,"viewport":stroke.spec.pointer.size,"cursor":stroke.cursor.to_array(),
             "selection_mode":if stroke.spec.faces {"faces"} else {"objects"},
             "mode":match stroke.spec.mode {SelectMode::Replace=>"replace",SelectMode::Add=>"add",SelectMode::Remove=>"remove",SelectMode::Toggle=>"toggle"},
@@ -399,10 +487,102 @@ impl Session {
             "objects":stroke.objects.iter().skip(offset).take(limit.clamp(1,500)).map(|id|match id {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")}).collect::<Vec<_>>(),
             "faces":stroke.faces.iter().skip(offset).take(limit.clamp(1,500)).map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()
         }));
-        json!({"enabled":self.paint.enabled,"radius":self.paint.radius,"preview":preview,
+        json!({"enabled":self.paint.enabled,"sample_material":self.surface_sample.as_ref().map(|sample|&sample.material),"operation":self.paint.operation.name(),"radius":self.paint.radius,"preview":preview,
             "limits":{"min_radius":MIN_RADIUS,"max_radius":MAX_RADIUS,"max_viewport_side":MAX_VIEWPORT,"points_per_update":MAX_POINTS,"new_samples_per_update":MAX_UPDATE_SAMPLES,"pixel_visits_per_update":MAX_UPDATE_VISITS,"samples_per_stroke":MAX_STROKE_SAMPLES,"matches":MAX_MATCHES},
             "sample_spacing":SAMPLE_SPACING,"visibility":"Nearest visible hit per sample; hidden objects/brushes and hidden tool brushes are skipped. Faces ignore point helpers; terrain uses supporting faces."})
     }
+}
+
+fn update_stroke(
+    stroke: &mut Stroke,
+    document: &Document,
+    points: &[DVec2],
+) -> Result<bool, String> {
+    if points.is_empty() || points.len() > MAX_POINTS {
+        return Err(format!("Supply 1–{MAX_POINTS} pointer samples"));
+    }
+    let mut pending = BTreeSet::new();
+    let mut visits = 0;
+    let mut previous = stroke.cursor;
+    for &point in points {
+        validate_pointer(Pointer {
+            position: point,
+            ..stroke.spec.pointer
+        })?;
+        capsule_samples(
+            previous,
+            point,
+            stroke.spec.pointer.size,
+            stroke.spec.radius,
+            &stroke.samples,
+            &mut pending,
+            &mut visits,
+        )?;
+        previous = point;
+    }
+    let mut objects = stroke.objects.clone();
+    let mut faces = stroke.faces.clone();
+    for &(x, y) in &pending {
+        let pointer = Pointer {
+            position: DVec2::new(
+                f64::from(x * SAMPLE_SPACING) + 0.5,
+                f64::from(y * SAMPLE_SPACING) + 0.5,
+            ),
+            ..stroke.spec.pointer
+        };
+        let ndc = pointer.ndc();
+        let (origin, direction) = stroke.spec.camera.ray(
+            ndc.x as f32,
+            ndc.y as f32,
+            pointer.size.0 as f32 / pointer.size.1 as f32,
+        );
+        if let Some(hit) = stroke.picker.pick(&Ray {
+            origin: origin.as_dvec3(),
+            direction: direction.as_dvec3(),
+        }) {
+            if stroke.spec.faces {
+                if let (Some(solid), Some(side)) = (hit.solid, hit.side) {
+                    faces.insert(FaceId { solid, side });
+                }
+            } else {
+                objects.insert(hit.object);
+            }
+        }
+        if objects.len() + faces.len() > MAX_MATCHES {
+            return Err(format!(
+                "Paint stroke supports at most {MAX_MATCHES} matches. Apply or cancel it, then start another."
+            ));
+        }
+    }
+    let matches_changed = stroke.objects != objects || stroke.faces != faces;
+    if matches_changed && let Some(texture) = &mut stroke.texture {
+        let new_faces = faces.difference(&stroke.faces).copied().collect::<Vec<_>>();
+        let mode = stroke.operation.texture_mode().unwrap();
+        let edits = new_faces
+            .iter()
+            .map(|face| {
+                surface::paint_edit(document, *face, &texture.sample, mode)
+                    .map(|edit| (*face, edit))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let mut preview = Document::new(texture.document.vmf().clone());
+        let changed = preview
+            .edit("preview texture stroke", |tx| {
+                edits.iter().try_fold(0, |count, (face, patch)| {
+                    surface::edit_faces(tx, &[*face], patch).map(|changed| count + changed)
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        texture.document = preview;
+        texture.edits.extend(edits);
+        texture.changed += changed;
+    }
+    stroke.objects = objects;
+    stroke.faces = faces;
+    stroke.samples.extend(pending);
+    stroke.cursor = previous;
+    Ok(matches_changed)
 }
 
 #[cfg(test)]
@@ -505,6 +685,196 @@ mod tests {
             mode,
             faces,
         }
+    }
+
+    fn texture_source(session: &mut Session) -> FaceId {
+        let ObjectId::Solid(id) = session
+            .create_block(
+                Actor::User,
+                DVec3::new(-16.0, 112.0, -16.0),
+                DVec3::new(16.0, 144.0, 16.0),
+                "metal/sample",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document
+            .solid(id)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = FaceId { solid: id, side };
+        session
+            .edit_faces(
+                Actor::User,
+                &[face],
+                SurfaceEdit {
+                    shift_u: Some(13.5),
+                    shift_v: Some(-21.0),
+                    scale_u: Some(0.5),
+                    scale_v: Some(-0.25),
+                    rotation: Some(37.0),
+                    lightmap_scale: Some(8),
+                    ..Default::default()
+                },
+                false,
+                false,
+            )
+            .unwrap();
+        session.sample_face_texture(face).unwrap();
+        face
+    }
+
+    #[test]
+    fn texture_strokes_preview_atomic_edits_preserve_selection_and_undo_once() {
+        for operation in [Operation::Material, Operation::Projection] {
+            let (mut session, _, points, light) = fixture(Projection::Top);
+            let source = texture_source(&mut session);
+            session.select(&[light], SelectMode::Replace).unwrap();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let spec = spec(&session, points[0], false, SelectMode::Toggle);
+            let token = session.begin_texture_stroke(spec, operation).unwrap();
+            session
+                .update_texture_stroke(token, &[points[1], points[0], points[1]])
+                .unwrap();
+            let stroke = session.paint_stroke().unwrap();
+            assert_eq!(stroke.faces.len(), 2);
+            let texture = stroke.texture.as_ref().unwrap();
+            assert_eq!(texture.changed, 2);
+            assert_eq!(texture.edits.len(), 2);
+            assert_eq!(texture.document.undo_labels().count(), 1);
+            let preview = session.render_document().vmf().clone();
+            for face in &stroke.faces {
+                let old = surface::side(&session.document, *face).unwrap();
+                let new = surface::side(&texture.document, *face).unwrap();
+                let mut expected = old.clone();
+                expected.material = session.surface_sample().unwrap().material.clone();
+                if operation == Operation::Projection {
+                    let sampled = surface::side(&session.document, source).unwrap();
+                    expected.u_axis = sampled.u_axis;
+                    expected.v_axis = sampled.v_axis;
+                    expected.rotation = sampled.rotation;
+                }
+                assert_eq!(*new, expected);
+            }
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.selected_ids(), vec![light]);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert!(session.commit_paint_selection(Actor::Agent, token).is_err());
+            assert_eq!(
+                session.commit_texture_stroke(Actor::Agent, token).unwrap(),
+                2
+            );
+            assert_eq!(session.document.vmf(), &preview);
+            assert_eq!(session.selected_ids(), vec![light]);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            session.undo(Actor::User).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(Actor::User).unwrap();
+            assert_eq!(session.document.vmf(), &preview);
+            let token = session.begin_texture_stroke(spec, operation).unwrap();
+            session.update_texture_stroke(token, &[points[1]]).unwrap();
+            assert_eq!(
+                session.commit_texture_stroke(Actor::User, token).unwrap(),
+                0
+            );
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+        }
+    }
+
+    #[test]
+    fn failed_texture_updates_and_starts_preserve_the_existing_draft() {
+        let (mut session, _, points, _) = fixture(Projection::Top);
+        let spec = spec(&session, points[0], true, SelectMode::Replace);
+        let selection = session.begin_paint_selection(spec).unwrap();
+        assert!(
+            session
+                .begin_texture_stroke(spec, Operation::Material)
+                .is_err()
+        );
+        assert_eq!(session.paint_stroke().unwrap().token, selection);
+        let source = texture_source(&mut session);
+        let token = session
+            .begin_texture_stroke(spec, Operation::Material)
+            .unwrap();
+        let before = session.paint_selection_json(0, 500);
+        let preview = session.render_document().vmf().clone();
+        assert!(
+            session
+                .update_texture_stroke(token, &[points[1], DVec2::splat(f64::NAN)])
+                .is_err()
+        );
+        assert_eq!(session.paint_selection_json(0, 500), before);
+        assert_eq!(session.render_document().vmf(), &preview);
+        let mut bad = spec;
+        bad.radius = 100.0;
+        assert!(
+            session
+                .begin_texture_stroke(bad, Operation::Projection)
+                .is_err()
+        );
+        assert_eq!(session.paint_stroke().unwrap().token, token);
+        let bad_projection = Spec {
+            camera: Camera::planar(Projection::Front, Vec3::ZERO, 384.0),
+            ..spec
+        };
+        assert!(
+            session
+                .begin_texture_stroke(bad_projection, Operation::Projection)
+                .is_err()
+        );
+        assert_eq!(session.paint_stroke().unwrap().token, token);
+        let empty = Spec {
+            pointer: Pointer {
+                position: DVec2::new(40.0, 40.0),
+                ..bad_projection.pointer
+            },
+            ..bad_projection
+        };
+        let token = session
+            .begin_texture_stroke(empty, Operation::Projection)
+            .unwrap();
+        let before = session.paint_selection_json(0, 500);
+        let preview = session.render_document().vmf().clone();
+        assert!(session.update_texture_stroke(token, &[points[0]]).is_err());
+        assert_eq!(session.paint_selection_json(0, 500), before);
+        assert_eq!(session.render_document().vmf(), &preview);
+        let camera = Camera::looking_at(Vec3::new(-300.0, -400.0, 260.0), Vec3::ZERO);
+        let top = screen(camera, DVec3::new(-64.0, 0.0, 16.0));
+        let wall = screen(camera, DVec3::new(64.0, -16.0, 0.0));
+        let spec_perspective = Spec {
+            camera,
+            radius: 2.0,
+            pointer: Pointer {
+                position: top,
+                ..spec.pointer
+            },
+            ..spec
+        };
+        let token = session
+            .begin_texture_stroke(spec_perspective, Operation::Projection)
+            .unwrap();
+        let before = session.paint_selection_json(0, 500);
+        let preview = session.render_document().vmf().clone();
+        assert!(session.update_texture_stroke(token, &[wall]).is_err());
+        assert_eq!(session.paint_selection_json(0, 500), before);
+        assert_eq!(session.render_document().vmf(), &preview);
+        session.sample_face_texture(source).unwrap();
+        assert!(session.paint_stroke().is_none());
+        assert!(session.commit_texture_stroke(Actor::Agent, token).is_err());
+        let token = session
+            .begin_texture_stroke(spec, Operation::Projection)
+            .unwrap();
+        let before = session.document.vmf().clone();
+        session.cancel_texture_stroke(token).unwrap();
+        assert_eq!(session.document.vmf(), &before);
     }
 
     #[test]

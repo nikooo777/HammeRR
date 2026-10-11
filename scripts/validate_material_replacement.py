@@ -104,7 +104,8 @@ def preserved_map(client):
                 "set_paint_tool",
                 {
                     key: original["paint_selection"][key]
-                    for key in ["enabled", "radius"]
+                    for key in ["enabled", "radius", "operation"]
+                    if key in original["paint_selection"]
                 },
             )
         restored = client.call("get_map_info")

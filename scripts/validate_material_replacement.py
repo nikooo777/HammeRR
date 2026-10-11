@@ -122,6 +122,14 @@ def preserved_map(client):
                 {**component_options, "snapshot": state["snapshot"]},
             )["move_options"]
             assert restored_options == component_options
+        clip_options = original.get("clipping", {}).get("handle_options")
+        if clip_options:
+            state = client.call("get_clip_preview")
+            restored_options = client.call(
+                "set_clip_handle_options",
+                {**clip_options, "snapshot": state["snapshot"]},
+            )["handle_options"]
+            assert restored_options == clip_options
         for key in [
             "path",
             "unsaved_changes",

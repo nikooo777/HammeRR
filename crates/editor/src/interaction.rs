@@ -30,6 +30,7 @@ struct AreaDrag {
 
 #[derive(Default)]
 pub struct Interaction {
+    clip_drag: Option<u64>,
     clip_point: Option<ClipPointClick>,
     component: Option<ComponentClick>,
     component_drag: Option<u64>,
@@ -46,6 +47,15 @@ impl Interaction {
         control: bool,
     ) -> Result<bool, String> {
         pointer.validate()?;
+        if let Some(handle) = session.pick_clip_handle(pointer) {
+            *self = Self::default();
+            self.clip_drag = Some(session.begin_clip_drag(
+                handle,
+                Some(pointer),
+                &session.clip_point_stamp(),
+            )?);
+            return Ok(true);
+        }
         if session.clip_points().is_some() {
             *self = Self::default();
             self.clip_point = Some(ClipPointClick {
@@ -127,6 +137,12 @@ impl Interaction {
     }
 
     pub fn moved(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if let Some(token) = self.clip_drag {
+            if session.clip_drag().is_some_and(|d| d.token == token) {
+                session.update_clip_drag(token, Some(pointer), None)?;
+            }
+            return Ok(true);
+        }
         if self.clip_point.is_some() {
             return Ok(true);
         }
@@ -185,6 +201,13 @@ impl Interaction {
     }
 
     pub fn up(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if let Some(token) = self.clip_drag.take() {
+            if session.clip_drag().is_some_and(|d| d.token == token) {
+                session.update_clip_drag(token, Some(pointer), None)?;
+                session.finish_clip_drag(token)?;
+            }
+            return Ok(true);
+        }
         if let Some(click) = self.clip_point.take() {
             if click.stamp == session.clip_point_stamp()
                 && click.camera == session.camera()
@@ -307,6 +330,9 @@ impl Interaction {
     }
 
     pub fn cancel(&mut self, session: &mut Session) {
+        if let Some(token) = self.clip_drag.take() {
+            let _ = session.cancel_clip_drag(token);
+        }
         self.clip_point = None;
         if let Some(token) = self.component_drag.take() {
             let _ = session.cancel_component_drag(token);
@@ -323,7 +349,8 @@ impl Interaction {
     }
 
     pub fn active(&self) -> bool {
-        self.component.is_some()
+        self.clip_drag.is_some()
+            || self.component.is_some()
             || self.clip_point.is_some()
             || self.component_drag.is_some()
             || self.area.is_some()

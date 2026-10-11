@@ -1472,6 +1472,12 @@ export component AppWindow inherits Window {
     in property <bool> clipping;
     in property <bool> has-clip-preview;
     in property <string> clip-summary;
+    in property <bool> clip-positioning;
+    in-out property <int> clip-handles-mode: 1;
+    in-out property <bool> clip-handles-snap: true;
+    in-out property <string> clip-angle-step: "15";
+    callback clip-handles-changed();
+    callback cancel-clip-positioning();
     in property <bool> clip-point-mode;
     in property <int> clip-point-count;
     in property <string> clip-points-summary;
@@ -1933,7 +1939,7 @@ export component AppWindow inherits Window {
                     x: 12px;
                     y: 64px;
                     width: min(740px, parent.width - 24px);
-                    height: 198px;
+                    height: 234px;
                     background: #20252eee;
                     border-color: #4c829f;
                     border-width: 1px;
@@ -1959,6 +1965,21 @@ export component AppWindow inherits Window {
                             }
                             Text { text: "Cyan arrow points to the front side"; color: #9dd8f1; vertical-alignment: center; }
                         }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Handles"; color: #c8ccd4; vertical-alignment: center; }
+                            ComboBox {
+                                width: 155px;
+                                model: ["Hidden", "Move plane", "Rotate plane"];
+                                current-index <=> root.clip-handles-mode;
+                                selected => { root.clip-handles-changed(); }
+                            }
+                            CheckBox { text: "Snap"; checked <=> root.clip-handles-snap; toggled => { root.clip-handles-changed(); } }
+                            if root.clip-handles-mode == 2: LineEdit { width: 55px; text <=> root.clip-angle-step; input-type: decimal; accepted => { root.clip-handles-changed(); } }
+                            if root.clip-handles-mode == 2: Text { text: "° steps"; color: #c8ccd4; vertical-alignment: center; }
+                            if root.clip-positioning: Button { text: "Cancel positioning"; clicked => { root.cancel-clip-positioning(); } }
+                            Text { text: "World axes"; color: #9dd8f1; vertical-alignment: center; horizontal-alignment: right; horizontal-stretch: 1; }
+                        }
                         if root.clip-point-mode: Text { text: root.clip-points-summary; color: #ffc66d; font-size: 12px; wrap: word-wrap; }
                         if !root.clip-point-mode: HorizontalLayout {
                             spacing: 6px;
@@ -1977,7 +1998,7 @@ export component AppWindow inherits Window {
                             Text { text: "Cut material"; color: #c8ccd4; vertical-alignment: center; }
                             LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-material; placeholder-text: "Inherit each brush's material"; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
                             Button { text: "Browse…"; clicked => { root.browse-material("@clip"); } }
-                            Button { text: "Apply cut"; enabled: root.has-clip-preview; clicked => { root.apply-clip(); } }
+                            Button { text: "Apply cut"; enabled: root.has-clip-preview && !root.clip-positioning; clicked => { root.apply-clip(); } }
                             Button { text: "Cancel cut"; clicked => { root.cancel-clip(); } }
                         }
                         Text { text: root.clip-summary; color: #9dd8f1; font-size: 12px; wrap: word-wrap; }
@@ -1993,7 +2014,7 @@ export component AppWindow inherits Window {
                     background: #000000a0;
 
                     hint := Text {
-                        text: root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
+                        text: root.clipping ? "Drag a plane handle · release keeps the preview · Apply cut changes the map · Esc cancels" : root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
                         color: #c8ccd4;
                         font-size: 12px;
                     }

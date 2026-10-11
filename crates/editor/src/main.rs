@@ -547,6 +547,15 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
 fn refresh_clip(app: &AppWindow, session: &Session) {
     app.set_can_clip(session.can_clip_selection());
     app.set_clipping(session.clip_tool());
+    app.set_clip_positioning(session.clip_drag().is_some());
+    let options = session.clip_handle_options();
+    app.set_clip_handles_mode(match options.mode {
+        Some(render::handles::Mode::Move) => 1,
+        Some(render::handles::Mode::Rotate) => 2,
+        _ => 0,
+    });
+    app.set_clip_handles_snap(options.snap);
+    app.set_clip_angle_step(options.angle_step.to_string().into());
     app.set_has_clip_preview(session.clip_preview().is_some());
     app.set_clip_point_mode(session.clip_points().is_some());
     app.set_clip_point_count(session.clip_points().map_or(0, |d| d.points.len() as i32));
@@ -560,7 +569,7 @@ fn refresh_clip(app: &AppWindow, session: &Session) {
             .join("  ·  ");
         app.set_clip_points_summary(
             format!(
-                "{} / 3 points · click brush surfaces in any view · editor snapping applies\n{}",
+                "{} / 3 points · click surfaces to add points; drag handles to position the plane\n{}",
                 draft.points.len(),
                 positions
             )
@@ -592,6 +601,9 @@ fn refresh_clip(app: &AppWindow, session: &Session) {
             )
             .into(),
         );
+        if let Some(error) = session.clip_drag().and_then(|drag| drag.error.as_ref()) {
+            app.set_clip_summary(error.clone().into());
+        }
     } else {
         app.set_clip_summary(
             "Draw a cut or preview a plane · the map stays unchanged until Apply cut".into(),
@@ -680,6 +692,46 @@ fn change_clip_points(
 }
 
 fn bind_clip_controls(app: &AppWindow, shared: SharedSession) {
+    app.on_clip_handles_changed({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            let snapshot = session.clip_point_stamp();
+            let result = app
+                .get_clip_angle_step()
+                .parse::<f64>()
+                .map_err(|_| "Enter a rotation step in degrees".to_owned())
+                .and_then(|angle_step| {
+                    session.set_clip_handle_options(
+                        session::clip_drag::Options {
+                            mode: match app.get_clip_handles_mode() {
+                                1 => Some(render::handles::Mode::Move),
+                                2 => Some(render::handles::Mode::Rotate),
+                                _ => None,
+                            },
+                            snap: app.get_clip_handles_snap(),
+                            angle_step,
+                        },
+                        &snapshot,
+                    )
+                });
+            app.set_message(result.err().unwrap_or_default().into());
+            refresh_clip(&app, &session);
+        }
+    });
+    app.on_cancel_clip_positioning({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            if let Some(token) = session.clip_drag().map(|d| d.token) {
+                let result = session.cancel_clip_drag(token);
+                app.set_message(result.err().unwrap_or_default().into());
+            }
+            refresh_clip(&app, &session);
+        }
+    });
     app.on_clip_points_action({
         let (app, shared) = (app.as_weak(), shared.clone());
         move |action| {
@@ -2610,6 +2662,12 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
             let mut ui = ui.borrow_mut();
             let shared = ui.session.clone();
             let mut session = lock(&shared);
+            if let Some(token) = session.clip_drag().map(|d| d.token) {
+                let _ = session.cancel_clip_drag(token);
+                ui.interaction.cancel(&mut session);
+                refresh_clip(app, &session);
+                return true;
+            }
             if session.component_picking().is_some() || !session.component_selection().is_empty() {
                 ui.interaction.cancel(&mut session);
                 session.clear_component_edit();
@@ -3547,15 +3605,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if button == 0 {
                 let shared = ui.session.clone();
                 let mut session = lock(&shared);
-                if session.clip_points().is_some() {
+                let pointer = session::Pointer {
+                    position: glam::DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        viewport_size.0.round().max(1.0) as u32,
+                        viewport_size.1.round().max(1.0) as u32,
+                    ),
+                };
+                if session.clip_points().is_some()
+                    || (down && session.pick_clip_handle(pointer).is_some())
+                    || session.clip_drag().is_some()
+                    || (!down && ui.interaction.active() && session.clip_tool())
+                {
                     session.publish_camera(ui.viewport.camera);
-                    let pointer = session::Pointer {
-                        position: glam::DVec2::new(f64::from(x), f64::from(y)),
-                        size: (
-                            viewport_size.0.round().max(1.0) as u32,
-                            viewport_size.1.round().max(1.0) as u32,
-                        ),
-                    };
                     let result = if down {
                         ui.interaction.down(&mut session, pointer, control)
                     } else {
@@ -3589,6 +3651,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
                 if !down && let Some(drag) = ui.clip_drag.take() {
+                    if drag.epoch != session.clip_epoch() {
+                        return;
+                    }
                     let result = plane_coordinates(
                         ui.viewport.camera,
                         (x, y),
@@ -3735,6 +3800,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(drag) = ui.clip_drag {
                 let shared = ui.session.clone();
                 let mut session = lock(&shared);
+                if drag.epoch != session.clip_epoch() {
+                    ui.clip_drag = None;
+                    return;
+                }
                 let result = plane_coordinates(
                     ui.viewport.camera,
                     (x, y),
@@ -3747,6 +3816,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if result.is_err() {
                     session.clear_clip_preview();
                     refresh_clip(&app, &session);
+                }
+                if let Some(active) = &mut ui.clip_drag {
+                    active.epoch = session.clip_epoch();
                 }
             }
             if let Some(drag) = ui.brush_drag {
@@ -3779,6 +3851,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.set_message(error.into());
             }
             refresh_interaction(&app, &session);
+            if session.clip_tool() {
+                refresh_clip(&app, &session);
+            }
         }
     });
     app.on_wheel({
@@ -4518,7 +4593,7 @@ mod tests {
                     .next()
                     .unwrap();
             assert!(button.absolute_position().x + button.size().width <= 752.5);
-            assert!(button.absolute_position().y + button.size().height <= 306.5);
+            assert!(button.absolute_position().y + button.size().height <= 342.5);
         }
         i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Cancel cut")
             .next()
@@ -4572,6 +4647,40 @@ mod tests {
             Some("tools/toolsnodraw")
         );
         save_ui_snapshot(app.window(), "three-point-clipping");
+        app.set_clip_handles_mode(2);
+        app.set_clip_angle_step("30".into());
+        app.invoke_clip_handles_changed();
+        let (token, before_plane) = {
+            let mut state = lock(&shared);
+            let before = state.clip_preview().unwrap().plane;
+            let stamp = state.clip_point_stamp();
+            let token = state
+                .begin_clip_drag(render::handles::Handle::Z, None, &stamp)
+                .unwrap();
+            state
+                .update_clip_drag(token, None, Some(DVec2::new(31.0, 0.0)))
+                .unwrap();
+            refresh_clip(&app, &state);
+            (token, before)
+        };
+        assert!(app.get_clip_positioning());
+        assert_dialog_button_visible(&app, "Cancel positioning");
+        save_ui_snapshot(app.window(), "cut-plane-handles");
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &app,
+            "Cancel positioning",
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+        assert!(!app.get_clip_positioning());
+        assert_eq!(lock(&shared).clip_preview().unwrap().plane, before_plane);
+        assert!(lock(&shared).finish_clip_drag(token).is_err());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        app.set_clip_angle_step("0".into());
+        app.invoke_clip_handles_changed();
+        assert!(app.get_message().contains("angle step"));
+
         for label in [
             "Use plane / line",
             "Remove last point",

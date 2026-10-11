@@ -182,6 +182,7 @@ preview_hollow builds inward/outward wall shells with shared geometry and cavity
 clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
 Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview \
 or cancel_clip_preview. Keep front (arrow side), back, or both; displacements cannot be clipped. \
+get_clip_handles and set_clip_handle_options expose shared cut-plane movement/rotation. Begin with begin_clip_drag and the latest clipping snapshot; update_clip_drag takes the returned token and pointer or total amounts. finish_clip_drag only finishes positioning; commit_clip_preview explicitly applies the cut. cancel_clip_drag restores the starting plane. \
 Discover entity classes with search_entity_classes and get_entity_class. create_entity \
 applies FGD defaults, including light brightness; set_entity_properties validates declared \
 types. Custom classes and keys remain supported. Placed lights are stored in the VMF; \
@@ -1422,6 +1423,24 @@ pub struct ClipToolArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ClipHandleOptionsArgs {
+    /// move, rotate or off; world axes, with pivot projected onto the cut plane.
+    mode: Option<String>,
+    snap: Option<bool>,
+    /// Degrees per rotation step when snapping; 0.1 through 180.
+    angle_step: Option<f64>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateClipDragArgs {
+    token: String,
+    pointer: Option<PointerArgs>,
+    /// Total amounts since begin: world units for move, degrees for rotate. Axis/ring second amount must be zero.
+    amount: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ClipPointsArgs {
     /// Zero to three world points; three define a VMF-wound plane and preview the cut.
     points: Vec<[f64; 3]>,
@@ -1448,7 +1467,7 @@ fn clip_result(result: &map_core::clip::ClipResult) -> Value {
 }
 
 fn clip_state(session: &Session) -> Value {
-    json!({"enabled": session.clip_tool(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "preview": session.clip_preview().map(|preview| json!({
+    json!({"enabled": session.clip_tool(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview": session.clip_preview().map(|preview| json!({
         "plane": {"normal": preview.plane.normal.to_array(), "distance": preview.plane.dist},
         "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
         "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
@@ -4441,6 +4460,122 @@ impl EditorServer {
                 "origin": guide.map(|guide| guide.origin.to_array()),
                 "handles": shapes.iter().map(|shape| json!({"handle": shape.handle.name(), "color": shape.color, "segments": shape.segments.iter().map(|points| points.map(|point| point.to_array())).collect::<Vec<_>>(), "pixel_segments": shape.segments.iter().filter_map(|points| Some([render::handles::project(&camera, points[0], size)?.to_array(), render::handles::project(&camera, points[1], size)?.to_array()])).collect::<Vec<_>>()})).collect::<Vec<_>>() }),
             )
+        })
+    }
+
+    #[tool(
+        description = "Inspect shared cut-plane move/rotation handles and pixel/world paths. Optional camera/point performs hit testing without changing the view. Preview a cut first. World axes pivot at the selection center projected onto the plane.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_clip_handles(&self, Parameters(args): Parameters<HandlesArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let size = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)?;
+            let guide = session.clip_guide();
+            let shapes = guide.map_or_else(Vec::new, |guide| {
+                render::handles::shapes(&camera, size, &guide)
+            });
+            let picked = if let (Some(guide), Some(point)) = (guide, args.point) {
+                let point = glam::Vec2::new(point[0] as f32, point[1] as f32);
+                if !point.is_finite() {
+                    return Err("Handle point must be finite".into());
+                }
+                render::handles::pick(&camera, size, &guide, point)
+                    .map(render::handles::Handle::name)
+            } else {
+                None
+            };
+            Ok(
+                json!({"state":clip_state(&session), "camera":camera_json(&camera), "width":size.0,"height":size.1,
+                "picked":picked, "origin":guide.map(|g|g.origin.to_array()),
+                "handles":shapes.iter().map(|shape|json!({"handle":shape.handle.name(), "color":shape.color,
+                    "segments":shape.segments.iter().map(|points|points.map(|p|p.to_array())).collect::<Vec<_>>(),
+                    "pixel_segments":shape.segments.iter().filter_map(|points|Some([render::handles::project(&camera,points[0],size)?.to_array(),render::handles::project(&camera,points[1],size)?.to_array()])).collect::<Vec<_>>()
+                })).collect::<Vec<_>>() }),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Set cut-plane handle mode (move/rotate/off), grid snapping and rotation step. Requires the latest clipping snapshot. Changing options cancels the active gesture and restores its starting plane; the cut remains a preview."
+    )]
+    fn set_clip_handle_options(
+        &self,
+        Parameters(args): Parameters<ClipHandleOptionsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mut options = session.clip_handle_options();
+            if let Some(mode) = args.mode {
+                options.mode = match mode.as_str() {
+                    "move" => Some(render::handles::Mode::Move),
+                    "rotate" => Some(render::handles::Mode::Rotate),
+                    "off" => None,
+                    _ => return Err("Choose move, rotate or off".into()),
+                };
+            }
+            options.snap = args.snap.unwrap_or(options.snap);
+            options.angle_step = args.angle_step.unwrap_or(options.angle_step);
+            session.set_clip_handle_options(options, &args.snapshot)?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Begin positioning an existing cut preview with world-axis handles. Move: x/y/z, xy/xz/yz or view; rotate: x/y/z. Supply latest clipping snapshot and optional viewport pointer. Returns drag.token. Preview, keep side, cap material and three-point draft are retained; map/history unchanged."
+    )]
+    fn begin_clip_drag(&self, Parameters(args): Parameters<BeginComponentDragArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let handle =
+                render::handles::Handle::parse(&args.handle).ok_or("Unknown cut-plane handle")?;
+            session.begin_clip_drag(
+                handle,
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+                &args.snapshot,
+            )?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Position the exact cut-plane drag token using pointer or total amount pair since begin. Move amounts are world units; rotation is degrees. Snapping uses the shared grid or angle step. Invalid updates preserve the last valid draft and block finish. The original three cut points move rigidly with the plane, without re-snapping them."
+    )]
+    fn update_clip_drag(&self, Parameters(args): Parameters<UpdateClipDragArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.update_clip_drag(
+                parse_token(&args.token)?,
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+                args.amount.map(glam::DVec2::from_array),
+            )?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Finish positioning the exact cut-plane drag token. Keeps the cut as a preview with no map/history changes, matching mouse release. Inspect/render it, then explicitly commit_clip_preview to Apply cut, or cancel_clip_preview to abandon the cut."
+    )]
+    fn finish_clip_drag(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.finish_clip_drag(parse_token(&args.token)?)?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Cancel the exact cut-plane drag token and restore the plane and three-point draft from before the gesture. Does not abandon the entire cut or change map/history. Stale tokens cannot cancel newer work. Camera, view or handle-option changes also restore an active gesture."
+    )]
+    fn cancel_clip_drag(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_clip_drag(parse_token(&args.token)?)?;
+            Ok(clip_state(&session))
         })
     }
 

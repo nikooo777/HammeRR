@@ -699,6 +699,7 @@ impl Session {
     }
 
     pub fn interaction_camera_changed(&mut self) {
+        self.restore_clip_drag();
         self.clear_component_drag();
         if self.transform_drag.is_some() {
             self.cancel_transform_preview();

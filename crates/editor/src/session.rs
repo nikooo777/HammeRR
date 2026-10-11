@@ -21,6 +21,7 @@ use crate::inspector;
 use crate::spatial;
 
 pub mod checks;
+pub mod clip_drag;
 pub mod clip_points;
 mod clipping;
 pub mod compilation;
@@ -132,6 +133,8 @@ pub struct Session {
     clip_tool: bool,
     clip_epoch: u64,
     clip_points: Option<clip_points::Draft>,
+    clip_handles: clip_drag::Options,
+    clip_drag: Option<clip_drag::Drag>,
     transform_tool: TransformTool,
     transform_preview: Option<TransformPreview>,
     transform_drag: Option<TransformDrag>,
@@ -226,6 +229,8 @@ impl Session {
             clip_tool: false,
             clip_epoch: 0,
             clip_points: None,
+            clip_handles: clip_drag::Options::default(),
+            clip_drag: None,
             transform_tool: TransformTool::default(),
             transform_preview: None,
             transform_drag: None,
@@ -1220,7 +1225,10 @@ impl Session {
                 distance: preview.plane.dist as f32,
                 bounds: preview.bounds.map(|point| point.as_vec3()),
             }),
-            transform_handles: self.component_guide().or_else(|| self.transform_guide()),
+            transform_handles: self
+                .clip_guide()
+                .or_else(|| self.component_guide())
+                .or_else(|| self.transform_guide()),
             area_preview: self.area_preview.as_ref().map(|preview| render::AreaGuide {
                 corners: [
                     preview.start.ndc().as_vec2(),
@@ -1246,6 +1254,7 @@ impl Session {
     }
 
     pub fn set_view(&mut self, view: ViewOptions) {
+        self.restore_clip_drag();
         self.clear_component_drag();
         if self.view.tool_textures != view.tool_textures {
             if self.component_picking().is_some() || !self.component_selection().is_empty() {

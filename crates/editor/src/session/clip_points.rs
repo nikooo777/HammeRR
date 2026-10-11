@@ -58,10 +58,13 @@ impl Session {
             return Err("Choose up to three finite points within ±65536 world units".into());
         }
         if draft.snap {
-            draft
-                .points
-                .iter_mut()
-                .for_each(|p| *p = self.spatial.snap_point(*p));
+            for point in &mut draft.points {
+                if !self.clip_points.as_ref().is_some_and(|previous| {
+                    previous.snap == draft.snap && previous.points.contains(point)
+                }) {
+                    *point = self.spatial.snap_point(*point);
+                }
+            }
         }
         for (index, point) in draft.points.iter().enumerate() {
             if draft.points[..index]
@@ -90,6 +93,7 @@ impl Session {
             }
             self.cancel_clip_preview();
         }
+        self.clip_drag = None;
         self.clip_points = Some(draft);
         self.clip_epoch += 1;
         self.scene_serial += 1;

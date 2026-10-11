@@ -27,7 +27,7 @@ and the shared entity inspector and activity panel.*
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush hollowing | Inward/outward wall shells with inherited materials and lighting, cavity inspection, cancellable previews and one-step undo. |
-| Brush clipping | Planar cut gestures, three-point surface picking or exact planes, keep either side or both, cap materials, cancellable previews and one-step undo. |
+| Brush clipping | Planar cuts, three-point surface picking, exact planes and 3D move/rotation handles; keep either side or both, cap materials and one-step undo. |
 | Brush components | Viewport/list selection of faces, edges and corners; axis/plane move handles and exact offsets, with texture attachment, guarded previews and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
@@ -276,6 +276,17 @@ You can change views between points. Orange markers show their positions;
 the third distinct, noncollinear point previews the cut. **Remove last point**
 lets you revise it, **Start again** clears the points, and **Use plane / line**
 returns to the other controls. Point placement follows editor snapping.
+
+Once a cut is previewed, choose **Move plane** or **Rotate plane** under
+**Handles**. Drag a world-axis arrow, movement square or rotation ring.
+**Snap** uses the editor grid for movement and the displayed angle step for
+rotation. Releasing a handle keeps the preview; **Apply cut** changes the map.
+**Cancel positioning** or Escape during a drag restores its starting plane.
+Three-point markers follow the plane, and the side and material choices stay set.
+
+| Position the cut | Rotate the plane |
+| --- | --- |
+| ![Shared cut-plane move handles](docs/images/cut-plane-move.png) | ![Rotation rings on the positioned cut preview](docs/images/cut-plane-rotate.png) |
 
 ![Three-point cut with point markers and the shared plane preview](docs/images/three-point-cut.png)
 
@@ -676,7 +687,7 @@ For example, place a warm light:
 | Transform handles and previews | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
-| Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `commit_clip_preview`, `cancel_clip_preview` |
+| Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
@@ -803,6 +814,16 @@ start with an empty point array, then call `pick_clip_point` with viewport pixel
 and that snapshot. It picks committed brush surfaces and applies the shared snap
 setting. The third point previews the plane. Revise the array to remove or replace
 points; existing clip commit/cancel calls finish the draft.
+
+`get_clip_handles` returns the same world/pixel paths and hit tests as the
+viewport. Set `move`, `rotate` or `off` with `set_clip_handle_options`, then
+`begin_clip_drag` with the latest clipping snapshot. Pass its `drag.token` to
+`update_clip_drag`, using a viewport pointer or total `amount: [a, b]` since begin:
+world units for movement, degrees for rotation. Axis/ring handles require `b: 0`.
+`finish_clip_drag` leaves a preview for inspection and explicit
+`commit_clip_preview`; `cancel_clip_drag` restores the plane before positioning.
+Invalid updates keep the last valid preview and block finishing. Camera, view
+and handle-option changes cancel positioning; source changes discard the cut.
 
 `transform_objects` accepts `space: "world"` or `"local"` and `preview: true`.
 Handle tools support numeric amounts and viewport pointers, with updates
@@ -948,7 +969,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes component splitting/welding, 3D cut-plane handles,
+Editor work ahead includes component splitting/welding, displacement clipping,
 carving, displacement tools, model rendering and broader map checks.
 
 ## Project layout

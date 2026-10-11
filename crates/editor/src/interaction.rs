@@ -4,6 +4,14 @@ use crate::session::{Actor, Pointer, SelectMode, Session};
 
 const DRAG_THRESHOLD: f64 = 4.0;
 
+struct ComponentClick {
+    start: Pointer,
+    camera: Camera,
+    snapshot: String,
+    view_serial: u64,
+    control: bool,
+}
+
 struct AreaDrag {
     start: Pointer,
     camera: Camera,
@@ -15,6 +23,7 @@ struct AreaDrag {
 
 #[derive(Default)]
 pub struct Interaction {
+    component: Option<ComponentClick>,
     area: Option<AreaDrag>,
     handle_epoch: Option<u64>,
     paint_token: Option<u64>,
@@ -28,6 +37,19 @@ impl Interaction {
         control: bool,
     ) -> Result<bool, String> {
         pointer.validate()?;
+        if session.component_picking().is_some() {
+            self.area = None;
+            self.handle_epoch = None;
+            self.paint_token = None;
+            self.component = Some(ComponentClick {
+                start: pointer,
+                camera: session.camera(),
+                snapshot: session.component_stamp(),
+                view_serial: session.view_serial(),
+                control,
+            });
+            return Ok(true);
+        }
         if session.paint_enabled() {
             let spec = crate::session::paint::Spec {
                 camera: session.camera(),
@@ -74,6 +96,9 @@ impl Interaction {
     }
 
     pub fn moved(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if self.component.is_some() {
+            return Ok(true);
+        }
         if let Some(token) = self.paint_token {
             let Some(stroke) = session
                 .paint_stroke()
@@ -117,6 +142,43 @@ impl Interaction {
     }
 
     pub fn up(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if let Some(click) = self.component.take() {
+            if click.snapshot != session.component_stamp()
+                || click.camera != session.camera()
+                || click.view_serial != session.view_serial()
+                || click.start.size != pointer.size
+                || pointer.validate().is_err()
+                || pointer.position.distance(click.start.position) >= DRAG_THRESHOLD
+            {
+                return Ok(true);
+            }
+            let Some(picking) = session.component_picking().cloned() else {
+                return Ok(true);
+            };
+            let picks = session.pick_components(
+                click.camera,
+                pointer,
+                picking.kind,
+                &picking.solids.iter().copied().collect::<Vec<_>>(),
+                crate::session::component_picking::PICK_RADIUS,
+            )?;
+            let components = picks
+                .candidates
+                .into_iter()
+                .take(1)
+                .map(|candidate| candidate.component)
+                .collect::<Vec<_>>();
+            session.select_components(
+                &components,
+                if click.control {
+                    SelectMode::Toggle
+                } else {
+                    SelectMode::Replace
+                },
+                &click.snapshot,
+            )?;
+            return Ok(true);
+        }
         if let Some(token) = self.paint_token.take() {
             let Some(stroke) = session
                 .paint_stroke()
@@ -180,6 +242,7 @@ impl Interaction {
     }
 
     pub fn cancel(&mut self, session: &mut Session) {
+        self.component = None;
         self.area = None;
         self.handle_epoch = None;
         if let Some(token) = self.paint_token.take() {
@@ -191,7 +254,10 @@ impl Interaction {
     }
 
     pub fn active(&self) -> bool {
-        self.area.is_some() || self.handle_epoch.is_some() || self.paint_token.is_some()
+        self.component.is_some()
+            || self.area.is_some()
+            || self.handle_epoch.is_some()
+            || self.paint_token.is_some()
     }
 }
 
@@ -231,6 +297,92 @@ mod tests {
             )
             .unwrap();
         session
+    }
+
+    #[test]
+    fn viewport_component_clicks_share_query_selection_and_preserve_scope() {
+        use crate::session::component_picking::{Kind, PICK_RADIUS};
+        for projection in [
+            Projection::Top,
+            Projection::Front,
+            Projection::Side,
+            Projection::Perspective,
+        ] {
+            let mut session = fixture(projection, Some(Mode::Move));
+            let ids = session.component_solids();
+            session
+                .set_component_picking(Some(Kind::Vertex), &ids, &session.component_stamp())
+                .unwrap();
+            assert!(session.transform_guide().is_none());
+            let shape = session.component_topology(&ids).unwrap().remove(0);
+            let pointer = Pointer {
+                position: handles::project(
+                    &session.camera(),
+                    shape.vertices[0].position.as_vec3(),
+                    (1200, 800),
+                )
+                .unwrap()
+                .as_dvec2(),
+                size: (1200, 800),
+            };
+            let original = session.document().vmf().clone();
+            let expected = session
+                .pick_components(session.camera(), pointer, Kind::Vertex, &ids, PICK_RADIUS)
+                .unwrap()
+                .candidates[0]
+                .component
+                .clone();
+            let mut interaction = Interaction::default();
+            assert!(interaction.down(&mut session, pointer, false).unwrap());
+            assert!(interaction.up(&mut session, pointer).unwrap());
+            assert_eq!(
+                session.component_selection(),
+                &std::collections::BTreeSet::from([expected])
+            );
+            assert!(interaction.down(&mut session, pointer, true).unwrap());
+            assert!(interaction.up(&mut session, pointer).unwrap());
+            assert!(session.component_selection().is_empty());
+            assert_eq!(session.component_solids(), ids);
+            assert_eq!(session.document().vmf(), &original);
+            assert!(session.area_preview().is_none());
+            let empty = Pointer {
+                position: DVec2::splat(1.0),
+                ..pointer
+            };
+            interaction.down(&mut session, pointer, false).unwrap();
+            interaction.up(&mut session, pointer).unwrap();
+            interaction.down(&mut session, empty, false).unwrap();
+            interaction.up(&mut session, empty).unwrap();
+            assert!(session.component_selection().is_empty());
+            assert_eq!(session.component_solids(), ids);
+            for changed in 0..5 {
+                interaction.down(&mut session, pointer, false).unwrap();
+                let mut release = pointer;
+                match changed {
+                    0 => release.size.0 += 1,
+                    1 => release.position.x += 20.0,
+                    2 => {
+                        let mut camera = session.camera();
+                        camera.position.x += 1.0;
+                        session.set_camera(camera);
+                    }
+                    3 => session
+                        .select_components(&[], SelectMode::Replace, &session.component_stamp())
+                        .unwrap(),
+                    _ => {
+                        let mut view = session.view();
+                        view.tool_textures = !view.tool_textures;
+                        session.set_view(view);
+                    }
+                }
+                assert!(interaction.up(&mut session, release).unwrap());
+                assert!(session.component_selection().is_empty());
+            }
+            interaction.down(&mut session, pointer, false).unwrap();
+            session.clear_component_edit();
+            assert!(interaction.up(&mut session, pointer).unwrap());
+            assert_eq!(session.document().vmf(), &original);
+        }
     }
 
     #[test]

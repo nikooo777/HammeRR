@@ -23,6 +23,7 @@ use crate::spatial;
 pub mod checks;
 mod clipping;
 pub mod compilation;
+pub mod component_picking;
 pub mod components;
 pub mod context;
 pub mod hollowing;
@@ -409,6 +410,7 @@ impl Session {
     }
 
     pub fn set_face_mode(&mut self, enabled: bool) {
+        self.clear_component_edit();
         if self.face_mode != enabled {
             self.face_mode = enabled;
             if enabled && self.clip_tool {
@@ -1156,6 +1158,7 @@ impl Session {
         if let Some(missing) = ids.iter().find(|&&id| !self.document.contains(id)) {
             return Err(format!("{missing} does not exist"));
         }
+        self.clear_component_edit();
         let before = self.selection.clone();
         let was_face_mode = self.face_mode;
         self.face_mode = false;
@@ -1240,6 +1243,9 @@ impl Session {
 
     pub fn set_view(&mut self, view: ViewOptions) {
         if self.view.tool_textures != view.tool_textures {
+            if self.component_picking().is_some() || !self.component_selection().is_empty() {
+                self.scene_serial += 1;
+            }
             self.cancel_area_selection();
             self.clear_volume_selection();
         }
@@ -1810,7 +1816,8 @@ impl Session {
                     .map(|texture| &texture.document)
             })
             .unwrap_or(&self.document);
-        let selected = if self.components.selection.is_empty() {
+        let selected = if self.components.selection.is_empty() && self.component_picking().is_none()
+        {
             selected
         } else {
             HashSet::new()

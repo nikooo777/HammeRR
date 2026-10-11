@@ -299,7 +299,9 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
     });
     app.set_has_transform_preview(session.transform_preview().is_some());
     app.set_has_area_preview(session.area_preview().is_some());
-    let summary = if let Some(drag) = session.transform_drag() {
+    let summary = if let Some(picking) = session.component_picking() {
+        picking.hint()
+    } else if let Some(drag) = session.transform_drag() {
         let transform = session.transform_preview().map(|preview| preview.transform);
         match (drag.mode, transform) {
             (render::handles::Mode::Move, Some(transform)) => format!(
@@ -2455,6 +2457,26 @@ fn single_selected_entity(session: &Session) -> Option<u32> {
 /// Keyboard commands; returns whether the key was handled.
 fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift: bool) -> bool {
     let key = text.to_lowercase();
+    let object_shortcut = if control {
+        key == "d"
+    } else {
+        [
+            Key::Delete,
+            Key::Backspace,
+            Key::UpArrow,
+            Key::DownArrow,
+            Key::LeftArrow,
+            Key::RightArrow,
+            Key::PageUp,
+            Key::PageDown,
+        ]
+        .iter()
+        .any(|value| key == key_text(*value))
+    };
+    if object_shortcut && lock(&session_of(ui)).component_picking().is_some() {
+        app.set_message("Use Reshape brushes to move components. Stop viewport picking before editing whole objects.".into());
+        return true;
+    }
     if control {
         match key.as_str() {
             "z" if shift => drop(lock(&session_of(ui)).redo(Actor::User)),
@@ -2497,6 +2519,12 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
             let mut ui = ui.borrow_mut();
             let shared = ui.session.clone();
             let mut session = lock(&shared);
+            if session.component_picking().is_some() || !session.component_selection().is_empty() {
+                ui.interaction.cancel(&mut session);
+                session.clear_component_edit();
+                refresh_interaction(app, &session);
+                return true;
+            }
             if session.volume_preview().is_some() {
                 session.clear_volume_selection();
                 return true;
@@ -5004,7 +5032,19 @@ mod tests {
         let window = ComponentsWindow::new().unwrap();
         components_ui::bind(&window, &shared);
         components_ui::refresh(&window, &lock(&shared));
+        window.invoke_toggle_picking();
+        assert!(window.get_picking());
+        assert_eq!(lock(&shared).component_solids(), vec![id]);
+        window.set_kind(1);
+        window.invoke_change_kind();
+        assert_eq!(
+            lock(&shared).component_picking().unwrap().kind,
+            session::component_picking::Kind::Vertex
+        );
+        window.set_kind(0);
+        window.invoke_change_kind();
         window.invoke_choose(key.into());
+        assert!(lock(&shared).component_picking().is_some());
         assert_eq!(lock(&shared).component_selection().len(), 1);
         window.set_move_z("16".into());
         window.invoke_preview_edit();
@@ -5013,6 +5053,7 @@ mod tests {
         let valid = lock(&shared).render_document().vmf().clone();
         window.show().unwrap();
         save_ui_snapshot(window.window(), "brush-components");
+        assert_dialog_button_visible(&window, "Stop viewport picking");
         for label in [
             "Cancel",
             "Apply move",

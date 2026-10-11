@@ -169,7 +169,7 @@ update_paint_selection extends its pixel path, and get_paint_selection exposes c
 Use its token with commit_paint_selection or cancel_paint_selection; render_view shows the shared preview. \
 For sampled material/projection strokes, sample_face_texture then begin_texture_stroke, update_texture_stroke, \
 get_texture_stroke and commit_texture_stroke or cancel_texture_stroke share one undoable preview with the UI. \
-get_brush_components exposes precise faces/vertices/edges with stable incident-face IDs. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures default to world anchoring, with optional texture_lock to preserve corresponding corner UVs. \
+get_brush_components exposes precise faces/vertices/edges with stable incident-face IDs and current viewport picking scope. set_component_picking captures a brush scope; pick_brush_components queries the same screen candidates as the UI before guarded selection. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures default to world anchoring, with optional texture_lock to preserve corresponding corner UVs. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -483,6 +483,24 @@ struct ComponentSelectionArgs {
     snapshot: String,
     /// replace (default), add, remove or toggle.
     mode: Option<String>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentPickingArgs {
+    enabled: bool,
+    kind: Option<crate::session::component_picking::Kind>,
+    solids: Option<Vec<u32>>,
+    snapshot: String,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentPixelArgs {
+    x: f64,
+    y: f64,
+    width: Option<u32>,
+    height: Option<u32>,
+    camera: Option<CameraSpec>,
+    kind: crate::session::component_picking::Kind,
+    solids: Option<Vec<u32>>,
+    radius: Option<f64>,
 }
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentMoveArgs {
@@ -2813,6 +2831,68 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Enable or stop viewport component picking using the latest component snapshot. When enabled, kind is vertex, edge or face; solids defaults to the current captured scope or selected brushes (1–16). Captures a fixed brush scope that survives component selection and displays its guides before the first click. Clears competing tools and any movement draft. Invalid settings preserve the previous state. enabled=false clears picking, component selection and its draft without map edits. External object selection, source edits and competing tools exit this mode. Returns state including picking; get_brush_components also reports it."
+    )]
+    fn set_component_picking(
+        &self,
+        Parameters(args): Parameters<ComponentPickingArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let kind = if args.enabled {
+                Some(args.kind.ok_or("Choose vertex, edge or face")?)
+            } else {
+                None
+            };
+            let solids = args.solids.unwrap_or_else(|| session.component_solids());
+            session.set_component_picking(kind, &solids, &args.snapshot)?;
+            session.component_report(&session.component_solids())
+        })
+    }
+
+    #[tool(
+        description = "Read component candidates at viewport coordinates using the same query as a UI click. x/y are continuous pixels from top-left (pixel center is column+0.5,row+0.5); use the camera and size of render_view. kind is vertex, edge or face; solids defaults to captured picking scope or selected brushes. Radius defaults to 10 pixels, allowed 1–32. Uses current component preview geometry and shared tool visibility; finish other geometry drafts or enter component picking first. Corners and edges are pickable through surfaces, matching their guides; faces use the nearest visible brush surface and are occluded by other brushes. Hidden brushes are excluded. Edges are clipped at the camera near plane. Returns at most 64 candidates sorted by screen distance, depth and stable solid/sides IDs, plus total/truncated, camera, size and snapshot. Read-only; pass chosen component and returned snapshot to select_brush_components. A normal UI click selects the first candidate; Ctrl toggles it; an empty normal click clears components while retaining scope.",
+        annotations(read_only_hint = true)
+    )]
+    fn pick_brush_components(
+        &self,
+        Parameters(args): Parameters<ComponentPixelArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let size = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)?;
+            let solids = args.solids.unwrap_or_else(|| session.component_solids());
+            let radius = args
+                .radius
+                .unwrap_or(crate::session::component_picking::PICK_RADIUS);
+            let picks = session.pick_components(
+                camera,
+                crate::session::Pointer {
+                    position: DVec2::new(args.x, args.y),
+                    size,
+                },
+                args.kind,
+                &solids,
+                radius,
+            )?;
+            Ok(json!({
+                "snapshot":session.component_stamp(), "kind":args.kind, "solids":solids,
+                "camera":camera_json(&camera), "width":size.0, "height":size.1, "radius":radius,
+                "total":picks.total, "truncated":picks.total > picks.candidates.len(),
+                "candidates":picks.candidates.iter().map(|candidate|json!({
+                    "component":crate::session::components::component_json(&candidate.component),
+                    "position":candidate.position.to_array(), "screen":candidate.screen.to_array(),
+                    "distance":candidate.distance, "depth":candidate.depth,
+                })).collect::<Vec<_>>(),
+            }))
+        })
+    }
+
+    #[tool(
         description = "Preview moving selected brush faces/vertices/edges by a total world-space delta from committed geometry. Requires the latest component snapshot; optional snap honors the shared grid. Preserves face/solid IDs, ownership, material and metadata. Textures stay world-anchored by default. texture_lock=true attaches UVs to every corresponding corner; affine stretches and rotations work, incompatible face deformations reject and preserve the previous draft. Rejects nonplanar faces, collapsed edges, concavity, changed topology, displacements or coordinates outside ±65536. Invalid updates preserve the last valid draft. render_view and get_brush_components show the draft; Apply is one undo step. Source edits or other geometry tools invalidate the draft."
     )]
     fn preview_component_move(
@@ -2860,7 +2940,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Cancel the exact component preview token without changing the map, history or component selection. Stale tokens cannot cancel a replacement preview. Clear markers with select_brush_components using an empty replacement selection."
+        description = "Cancel the exact component preview token without changing the map, history or component selection. Stale tokens cannot cancel a replacement preview. Clear selected markers with select_brush_components using an empty replacement selection; exit picking and clear all guides with set_component_picking enabled=false."
     )]
     fn cancel_component_move(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {

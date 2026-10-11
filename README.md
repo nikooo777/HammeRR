@@ -28,7 +28,7 @@ and the shared entity inspector and activity panel.*
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush hollowing | Inward/outward wall shells with inherited materials and lighting, cavity inspection, cancellable previews and one-step undo. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
-| Brush components | Precise face/vertex/edge selection and convex shape corrections, with shared previews, grid snapping, invalid-solid feedback and atomic undo. |
+| Brush components | Viewport and list selection of faces, edges and corners, plus convex shape corrections, with shared previews, grid snapping, invalid-solid feedback and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
@@ -183,12 +183,24 @@ supporting brush faces for selection queries.
 
 ### Vertices, edges and faces
 
-Select brushes, then open **Reshape brushes…**. Choose **Edges**, **Vertices** or **Faces**, check the components to move, and enter an XYZ offset in world
-units. **Use editor grid snapping** follows the shared grid and Snap setting.
+Select brushes, then open **Reshape brushes…**. Choose **Edges**, **Vertices** or
+**Faces**, then **Pick in viewport**. Click to select, Ctrl-click to toggle, or
+use the component list to choose overlapping parts. The original brush scope
+stays available as you select components. An empty click clears the component
+selection. **Stop viewport picking**, **Cancel** or Esc returns to object picking
+and discards the component draft.
+
+Corners and edges can be selected through surfaces, matching their blue guides.
+Face clicks select the nearest visible brush surface. Hidden brushes have no
+guides and cannot be picked. The list still provides precise access to every
+component in the selected scope.
+
+Enter an XYZ offset in world units. **Use editor grid snapping** follows the
+shared grid and Snap setting.
 **Preview move** shows the proposed shape; **Apply move** records one undo step.
 **Cancel** discards the draft and clears the component markers.
 
-Orange marks selected corners and edges; blue marks other corners. Offsets are
+Orange marks selected components; blue marks available corners and edges. Offsets are
 measured from the committed map, so revising a preview does not accumulate moves.
 Invalid offsets leave the last valid preview visible. Faces must remain flat
 and the brush convex: moving one corner of a box usually requires moving its
@@ -652,7 +664,7 @@ For example, place a warm light:
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
-| Brush components | `get_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
+| Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
@@ -709,6 +721,7 @@ python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
 python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-check
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
+python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
 python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
@@ -732,11 +745,22 @@ at corresponding face corners. The default is world anchoring. The response
 reports `texture_mode` and the preview's `texture_lock` setting; incompatible
 deformations leave the previous valid draft intact.
 
+For component picking, `set_component_picking` captures the brush IDs and kind;
+`get_brush_components` reports that shared mode. `pick_brush_components` accepts
+`kind`, viewport `x`/`y`, image `width`/`height`, an optional camera and a 1–32 pixel
+radius (default 10). Coordinates start at the top-left; a pixel center is
+`column + 0.5, row + 0.5`. It returns up to 64 candidates ordered by screen
+distance, depth and stable IDs, plus the snapshot for `select_brush_components`.
+Queries do not change selection. Edges are clipped at the near plane and use
+perspective-correct world positions. Use `enabled: false` on
+`set_component_picking` to exit the mode and clear its draft and guides.
+
 For hollowing, get the current `stamp` from `get_hollow_preview`, then pass it
 to `preview_hollow` with thickness, direction and optional object IDs. The result
 lists planned wall IDs and cavity centers/bounds. Inspect the rendered draft,
 optionally use `look_inside_hollow`, then apply or cancel its exact token.
 Map/selection edits and competing geometry tools invalidate the draft.
+
 The state also lists source `faces` with IDs, normals, centers and materials.
 Pass selected `{solid, side}` references as `open_faces` to leave those faces
 open; omit the array for a closed shell. Invalid openings retain the last valid

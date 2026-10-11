@@ -31,6 +31,7 @@ and the shared entity inspector and activity panel.*
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
 | Design context | Map briefs, object notes and editor-only regions; shared drafts, search, relevant-context retrieval, bounded storage and undo. |
 | Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, fitting and placement, with cancellable previews and grouped material thumbnails. |
+| Face lighting | Batch lightmap scales and smoothing groups, mixed-value controls, cancellable previews, and density/group viewport diagnostics. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
 | Map management | World settings, mixed-value property batches and default resets; object reports, search, selection, framing and visibility restore. |
@@ -45,7 +46,7 @@ run without graphics initialization. Install Counter-Strike:
 Source to use its materials; HammeRR discovers the game through Steam.
 
 ```sh
-cargo build --release -p editor
+cargo build --release -p editor -j 8
 ./target/release/editor path/to/map.vmf
 ```
 
@@ -64,7 +65,7 @@ installed CS:S SDK entity definitions.
 | `--headless` | Serve MCP over stdio; initialize graphics only when a rendered view is requested. |
 
 ```sh
-cargo test --workspace
+cargo test --workspace -j 8
 ```
 
 </details>
@@ -234,6 +235,27 @@ Choosing a thumbnail selects a candidate; **Use material** accepts it.
 Blank texture fields preserve existing values when selections are mixed.
 Fitting uses the material's real dimensions. Categories are inferred from
 material paths; favorites and recent applications last for the session.
+
+### Face lighting
+
+Select faces and open **Face lighting…**. Set a lightmap scale in world units
+per lighting pixel, or use the 8/16/32/64 presets. Smaller values mean finer
+authored lighting detail. Blank fields preserve each face's current scale.
+
+Toggle groups individually to preserve other memberships across a mixed
+selection. Groups **1–24** allow smoothing; shared **25–32** groups prevent it.
+**Clear all groups** removes memberships, while **Reset group changes** restores
+the current selection's values. **Preview settings**, **Apply settings** and
+**Cancel** share the same draft and undo behavior as face texture editing.
+
+Choose **Lightmap density** to inspect the authored grid, or **Group membership**
+to highlight one group. These views work in perspective; planar views retain
+wireframes. The native compiler preserves the settings but does not yet bake
+lighting or compute smoothed lighting normals.
+
+| Face lighting controls | Authored lightmap density |
+| --- | --- |
+| ![Mixed smoothing groups, scale presets and preview controls](docs/images/face-lighting.png) | ![Lightmap density grids on brushes with different face scales](docs/images/face-lighting-density.png) |
 
 ### Entities and lights
 
@@ -411,14 +433,44 @@ For example, place a warm light:
 | Design context | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `commit_face_preview`, `cancel_face_preview` |
+| Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
 | Compile and play | `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
 
-`edit_faces` supports material, UV offsets/scales, rotation, fitting and
-non-destructive previews. Commit or cancel the shared preview from either
-front end. Material browsing and inspector tools return the same catalog,
-labels and control types used by the GUI.
+`edit_faces` supports material, UV offsets/scales, rotation, fitting, lightmap
+scale, smoothing groups and non-destructive previews. Commit or cancel the
+shared preview from either front end. Material browsing and inspector tools
+return the same catalog, labels and control types used by the GUI.
+
+For example, preview denser lightmaps and add group 3 to the selected faces:
+
+```json
+{
+  "name": "edit_faces",
+  "arguments": { "lightmap_scale": 8, "smoothing_add": [3], "preview": true }
+}
+```
+
+Pass the returned `state.preview_token` as `token` to `commit_face_preview`
+or `cancel_face_preview` to guard against another client replacing the draft.
+`smoothing_groups` replaces memberships; `[]` clears them. `smoothing_add` and
+`smoothing_remove` preserve unrelated groups. `set_view` shares `surface` values
+`textured`, `lightmap_density` and `smoothing_groups`, with `smoothing_group`
+from 1 to 32. The same options on `render_view` inspect a view without changing
+the user's settings.
+
+The repeatable lighting checks run through MCP and save a fixture, rendered
+views and a JSON report:
+
+```sh
+python scripts/validate_face_lighting.py --output /tmp/hammerr-lighting-check
+```
+
+Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`
+to check an idle GUI session with a clean map and empty undo/redo history.
+The script temporarily opens its fixture, then restores the original file,
+camera, selection and view.
 
 `clip_brushes` accepts a plane normal/distance, three points, or a snapped
 planar line. Use `preview: true` to inspect the shared cut before committing
@@ -533,5 +585,4 @@ displacement tools, model rendering, paint strokes and grouped texture fitting.
 | `editor` | Slint UI, shared Session and MCP server. |
 | `compiler` | Native VMF-to-BSP compilation and the `hammerr-compile` CLI. |
 
-This is a clean-room project: no Valve or Hammer++ code is used.
 Counter-Strike: Source and its assets are not included.

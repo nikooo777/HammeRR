@@ -241,6 +241,7 @@ fn solid_detail(solid: &Solid) -> Value {
                 "uaxis": side.u_axis.to_string(),
                 "vaxis": side.v_axis.to_string(),
                 "rotation": side.rotation,
+                "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0)), "smoothing_mask": side.smoothing_groups.unwrap_or(0),
                 "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
                 "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale,
                 "displacement": side.displacement.as_ref().map(|d| d.power),
@@ -850,6 +851,16 @@ pub struct SelectFacesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct FacePreviewArgs {
+    /// Optional guard from get_face_selection.preview_token; rejects a replaced preview.
+    pub token: Option<String>,
+}
+
+fn parse_token(value: &str) -> Result<u64, String> {
+    value.parse().map_err(|_| "Invalid preview token".into())
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EditFacesArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub material: Option<String>,
@@ -858,6 +869,14 @@ pub struct EditFacesArgs {
     pub scale_u: Option<f64>,
     pub scale_v: Option<f64>,
     pub rotation: Option<f64>,
+    /// World units per lighting pixel, 1–1024. Smaller values give denser authored lightmaps.
+    pub lightmap_scale: Option<u32>,
+    /// Replace groups with these numbers (1–32); [] clears. 25–32 are Source hard-edge groups.
+    pub smoothing_groups: Option<Vec<u32>>,
+    /// Add groups while preserving other memberships on each face.
+    pub smoothing_add: Option<Vec<u32>>,
+    /// Remove groups while preserving other memberships on each face.
+    pub smoothing_remove: Option<Vec<u32>>,
     /// world or face. Resets the projection basis and rotation before optional rotation is applied.
     pub alignment: Option<String>,
     /// left, center or right within one material tile; changes offset only, after fit.
@@ -968,6 +987,10 @@ pub struct FavoriteMaterialArgs {
     pub favorite: bool,
 }
 
+fn view_state(view: ViewOptions) -> Value {
+    json!({"tool_textures":view.tool_textures,"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+}
+
 fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
     map_core::surface::FaceId {
         solid: face.solid,
@@ -977,12 +1000,14 @@ fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
 
 fn face_state(session: &Session) -> Value {
     json!({"mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
+        "preview_token":session.face_preview_token().map(|token|token.to_string()),
         "sample": surface_sample_state(session),
         "preview_faces": session.preview_faces().into_iter().filter_map(|face| {
             let side = session.preview_side(face)?;
             Some(json!({"solid": face.solid, "side": face.side, "material": side.material,
                 "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
                 "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
+                "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0)), "smoothing_mask": side.smoothing_groups.unwrap_or(0),
                 "uaxis": side.u_axis.to_string(), "vaxis": side.v_axis.to_string()}))
         }).collect::<Vec<_>>(),
         "faces": session.selected_faces().into_iter().filter_map(|face| {
@@ -990,8 +1015,9 @@ fn face_state(session: &Session) -> Value {
             Some(json!({"solid": face.solid, "side": face.side, "owner": session.document().owner_of_solid(face.solid).map(id_string),
                 "material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
                 "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
+                "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0)), "smoothing_mask": side.smoothing_groups.unwrap_or(0),
                 "uaxis": side.u_axis.to_string(), "vaxis": side.v_axis.to_string(),
-                "preview": session.preview_side(face).map(|side| json!({"material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset, "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation}))}))
+                "preview": session.preview_side(face).map(|side| json!({"material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset, "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation, "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0))}))}))
         }).collect::<Vec<_>>()})
 }
 
@@ -1249,6 +1275,10 @@ pub struct SetViewArgs {
     pub tool_textures: Option<bool>,
     /// Show the current compilation's leak path through geometry.
     pub leak_path: Option<bool>,
+    /// textured, lightmap_density (authored grid), or smoothing_groups (membership).
+    pub surface: Option<String>,
+    /// Highlight membership in this smoothing/hard-edge group, 1–32.
+    pub smoothing_group: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1261,6 +1291,9 @@ pub struct RenderArgs {
     /// Draw tool brushes (nodraw, clip, trigger, skybox). Defaults to the editor setting.
     pub tool_textures: Option<bool>,
     pub leak_path: Option<bool>,
+    /// Optional surface diagnostic override; does not change the user's view.
+    pub surface: Option<String>,
+    pub smoothing_group: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2295,7 +2328,7 @@ impl EditorServer {
             "launching": session.launching(),
             "game_running": session.game_running(),
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
-            "view": {"tool_textures": session.view().tool_textures, "leak_path": session.view().leak_path},
+            "view": view_state(session.view()),
             "spatial": session.spatial(),
             "block_preview": bounds_json(session.block_preview()),
             "clipping": clip_state(&session),
@@ -3172,7 +3205,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared selected faces, texture parameters, owners and active preview. Face IDs work for world brushes and brushes inside entities.",
+        description = "Inspect shared selected faces, texture parameters, lightmap scales, smoothing groups, owners and active preview token. Face IDs work for world brushes and brushes inside entities.",
         annotations(read_only_hint = true)
     )]
     fn get_face_selection(&self) -> ToolResult {
@@ -3180,7 +3213,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Edit materials and texture offsets (texels), scales (world units per texel) and absolute rotation (degrees about the face normal). Omitted values preserve each face's original value. Omitted faces use shared face selection. Fit maps one material tile onto each face's projected bounds using actual texture dimensions. Preview renders a draft without changing the map or undo history; commit or cancel it with the preview tools. Atomic, undoable when applied."
+        description = "Edit materials and texture offsets (texels), scales (world units per texel) and absolute rotation (degrees about the face normal). Lightmap scale is 1–1024 world units per lighting pixel. Smoothing group lists replace/add/remove memberships (1–24 smooth, 25–32 hard-edge); empty replacement clears. Omitted values preserve each face's original value. Omitted faces use shared face selection. Fit maps one material tile onto each face's projected bounds using actual texture dimensions. Preview renders a draft without changing the map or undo history; commit or cancel it with the preview tools. Atomic, undoable when applied."
     )]
     fn edit_faces(&self, Parameters(args): Parameters<EditFacesArgs>) -> ToolResult {
         run(|| {
@@ -3199,6 +3232,21 @@ impl EditorServer {
                     scale_u: args.scale_u,
                     scale_v: args.scale_v,
                     rotation: args.rotation,
+                    lightmap_scale: args.lightmap_scale,
+                    smoothing_groups: args
+                        .smoothing_groups
+                        .as_deref()
+                        .map(map_core::surface::smoothing_mask)
+                        .transpose()
+                        .map_err(|error| error.to_string())?,
+                    smoothing_add: map_core::surface::smoothing_mask(
+                        args.smoothing_add.as_deref().unwrap_or_default(),
+                    )
+                    .map_err(|error| error.to_string())?,
+                    smoothing_remove: map_core::surface::smoothing_mask(
+                        args.smoothing_remove.as_deref().unwrap_or_default(),
+                    )
+                    .map_err(|error| error.to_string())?,
                     alignment: match args.alignment.as_deref() {
                         None => None,
                         Some("world") => Some(map_core::surface::Alignment::World),
@@ -3263,21 +3311,29 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the current shared face-texture preview in one undo step. Fails if edits, document replacement or selection changes have invalidated it."
+        description = "Apply the shared face material/lighting preview in one undo step. Pass its token to reject a replaced preview. Fails if edits, document replacement or selection changes have invalidated it."
     )]
-    fn commit_face_preview(&self) -> ToolResult {
+    fn commit_face_preview(&self, Parameters(args): Parameters<FacePreviewArgs>) -> ToolResult {
         run(|| {
-            let changed = self.session().commit_face_preview(Actor::Agent)?;
+            let mut session = self.session();
+            session
+                .check_face_preview_token(args.token.as_deref().map(parse_token).transpose()?)?;
+            let changed = session.commit_face_preview(Actor::Agent)?;
             Ok(json!({"faces_changed": changed}))
         })
     }
 
     #[tool(
-        description = "Cancel the shared face-texture preview, restoring the viewport without changing the document or undo/redo history. Equivalent to the texture dialog's Cancel button."
+        description = "Cancel the shared face material/lighting preview without changing the document or undo/redo history. Pass its token to reject a replaced preview. Equivalent to the editing dialog's Cancel button."
     )]
-    fn cancel_face_preview(&self) -> ToolResult {
-        self.session().cancel_face_preview();
-        ok(json!({"preview": false}))
+    fn cancel_face_preview(&self, Parameters(args): Parameters<FacePreviewArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session
+                .check_face_preview_token(args.token.as_deref().map(parse_token).transpose()?)?;
+            session.cancel_face_preview();
+            Ok(json!({"preview": false}))
+        })
     }
 
     #[tool(
@@ -3676,12 +3732,18 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Show or hide tool textures and the current compile's leak path in the viewport."
+        description = "Set shared viewport visibility and surface diagnostics: textured, authored lightmap_density grid or smoothing_groups membership. Choose a group 1–32; groups 25–32 are hard-edge memberships. Diagnostics appear in perspective; planar views retain wireframes. These inspect authored metadata, not baked lighting or final engine smoothing."
     )]
     fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let mut view = session.view();
+            let mut view = session.surface_view_options(
+                args.surface
+                    .as_deref()
+                    .map(render::SurfaceView::parse)
+                    .transpose()?,
+                args.smoothing_group,
+            )?;
             if let Some(tools) = args.tool_textures {
                 view.tool_textures = tools;
             }
@@ -3689,7 +3751,7 @@ impl EditorServer {
                 view.leak_path = leak;
             }
             session.set_view(view);
-            Ok(json!({ "tool_textures": view.tool_textures, "leak_path": view.leak_path }))
+            Ok(view_state(view))
         })
     }
 
@@ -3751,7 +3813,18 @@ impl EditorServer {
                 .unwrap_or_default()
                 .resolve(&session, size.0 as f32 / size.1 as f32)
             {
-                Ok(camera) => (camera, session.view()),
+                Ok(camera) => {
+                    let view = args
+                        .surface
+                        .as_deref()
+                        .map(render::SurfaceView::parse)
+                        .transpose()
+                        .and_then(|mode| session.surface_view_options(mode, args.smoothing_group));
+                    match view {
+                        Ok(view) => (camera, view),
+                        Err(error) => return fail(error),
+                    }
+                }
                 Err(message) => return fail(message),
             }
         };
@@ -3767,7 +3840,7 @@ impl EditorServer {
         };
         let data = base64::engine::general_purpose::STANDARD.encode(png);
         let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1,
-            "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path,
+            "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
                 "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),

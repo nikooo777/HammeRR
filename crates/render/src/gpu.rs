@@ -122,6 +122,34 @@ struct Globals {
     view_proj: [[f32; 4]; 4],
     light_dir: [f32; 4],
     eye: [f32; 4],
+    surface_view: [u32; 4],
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SurfaceView {
+    #[default]
+    Textured,
+    LightmapDensity,
+    SmoothingGroups,
+}
+
+impl SurfaceView {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Textured => "textured",
+            Self::LightmapDensity => "lightmap_density",
+            Self::SmoothingGroups => "smoothing_groups",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "textured" => Ok(Self::Textured),
+            "lightmap_density" => Ok(Self::LightmapDensity),
+            "smoothing_groups" => Ok(Self::SmoothingGroups),
+            _ => Err("Surface view must be textured, lightmap_density or smoothing_groups".into()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -142,6 +170,8 @@ pub struct AreaGuide {
 /// Per-frame visibility filters, applied without rebuilding the scene.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
+    pub surface: SurfaceView,
+    pub smoothing_group: u32,
     pub tool_textures: bool,
     pub leak_path: bool,
     pub grid_visible: bool,
@@ -157,6 +187,8 @@ pub struct ViewOptions {
 impl Default for ViewOptions {
     fn default() -> Self {
         Self {
+            surface: SurfaceView::Textured,
+            smoothing_group: 1,
             tool_textures: true,
             leak_path: true,
             grid_visible: true,
@@ -289,6 +321,8 @@ impl Renderer {
                             1 => Float32x3,
                             2 => Float32x2,
                             3 => Unorm8x4,
+                            4 => Float32x3,
+                            5 => Uint32,
                         ],
                     })],
                 },
@@ -612,6 +646,16 @@ impl Renderer {
             view_proj: camera.view_projection(aspect).to_cols_array_2d(),
             light_dir: light.extend(0.0).to_array(),
             eye: camera.position.extend(1.0).to_array(),
+            surface_view: [
+                match options.surface {
+                    SurfaceView::Textured => 0,
+                    SurfaceView::LightmapDensity => 1,
+                    SurfaceView::SmoothingGroups => 2,
+                },
+                options.smoothing_group.clamp(1, 32) - 1,
+                0,
+                0,
+            ],
         };
         ctx.queue
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
@@ -660,7 +704,6 @@ impl Renderer {
                 (&self.opaque_pipeline, &scene.opaque),
                 (&self.translucent_pipeline, &scene.translucent),
             ] {
-                pass.set_pipeline(pipeline);
                 for draw in batches {
                     if camera.projection != Projection::Perspective && !draw.helper {
                         continue;
@@ -671,6 +714,11 @@ impl Renderer {
                     let Some(Some(material)) = self.materials.get(draw.batch.material) else {
                         continue;
                     };
+                    pass.set_pipeline(if options.surface == SurfaceView::Textured || draw.helper {
+                        pipeline
+                    } else {
+                        &self.opaque_pipeline
+                    });
                     pass.set_bind_group(1, material, &[]);
                     let batch = draw.batch;
                     pass.draw_indexed(
@@ -945,4 +993,19 @@ fn checkerboard_texture(ctx: &GpuContext) -> wgpu::Texture {
     );
     write_mip(ctx, &texture, 0, &pixels, SIZE * 4, SIZE, (SIZE, SIZE));
     texture
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn surface_shader_parses_and_validates_without_a_gpu() {
+        use wgpu::naga::{front::wgsl, valid};
+
+        let source = include_str!("shader.wgsl");
+        let module = wgsl::parse_str(source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+        valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::empty())
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+    }
 }

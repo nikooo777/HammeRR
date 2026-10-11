@@ -1,0 +1,96 @@
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox } from "std-widgets.slint";
+
+export struct LightingGroup {
+    number: int,
+    state: int,
+    action: int,
+}
+
+export component LightingWindow inherits Window {
+    title: "Face lighting - HammeRR";
+    preferred-width: 720px;
+    preferred-height: 710px;
+    in property <string> selection-label;
+    in property <string> message;
+    in property <bool> stale;
+    in property <bool> can-apply: true;
+    in-out property <string> lightmap-scale;
+    in-out property <[LightingGroup]> groups;
+    in-out property <int> view-mode;
+    in-out property <int> view-group: 1;
+    callback edited();
+    callback toggle-group(int, bool);
+    callback clear-groups();
+    callback reset-groups();
+    callback view-changed();
+    callback preview-edit();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+            Text { text: "Face lighting"; font-size: 24px; font-weight: 600; }
+            Text { text: root.selection-label; color: #aeb9c8; }
+            Text { text: "Lightmap scale · world units per lighting pixel"; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 10px;
+                LineEdit { text <=> root.lightmap-scale; input-type: number; placeholder-text: "Mixed · keep each value"; edited => { root.edited(); } }
+                for scale in [8, 16, 32, 64]: Button {
+                    text: "\{scale}";
+                    clicked => { root.lightmap-scale = "\{scale}"; root.edited(); }
+                }
+            }
+            Text { text: "Smaller values give finer lighting detail. Blank keeps existing values. Range: 1–1024."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "Smoothing groups · 1–24"; font-weight: 600; }
+            for row in 3: HorizontalLayout {
+                spacing: 4px;
+                for col in 8: CheckBox {
+                    property <int> index: row * 8 + col;
+                    text: "\{root.groups[self.index].number}" + (root.groups[self.index].state < 0 ? " −" : "");
+                    checked: root.groups[self.index].state == 1;
+                    toggled => { root.toggle-group(self.index, self.checked); }
+                }
+            }
+            Text { text: "Hard-edge groups · 25–32"; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 4px;
+                for col in 8: CheckBox {
+                    property <int> index: 24 + col;
+                    text: "\{root.groups[self.index].number}" + (root.groups[self.index].state < 0 ? " −" : "");
+                    checked: root.groups[self.index].state == 1;
+                    toggled => { root.toggle-group(self.index, self.checked); }
+                }
+            }
+            Text { text: "− means mixed membership. Toggling one group preserves the others. Shared hard-edge groups prevent smoothing; no groups uses the compiler's angle rule."; color: #aeb9c8; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Clear all groups"; clicked => { root.clear-groups(); } }
+                Button { text: "Reset group changes"; clicked => { root.reset-groups(); } }
+            }
+            Text { text: "Viewport inspection"; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 10px;
+                ComboBox { model: ["Textured", "Lightmap density", "Group membership"]; current-index <=> root.view-mode; selected => { root.view-changed(); } }
+                if root.view-mode == 2: SpinBox { minimum: 1; maximum: 32; value <=> root.view-group; edited => { root.view-changed(); } }
+            }
+            Text {
+                text: root.view-mode == 1 ? "One grid cell per lighting pixel · blue ≤8, green ≤16, orange ≤32, red >32. Magenta marks invalid values." : root.view-mode == 2 ? "Cyan marks faces in group \{root.view-group}; gray marks other faces." : "Inspect authored density and group membership in perspective.";
+                color: #aeb9c8; wrap: word-wrap;
+            }
+            Text { text: "These settings are saved in the VMF. Baked lighting is still pending in the native compiler."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: root.message; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Preview settings"; enabled: !root.stale; clicked => { root.preview-edit(); } }
+                Button { text: "Apply settings"; enabled: !root.stale && root.can-apply; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

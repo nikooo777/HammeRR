@@ -21,16 +21,17 @@ pub(crate) struct HelperMaterial {
 }
 
 pub(crate) fn bulb_model() -> &'static HelperModel {
+    const STORED_VERTEX_BYTES: usize = 36;
     static MODEL: OnceLock<HelperModel> = OnceLock::new();
     MODEL.get_or_init(|| {
         let bytes = include_bytes!("../assets/lightbulb/bulb.mesh");
         assert_eq!(&bytes[..4], b"HRM1");
         let count = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
         let index_count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-        let end = 12 + count * size_of::<Vertex>();
+        let end = 12 + count * STORED_VERTEX_BYTES;
         assert_eq!(bytes.len(), end + index_count * size_of::<u32>());
         let vertices: Vec<Vertex> = bytes[12..end]
-            .as_chunks::<{ size_of::<Vertex>() }>()
+            .as_chunks::<STORED_VERTEX_BYTES>()
             .0
             .iter()
             .map(|chunk| {
@@ -42,6 +43,8 @@ pub(crate) fn bulb_model() -> &'static HelperModel {
                     normal: floats[3..6].try_into().unwrap(),
                     uv: floats[6..8].try_into().unwrap(),
                     color: chunk[32..36].try_into().unwrap(),
+                    lightmap: [0.0; 3],
+                    smoothing: 0,
                 }
             })
             .collect();

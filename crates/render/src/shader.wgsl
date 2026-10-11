@@ -2,6 +2,7 @@ struct Globals {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,
     eye: vec4<f32>,
+    surface_view: vec4<u32>,
 }
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
@@ -24,6 +25,8 @@ struct VertexIn {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) lightmap: vec3<f32>,
+    @location(5) smoothing: u32,
 }
 
 struct VertexOut {
@@ -32,6 +35,8 @@ struct VertexOut {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec4<f32>,
     @location(3) world_position: vec3<f32>,
+    @location(4) lightmap: vec3<f32>,
+    @location(5) @interpolate(flat) smoothing: u32,
 }
 
 @vertex
@@ -42,6 +47,8 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.normal = v.normal;
     out.color = v.color;
     out.world_position = v.position;
+    out.lightmap = v.lightmap;
+    out.smoothing = v.smoothing;
     return out;
 }
 
@@ -55,6 +62,26 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let dy = dpdy(in.world_position);
     let uv_dx = dpdx(in.uv);
     let uv_dy = dpdy(in.uv);
+    let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
+    if globals.surface_view.x != 0u && in.lightmap.z != 0.0 {
+        if globals.surface_view.x == 2u {
+            let member = (in.smoothing & (1u << globals.surface_view.y)) != 0u;
+            let base = select(vec3<f32>(0.065, 0.08, 0.11), vec3<f32>(0.1, 0.7, 0.8), member);
+            let shade = 0.65 + 0.35 * abs(dot(normalize(in.normal), globals.light_dir.xyz));
+            return vec4<f32>(base * shade, 1.0);
+        }
+        if in.lightmap.z < 0.0 {
+            return vec4<f32>(0.8, 0.02, 0.8, 1.0);
+        }
+        var base = vec3<f32>(0.12, 0.45, 0.85);
+        if in.lightmap.z > 8.0 { base = vec3<f32>(0.08, 0.6, 0.3); }
+        if in.lightmap.z > 16.0 { base = vec3<f32>(0.9, 0.48, 0.05); }
+        if in.lightmap.z > 32.0 { base = vec3<f32>(0.8, 0.12, 0.07); }
+        let distance = abs(fract(in.lightmap.xy - 0.5) - 0.5) / grid_width;
+        let line = 1.0 - clamp(min(distance.x, distance.y), 0.0, 1.0);
+        let fade = 1.0 - smoothstep(0.5, 1.5, max(grid_width.x, grid_width.y));
+        return vec4<f32>(base * (1.0 - 0.65 * line * fade), 1.0);
+    }
     if material.flags.y > 0.5 {
         texel = mix(texel, second, in.color.a);
     }

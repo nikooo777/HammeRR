@@ -32,13 +32,27 @@ impl GpuContext {
     /// Picks the high-performance adapter and enables BC texture compression
     /// when available, so DXT textures upload without decoding.
     pub fn new() -> Result<Self, String> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        let backends = descriptor.backends;
+        let instance = wgpu::Instance::new(descriptor);
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
         }))
         .map_err(|e| format!("no GPU adapter: {e}"))?;
+        let supports_view_formats = |adapter: &wgpu::Adapter| {
+            adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+        };
+        let adapter = if supports_view_formats(&adapter) {
+            adapter
+        } else {
+            let name = adapter.get_info().name;
+            pollster::block_on(instance.enumerate_adapters(backends)).into_iter().find(supports_view_formats)
+                .ok_or_else(|| format!("GPU adapter {name:?} cannot render texture views, and no compatible adapter is available. Check GPU access and Vulkan driver availability"))?
+        };
         let features = adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("map renderer"),

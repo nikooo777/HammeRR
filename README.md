@@ -36,7 +36,9 @@ and the shared entity inspector and activity panel.*
 
 ## Quick start
 
-Requires **Rust 1.92+** and a **Vulkan-capable GPU**. Install Counter-Strike:
+Requires **Rust 1.92+**. The graphical editor and rendered views need a
+**Vulkan-compatible graphics backend**; headless editing and compilation can
+run without graphics initialization. Install Counter-Strike:
 Source to use its materials; HammeRR discovers the game through Steam.
 
 ```sh
@@ -56,7 +58,7 @@ installed CS:S SDK entity definitions.
 | `--fgd <file.fgd>` | Load another entity definition file and its includes. |
 | `--mcp-port <port>` | Change the HTTP MCP port; the default is `7377`. |
 | `--no-mcp` | Run the GUI without the MCP server. |
-| `--headless` | Serve MCP over stdio without opening a window. |
+| `--headless` | Serve MCP over stdio; initialize graphics only when a rendered view is requested. |
 
 ```sh
 cargo test --workspace

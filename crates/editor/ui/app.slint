@@ -1003,7 +1003,7 @@ export component RecoveryWindow inherits Window {
                 Button { text: "Apply settings"; enabled: root.available && root.settings-dirty; clicked => { root.apply-settings(); } }
                 Button { text: "Save snapshot now"; enabled: root.available && !root.busy; clicked => { root.snapshot-now(); } }
             }
-            Text { text: "Snapshots keep committed edits, including unnamed maps. Your VMF is saved only when you choose Save."; wrap: word-wrap; color: #9da7b5; }
+            Text { text: "Snapshots include applied edits, even in unnamed maps. Use Save to update the map file."; wrap: word-wrap; color: #9da7b5; }
             HorizontalLayout {
                 spacing: 10px;
                 Text { text: root.summary; vertical-alignment: center; horizontal-stretch: 1; }

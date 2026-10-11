@@ -22,6 +22,33 @@ pub struct Selection {
 }
 
 impl Region {
+    pub fn from_bounds(mins: DVec3, maxs: DVec3) -> Result<Self, &'static str> {
+        if !mins.is_finite()
+            || !maxs.is_finite()
+            || !mins.cmplt(maxs).all()
+            || !(maxs - mins).is_finite()
+        {
+            return Err("Volume needs finite corners and positive width, height and depth");
+        }
+        let mut planes = Vec::with_capacity(6);
+        for axis in 0..3 {
+            let mut normal = DVec3::ZERO;
+            normal[axis] = 1.0;
+            planes.push(Plane {
+                normal,
+                dist: maxs[axis],
+            });
+            planes.push(Plane {
+                normal: -normal,
+                dist: -mins[axis],
+            });
+        }
+        Ok(Self {
+            planes,
+            seed: mins + (maxs - mins) * 0.5,
+        })
+    }
+
     fn contains(&self, point: DVec3) -> bool {
         self.planes
             .iter()
@@ -158,22 +185,19 @@ mod tests {
     use crate::edit;
 
     fn region(mins: DVec3, maxs: DVec3) -> Region {
-        let mut planes = Vec::new();
-        for axis in 0..3 {
-            let mut normal = DVec3::ZERO;
-            normal[axis] = 1.0;
-            planes.push(Plane {
-                normal,
-                dist: maxs[axis],
-            });
-            planes.push(Plane {
-                normal: -normal,
-                dist: -mins[axis],
-            });
-        }
-        Region {
-            planes,
-            seed: (mins + maxs) * 0.5,
+        Region::from_bounds(mins, maxs).unwrap()
+    }
+
+    #[test]
+    fn invalid_volume_bounds_are_rejected() {
+        for (mins, maxs) in [
+            (DVec3::ZERO, DVec3::ZERO),
+            (DVec3::ONE, DVec3::ZERO),
+            (DVec3::splat(f64::NAN), DVec3::ONE),
+            (DVec3::ZERO, DVec3::splat(f64::INFINITY)),
+            (DVec3::splat(-f64::MAX), DVec3::splat(f64::MAX)),
+        ] {
+            assert!(Region::from_bounds(mins, maxs).is_err());
         }
     }
 

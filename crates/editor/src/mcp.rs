@@ -82,6 +82,7 @@ or viewport pointers. Apply with commit_transform_preview or cancel_transform_pr
 select_area selects objects or faces through a pixel rectangle in any projection; choose \
 contained/intersecting and replace/add/remove/toggle. Use preview: true, inspect \
 get_area_selection and render_view, then commit_area_selection or cancel_area_selection. \
+select_volume queries a world-space box, with shared candidate previews, framing and token-guarded commit/cancel. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -746,6 +747,31 @@ pub struct HandlesArgs {
     pub camera: Option<CameraSpec>,
     /// Optional viewport point to hit-test against the rendered handles.
     pub point: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct VolumeArgs {
+    pub mins: [f64; 3],
+    pub maxs: [f64; 3],
+    /// objects or faces; defaults to the current selection mode. Preview does not change that mode.
+    pub selection_mode: Option<String>,
+    /// intersecting (default) or contained. Uses geometry, including enclosed volumes.
+    pub rule: Option<String>,
+    /// replace (default), add, remove or toggle.
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct VolumeTokenArgs {
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct VolumeFrameArgs {
+    pub token: String,
+    pub aspect: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2376,6 +2402,7 @@ impl EditorServer {
             "clipping": clip_state(&session),
             "transform": transform_state(&session),
             "area_selection": area_state(&session),
+            "volume_selection": {"preview":session.volume_preview().map(|preview|preview.token.to_string())},
             "connection_draft": connection_draft_json(&session),
             "rename_draft": rename_draft_json(&session),
             "property_draft": session.property_draft(),
@@ -3697,6 +3724,91 @@ impl EditorServer {
                 .unwrap_or(session.area_mode());
             session.set_area_settings(rule, mode);
             Ok(area_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Select objects or faces through an axis-aligned world-space box. Shared with Select a volume in the UI. Corners must be ordered, finite and within ±65536 units. Geometry-based contained/intersecting rules; replace/add/remove/toggle. Hidden geometry and hidden tool brushes are skipped; displacements use supporting faces. preview=true shows a blue guide and resulting selection highlights without changing selection/history. It survives camera movement; map, selection or tool-visibility changes invalidate it. Inspect paginated get_volume_selection and use its token to commit/cancel/frame."
+    )]
+    fn select_volume(&self, Parameters(args): Parameters<VolumeArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = match args.selection_mode.as_deref() {
+                None => session.face_mode(),
+                Some("objects") => false,
+                Some("faces") => true,
+                _ => return Err("selection_mode must be objects or faces".into()),
+            };
+            let rule = match args.rule.as_deref().unwrap_or("intersecting") {
+                "intersecting" => map_core::region::Match::Intersecting,
+                "contained" => map_core::region::Match::Contained,
+                _ => return Err("rule must be intersecting or contained".into()),
+            };
+            let token = session.preview_volume_selection(crate::session::volume::Spec {
+                mins: DVec3::from_array(args.mins),
+                maxs: DVec3::from_array(args.maxs),
+                rule,
+                mode: parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?,
+                faces,
+            })?;
+            if args.preview {
+                Ok(session.volume_selection_json(0, 100))
+            } else {
+                let matches = session.commit_volume_selection(Actor::Agent, token)?;
+                Ok(
+                    json!({"matched_objects":matches.objects.len(),"matched_faces":matches.faces.len(),"selected_objects":session.selected_ids().len(),"selected_faces":session.selected_faces().len()}),
+                )
+            }
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared volume selection, candidate IDs/counts and suggested selection/map bounds. offset/limit paginate candidates (maximum 500). Blue guide and highlights appear in every projection.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_volume_selection(
+        &self,
+        Parameters(args): Parameters<MaterialSearchPageArgs>,
+    ) -> ToolResult {
+        ok(self
+            .session()
+            .volume_selection_json(args.offset.unwrap_or(0), args.limit.unwrap_or(100)))
+    }
+
+    #[tool(
+        description = "Apply the shared volume selection by token. Changes selection only, never map contents or undo history. Rejects a closed or superseded preview."
+    )]
+    fn commit_volume_selection(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let matches =
+                session.commit_volume_selection(Actor::Agent, parse_token(&args.token)?)?;
+            Ok(
+                json!({"matched_objects":matches.objects.len(),"matched_faces":matches.faces.len(),"selected_objects":session.selected_ids().len(),"selected_faces":session.selected_faces().len()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Discard a volume selection preview by token, preserving committed selection and map history. Equivalent to Cancel/Escape/closing its human dialog."
+    )]
+    fn cancel_volume_selection(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .cancel_volume_selection(parse_token(&args.token)?)?;
+            Ok(json!({"preview":false}))
+        })
+    }
+
+    #[tool(
+        description = "Frame the previewed volume in the current projection without committing selection. Requires the current volume token. aspect defaults to 1.6."
+    )]
+    fn frame_volume_selection(&self, Parameters(args): Parameters<VolumeFrameArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session
+                .frame_volume_selection(parse_token(&args.token)?, args.aspect.unwrap_or(1.6))?;
+            Ok(camera_json(&session.camera()))
         })
     }
 

@@ -20,6 +20,7 @@ mod surface_group_ui;
 #[cfg(test)]
 mod test_assets;
 mod viewport;
+mod volume_ui;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -161,6 +162,7 @@ struct Ui {
     lighting: Option<lighting_ui::Controller>,
     material_replace: Option<material_replace_ui::Controller>,
     surface_group: Option<surface_group_ui::Controller>,
+    volume: Option<volume_ui::Controller>,
     material_for_group: bool,
     material_for_replace: Option<bool>,
     material_for_faces: bool,
@@ -386,6 +388,7 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
             let mut session = lock(&shared);
             session.cancel_transform_preview();
             session.cancel_area_selection();
+            session.clear_volume_selection();
             refresh_interaction(&app.unwrap(), &session);
         }
     });
@@ -2375,6 +2378,10 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
             let mut ui = ui.borrow_mut();
             let shared = ui.session.clone();
             let mut session = lock(&shared);
+            if session.volume_preview().is_some() {
+                session.clear_volume_selection();
+                return true;
+            }
             if ui.interaction.active()
                 || session.transform_preview().is_some()
                 || session.transform_drag().is_some()
@@ -2561,6 +2568,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         lighting: None,
         material_replace: None,
         surface_group: None,
+        volume: None,
         material_for_group: false,
         material_for_replace: None,
         material_for_faces: false,
@@ -2827,6 +2835,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_edit_face_textures({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
+    });
+    app.on_select_volume({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().volume.is_none() {
+                match volume_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().volume = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.volume.as_ref().unwrap();
+            controller.initialize(&mut lock(&shared));
+            let _ = controller.window.show();
+        }
     });
     app.on_map_face_group({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3424,6 +3451,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.seen_scene = session.scene_serial();
                     let mesh = session.build_scene();
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                    if let Some(controller) = &ui.volume
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.surface_group
                         && controller.window.window().is_visible()
                     {
@@ -3460,6 +3492,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
+                    if let Some(controller) = &ui.volume
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.surface_group
                         && controller.window.window().is_visible()
                     {
@@ -4356,6 +4393,98 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn volume_controls_preview_frame_cancel_and_guard_shared_selection() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets".into()));
+        let a = session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let b = session
+            .create_block(
+                Actor::User,
+                DVec3::new(128.0, 0.0, 0.0),
+                DVec3::new(192.0, 64.0, 64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = volume_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared));
+        let window = &controller.window;
+        window.show().unwrap();
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(lock(&shared).selected_ids(), [b]);
+        window.invoke_frame();
+        assert!(lock(&shared).volume_preview().is_some());
+        save_ui_snapshot(window.window(), "volume-selection");
+        for label in [
+            "Cancel",
+            "Frame box",
+            "Preview matches",
+            "Select matches",
+            "Use selection bounds",
+        ] {
+            assert_dialog_button_visible(window, label);
+        }
+        let foreign = lock(&shared)
+            .preview_volume_selection(session::volume::Spec {
+                mins: DVec3::splat(-1.0),
+                maxs: DVec3::splat(65.0),
+                rule: map_core::region::Match::Contained,
+                mode: SelectMode::Replace,
+                faces: false,
+            })
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).selected_ids(), [b]);
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).volume_preview().unwrap().token, foreign);
+        controller.initialize(&mut lock(&shared));
+        window.set_min_x("0".into());
+        window.set_max_x("64".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).selected_ids(), [a]);
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        controller.initialize(&mut lock(&shared));
+        window.set_max_x("-100".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert!(window.get_message().contains("positive"));
+        window.invoke_use_bounds();
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        lock(&shared).new_map(Actor::Agent, true).unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        assert!(lock(&shared).selected_ids().is_empty());
     }
 
     #[test]

@@ -30,6 +30,7 @@ def validate(client, output):
         checks.append(label)
 
     with preserved_map(client):
+        client.call("set_view", {"tool_textures": True, "surface": "textured"})
         ids = []
         for start, end in [(-128, 0), (0, 128)]:
             ids.append(
@@ -126,9 +127,7 @@ def validate(client, output):
                 uv(mapped[0], [0, y, 16]) == uv(mapped[1], [0, y, 16]),
                 "Continuous seam texel coordinates",
             )
-        texture = client.call(
-            "preview_material", {"material": "tile/tilefloor001a"}
-        )
+        texture = client.call("preview_material", {"material": "tile/tilefloor001a"})
         values = [uv(mapped[0], [x, y, 16]) for x in [-128, 128] for y in [-64, 64]]
         for index, extent in enumerate([texture["width"] * 2, texture["height"] * 0.5]):
             check(

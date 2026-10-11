@@ -24,6 +24,7 @@ def preserved_map(client):
             original["transform"]["drag"],
             original["transform"]["preview"],
             original["area_selection"]["preview"],
+            original.get("volume_selection", {}).get("preview"),
             original["block_preview"],
             original["spatial"]["draw_block"],
             original["connection_draft"],
@@ -112,6 +113,7 @@ def validate(client, output):
         checks.append(label)
 
     with preserved_map(client):
+        client.call("set_view", {"tool_textures": True, "surface": "textured"})
         ids = []
         for index in range(3):
             block = client.call(

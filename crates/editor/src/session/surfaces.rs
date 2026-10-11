@@ -7,6 +7,12 @@ pub enum GroupProjection {
     View,
 }
 
+pub struct ChainPaint {
+    pub changed: usize,
+    pub links: Vec<map_core::texture_chain::Link>,
+    pub source_in_targets: bool,
+}
+
 impl Session {
     pub fn project_face_group(
         &mut self,
@@ -106,6 +112,7 @@ impl Session {
         {
             self.clear_paint_stroke();
         }
+        self.cancel_face_preview();
         self.surface_sample = Some(sample);
         self.view_serial += 1;
         Ok(())
@@ -113,6 +120,26 @@ impl Session {
 
     pub fn surface_sample(&self) -> Option<&SurfaceSample> {
         self.surface_sample.as_ref()
+    }
+
+    pub fn propagate_face_texture(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        preview: bool,
+    ) -> Result<ChainPaint, String> {
+        let sample = self
+            .surface_sample
+            .as_ref()
+            .ok_or("Sample a source face texture first")?;
+        let chain = map_core::texture_chain::wrap(&self.document, faces, sample)
+            .map_err(|error| error.to_string())?;
+        let changed = self.preview_or_apply_faces(actor, chain.edits, preview)?;
+        Ok(ChainPaint {
+            changed,
+            links: chain.links,
+            source_in_targets: chain.source_in_targets,
+        })
     }
 
     pub fn paint_face_texture(
@@ -142,6 +169,101 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connected_wrapping_is_guarded_atomic_and_invalidated_by_resampling() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let ObjectId::Solid(solid) = session
+                .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let face = |normal: DVec3| FaceId {
+                solid,
+                side: session
+                    .document()
+                    .solid(solid)
+                    .unwrap()
+                    .sides
+                    .iter()
+                    .find(|side| {
+                        map_core::Plane::from_points(side.plane.0).unwrap().normal == normal
+                    })
+                    .unwrap()
+                    .id,
+            };
+            let source = face(DVec3::Z);
+            let targets = [face(DVec3::NEG_Y), face(DVec3::NEG_Z)];
+            session
+                .edit_faces(
+                    actor,
+                    &[source],
+                    SurfaceEdit {
+                        material: Some("metal/sample".into()),
+                        shift_u: Some(13.0),
+                        rotation: Some(27.0),
+                        ..Default::default()
+                    },
+                    false,
+                    false,
+                )
+                .unwrap();
+            session.sample_face_texture(source).unwrap();
+            session.select_faces(&targets, SelectMode::Replace).unwrap();
+            let selected = session.selected_faces();
+            let before = session.document().vmf().clone();
+            let history = session.document().undo_labels().count();
+            let result = session
+                .propagate_face_texture(actor, &targets, true)
+                .unwrap();
+            assert_eq!(result.changed, 2);
+            assert_eq!(result.links.len(), 2);
+            let preview = session.face_preview_document().unwrap().vmf().clone();
+            let token = session.face_preview_token();
+            let closed = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .map(|side| FaceId {
+                    solid,
+                    side: side.id,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                session
+                    .propagate_face_texture(actor, &closed, true)
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), token);
+            assert_eq!(session.face_preview_document().unwrap().vmf(), &preview);
+            assert_eq!(session.document().vmf(), &before);
+            session.cancel_face_preview();
+            session
+                .propagate_face_texture(actor, &targets, true)
+                .unwrap();
+            session.commit_face_preview(actor).unwrap();
+            assert_eq!(session.document().vmf(), &preview);
+            assert_eq!(session.selected_faces(), selected);
+            assert_eq!(session.document().undo_labels().count(), history + 1);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &before);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &preview);
+            session.undo(actor).unwrap();
+            session
+                .propagate_face_texture(actor, &targets, true)
+                .unwrap();
+            let token = session.face_preview_token();
+            session.sample_face_texture(source).unwrap();
+            assert!(!session.has_face_preview());
+            assert!(session.check_face_preview_token(token).is_err());
+            assert_eq!(session.document().vmf(), &before);
+        }
+    }
 
     #[test]
     fn grouped_projection_shares_previews_history_and_material_validation() {

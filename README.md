@@ -281,6 +281,16 @@ projection copying or wrapping across a shared edge. Wrapping keeps the seam
 continuous; each target must touch the source. Samples retain their captured
 values until sampled again or another map is opened.
 
+**Wrap connected faces** carries the sample through selected intermediate
+faces, folding it at every shared edge. Select an open strip around a column
+or across several folds, then preview and apply once. Disconnected targets and
+incompatible closed loops explain why they cannot wrap. The source stays
+unchanged; up to 256 target faces are supported. Displacements are excluded.
+
+| Connected wrapping | Texture continued around a faceted column |
+| --- | --- |
+| ![Connected face wrapping with preview, apply and cancellation](docs/images/connected-wrapping.png) | ![Sampled texture propagated across five successive shared edges](docs/images/connected-wrapping-viewport.png) |
+
 **Browse materials…** offers thumbnail pages, a larger preview, search,
 folder/category groups, and map-used, recent and favorite materials.
 Choosing a thumbnail selects a candidate; **Use material** accepts it.
@@ -543,7 +553,7 @@ For example, place a warm light:
 | Design context | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
-| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
+| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `propagate_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
 | Texture strokes | `begin_texture_stroke`, `update_texture_stroke`, `get_texture_stroke`, `commit_texture_stroke`, `cancel_texture_stroke`, `set_paint_tool` |
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials`, `commit_face_preview`, `cancel_face_preview` |
 | Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
@@ -584,6 +594,7 @@ python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
 python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-check
 python -B scripts/validate_paint_selection.py --output /tmp/hammerr-paint-check
 python -B scripts/validate_texture_strokes.py --output /tmp/hammerr-texture-check
+python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
@@ -744,7 +755,7 @@ unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes broader map checks, vertex and edge editing,
-displacement tools, model rendering, chained texture seams.
+displacement tools, model rendering, vertex and edge editing.
 
 ## Project layout
 

@@ -1,3 +1,4 @@
+export { ComponentsWindow, ComponentRow } from "components.slint";
 export { SavedViewsWindow, SavedViewRow } from "saved-views.slint";
 export { CompileWindow } from "compile.slint";
 export { VolumeWindow } from "volume.slint";
@@ -1585,6 +1586,7 @@ export component AppWindow inherits Window {
     callback map-checks();
     callback design-context();
     callback brush-shapes();
+    callback brush-components();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -2044,6 +2046,11 @@ export component AppWindow inherits Window {
                         text: "Transform selection";
                         checked <=> root.show-transform;
                         toggled => { if self.checked { root.handles-mode-index = root.transform-mode + 1; root.transform-tool-changed(); } }
+                    }
+                    Button {
+                        text: "Edit vertices and edges…";
+                        enabled: root.can-clip;
+                        clicked => { root.brush-components(); }
                     }
                     Button {
                         text: "Clip selected brushes";

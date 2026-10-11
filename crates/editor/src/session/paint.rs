@@ -241,6 +241,7 @@ impl Session {
             self.cancel_block_preview();
             self.cancel_face_preview();
             self.cancel_clip_preview();
+            self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();
             self.cancel_transform_preview();
@@ -369,6 +370,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_face_preview();
         self.cancel_clip_preview();
+        self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.cancel_transform_preview();

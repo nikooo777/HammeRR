@@ -23,6 +23,7 @@ use crate::spatial;
 pub mod checks;
 mod clipping;
 pub mod compilation;
+pub mod components;
 pub mod context;
 mod management;
 pub mod material_search;
@@ -132,6 +133,7 @@ pub struct Session {
     area_preview: Option<AreaPreview>,
     paint: paint::State,
     pointfile: pointfiles::State,
+    components: components::State,
     volume: volume::State,
     connection_draft: Option<ConnectionDraft>,
     connection_serial: u64,
@@ -223,6 +225,7 @@ impl Session {
             area_preview: None,
             paint: paint::State::default(),
             pointfile: pointfiles::State::default(),
+            components: components::State::default(),
             volume: volume::State::default(),
             connection_draft: None,
             connection_serial: 0,
@@ -571,6 +574,7 @@ impl Session {
                 })
                 .map_err(|error| error.to_string())?;
             self.cancel_clip_preview();
+            self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();
             self.clip_tool = false;
@@ -965,6 +969,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_face_preview();
         self.cancel_clip_preview();
+        self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.cancel_transform_preview();
@@ -1333,6 +1338,7 @@ impl Session {
         }
         self.cancel_block_preview();
         self.cancel_clip_preview();
+        self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.cancel_transform_preview();
@@ -1356,6 +1362,7 @@ impl Session {
 
     pub fn preview_block(&mut self, mins: DVec3, maxs: DVec3) -> Result<(), String> {
         spatial::validate_bounds(mins, maxs)?;
+        self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         if self.block_preview != Some((mins, maxs)) {
@@ -1611,6 +1618,12 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
+            .or_else(|| {
+                self.components
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
@@ -1644,6 +1657,12 @@ impl Session {
             .map(|preview| &preview.document)
             .or_else(|| {
                 self.transform_preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
+                self.components
+                    .preview
                     .as_ref()
                     .map(|preview| &preview.document)
             })
@@ -1747,6 +1766,12 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
+            .or_else(|| {
+                self.components
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
@@ -1757,6 +1782,11 @@ impl Session {
                     .map(|texture| &texture.document)
             })
             .unwrap_or(&self.document);
+        let selected = if self.components.selection.is_empty() {
+            selected
+        } else {
+            HashSet::new()
+        };
         let mut mesh = SceneMesh::build_with_faces(
             document.vmf(),
             &self.game,
@@ -1769,6 +1799,7 @@ impl Session {
         }
         self.append_context_guides(&mut mesh);
         self.append_volume_guide(&mut mesh);
+        self.append_component_guides(&mut mesh);
         mesh
     }
 

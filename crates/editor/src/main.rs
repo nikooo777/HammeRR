@@ -1,5 +1,6 @@
 mod checks_ui;
 mod compile_ui;
+mod components_ui;
 mod connection_ui;
 mod context_ui;
 mod game;
@@ -148,6 +149,7 @@ struct Ui {
     report_window: Option<ReportWindow>,
     statistics_window: Option<StatisticsWindow>,
     pointfile_window: Option<PointfileWindow>,
+    components_window: Option<ComponentsWindow>,
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
@@ -2666,6 +2668,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         report_window: None,
         statistics_window: None,
         pointfile_window: None,
+        components_window: None,
         recovery_window: None,
         checks_window: None,
         context_window: None,
@@ -2882,6 +2885,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_object_report({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_report_window(&app.unwrap(), &ui)
+    });
+    app.on_brush_components({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if ui.borrow().components_window.is_none() {
+                match ComponentsWindow::new() {
+                    Ok(window) => {
+                        components_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().components_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui
+                .borrow()
+                .components_window
+                .as_ref()
+                .unwrap()
+                .clone_strong();
+            components_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
     });
     app.on_pointfile({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3861,6 +3891,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                if let Some(window) = &ui.components_window
+                    && window.window().is_visible()
+                {
+                    components_ui::refresh_changed(window, &lock(&ui.session));
+                }
                 if let Some(window) = &ui.pointfile_window
                     && window.window().is_visible()
                 {
@@ -4892,6 +4927,89 @@ mod tests {
         assert!(!window.get_has_path());
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).document().undo_labels().count(), 0);
+    }
+
+    #[test]
+    fn component_controls_select_preview_reject_apply_and_cancel() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let id = state.component_solids()[0];
+        let shape = state.component_topology(&[id]).unwrap().remove(0);
+        let edge = shape
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.vertices
+                    .iter()
+                    .all(|index| shape.vertices[*index].position.z == 64.0)
+            })
+            .unwrap();
+        let key = format!(
+            "{}:{}",
+            id,
+            edge.sides
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        components_ui::refresh(&window, &lock(&shared));
+        window.invoke_choose(key.into());
+        assert_eq!(lock(&shared).component_selection().len(), 1);
+        window.set_move_z("16".into());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        let valid = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-components");
+        for label in [
+            "Cancel",
+            "Apply move",
+            "Preview move",
+            "Select all shown",
+            "Clear selection",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.set_move_z("-64".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert!(!window.get_message().is_empty());
+        assert_eq!(lock(&shared).render_document().vmf(), &valid);
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.set_move_z("16".into());
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &valid);
+        window.invoke_preview_edit();
+        window.invoke_cancel();
+        assert!(!window.window().is_visible());
+        assert_eq!(lock(&shared).document().vmf(), &valid);
+        assert_eq!(lock(&shared).render_document().vmf(), &valid);
+        assert!(lock(&shared).component_selection().is_empty());
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {

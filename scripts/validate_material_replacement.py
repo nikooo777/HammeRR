@@ -27,6 +27,8 @@ def preserved_map(client):
             original.get("volume_selection", {}).get("preview"),
             original.get("paint_selection", {}).get("preview"),
             original.get("pointfile", {}).get("source"),
+            original.get("components", {}).get("preview"),
+            original.get("components", {}).get("selection"),
             original["block_preview"],
             original["spatial"]["draw_block"],
             original["connection_draft"],

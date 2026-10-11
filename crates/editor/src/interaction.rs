@@ -29,7 +29,7 @@ impl Interaction {
     ) -> Result<bool, String> {
         pointer.validate()?;
         if session.paint_enabled() {
-            let token = session.begin_paint_selection(crate::session::paint::Spec {
+            let spec = crate::session::paint::Spec {
                 camera: session.camera(),
                 pointer,
                 radius: session.paint_radius(),
@@ -39,7 +39,13 @@ impl Interaction {
                     session.area_mode()
                 },
                 faces: session.face_mode(),
-            })?;
+            };
+            let operation = session.paint_operation();
+            let token = if operation == crate::session::paint::Operation::Selection {
+                session.begin_paint_selection(spec)?
+            } else {
+                session.begin_texture_stroke(spec, operation)?
+            };
             self.paint_token = Some(token);
             self.area = None;
             self.handle_epoch = None;
@@ -73,15 +79,13 @@ impl Interaction {
                 .paint_stroke()
                 .filter(|stroke| stroke.token == token)
             else {
-                self.paint_token = None;
                 return Ok(true);
             };
             if stroke.spec.pointer.size != pointer.size {
                 session.cancel_paint_selection(token)?;
-                self.paint_token = None;
                 return Err("Viewport resized; start a new paint stroke".into());
             }
-            session.update_paint_selection(token, &[pointer.position])?;
+            session.update_active_stroke(token, &[pointer.position])?;
             return Ok(true);
         }
         if let Some(epoch) = self.handle_epoch {
@@ -124,8 +128,8 @@ impl Interaction {
                 session.cancel_paint_selection(token)?;
                 return Err("Viewport resized; start a new paint stroke".into());
             }
-            session.update_paint_selection(token, &[pointer.position])?;
-            session.commit_paint_selection(Actor::User, token)?;
+            session.update_active_stroke(token, &[pointer.position])?;
+            session.commit_active_stroke(Actor::User, token)?;
             return Ok(true);
         }
         if let Some(epoch) = self.handle_epoch.take() {
@@ -262,6 +266,7 @@ mod tests {
                 interaction.down(&mut session, pointer, false).unwrap();
                 let spec = session.paint_stroke().unwrap().spec;
                 let replacement = session.begin_paint_selection(spec).unwrap();
+                interaction.moved(&mut session, pointer).unwrap();
                 if cancel {
                     interaction.cancel(&mut session);
                 } else {
@@ -285,6 +290,59 @@ mod tests {
             assert!(session.paint_stroke().is_none());
             assert!(session.selected_ids().is_empty());
             assert_eq!(session.document().undo_labels().count(), 1);
+        }
+    }
+
+    #[test]
+    fn texture_gestures_commit_the_shared_preview_in_every_projection() {
+        for projection in [
+            Projection::Top,
+            Projection::Front,
+            Projection::Side,
+            Projection::Perspective,
+        ] {
+            let mut session = fixture(projection, None);
+            let selection = session.selected_ids();
+            let center = session.camera().right().as_dvec3() * 300.0;
+            let map_core::ObjectId::Solid(source) = session
+                .create_block(
+                    Actor::Agent,
+                    center - DVec3::splat(16.0),
+                    center + DVec3::splat(16.0),
+                    "metal/sample",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let face = map_core::surface::FaceId {
+                solid: source,
+                side: session.document().solid(source).unwrap().sides[0].id,
+            };
+            session.sample_face_texture(face).unwrap();
+            session.select(&selection, SelectMode::Replace).unwrap();
+            session
+                .set_paint_operation(
+                    Actor::User,
+                    true,
+                    6.0,
+                    crate::session::paint::Operation::Material,
+                )
+                .unwrap();
+            let pointer = Pointer {
+                position: DVec2::new(400.0, 300.0),
+                size: (800, 600),
+            };
+            let history = session.document().undo_labels().count();
+            let mut interaction = Interaction::default();
+            interaction.down(&mut session, pointer, false).unwrap();
+            interaction.moved(&mut session, pointer).unwrap();
+            let preview = session.render_document().vmf().clone();
+            interaction.up(&mut session, pointer).unwrap();
+            assert_eq!(session.document().vmf(), &preview);
+            assert_eq!(session.selected_ids(), selection);
+            assert_eq!(session.document().undo_labels().count(), history + 1);
         }
     }
 

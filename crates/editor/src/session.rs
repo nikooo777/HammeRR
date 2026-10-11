@@ -1608,6 +1608,13 @@ impl Session {
             })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.paint
+                    .stroke
+                    .as_ref()
+                    .and_then(|stroke| stroke.texture.as_ref())
+                    .map(|texture| &texture.document)
+            })
             .unwrap_or(&self.document);
         let mut hidden = HashSet::new();
         if !self.view.tool_textures {
@@ -1637,6 +1644,13 @@ impl Session {
             })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.paint
+                    .stroke
+                    .as_ref()
+                    .and_then(|stroke| stroke.texture.as_ref())
+                    .map(|texture| &texture.document)
+            })
             .unwrap_or(&self.document)
     }
 
@@ -1730,6 +1744,13 @@ impl Session {
             })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.paint
+                    .stroke
+                    .as_ref()
+                    .and_then(|stroke| stroke.texture.as_ref())
+                    .map(|texture| &texture.document)
+            })
             .unwrap_or(&self.document);
         let mut mesh = SceneMesh::build_with_faces(
             document.vmf(),

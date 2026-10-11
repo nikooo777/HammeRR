@@ -234,9 +234,25 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
         Some(render::handles::Mode::Rotate) => 2,
         Some(render::handles::Mode::Scale) => 3,
     };
-    let index = if session.paint_enabled() { 4 } else { index };
+    let index = if session.paint_enabled() {
+        if session.paint_operation() == session::paint::Operation::Selection {
+            4
+        } else {
+            5
+        }
+    } else {
+        index
+    };
     app.set_handles_mode_index(index);
     app.set_paint_radius(session.paint_radius() as f32);
+    app.set_texture_paint_mode(i32::from(
+        session.paint_operation() == session::paint::Operation::Projection,
+    ));
+    app.set_has_texture_stroke(
+        session
+            .paint_stroke()
+            .is_some_and(|stroke| stroke.texture.is_some()),
+    );
     app.set_has_paint_preview(session.paint_stroke().is_some());
     app.set_paint_token(
         session
@@ -296,16 +312,28 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
     } else if let Some(preview) = session.transform_preview() {
         format!("{} objects · transform preview", preview.ids.len())
     } else if let Some(stroke) = session.paint_stroke() {
-        format!(
-            "{} {} · paint preview",
-            stroke.objects.len() + stroke.faces.len(),
-            match (stroke.spec.faces, stroke.objects.len() + stroke.faces.len()) {
-                (true, 1) => "face",
-                (true, _) => "faces",
-                (false, 1) => "object",
-                (false, _) => "objects",
-            }
-        )
+        if let Some(texture) = &stroke.texture {
+            format!(
+                "{} {} will change · texture preview",
+                texture.changed,
+                if texture.changed == 1 {
+                    "face"
+                } else {
+                    "faces"
+                }
+            )
+        } else {
+            format!(
+                "{} {} · paint preview",
+                stroke.objects.len() + stroke.faces.len(),
+                match (stroke.spec.faces, stroke.objects.len() + stroke.faces.len()) {
+                    (true, 1) => "face",
+                    (true, _) => "faces",
+                    (false, 1) => "object",
+                    (false, _) => "objects",
+                }
+            )
+        }
     } else if let Some(preview) = session.area_preview() {
         if preview.faces {
             format!(
@@ -353,6 +381,36 @@ fn transform_tool_from_controls(app: &AppWindow) -> Result<TransformTool, String
     })
 }
 
+fn paint_operation_from_controls(app: &AppWindow) -> session::paint::Operation {
+    if app.get_handles_mode_index() != 5 {
+        session::paint::Operation::Selection
+    } else if app.get_texture_paint_mode() == 1 {
+        session::paint::Operation::Projection
+    } else {
+        session::paint::Operation::Material
+    }
+}
+
+fn refresh_texture_brush_sample(app: &AppWindow, session: &mut Session) {
+    let material = session
+        .surface_sample()
+        .map(|sample| sample.material.to_ascii_lowercase())
+        .unwrap_or_default();
+    if app.get_texture_sample_material().as_str() != material {
+        let preview = if material.is_empty() {
+            slint::Image::default()
+        } else {
+            session
+                .material_preview(&material)
+                .ok()
+                .map(|preview| preview_image(&preview))
+                .unwrap_or_default()
+        };
+        app.set_texture_sample_material(material.into());
+        app.set_texture_sample_preview(preview);
+    }
+}
+
 fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
     app.on_transform_tool_changed({
         let (app, shared) = (app.as_weak(), shared.clone());
@@ -362,10 +420,11 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
             let result = transform_tool_from_controls(&app)
                 .and_then(|tool| session.set_transform_tool(Actor::User, tool))
                 .and_then(|()| {
-                    session.set_paint_tool(
+                    session.set_paint_operation(
                         Actor::User,
-                        app.get_handles_mode_index() == 4,
+                        app.get_handles_mode_index() >= 4,
                         f64::from(app.get_paint_radius()),
+                        paint_operation_from_controls(&app),
                     )
                 });
             if let Err(error) = result {
@@ -379,10 +438,11 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
         move || {
             let app = app.unwrap();
             let mut session = lock(&shared);
-            if let Err(error) = session.set_paint_tool(
+            if let Err(error) = session.set_paint_operation(
                 Actor::User,
-                app.get_handles_mode_index() == 4,
+                app.get_handles_mode_index() >= 4,
                 f64::from(app.get_paint_radius()),
+                paint_operation_from_controls(&app),
             ) {
                 app.set_message(error.into());
             }
@@ -431,7 +491,7 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
                 app.get_paint_token()
                     .parse()
                     .map_err(|_| "Paint preview changed; refresh it".to_string())
-                    .and_then(|token| session.commit_paint_selection(Actor::User, token))
+                    .and_then(|token| session.commit_active_stroke(Actor::User, token))
                     .map(|_| ())
             } else {
                 session.commit_area_selection().map(|_| ())
@@ -3059,8 +3119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             app.set_message(match result {
                 Ok(()) => {
-                    "Texture sampled. Select target faces and open Edit face textures to paint."
-                        .into()
+                    "Texture sampled. Choose Paint texture or open Edit face textures.".into()
                 }
                 Err(error) => error.into(),
             });
@@ -3597,6 +3656,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
+                    refresh_texture_brush_sample(&app, &mut session);
                     if let Some(controller) = &ui.volume
                         && controller.window.window().is_visible()
                     {
@@ -3971,6 +4031,124 @@ mod tests {
             assert_eq!(lock(&shared).document().undo_labels().count(), 1);
         }
     }
+    #[test]
+    fn texture_brush_controls_preview_apply_and_cancel_without_desktop_input() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let ObjectId::Solid(source) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::new(256.0, 0.0, 0.0),
+                DVec3::new(320.0, 64.0, 64.0),
+                "metal/sample",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = state
+            .document()
+            .solid(source)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = map_core::surface::FaceId {
+            solid: source,
+            side,
+        };
+        state.sample_face_texture(face).unwrap();
+        state.select_faces(&[face], SelectMode::Replace).unwrap();
+        state.set_camera(render::Camera::planar(
+            Projection::Top,
+            Vec3::splat(32.0),
+            256.0,
+        ));
+        let shared = Arc::new(Mutex::new(state));
+        let app = AppWindow::new().unwrap();
+        bind_manipulation_controls(&app, shared.clone());
+        refresh_panel(&app, &mut lock(&shared));
+        refresh_texture_brush_sample(&app, &mut lock(&shared));
+        app.show().unwrap();
+        app.window().set_size(slint::PhysicalSize::new(1600, 960));
+        app.set_handles_mode_index(5);
+        app.set_texture_paint_mode(1);
+        app.invoke_transform_tool_changed();
+        assert_eq!(
+            lock(&shared).paint_operation(),
+            session::paint::Operation::Projection
+        );
+        assert_eq!(app.get_texture_sample_material(), "metal/sample");
+        for apply in [false, true] {
+            let mut state = lock(&shared);
+            let before = state.document().vmf().clone();
+            let history = state.document().undo_labels().count();
+            let spec = session::paint::Spec {
+                camera: state.camera(),
+                pointer: Pointer {
+                    position: DVec2::new(400.0, 300.0),
+                    size: (800, 600),
+                },
+                radius: 12.0,
+                mode: SelectMode::Replace,
+                faces: true,
+            };
+            let old = state
+                .begin_texture_stroke(spec, session::paint::Operation::Projection)
+                .unwrap();
+            refresh_interaction(&app, &state);
+            let token = state
+                .begin_texture_stroke(spec, session::paint::Operation::Projection)
+                .unwrap();
+            let preview = state.render_document().vmf().clone();
+            drop(state);
+            app.invoke_apply_area_selection();
+            assert_ne!(old, token);
+            assert_eq!(lock(&shared).paint_stroke().unwrap().token, token);
+            refresh_interaction(&app, &lock(&shared));
+            save_ui_snapshot(app.window(), "texture-stroke-controls");
+            for label in ["Apply textures", "Cancel"] {
+                assert_dialog_button_visible(&app, label);
+            }
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                if apply { "Apply textures" } else { "Cancel" },
+            )
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+            assert!(lock(&shared).paint_stroke().is_none());
+            assert_eq!(
+                lock(&shared).document().vmf(),
+                if apply { &preview } else { &before }
+            );
+            assert_eq!(lock(&shared).selected_faces(), vec![face]);
+            assert_eq!(
+                lock(&shared).document().undo_labels().count(),
+                history + usize::from(apply)
+            );
+        }
+    }
+
     #[test]
     fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_input() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(

@@ -100,6 +100,12 @@ impl Session {
 
     pub fn sample_face_texture(&mut self, face: FaceId) -> Result<(), String> {
         let sample = surface::sample(&self.document, face).map_err(|error| error.to_string())?;
+        if self
+            .paint_stroke()
+            .is_some_and(|stroke| stroke.texture.is_some())
+        {
+            self.clear_paint_stroke();
+        }
         self.surface_sample = Some(sample);
         self.view_serial += 1;
         Ok(())

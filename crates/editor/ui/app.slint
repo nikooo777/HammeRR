@@ -1362,6 +1362,10 @@ export component AppWindow inherits Window {
     in property <bool> has-transform-preview;
     in property <bool> has-area-preview;
     in property <bool> has-paint-preview;
+    in property <bool> has-texture-stroke;
+    in-out property <int> texture-paint-mode;
+    in property <string> texture-sample-material;
+    in property <image> texture-sample-preview;
     in property <string> paint-token;
     in-out property <float> paint-radius: 12;
     callback paint-settings-changed();
@@ -1673,7 +1677,7 @@ export component AppWindow inherits Window {
                 if !root.drawing-block && !root.clipping: Rectangle {
                     x: 12px;
                     y: 64px;
-                    width: min(root.handles-mode-index == 4 ? 550px : 900px, parent.width - 24px);
+                    width: min(root.handles-mode-index == 4 ? 550px : root.handles-mode-index == 5 ? 610px : 900px, parent.width - 24px);
                     height: 44px;
                     background: #20252eee;
                     border-color: #394252;
@@ -1684,7 +1688,7 @@ export component AppWindow inherits Window {
                         spacing: 8px;
                         ComboBox {
                             width: 150px;
-                            model: ["Select", "Move handles", "Rotate handles", "Scale handles", "Paint selection"];
+                            model: ["Select", "Move handles", "Rotate handles", "Scale handles", "Paint selection", "Paint texture"];
                             current-index <=> root.handles-mode-index;
                             selected => { root.transform-tool-changed(); }
                         }
@@ -1704,20 +1708,26 @@ export component AppWindow inherits Window {
                             Text { text: "Angle snap · °"; color: #c8ccd4; vertical-alignment: center; }
                             LineEdit { width: 65px; text <=> root.rotation-step; input-type: decimal; accepted => { root.transform-tool-changed(); } }
                         }
-                        if root.handles-mode-index == 4: HorizontalLayout {
+                        if root.handles-mode-index == 5: ComboBox {
+                            width: 170px;
+                            model: ["Material only", "Copy projection"];
+                            current-index <=> root.texture-paint-mode;
+                            selected => { root.paint-settings-changed(); }
+                        }
+                        if root.handles-mode-index >= 4: HorizontalLayout {
                             spacing: 6px;
                             horizontal-stretch: 0;
                             Text { text: "Radius · " + round(root.paint-radius) + " px"; color: #c8ccd4; vertical-alignment: center; horizontal-stretch: 0; }
                             Slider { width: 120px; minimum: 2; maximum: 64; value: root.paint-radius; changed(value) => { root.paint-radius = round(value); root.paint-settings-changed(); } }
                         }
-                        if root.handles-mode-index != 4: Text { text: "Area"; color: #c8ccd4; vertical-alignment: center; }
-                        if root.handles-mode-index != 4: ComboBox {
+                        if root.handles-mode-index < 4: Text { text: "Area"; color: #c8ccd4; vertical-alignment: center; }
+                        if root.handles-mode-index < 4: ComboBox {
                             width: 125px;
                             model: ["Intersects", "Fully inside"];
                             current-index <=> root.area-rule-index;
                             selected => { root.area-settings-changed(); }
                         }
-                        ComboBox {
+                        if root.handles-mode-index != 5: ComboBox {
                             width: 100px;
                             model: ["Replace", "Add", "Remove", "Toggle"];
                             current-index <=> root.area-mode-index;
@@ -1725,9 +1735,19 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+                if root.handles-mode-index == 5: Rectangle {
+                    x: 12px; y: 118px; width: min(680px, parent.width - 24px); height: 44px;
+                    background: #20252eee; border-color: #394252; border-width: 1px; border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 6px; spacing: 8px;
+                        Image { width: 30px; height: 30px; source: root.texture-sample-preview; image-fit: contain; }
+                        Text { text: root.texture-sample-material == "" ? "Select one source face, then sample its texture" : root.texture-sample-material; color: #c8ccd4; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { text: "Sample face"; enabled: root.can-sample-face; clicked => { root.sample-face-texture(); } }
+                    }
+                }
                 if root.has-transform-preview || root.has-area-preview || root.has-paint-preview: Rectangle {
                     x: 12px;
-                    y: 118px;
+                    y: root.handles-mode-index == 5 ? 168px : 118px;
                     width: min(700px, parent.width - 24px);
                     height: 46px;
                     background: #20252eee;
@@ -1738,7 +1758,7 @@ export component AppWindow inherits Window {
                         padding: 7px;
                         spacing: 8px;
                         Text { text: root.interaction-summary; color: #9dd8f1; vertical-alignment: center; horizontal-stretch: 1; }
-                        Button { text: root.has-transform-preview ? "Apply transform" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }
+                        Button { text: root.has-transform-preview ? "Apply transform" : root.has-texture-stroke ? "Apply textures" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }
                         Button { text: "Cancel"; clicked => { root.cancel-interaction(); } }
                     }
                 }
@@ -1823,7 +1843,7 @@ export component AppWindow inherits Window {
                     background: #000000a0;
 
                     hint := Text {
-                        text: root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
+                        text: root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
                         color: #c8ccd4;
                         font-size: 12px;
                     }

@@ -167,6 +167,8 @@ select_volume queries a world-space box, with shared candidate previews, framing
 set_paint_tool configures a circular selection brush; begin_paint_selection starts a visible-hit stroke, \
 update_paint_selection extends its pixel path, and get_paint_selection exposes candidates and limits. \
 Use its token with commit_paint_selection or cancel_paint_selection; render_view shows the shared preview. \
+For sampled material/projection strokes, sample_face_texture then begin_texture_stroke, update_texture_stroke, \
+get_texture_stroke and commit_texture_stroke or cancel_texture_stroke share one undoable preview with the UI. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -793,6 +795,8 @@ pub struct TransformToolArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PaintToolArgs {
     pub enabled: Option<bool>,
+    /// selection, material or projection. Texture strokes require a sampled source face.
+    pub operation: Option<String>,
     /// Brush radius in screen pixels, from 2 to 64.
     pub radius: Option<f64>,
 }
@@ -804,6 +808,15 @@ pub struct BeginPaintArgs {
     /// objects or faces; omitted uses the current selection mode.
     pub selection_mode: Option<String>,
     /// replace, add, remove or toggle; omitted uses the shared selection rule.
+    pub mode: Option<String>,
+    pub camera: Option<CameraSpec>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BeginTextureStrokeArgs {
+    pub pointer: PointerArgs,
+    pub radius: Option<f64>,
+    /// material or projection; defaults to the shared texture operation, or material.
     pub mode: Option<String>,
     pub camera: Option<CameraSpec>,
 }
@@ -3963,14 +3976,24 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Enable/disable the shared Paint selection tool and set its screen-space brush radius (2–64 pixels). Changing settings cancels the active stroke; selection/history remain unchanged. UI equivalent: Paint selection and Radius."
+        description = "Enable/disable the shared circular paint brush, choose selection/material/projection and set a 2–64 screen-pixel radius. Changing settings cancels the active stroke without map or selection edits. Texture strokes use sample_face_texture; inspect get_surface_sample and preview_material for the source. UI equivalents: Paint selection / Paint texture, operation and Radius."
     )]
     fn set_paint_tool(&self, Parameters(args): Parameters<PaintToolArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
             let enabled = args.enabled.unwrap_or(session.paint_enabled());
             let radius = args.radius.unwrap_or(session.paint_radius());
-            session.set_paint_tool(Actor::Agent, enabled, radius)?;
+            let operation = args
+                .operation
+                .as_deref()
+                .map(crate::session::paint::Operation::parse)
+                .transpose()?
+                .unwrap_or(session.paint_operation());
+            if operation == crate::session::paint::Operation::Selection {
+                session.set_paint_tool(Actor::Agent, enabled, radius)?;
+            } else {
+                session.set_paint_operation(Actor::Agent, enabled, radius, operation)?;
+            }
             Ok(session.paint_selection_json(0, 100))
         })
     }
@@ -4050,6 +4073,99 @@ impl EditorServer {
             Ok(
                 json!({"matched_objects":matches.objects.len(),"matched_faces":matches.faces.len(),"selected_objects":session.selected_ids().len(),"selected_faces":session.selected_faces().len()}),
             )
+        })
+    }
+
+    #[tool(
+        description = "Begin a sampled texture stroke over nearest visible faces. First call sample_face_texture. material preserves target UVs; projection copies the captured material and UV projection and rejects collapsed mappings. Same circular sampler, radius, camera/viewport and limits as paint selection. Returns a shared token and rendered preview; map, selection and undo remain unchanged. Invalid starts preserve the existing preview."
+    )]
+    fn begin_texture_stroke(
+        &self,
+        Parameters(args): Parameters<BeginTextureStrokeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let pointer = args.pointer.resolve()?;
+            let mut session = self.session();
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, pointer.size.0 as f32 / pointer.size.1 as f32)?;
+            let operation = args
+                .mode
+                .as_deref()
+                .map(crate::session::paint::Operation::parse)
+                .transpose()?
+                .unwrap_or_else(|| {
+                    if session.paint_operation() == crate::session::paint::Operation::Projection {
+                        crate::session::paint::Operation::Projection
+                    } else {
+                        crate::session::paint::Operation::Material
+                    }
+                });
+            let radius = args.radius.unwrap_or(session.paint_radius());
+            session.begin_texture_stroke(
+                crate::session::paint::Spec {
+                    camera,
+                    pointer,
+                    radius,
+                    faces: true,
+                    mode: SelectMode::Replace,
+                },
+                operation,
+            )?;
+            Ok(session.paint_selection_json(0, 100))
+        })
+    }
+
+    #[tool(
+        description = "Extend the exact sampled texture stroke through ordered pixel points. Frontmost faces are deduplicated; only new faces are painted in the draft. Invalid projection, point or budget updates preserve the previous preview atomically. The stroke retains its captured sample; sampling a different source invalidates it."
+    )]
+    fn update_texture_stroke(&self, Parameters(args): Parameters<UpdatePaintArgs>) -> ToolResult {
+        run(|| {
+            let points = args
+                .points
+                .into_iter()
+                .map(DVec2::from_array)
+                .collect::<Vec<_>>();
+            let mut session = self.session();
+            session.update_texture_stroke(parse_token(&args.token)?, &points)?;
+            Ok(session.paint_selection_json(0, 100))
+        })
+    }
+
+    #[tool(
+        description = "Inspect shared brush operation/radius, texture-stroke token, captured source/material, changed-face count, camera, cursor, limits and paginated candidates. operation distinguishes texture and selection strokes. Use render_view for the draft and get_surface_sample for the source projection.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_texture_stroke(
+        &self,
+        Parameters(args): Parameters<MaterialSearchPageArgs>,
+    ) -> ToolResult {
+        ok(self
+            .session()
+            .paint_selection_json(args.offset.unwrap_or(0), args.limit.unwrap_or(100)))
+    }
+
+    #[tool(
+        description = "Commit the exact texture stroke as one atomic face edit, preserving selection, geometry, unrelated UV/lighting metadata and hidden faces. The applied result matches the preview. Empty or unchanged strokes add no undo step; stale or selection-stroke tokens are rejected. Equivalent to releasing a texture drag or Apply textures."
+    )]
+    fn commit_texture_stroke(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let changed = session.commit_texture_stroke(Actor::Agent, parse_token(&args.token)?)?;
+            Ok(json!({"faces_changed":changed,"state":session.paint_selection_json(0,100)}))
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact texture-stroke preview and brush outline without changing map, selection or undo history. A stale token cannot cancel another client's newer stroke."
+    )]
+    fn cancel_texture_stroke(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let token = parse_token(&args.token)?;
+            session.cancel_texture_stroke(token)?;
+            Ok(session.paint_selection_json(0, 100))
         })
     }
 

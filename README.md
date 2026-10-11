@@ -31,7 +31,7 @@ and the shared entity inspector and activity panel.*
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
 | Design context | Map briefs, object notes and editor-only regions; shared drafts, search, relevant-context retrieval, bounded storage and undo. |
-| Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, per-face/grouped fitting, view projection and placement, with cancellable previews and grouped material thumbnails. |
+| Face materials | Individual face selection, sampled material/projection strokes and batch painting, edge wrapping, world/face alignment, UV controls, per-face/grouped fitting, view projection and placement, with cancellable previews and grouped material thumbnails. |
 | Material replacement | Exact map/object/face searches, explicit hidden-face handling, matching-face selection, guarded previews and atomic replacement. |
 | Face lighting | Batch lightmap scales and smoothing groups, mixed-value controls, cancellable previews, and density/group viewport diagnostics. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
@@ -327,6 +327,24 @@ search selections require a fresh search before applying.
 
 ![Material replacement scope, match counts, previews and cancellation](docs/images/material-replacement.png)
 
+
+### Texture paint strokes
+
+Select one face and choose **Sample face texture**, then choose **Paint texture**
+in the viewport toolbar. The source material and thumbnail appear below the
+brush controls. Choose **Material only** to keep the target UVs, or **Copy
+projection** to copy the sampled axes, offsets, scales and rotation. Adjust
+**Radius**, then drag over visible faces.
+
+The draft shows the texture changes and the number of faces that will change.
+Release or **Apply textures** commits the whole stroke in one undo step;
+**Cancel** or Escape discards it. Selection stays unchanged. Repeated passes
+paint a face once, and empty or unchanged strokes add no undo entry. Hidden
+faces and point helpers are skipped. A projection that collapses on a target
+surface is rejected. Sampling another source cancels the active draft.
+
+![Sampled wood-floor painting across five stair treads with shared preview and cancellation](docs/images/texture-strokes.png)
+
 ### Face lighting
 
 Select faces and open **Face lighting…**. Set a lightmap scale in world units
@@ -526,6 +544,7 @@ For example, place a warm light:
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
+| Texture strokes | `begin_texture_stroke`, `update_texture_stroke`, `get_texture_stroke`, `commit_texture_stroke`, `cancel_texture_stroke`, `set_paint_tool` |
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials`, `commit_face_preview`, `cancel_face_preview` |
 | Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
@@ -564,6 +583,7 @@ python -B scripts/validate_material_replacement.py --output /tmp/hammerr-materia
 python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
 python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-check
 python -B scripts/validate_paint_selection.py --output /tmp/hammerr-paint-check
+python -B scripts/validate_texture_strokes.py --output /tmp/hammerr-texture-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
@@ -605,6 +625,11 @@ or over-budget updates preserve the previous preview. A stroke accepts up to
 256 points, 32,768 new samples and 1,048,576 pixel visits per update, with
 262,144 samples total.
 Selection strokes add no map undo step.
+
+`sample_face_texture` captures a source for `begin_texture_stroke`. Use `mode: "material"` or `"projection"`, then send pixel points to `update_texture_stroke`.
+Inspect `get_texture_stroke` and `render_view`; commit or cancel with the token.
+Invalid updates preserve the previous draft. `set_paint_tool` accepts
+`operation` to choose selection, material or projection in the shared toolbar.
 
 `save_camera_view` stores the current shared camera under `name`; `replace_id`
 updates an existing view. Pass both `generation` and `revision` from
@@ -719,7 +744,7 @@ unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes broader map checks, vertex and edge editing,
-displacement tools, model rendering, texture paint strokes and chained texture seams.
+displacement tools, model rendering, chained texture seams.
 
 ## Project layout
 

@@ -11,6 +11,7 @@ pub struct Preview {
     pub document: Document,
     pub token: u64,
     delta: DVec3,
+    texture_lock: bool,
     replacements: Vec<Replacement>,
     generation: u64,
     revision: u64,
@@ -104,8 +105,8 @@ impl Session {
         Ok(json!({
             "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
             "brushes":brushes, "selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
-            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"delta":preview.delta.to_array(),"brushes":preview.replacements.len()})),
-            "texture_mode":"world", "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS},
+            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len()})),
+            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS},
         }))
     }
 
@@ -198,6 +199,7 @@ impl Session {
         &mut self,
         delta: DVec3,
         snap: bool,
+        texture_lock: bool,
         stamp: &str,
     ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
@@ -212,8 +214,13 @@ impl Session {
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        let replacements = subobject::plan_move(&self.document, &components, delta)
-            .map_err(|error| error.to_string())?;
+        let replacements = subobject::plan_move_with_texture_lock(
+            &self.document,
+            &components,
+            delta,
+            texture_lock,
+        )
+        .map_err(|error| error.to_string())?;
         let mut document = self.document.clone();
         document
             .edit("preview component move", |tx| {
@@ -226,6 +233,7 @@ impl Session {
             document,
             token,
             delta,
+            texture_lock,
             replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
@@ -390,7 +398,7 @@ mod tests {
         let revision = session.document.revision();
         let history = session.document.undo_labels().count();
         let token = session
-            .preview_component_move(DVec3::Z * 16.0, false, &session.component_stamp())
+            .preview_component_move(DVec3::Z * 16.0, false, false, &session.component_stamp())
             .unwrap();
         assert_eq!(session.document.vmf(), &original);
         assert_eq!(session.document.revision(), revision);
@@ -407,7 +415,7 @@ mod tests {
         );
         assert!(
             session
-                .preview_component_move(DVec3::Z * -64.0, false, &session.component_stamp())
+                .preview_component_move(DVec3::Z * -64.0, false, false, &session.component_stamp())
                 .is_err()
         );
         assert_eq!(session.render_document().vmf(), &preview);
@@ -424,15 +432,70 @@ mod tests {
     }
 
     #[test]
+    fn texture_attachment_rejection_keeps_world_preview_and_locked_commit_is_exact() {
+        let (mut session, id, _) = fixture();
+        let original = session.document.vmf().clone();
+        let token = session
+            .preview_component_move(DVec3::Z * 16.0, false, false, &session.component_stamp())
+            .unwrap();
+        let draft = session.render_document().vmf().clone();
+        assert!(
+            session
+                .preview_component_move(DVec3::Z * 16.0, false, true, &session.component_stamp())
+                .is_err()
+        );
+        assert_eq!(session.render_document().vmf(), &draft);
+        assert_eq!(session.components.preview.as_ref().unwrap().token, token);
+        assert_eq!(
+            session.component_report(&[]).unwrap()["texture_mode"],
+            "world"
+        );
+        session.cancel_component_move(token).unwrap();
+        let shape = session.component_topology(&[id]).unwrap().remove(0);
+        let top = shape
+            .faces
+            .iter()
+            .find(|face| {
+                face.vertices
+                    .iter()
+                    .all(|index| shape.vertices[*index].position.z == 64.0)
+            })
+            .unwrap();
+        session
+            .select_components(
+                &[Component {
+                    solid: id,
+                    sides: vec![top.side],
+                }],
+                SelectMode::Replace,
+                &session.component_stamp(),
+            )
+            .unwrap();
+        let token = session
+            .preview_component_move(DVec3::Z * 16.0, false, true, &session.component_stamp())
+            .unwrap();
+        let draft = session.render_document().vmf().clone();
+        assert_eq!(
+            session.component_report(&[]).unwrap()["texture_mode"],
+            "attached"
+        );
+        assert_eq!(session.document.vmf(), &original);
+        session.commit_component_move(Actor::Agent, token).unwrap();
+        assert_eq!(session.document.vmf(), &draft);
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.document.vmf(), &original);
+    }
+
+    #[test]
     fn guards_prevent_stale_clients_from_replacing_or_cancelling_drafts() {
         let (mut session, _, component) = fixture();
         let stale = session.component_stamp();
         let first = session
-            .preview_component_move(DVec3::Z * 16.0, false, &stale)
+            .preview_component_move(DVec3::Z * 16.0, false, false, &stale)
             .unwrap();
         assert!(
             session
-                .preview_component_move(DVec3::Z * 24.0, false, &stale)
+                .preview_component_move(DVec3::Z * 24.0, false, false, &stale)
                 .is_err()
         );
         assert!(
@@ -441,7 +504,7 @@ mod tests {
                 .is_err()
         );
         let second = session
-            .preview_component_move(DVec3::Z * 32.0, false, &session.component_stamp())
+            .preview_component_move(DVec3::Z * 32.0, false, false, &session.component_stamp())
             .unwrap();
         assert!(session.cancel_component_move(first).is_err());
         assert!(session.commit_component_move(Actor::Agent, first).is_err());
@@ -452,7 +515,7 @@ mod tests {
             &BTreeSet::from([component.clone()])
         );
         let third = session
-            .preview_component_move(DVec3::Z * 16.0, false, &session.component_stamp())
+            .preview_component_move(DVec3::Z * 16.0, false, false, &session.component_stamp())
             .unwrap();
         session
             .select_components(&[component], SelectMode::Toggle, &session.component_stamp())
@@ -465,7 +528,7 @@ mod tests {
     fn snapping_source_changes_and_other_previews_invalidate_components() {
         let (mut session, _, _) = fixture();
         let token = session
-            .preview_component_move(DVec3::Z * 19.0, true, &session.component_stamp())
+            .preview_component_move(DVec3::Z * 19.0, true, false, &session.component_stamp())
             .unwrap();
         assert_eq!(
             session.components.preview.as_ref().unwrap().delta,
@@ -478,7 +541,7 @@ mod tests {
         assert!(session.component_selection().is_empty());
         let (mut session, id, _) = fixture();
         let token = session
-            .preview_component_move(DVec3::Z * 16.0, false, &session.component_stamp())
+            .preview_component_move(DVec3::Z * 16.0, false, false, &session.component_stamp())
             .unwrap();
         session
             .edit(Actor::Agent, "external edit", |tx| {

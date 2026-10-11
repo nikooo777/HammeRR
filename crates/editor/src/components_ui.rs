@@ -172,6 +172,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let preview = &report["preview"];
     let token = preview["token"].as_str().unwrap_or_default();
     if !preview.is_null() && window.get_token() != token {
+        window.set_texture_lock(preview["texture_lock"].as_bool().unwrap_or(false));
         window.set_move_x(preview["delta"][0].as_f64().unwrap().to_string().into());
         window.set_move_y(preview["delta"][1].as_f64().unwrap().to_string().into());
         window.set_move_z(preview["delta"][2].as_f64().unwrap().to_string().into());
@@ -179,6 +180,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_token(token.into());
     window.set_ready(
         !preview.is_null()
+            && window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
             && [
                 window.get_move_x(),
                 window.get_move_y(),
@@ -264,7 +266,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
         move || {
             let window = window.unwrap();
             window.set_ready(false);
-            window.set_message("Offsets changed. Preview the new move before applying.".into());
+            window.set_message("Settings changed. Preview the new move before applying.".into());
         }
     });
     window.on_preview_edit({
@@ -289,6 +291,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                 session.preview_component_move(
                     DVec3::new(delta[0], delta[1], delta[2]),
                     window.get_snap(),
+                    window.get_texture_lock(),
                     window.get_stamp().as_str(),
                 )
             });

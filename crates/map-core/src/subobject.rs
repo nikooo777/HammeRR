@@ -228,6 +228,15 @@ pub fn plan_move(
     components: &[Component],
     delta: DVec3,
 ) -> Result<Vec<Replacement>, EditError> {
+    plan_move_with_texture_lock(document, components, delta, false)
+}
+
+pub fn plan_move_with_texture_lock(
+    document: &Document,
+    components: &[Component],
+    delta: DVec3,
+    texture_lock: bool,
+) -> Result<Vec<Replacement>, EditError> {
     if components.is_empty() || components.len() > MAX_COMPONENTS {
         return Err(invalid("Select between 1 and 512 faces, vertices or edges"));
     }
@@ -329,13 +338,25 @@ pub fn plan_move(
                 )));
             }
             if face.vertices.iter().any(|index| selected.contains(index)) {
-                replacement
+                let target = replacement
                     .sides
                     .iter_mut()
                     .find(|side| side.id == face.side)
-                    .unwrap()
-                    .plane
-                    .0 = triple;
+                    .unwrap();
+                if texture_lock {
+                    let before = face
+                        .vertices
+                        .iter()
+                        .map(|index| topology.vertices[*index].position)
+                        .collect::<Vec<_>>();
+                    let projection = crate::texture_deform::attach(target, &before, &ring)
+                        .map_err(|error| {
+                            invalid(format!("Brush {id}, face {}: {error}", face.side))
+                        })?;
+                    target.u_axis = projection.u;
+                    target.v_axis = projection.v;
+                }
+                target.plane.0 = triple;
             }
         }
         let rebuilt = self::topology(&replacement)?;
@@ -487,6 +508,72 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first[0].solid, overlap[0].solid);
+    }
+
+    #[test]
+    fn texture_attachment_preserves_face_corners_and_rejects_trapezoids() {
+        let mut document = Document::empty();
+        let id = block(&mut document, DVec3::ZERO, 64.0);
+        document
+            .edit("texture", |tx| {
+                for side in &mut tx.solid_mut(id)?.sides {
+                    side.u_axis.offset = 17.25;
+                    side.v_axis.scale = -0.5;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let source = document.solid(id).unwrap();
+        let before = topology(source).unwrap();
+        let top = before
+            .faces
+            .iter()
+            .find(|face| {
+                face.vertices
+                    .iter()
+                    .all(|index| before.vertices[*index].position.z == 64.0)
+            })
+            .unwrap();
+        let selection = [Component {
+            solid: id,
+            sides: vec![top.side],
+        }];
+        let plan =
+            plan_move_with_texture_lock(&document, &selection, DVec3::Z * 32.0, true).unwrap();
+        let changed = &plan[0].solid;
+        let after = topology(changed).unwrap();
+        for old in &source.sides {
+            let new = changed.sides.iter().find(|side| side.id == old.id).unwrap();
+            let mut expected = old.clone();
+            expected.plane = new.plane;
+            expected.u_axis = new.u_axis;
+            expected.v_axis = new.v_axis;
+            assert_eq!(*new, expected);
+            for vertex in before
+                .vertices
+                .iter()
+                .filter(|vertex| vertex.sides.contains(&old.id))
+            {
+                let point = after.vertices[after.resolve(&vertex.sides).unwrap()[0]].position;
+                assert!(
+                    crate::texel_uv(old, vertex.position)
+                        .abs_diff_eq(crate::texel_uv(new, point), 1e-8)
+                );
+            }
+        }
+        assert!(
+            source
+                .sides
+                .iter()
+                .zip(&changed.sides)
+                .any(|(old, new)| old.u_axis != new.u_axis || old.v_axis != new.v_axis)
+        );
+        let selection = [edge(&document, id)];
+        assert!(plan_move_with_texture_lock(&document, &selection, DVec3::Z * 16.0, false).is_ok());
+        let error = plan_move_with_texture_lock(&document, &selection, DVec3::Z * 16.0, true)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("every corner"));
     }
 
     #[test]

@@ -26,6 +26,7 @@ and the shared entity inspector and activity panel.*
 | Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Selection | Object and face marquee selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
+| Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, fitting and placement, with cancellable previews and grouped material thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
@@ -123,6 +124,25 @@ undo step; **Cancel cut** or Escape discards it.
 
 Existing faces keep their texture projections. Brushes the plane does not
 cross stay unchanged. Intersected displacements cannot be clipped yet.
+
+### Autosave and recovery
+
+**Recovery…** lists periodic snapshots, manual checkpoints and previous saved
+versions. Autosave captures changed maps every two minutes by default, including
+unnamed maps. It leaves the original VMF, dirty state and undo history alone.
+You can change the interval and retention, or create a snapshot immediately.
+
+Select a snapshot and choose **Open recovered copy**. It opens as an unsaved
+map; choose a save path to keep it. Replacing unsaved edits and deleting a
+snapshot require explicit confirmation. **Cancel / close** discards unapplied
+settings fields. Settings and recovery files persist across editor restarts.
+
+![Autosave settings, retained snapshots and safe recovery controls](docs/images/recovery.png)
+
+Recovery uses `$XDG_STATE_HOME/hammerr/recovery`, falling back to
+`~/.local/state/hammerr/recovery`. Set `HAMMERR_RECOVERY_DIR` to an absolute path
+for a separate store. Turning autosave off leaves manual snapshots and backups
+available. Failed snapshots appear in Recovery and the activity log.
 
 ### Face textures and materials
 
@@ -322,6 +342,7 @@ For example, place a warm light:
 | Map reports and visibility | `get_object_report`, `select_object_report`, `set_object_visibility` |
 | World settings and property batches | `get_property_inspector`, `begin_property_edit`, `update_property_edit`, `get_property_edit`, `commit_property_edit`, `cancel_property_edit` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
+| Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `commit_face_preview`, `cancel_face_preview` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
@@ -432,7 +453,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes recovery/autosave, vertex and edge editing,
+Editor work ahead includes whole-map validation, vertex and edge editing,
 displacement tools, model rendering, paint strokes and grouped texture fitting.
 
 ## Project layout

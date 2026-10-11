@@ -944,6 +944,102 @@ export component PropertiesWindow inherits Window {
 
 export struct ObjectReportRow { id: string, label: string, detail: string }
 
+export struct RecoveryRow { id: string, title: string, detail: string }
+
+export component RecoveryWindow inherits Window {
+    title: "Recovery - HammeRR";
+    preferred-width: 780px;
+    preferred-height: 790px;
+    in property <bool> available;
+    in property <bool> busy;
+    in property <bool> dirty-map;
+    in property <string> status;
+    in property <string> storage;
+    in property <string> warning;
+    in property <string> message;
+    in property <string> summary;
+    in property <string> selected-detail;
+    in property <[RecoveryRow]> rows;
+    in property <bool> has-next;
+    in-out property <string> settings-revision;
+    in-out property <bool> autosave-enabled;
+    in-out property <int> interval-seconds: 120;
+    in-out property <int> keep-count: 10;
+    in-out property <bool> settings-dirty;
+    in-out property <bool> current-map-only;
+    in-out property <int> page;
+    in-out property <string> selected-id;
+    in-out property <bool> confirm-delete;
+    in-out property <bool> discard-changes;
+    in-out property <string> map-generation;
+    in-out property <string> map-revision;
+    callback refresh();
+    callback reload-settings();
+    callback apply-settings();
+    callback select-snapshot(string);
+    callback snapshot-now();
+    callback restore-snapshot();
+    callback delete-snapshot();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 10px;
+            Text { text: "Autosave and recovery"; font-size: 23px; font-weight: 600; }
+            Text { text: root.status; color: #b9cadc; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 12px;
+                CheckBox { text: "Autosave changes"; checked <=> root.autosave-enabled; toggled => { root.settings-dirty = true; } }
+                Text { text: "Every (seconds)"; vertical-alignment: center; }
+                SpinBox { value <=> root.interval-seconds; minimum: 30; maximum: 3600; edited => { root.settings-dirty = true; } }
+                Text { text: "Keep per map"; vertical-alignment: center; }
+                SpinBox { value <=> root.keep-count; minimum: 1; maximum: 50; edited => { root.settings-dirty = true; } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Reload settings"; clicked => { root.reload-settings(); } }
+                Button { text: "Apply settings"; enabled: root.available && root.settings-dirty; clicked => { root.apply-settings(); } }
+                Button { text: "Save snapshot now"; enabled: root.available && !root.busy; clicked => { root.snapshot-now(); } }
+            }
+            Text { text: "Snapshots keep committed edits, including unnamed maps. Your VMF is saved only when you choose Save."; wrap: word-wrap; color: #9da7b5; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: root.summary; vertical-alignment: center; horizontal-stretch: 1; }
+                CheckBox { text: "Current map only"; checked <=> root.current-map-only; toggled => { root.page = 0; root.refresh(); } }
+                Button { text: "Refresh list"; clicked => { root.refresh(); } }
+            }
+            ListView {
+                min-height: 140px;
+                for row in root.rows: VerticalLayout {
+                    spacing: 3px; padding-bottom: 8px;
+                    Button { text: row.title + (root.selected-id == row.id ? " · selected" : ""); clicked => { root.select-snapshot(row.id); } }
+                    Text { text: row.detail; color: #aab0bb; font-size: 12px; }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.refresh(); } }
+                Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.refresh(); } }
+            }
+            Text { text: root.selected-detail; wrap: word-wrap; color: #c8ccd4; }
+            if root.dirty-map: CheckBox { text: "Discard current unsaved edits when opening the recovered copy"; checked <=> root.discard-changes; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Open recovered copy"; enabled: root.selected-id != "" && (!root.dirty-map || root.discard-changes); clicked => { root.restore-snapshot(); } }
+                CheckBox { text: "Confirm permanent deletion"; checked <=> root.confirm-delete; }
+                Button { text: "Delete snapshot"; enabled: root.selected-id != "" && root.confirm-delete && !root.busy; clicked => { root.delete-snapshot(); } }
+            }
+            Text { text: "Recovered maps open as unsaved copies. Choose a save path to keep them."; wrap: word-wrap; color: #9da7b5; }
+            if root.warning != "": Text { text: root.warning; wrap: word-wrap; color: #efa47c; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; }
+            Text { text: "Storage: " + root.storage; wrap: word-wrap; color: #8a909c; font-size: 11px; }
+            Button { text: "Cancel / close"; clicked => { root.cancel(); } }
+        }
+    }
+}
+
 export component ReportWindow inherits Window {
     title: "Object report - HammeRR";
     preferred-width: 960px; preferred-height: 760px;
@@ -1214,6 +1310,7 @@ export component AppWindow inherits Window {
     callback world-settings();
     callback batch-properties();
     callback object-report();
+    callback recovery();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -1678,6 +1775,7 @@ export component AppWindow inherits Window {
                         spacing: 6px;
                         Button { text: "World settings…"; clicked => { root.world-settings(); } }
                         Button { text: "Object report…"; clicked => { root.object-report(); } }
+                        Button { text: "Recovery…"; clicked => { root.recovery(); } }
                     }
                     Button { text: "Edit selected entity properties…"; clicked => { root.batch-properties(); } }
                     if root.entity-selected: Button {

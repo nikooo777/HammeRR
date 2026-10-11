@@ -5,6 +5,8 @@ mod interaction;
 mod management_ui;
 mod materials;
 mod mcp;
+mod recovery;
+mod recovery_ui;
 mod rename_ui;
 mod session;
 mod spatial;
@@ -54,8 +56,11 @@ impl Drop for ShutdownGuard {
     fn drop(&mut self) {
         lock(&self.0).shutdown();
         loop {
-            let launching = lock(&self.0).launching();
-            if !launching {
+            let busy = {
+                let session = lock(&self.0);
+                session.launching() || session.recovery_busy()
+            };
+            if !busy {
                 break;
             }
             std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
@@ -128,6 +133,8 @@ struct Ui {
     seen_connections: (u64, u64, u64),
     properties_window: Option<PropertiesWindow>,
     report_window: Option<ReportWindow>,
+    recovery_window: Option<RecoveryWindow>,
+    seen_recovery: (u64, u64),
     seen_management: (u64, u64, u64),
     rename_window: Option<RenameWindow>,
     seen_rename: (u64, u64, u64),
@@ -1984,7 +1991,15 @@ fn report(app: &AppWindow, result: Result<String, String>) {
 
 /// Asks before throwing away unsaved changes, then runs `then`.
 fn confirm_discard(ui: &SharedUi, then: impl FnOnce() + 'static) {
-    let dirty = lock(&session_of(ui)).document().is_dirty();
+    let shared = session_of(ui);
+    let (dirty, generation, revision) = {
+        let session = lock(&shared);
+        (
+            session.document().is_dirty(),
+            session.document_generation(),
+            session.document().revision(),
+        )
+    };
     if !dirty {
         then();
         return;
@@ -1995,6 +2010,17 @@ fn confirm_discard(ui: &SharedUi, then: impl FnOnce() + 'static) {
         .set_buttons(rfd::MessageButtons::YesNoCancel);
     slint::spawn_local(async move {
         if dialog.show().await == rfd::MessageDialogResult::Yes {
+            let mut session = lock(&shared);
+            if session.document_generation() != generation
+                || session.document().revision() != revision
+            {
+                session.log(
+                    Actor::System,
+                    "Map changed while confirming discard. Try again.",
+                );
+                return;
+            }
+            drop(session);
             then();
         }
     })
@@ -2345,6 +2371,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
     let ctx = GpuContext::new()?;
     let session = Arc::new(Mutex::new(Session::new(mount_game(args.gameinfo))));
+    lock(&session).configure_recovery(recovery::default_directory());
+    let _recovery_worker = recovery::Worker::start(&session)?;
     let _shutdown = ShutdownGuard(session.clone());
     let fgd = args
         .fgd
@@ -2391,12 +2419,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .select()?;
 
     let app = AppWindow::new()?;
-    app.window().on_close_requested(|| {
-        if let Err(error) = slint::quit_event_loop() {
-            eprintln!("could not close editor: {error}");
-        }
-        slint::CloseRequestResponse::HideWindow
-    });
     app.set_mcp_status(mcp_status.into());
     app.set_stats(ctx.adapter.get_info().name.into());
     {
@@ -2428,6 +2450,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_connections: (0, 0, 0),
         properties_window: None,
         report_window: None,
+        recovery_window: None,
+        seen_recovery: (0, 0),
         seen_management: (0, 0, 0),
         rename_window: None,
         seen_rename: (0, 0, 0),
@@ -2441,6 +2465,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         material_for_clip: false,
         seen_definitions: 0,
     }));
+
+    app.window().on_close_requested({
+        let ui = ui.clone();
+        move || {
+            confirm_discard(&ui, || {
+                if let Err(error) = slint::quit_event_loop() {
+                    eprintln!("could not close editor: {error}");
+                }
+            });
+            slint::CloseRequestResponse::KeepWindowShown
+        }
+    });
 
     app.on_open_map({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -2563,6 +2599,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_object_report({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_report_window(&app.unwrap(), &ui)
+    });
+    app.on_recovery({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            if ui.borrow().recovery_window.is_none() {
+                match RecoveryWindow::new() {
+                    Ok(window) => {
+                        recovery_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().recovery_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui.borrow().recovery_window.as_ref().unwrap().clone_strong();
+            window.set_settings_dirty(false);
+            window.set_discard_changes(false);
+            window.set_confirm_delete(false);
+            window.set_message("".into());
+            recovery_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.set_message(error.to_string().into());
+            }
+        }
     });
     app.on_edit_connections({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3120,6 +3183,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     session.scene_serial(),
                     session.definitions_serial(),
                 );
+                let recovery = (session.recovery_serial(), session.scene_serial());
+                if recovery != ui.seen_recovery {
+                    ui.seen_recovery = recovery;
+                    if let Some(window) = &ui.recovery_window
+                        && window.window().is_visible()
+                    {
+                        recovery_ui::refresh(window, &session);
+                    }
+                }
                 if management != ui.seen_management {
                     ui.seen_management = management;
                     if let Some(window) = &ui.properties_window
@@ -3915,6 +3987,133 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn recovery_controls_guard_settings_and_restore_and_share_snapshot_operations() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.configure_recovery(Ok(directory.path().join("recovery")));
+        session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        session
+            .save(Actor::User, Some(&directory.path().join("courtyard.vmf")))
+            .unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let entry = recovery::capture(&shared, Actor::User, recovery::Kind::Manual).unwrap();
+        lock(&shared)
+            .create_block(
+                Actor::Agent,
+                DVec3::splat(128.0),
+                DVec3::splat(192.0),
+                "extra",
+                false,
+            )
+            .unwrap();
+        let window = RecoveryWindow::new().unwrap();
+        recovery_ui::bind(&window, &shared);
+        recovery_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        window.invoke_select_snapshot(entry.id.clone().into());
+        save_ui_snapshot(window.window(), "recovery");
+        for label in [
+            "Cancel / close",
+            "Apply settings",
+            "Save snapshot now",
+            "Open recovered copy",
+            "Delete snapshot",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.set_interval_seconds(60);
+        window.set_settings_dirty(true);
+        window.invoke_apply_settings();
+        assert_eq!(lock(&shared).recovery_settings().interval_seconds, 60);
+        window.set_keep_count(3);
+        window.set_settings_dirty(true);
+        let newer = recovery::Settings {
+            enabled: false,
+            interval_seconds: 90,
+            keep_per_map: 7,
+        };
+        lock(&shared)
+            .set_recovery_settings(Actor::Agent, newer.clone(), None)
+            .unwrap();
+        window.invoke_apply_settings();
+        assert!(window.get_message().contains("changed elsewhere"));
+        assert_eq!(lock(&shared).recovery_settings(), &newer);
+        window.invoke_reload_settings();
+        assert_eq!(window.get_keep_count(), 7);
+        let before = lock(&shared).document().vmf().clone();
+        window.invoke_restore_snapshot();
+        assert!(window.get_message().contains("unsaved changes"));
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.set_discard_changes(true);
+        lock(&shared)
+            .create_block(
+                Actor::Agent,
+                DVec3::splat(256.0),
+                DVec3::splat(320.0),
+                "extra",
+                false,
+            )
+            .unwrap();
+        window.invoke_restore_snapshot();
+        assert!(window.get_message().contains("Map changed"));
+        assert!(!window.get_discard_changes());
+        window.set_discard_changes(true);
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &window,
+            "Open recovered copy",
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+        assert_eq!(lock(&shared).document().objects().count(), 1);
+        {
+            let session = lock(&shared);
+            assert!(session.document().is_dirty() && session.path().is_none());
+        }
+        window.show().unwrap();
+        window.invoke_select_snapshot(entry.id.clone().into());
+        window.invoke_delete_snapshot();
+        assert_eq!(lock(&shared).recovery_entries().unwrap().entries.len(), 1);
+        window.set_confirm_delete(true);
+        window.invoke_delete_snapshot();
+        assert!(lock(&shared).recovery_entries().unwrap().entries.is_empty());
+        window.invoke_snapshot_now();
+        for _ in 0..200 {
+            if !lock(&shared).recovery_busy() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!lock(&shared).recovery_busy());
+        assert_eq!(lock(&shared).recovery_entries().unwrap().entries.len(), 1);
+        window.set_settings_dirty(true);
+        window.set_interval_seconds(300);
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::Escape.into(),
+            });
+        assert!(!window.window().is_visible());
+        assert_eq!(lock(&shared).recovery_settings().interval_seconds, 90);
     }
 
     fn assert_dialog_button_visible<C: ComponentHandle>(component: &C, label: &str) {

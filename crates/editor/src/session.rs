@@ -22,9 +22,11 @@ use crate::spatial;
 
 mod clipping;
 mod management;
+mod recovery;
 mod surfaces;
 pub use clipping::ClipPreview;
 pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
+pub use recovery::RecoveryRequest;
 mod connections;
 pub use connections::{ConnectionDraft, ConnectionFields, ConnectionRecord};
 mod references;
@@ -64,6 +66,7 @@ struct CompiledMap {
 pub enum Actor {
     User,
     Agent,
+    System,
 }
 
 impl Actor {
@@ -71,6 +74,7 @@ impl Actor {
         match self {
             Self::User => "you",
             Self::Agent => "agent",
+            Self::System => "system",
         }
     }
 }
@@ -99,6 +103,7 @@ pub struct Session {
     face_mode: bool,
     face_preview: Option<FacePreview>,
     surface_sample: Option<surface::SurfaceSample>,
+    recovery: recovery::State,
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
@@ -210,6 +215,7 @@ impl Session {
             face_mode: false,
             face_preview: None,
             surface_sample: None,
+            recovery: recovery::State::default(),
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
@@ -982,6 +988,7 @@ impl Session {
         self.compiled = None;
         self.leak = None;
         self.path = path;
+        self.reset_recovery_document();
         self.selection.clear();
         self.face_selection.clear();
         self.camera_serial += 1;
@@ -1026,16 +1033,34 @@ impl Session {
             .map(Path::to_owned)
             .or_else(|| self.path.clone())
             .ok_or("the map has no file name yet; give a path")?;
+        let text = self
+            .document
+            .snapshot_for_save()
+            .write(&WriteOptions::default());
+        let backup = self.backup_before_save(&path);
+        if let Err(error) = crate::recovery::atomic_write(&path, text.as_bytes()) {
+            let _ = self.finish_save_backup(backup.as_ref().ok().and_then(Option::as_ref), false);
+            return Err(error);
+        }
+        let retention_error = self
+            .finish_save_backup(backup.as_ref().ok().and_then(Option::as_ref), true)
+            .err();
+        let backup_error = backup.err().or(retention_error);
         self.document.bump_map_version();
-        let text = self.document.vmf().write(&WriteOptions::default());
-        let temp = path.with_extension("vmf.tmp");
-        std::fs::write(&temp, text)
-            .and_then(|()| std::fs::rename(&temp, &path))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
         self.document.mark_saved();
         self.path = Some(path.clone());
+        self.update_recovery_path();
         self.changed();
-        self.log(actor, format!("saved {}", path.display()));
+        self.log(
+            actor,
+            match backup_error {
+                Some(error) => format!(
+                    "saved {}, but the previous-file backup failed: {error}",
+                    path.display()
+                ),
+                None => format!("saved {}", path.display()),
+            },
+        );
         Ok(path)
     }
 

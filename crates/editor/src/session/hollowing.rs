@@ -4,6 +4,13 @@ use serde_json::{Value, json};
 
 use super::{Actor, SelectMode, Session};
 
+pub struct OpeningFace {
+    pub id: map_core::surface::FaceId,
+    pub normal: glam::DVec3,
+    pub center: glam::DVec3,
+    pub material: String,
+}
+
 pub struct Preview {
     pub document: Document,
     pub result: hollow::Result,
@@ -26,6 +33,53 @@ pub fn result_json(result: &hollow::Result) -> Value {
 }
 
 impl Session {
+    pub fn hollow_faces(&self) -> Result<Vec<OpeningFace>, String> {
+        let ids = self
+            .component_solids()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        if ids.len() > hollow::MAX_BRUSHES {
+            return Err("Hollow at most 16 brushes at a time".into());
+        }
+        let mut faces = Vec::new();
+        for id in ids {
+            let (_, solid) =
+                subobject::solid(&self.document, id).map_err(|error| error.to_string())?;
+            let shape = subobject::topology(solid).map_err(|error| error.to_string())?;
+            for face in shape.faces {
+                let side = solid
+                    .sides
+                    .iter()
+                    .find(|side| side.id == face.side)
+                    .unwrap();
+                faces.push(OpeningFace {
+                    id: map_core::surface::FaceId {
+                        solid: id,
+                        side: side.id,
+                    },
+                    normal: map_core::Plane::from_points(side.plane.0).unwrap().normal,
+                    center: face
+                        .vertices
+                        .iter()
+                        .map(|index| shape.vertices[*index].position)
+                        .sum::<glam::DVec3>()
+                        / face.vertices.len() as f64,
+                    material: side.material.clone(),
+                });
+            }
+        }
+        Ok(faces)
+    }
+
+    pub fn hollow_report(&self) -> Value {
+        let mut report = self.hollow_state();
+        match self.hollow_faces() {
+            Ok(faces) => report["faces"] = json!(faces.iter().map(|face| json!({"solid":face.id.solid,"side":face.id.side,"normal":face.normal.to_array(),"center":face.center.to_array(),"material":face.material})).collect::<Vec<_>>()),
+            Err(error) => report["source_error"] = json!(error),
+        }
+        report
+    }
+
     pub fn hollow_stamp(&self) -> String {
         format!(
             "{}:{}:{}:{}",
@@ -153,7 +207,7 @@ impl Session {
     }
 
     pub fn hollow_state(&self) -> Value {
-        json!({"preview":self.hollowing.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"thickness":preview.spec.thickness,"outward":preview.spec.outward,"result":result_json(&preview.result)})),"limits":{"brushes":hollow::MAX_BRUSHES,"walls":hollow::MAX_PARTS,"minimum_thickness":0.125,"maximum_thickness":4096},"stamp":self.hollow_stamp()})
+        json!({"preview":self.hollowing.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"thickness":preview.spec.thickness,"outward":preview.spec.outward,"open_faces":preview.spec.open_faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),"result":result_json(&preview.result)})),"limits":{"brushes":hollow::MAX_BRUSHES,"walls":hollow::MAX_PARTS,"minimum_thickness":0.125,"maximum_thickness":4096},"stamp":self.hollow_stamp()})
     }
 }
 
@@ -187,6 +241,7 @@ mod tests {
                 Spec {
                     thickness: 16.0,
                     outward: false,
+                    open_faces: Default::default(),
                 },
                 &session.hollow_stamp(),
             )
@@ -203,7 +258,8 @@ mod tests {
                     &[id],
                     Spec {
                         thickness: 64.0,
-                        outward: false
+                        outward: false,
+                        open_faces: Default::default(),
                     },
                     &session.hollow_stamp()
                 )
@@ -223,6 +279,57 @@ mod tests {
     }
 
     #[test]
+    fn opening_choices_are_inspectable_and_invalid_updates_preserve_the_draft() {
+        let (mut session, id) = fixture();
+        let original = session.document.vmf().clone();
+        let faces = session.hollow_faces().unwrap();
+        assert_eq!(faces.len(), 6);
+        let top = faces
+            .iter()
+            .find(|face| face.normal == DVec3::Z)
+            .unwrap()
+            .id;
+        session
+            .preview_hollow(
+                &[id],
+                Spec {
+                    thickness: 16.0,
+                    outward: false,
+                    open_faces: [top].into(),
+                },
+                &session.hollow_stamp(),
+            )
+            .unwrap();
+        let report = session.hollow_report();
+        assert_eq!(report["faces"].as_array().unwrap().len(), 6);
+        assert_eq!(
+            report["preview"]["open_faces"],
+            json!([{"solid":top.solid,"side":top.side}])
+        );
+        let token = session.hollowing.preview.as_ref().unwrap().token;
+        let draft = session.render_document().vmf().clone();
+        assert!(
+            session
+                .preview_hollow(
+                    &[id],
+                    Spec {
+                        thickness: 16.0,
+                        outward: false,
+                        open_faces: faces.iter().map(|face| face.id).collect()
+                    },
+                    &session.hollow_stamp()
+                )
+                .is_err()
+        );
+        assert_eq!(session.hollow_report(), report);
+        assert_eq!(session.document.vmf(), &original);
+        session.commit_hollow(Actor::Agent, token).unwrap();
+        assert_eq!(session.document.vmf(), &draft);
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.document.vmf(), &original);
+    }
+
+    #[test]
     fn hollow_cancellation_and_competing_previews_guard_tokens() {
         let (mut session, id) = fixture();
         let original = session.document.vmf().clone();
@@ -232,6 +339,7 @@ mod tests {
                 Spec {
                     thickness: 16.0,
                     outward: false,
+                    open_faces: Default::default(),
                 },
                 &session.hollow_stamp(),
             )
@@ -243,6 +351,7 @@ mod tests {
                 Spec {
                     thickness: 8.0,
                     outward: true,
+                    open_faces: Default::default(),
                 },
                 &session.hollow_stamp(),
             )
@@ -258,6 +367,7 @@ mod tests {
                 Spec {
                     thickness: 16.0,
                     outward: false,
+                    open_faces: Default::default(),
                 },
                 &session.hollow_stamp(),
             )

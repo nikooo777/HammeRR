@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use glam::DVec3;
 use source_formats::vmf::Solid;
 
+use crate::surface::FaceId;
 use crate::{Document, EditError, ObjectId, Plane, Transaction, clip, subobject};
 
 pub const MAX_BRUSHES: usize = 16;
@@ -12,6 +13,7 @@ pub const MAX_PARTS: usize = 256;
 pub struct Spec {
     pub thickness: f64,
     pub outward: bool,
+    pub open_faces: BTreeSet<FaceId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,12 +73,39 @@ fn plan(
     if sources.is_empty() || sources.len() > MAX_BRUSHES {
         return Err(invalid("Hollow between 1 and 16 brushes at a time"));
     }
+    if spec.open_faces.len() > MAX_BRUSHES * subobject::MAX_SIDES {
+        return Err(invalid("Too many opening faces"));
+    }
+    for face in &spec.open_faces {
+        if !sources.contains(&face.solid)
+            || !subobject::solid(document, face.solid)?
+                .1
+                .sides
+                .iter()
+                .any(|side| side.id == face.side)
+        {
+            return Err(invalid(format!(
+                "Opening face {} must belong to selected brush {}",
+                face.side, face.solid
+            )));
+        }
+    }
     let mut shells = Vec::new();
     let mut total = 0;
     for id in sources {
         let (owner, source) = subobject::solid(document, id)?;
         subobject::topology(source)?;
-        if total + source.sides.len() > MAX_PARTS {
+        let openings = spec
+            .open_faces
+            .iter()
+            .filter(|face| face.solid == id)
+            .map(|face| face.side)
+            .collect::<BTreeSet<_>>();
+        let walls = source.sides.len() - openings.len();
+        if walls == 0 {
+            return Err(invalid(format!("Brush {id}: keep at least one wall")));
+        }
+        if total + walls > MAX_PARTS {
             return Err(invalid(
                 "Hollowing would create more than 256 wall brushes; use a smaller selection",
             ));
@@ -89,6 +118,9 @@ fn plan(
         let mut outer = source.clone();
         let mut inner = source.clone();
         for (index, side) in source.sides.iter().enumerate() {
+            if openings.contains(&side.id) {
+                continue;
+            }
             let plane = Plane::from_points(side.plane.0).unwrap();
             if spec.outward {
                 outer.sides[index].plane.0 = clip::plane_points(Plane {
@@ -129,6 +161,9 @@ fn plan(
         let mut remainder = outer;
         let mut parts = Vec::new();
         for side in &inner.sides {
+            if openings.contains(&side.id) {
+                continue;
+            }
             let plane = Plane::from_points(side.plane.0).unwrap();
             let mut part = clip::half(
                 &remainder,
@@ -253,6 +288,159 @@ mod tests {
     }
 
     #[test]
+    fn openings_keep_full_wall_height_and_clear_passages_in_both_directions() {
+        for outward in [false, true] {
+            for open_bottom in [false, true] {
+                let (mut document, id) = fixture();
+                let ObjectId::Solid(solid) = id else {
+                    unreachable!()
+                };
+                let open_faces = document
+                    .solid(solid)
+                    .unwrap()
+                    .sides
+                    .iter()
+                    .filter(|side| {
+                        let normal = Plane::from_points(side.plane.0).unwrap().normal;
+                        normal.z > 0.99 || (open_bottom && normal.z < -0.99)
+                    })
+                    .map(|side| FaceId {
+                        solid,
+                        side: side.id,
+                    })
+                    .collect();
+                let result = document
+                    .edit("open shell", |tx| {
+                        hollow(
+                            tx,
+                            &[id],
+                            &Spec {
+                                thickness: 16.0,
+                                outward,
+                                open_faces,
+                            },
+                        )
+                    })
+                    .unwrap();
+                assert_eq!(result.brushes.len(), if open_bottom { 4 } else { 5 });
+                let (mins, maxs) = query::bounds_of(&document, &result.objects).unwrap();
+                assert_eq!(maxs.z, 128.0);
+                assert_eq!(mins.z, if outward && !open_bottom { -16.0 } else { 0.0 });
+                let width: f64 = if outward { 160.0 } else { 128.0 };
+                let inner_width: f64 = if outward { 128.0 } else { 96.0 };
+                let height = maxs.z - mins.z;
+                let inner_height = if open_bottom || outward { 128.0 } else { 112.0 };
+                let expected = width.powi(2) * height - inner_width.powi(2) * inner_height;
+                assert!((document.vmf().solids().map(volume).sum::<f64>() - expected).abs() < 1e-5);
+                for direction in [DVec3::Z, DVec3::NEG_Z, DVec3::X] {
+                    let hit = query::pick(
+                        &document,
+                        &query::Ray {
+                            origin: DVec3::splat(64.0),
+                            direction,
+                        },
+                        |_| true,
+                    );
+                    assert_eq!(
+                        hit.is_none(),
+                        direction == DVec3::Z || (open_bottom && direction == DVec3::NEG_Z)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_single_remaining_wall_is_a_valid_slab() {
+        for outward in [false, true] {
+            let (mut document, id) = fixture();
+            let ObjectId::Solid(solid) = id else {
+                unreachable!()
+            };
+            let open_faces = document
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .filter(|side| Plane::from_points(side.plane.0).unwrap().normal.z > -0.99)
+                .map(|side| FaceId {
+                    solid,
+                    side: side.id,
+                })
+                .collect();
+            let result = document
+                .edit("single wall", |tx| {
+                    hollow(
+                        tx,
+                        &[id],
+                        &Spec {
+                            thickness: 16.0,
+                            outward,
+                            open_faces,
+                        },
+                    )
+                })
+                .unwrap();
+            assert_eq!(result.brushes.len(), 1);
+            assert!((volume(document.solid(solid).unwrap()) - 128.0 * 128.0 * 16.0).abs() < 1e-5);
+            let (mins, maxs) = query::bounds_of(&document, &result.objects).unwrap();
+            assert_eq!(
+                mins,
+                DVec3::new(0.0, 0.0, if outward { -16.0 } else { 0.0 })
+            );
+            assert_eq!(
+                maxs,
+                DVec3::new(128.0, 128.0, if outward { 0.0 } else { 16.0 })
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_opening_references_and_removing_every_wall_are_atomic() {
+        let (mut document, id) = fixture();
+        let ObjectId::Solid(solid) = id else {
+            unreachable!()
+        };
+        let before = document.vmf().clone();
+        let all = document
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .map(|side| FaceId {
+                solid,
+                side: side.id,
+            })
+            .collect();
+        for open_faces in [
+            all,
+            BTreeSet::from([FaceId {
+                solid,
+                side: 999_999,
+            }]),
+            BTreeSet::from([FaceId {
+                solid: 999_999,
+                side: 1,
+            }]),
+        ] {
+            assert!(
+                document
+                    .edit("invalid opening", |tx| hollow(
+                        tx,
+                        &[id],
+                        &Spec {
+                            thickness: 16.0,
+                            outward: false,
+                            open_faces
+                        }
+                    ))
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &before);
+        }
+    }
+
+    #[test]
     fn inward_and_outward_shells_have_expected_bounds_volume_and_unique_ids() {
         for outward in [false, true] {
             let (mut document, id) = fixture();
@@ -265,6 +453,7 @@ mod tests {
                         &Spec {
                             thickness: 16.0,
                             outward,
+                            open_faces: Default::default(),
                         },
                     )
                 })
@@ -307,7 +496,8 @@ mod tests {
                         &[id],
                         &Spec {
                             thickness,
-                            outward: false
+                            outward: false,
+                            open_faces: Default::default(),
                         }
                     ))
                     .is_err()
@@ -334,7 +524,8 @@ mod tests {
                     &[id, other],
                     &Spec {
                         thickness: 16.0,
-                        outward: false
+                        outward: false,
+                        open_faces: Default::default(),
                     }
                 ))
                 .is_err()
@@ -366,6 +557,7 @@ mod tests {
                     &Spec {
                         thickness: 8.0,
                         outward: false,
+                        open_faces: Default::default(),
                     },
                 )
             })
@@ -416,6 +608,7 @@ mod tests {
                     &Spec {
                         thickness: 16.0,
                         outward: false,
+                        open_faces: Default::default(),
                     },
                 )
             })
@@ -461,7 +654,8 @@ mod tests {
                     &ids,
                     &Spec {
                         thickness: 8.0,
-                        outward: false
+                        outward: false,
+                        open_faces: Default::default(),
                     }
                 ))
                 .is_err()
@@ -497,6 +691,7 @@ mod tests {
                     &Spec {
                         thickness: 4.0,
                         outward: false,
+                        open_faces: Default::default(),
                     },
                 )
             })

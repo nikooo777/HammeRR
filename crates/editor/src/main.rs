@@ -5147,6 +5147,52 @@ mod tests {
         assert!(!window.window().is_visible());
         assert_eq!(lock(&shared).document().vmf(), &original);
         assert_eq!(lock(&shared).render_document().vmf(), &original);
+        hollow_ui::refresh(&window, &lock(&shared));
+        let top = window
+            .get_faces()
+            .iter()
+            .find(|face| face.label.starts_with("Top"))
+            .unwrap();
+        window.invoke_choose_opening(top.key);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(
+            lock(&shared).hollow_state()["preview"]["result"]["brushes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            5
+        );
+        window.show().unwrap();
+        window.window().take_snapshot().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
+        save_ui_snapshot(window.window(), "hollow-openings");
+        let open = lock(&shared).render_document().vmf().clone();
+        for row in window
+            .get_faces()
+            .iter()
+            .filter(|face| !face.open)
+            .collect::<Vec<_>>()
+        {
+            window.invoke_choose_opening(row.key);
+        }
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert!(window.get_message().contains("at least one wall"));
+        assert_eq!(lock(&shared).render_document().vmf(), &open);
+        assert_dialog_button_visible(&window, "Close all openings");
+        window.invoke_close_openings();
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(
+            lock(&shared).hollow_state()["preview"]["result"]["brushes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            6
+        );
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {

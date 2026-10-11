@@ -16,13 +16,14 @@ def validate(client, output):
     def state():
         return client.call("get_hollow_preview")
 
-    def preview(thickness=16, outward=False, ids=None):
+    def preview(thickness=16, outward=False, ids=None, open_faces=None):
         return client.call(
             "preview_hollow",
             {
                 "thickness": thickness,
                 "outward": outward,
                 "stamp": state()["stamp"],
+                "open_faces": open_faces or [],
                 **({"ids": ids} if ids is not None else {}),
             },
         )["preview"]
@@ -137,6 +138,75 @@ def validate(client, output):
             client.render(output / "cancelled.png", surface="wireframe") == baseline,
             "Cancel restores original geometry pixels",
         )
+        choices = state()["faces"]
+        check(
+            len(choices) == 6
+            and all("center" in face and "material" in face for face in choices),
+            "Opening choices expose face identity, direction and material",
+        )
+        top = next(face for face in choices if face["normal"] == [0, 0, 1])
+        top_ref = {key: top[key] for key in ["solid", "side"]}
+        opened = preview(open_faces=[top_ref])
+        check(
+            len(opened["result"]["brushes"]) == 5 and opened["open_faces"] == [top_ref],
+            "An open roof produces five walls and inspectable parameters",
+        )
+        check(
+            opened["result"]["cavities"][0]["maxs"][2] == 256,
+            "Open roof retains the full source height",
+        )
+        open_pixels = client.render(output / "open-roof-preview.png")
+        check(
+            client.call("raycast", {"origin": [0, 0, 128], "direction": [0, 0, 1]})
+            == {"hit": None},
+            "The roof opening has a clear ray through the shared preview",
+        )
+        check(
+            client.call("raycast", {"origin": [0, 0, 128], "direction": [1, 0, 0]}).get(
+                "hit", True
+            )
+            is not None,
+            "The side wall remains solid beside the opening",
+        )
+        for openings in [
+            [{key: face[key] for key in ["solid", "side"]} for face in choices],
+            [{"solid": top["solid"], "side": 999999}],
+            [{"solid": 999999, "side": top["side"]}],
+        ]:
+            client.call(
+                "preview_hollow",
+                {"thickness": 16, "open_faces": openings, "stamp": state()["stamp"]},
+                error=True,
+            )
+            check(
+                state()["preview"] == opened,
+                "Invalid openings preserve the exact previous draft",
+            )
+        result = client.call("commit_hollow", {"token": opened["token"]})
+        check(
+            result == opened["result"]
+            and client.render(output / "open-roof-applied.png") == open_pixels,
+            "Open shell apply preserves preview IDs and pixels",
+        )
+        open_walls = detail(client, result["objects"])
+        client.call("undo")
+        check(
+            detail(client, [block]) == original,
+            "Open shell undo restores the original solid",
+        )
+        client.call("redo")
+        check(
+            detail(client, result["objects"]) == open_walls,
+            "Open shell redo restores every wall",
+        )
+        client.call("undo")
+        opened = preview(outward=True, open_faces=[top_ref])
+        check(
+            opened["result"]["cavities"][0]["maxs"] == [128, 128, 256]
+            and len(opened["result"]["brushes"]) == 5,
+            "Outward open shell preserves the source cavity",
+        )
+        client.call("cancel_hollow", {"token": opened["token"]})
         draft = preview(16, outward=True)
         current = draft["token"]
         check(
@@ -200,13 +270,33 @@ def validate(client, output):
             "Shells survive VMF save and reopen",
         )
         client.call(
+            "create_block",
+            {
+                "mins": [-64, -64, 16],
+                "maxs": [64, 64, 96],
+                "material": "dev/dev_measuregeneric01",
+            },
+        )
+        choices = state()["faces"]
+        top = next(face for face in choices if face["normal"] == [0, 0, 1])
+        opened = preview(8, open_faces=[{key: top[key] for key in ["solid", "side"]}])
+        nested_walls = client.call("commit_hollow", {"token": opened["token"]})
+        nested_detail = detail(client, nested_walls["objects"])
+        saved_open = output / "hollow-openings.vmf"
+        client.call("save_map", {"path": str(saved_open)})
+        client.call("open_map", {"path": str(saved_open)})
+        check(
+            detail(client, nested_walls["objects"]) == nested_detail,
+            "Open shells survive VMF save and reopen",
+        )
+        client.call(
             "create_entity",
-            {"classname": "info_player_counterterrorist", "origin": [0, 0, 32]},
+            {"classname": "info_player_counterterrorist", "origin": [0, 96, 32]},
         )
         compiled = client.call("compile_map", {"path": str(output / "hollow.bsp")})
         check(
             compiled["success"] and Path(compiled["bsp"]).is_file(),
-            "Generated room is sealed and compiles natively",
+            "Generated room containing an open shell is sealed and compiles natively",
         )
         (output / "compile.json").write_text(json.dumps(compiled, indent=2) + "\n")
         other = client.call(
@@ -216,7 +306,9 @@ def validate(client, output):
             "tie_to_entity", {"ids": [other], "classname": "func_detail"}
         )["id"]
         before_entity = detail(client, [entity])
-        draft = preview(8)
+        choices = state()["faces"]
+        top = next(face for face in choices if face["normal"] == [0, 0, 1])
+        draft = preview(8, open_faces=[{key: top[key] for key in ["solid", "side"]}])
         check(
             draft["result"]["objects"] == [entity],
             "Brush-entity preview retains its owner",
@@ -224,7 +316,7 @@ def validate(client, output):
         result = client.call("commit_hollow", {"token": draft["token"]})
         check(
             result["objects"] == [entity]
-            and len(detail(client, [entity])[0]["brushes"]) == 6,
+            and len(detail(client, [entity])[0]["brushes"]) == 5,
             "Entity owns all generated wall pieces",
         )
         client.call("undo")

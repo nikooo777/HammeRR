@@ -1,8 +1,12 @@
-import { Button, ComboBox, LineEdit, SpinBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, SpinBox } from "std-widgets.slint";
+
+export struct OpeningRow { key: string, label: string, open: bool }
 
 export component HollowWindow inherits Window {
     title: "Hollow brushes - HammeRR";
-    preferred-width: 620px; preferred-height: 520px;
+    preferred-width: 820px; preferred-height: 690px;
+    in property <[OpeningRow]> faces;
+    in property <string> source;
     in property <string> stamp;
     in property <string> token;
     in property <string> summary;
@@ -15,6 +19,8 @@ export component HollowWindow inherits Window {
     in-out property <int> direction;
     in-out property <string> thickness: "16";
     callback edited();
+    callback choose-opening(string);
+    callback close-openings();
     callback preview-edit();
     callback look-inside();
     callback apply();
@@ -41,7 +47,20 @@ export component HollowWindow inherits Window {
                 }
             }
             Text { text: root.direction == 0 ? "The outer shape stays the same. Walls reduce the space inside." : "The original shape becomes the empty space. Walls grow outward."; color: #aeb9c8; wrap: word-wrap; }
-            Text { text: "Each face becomes a separate convex wall. Inner surfaces inherit its material and texture mapping. The entire shell stays in its original world or entity."; color: #aeb9c8; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Openings"; font-size: 18px; font-weight: 600; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close all openings"; enabled: root.faces.length > 0; clicked => { root.close-openings(); } }
+            }
+            Text { text: "Check faces to leave open. Unchecked faces become walls. Keep at least one wall per brush."; color: #aeb9c8; wrap: word-wrap; }
+            ListView {
+                vertical-stretch: 1; min-height: 150px;
+                for face in root.faces: VerticalLayout {
+                    padding-top: 4px; padding-bottom: 4px;
+                    CheckBox { text: face.label; checked: face.open; toggled => { root.choose-opening(face.key); } }
+                }
+            }
             Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;

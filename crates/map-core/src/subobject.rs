@@ -303,21 +303,38 @@ pub fn plan_move_with_texture_lock(
                 .iter()
                 .map(|index| positions[*index])
                 .collect::<Vec<_>>();
-            let triple = ring[1..]
-                .windows(2)
-                .map(|pair| [ring[0], pair[0], pair[1]])
-                .find(|points| {
+            let original = source
+                .sides
+                .iter()
+                .find(|side| side.id == face.side)
+                .unwrap();
+            let moved = face
+                .vertices
+                .iter()
+                .filter(|index| selected.contains(index))
+                .count();
+            let triple = if moved == 0 {
+                original.plane.0
+            } else if moved == face.vertices.len() {
+                original.plane.0.map(|point| point + delta)
+            } else {
+                let area = |points: &[DVec3; 3]| {
                     (points[0] - points[1])
                         .cross(points[2] - points[1])
-                        .length()
-                        > EPSILON
-                })
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "Brush {id}, face {}: move collapses the face",
-                        face.side
-                    ))
-                })?;
+                        .length_squared()
+                };
+                ring[1..]
+                    .windows(2)
+                    .map(|pair| [ring[0], pair[0], pair[1]])
+                    .max_by(|a, b| area(a).total_cmp(&area(b)))
+                    .filter(|points| area(points) > EPSILON * EPSILON)
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "Brush {id}, face {}: move collapses the face",
+                            face.side
+                        ))
+                    })?
+            };
             let plane = Plane::from_points(triple).unwrap();
             if ring
                 .iter()
@@ -437,6 +454,75 @@ mod tests {
         Component {
             solid: id,
             sides: edge.sides.clone(),
+        }
+    }
+
+    #[test]
+    fn rigid_component_moves_preserve_thin_sloped_brush_planes() {
+        let mut document = Document::empty();
+        let id = block(&mut document, DVec3::ZERO, 64.0);
+        let point = DVec3::new;
+        let planes = [
+            [
+                point(3928.0, 5888.0, 57.0981),
+                point(4396.0, 5888.0, 57.0981),
+                point(4396.0, 5784.0, -0.051_668_4),
+            ],
+            [
+                point(3928.0, 5792.0, -0.051_668_5),
+                point(4396.0, 5792.0, -0.051_668_5),
+                point(4396.0, 5888.0, 52.9497),
+            ],
+            [
+                point(3928.0, 5784.0, -0.051_668_4),
+                point(4396.0, 5784.0, -0.051_668_4),
+                point(4396.0, 5792.0, -0.051_668_5),
+            ],
+            [
+                point(3928.0, 5888.0, 57.0981),
+                point(3928.0, 5784.0, -0.051_668_4),
+                point(3928.0, 5792.0, -0.051_668_5),
+            ],
+            [
+                point(4396.0, 5888.0, 57.0981),
+                point(3928.0, 5888.0, 57.0981),
+                point(3928.0, 5888.0, 52.9497),
+            ],
+            [
+                point(4396.0, 5888.0, 52.9497),
+                point(4396.0, 5792.0, -0.051_668_5),
+                point(4396.0, 5784.0, -0.051_668_4),
+            ],
+        ];
+        document
+            .edit("thin slope", |tx| {
+                for (side, plane) in tx.solid_mut(id)?.sides.iter_mut().zip(planes) {
+                    side.plane.0 = plane;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let shape = topology(document.solid(id).unwrap()).unwrap();
+        let selected = shape
+            .faces
+            .iter()
+            .map(|face| Component {
+                solid: id,
+                sides: vec![face.side],
+            })
+            .collect::<Vec<_>>();
+        let delta = DVec3::new(0.125, -0.25, 0.375);
+        let plan = plan_move(&document, &selected, delta).unwrap();
+        document
+            .edit("translate components", |tx| apply(tx, &plan))
+            .unwrap();
+        let changed = document.solid(id).unwrap();
+        assert_eq!(
+            topology(changed).unwrap().vertices.len(),
+            shape.vertices.len()
+        );
+        for (side, plane) in changed.sides.iter().zip(planes) {
+            assert_eq!(side.plane.0, plane.map(|point| point + delta));
         }
     }
 

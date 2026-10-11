@@ -181,3 +181,122 @@ fn corpus_map_checks_find_no_invalid_closed_geometry() {
         failures.into_iter().take(30).collect::<Vec<_>>().join("\n")
     );
 }
+
+#[test]
+fn corpus_component_translation_preserves_geometry_and_corner_textures() {
+    use map_core::{Document, subobject, texel_uv};
+
+    let delta = DVec3::new(0.125, -0.25, 0.375);
+    let mut moved = 0;
+    let mut skipped = std::collections::BTreeMap::new();
+    let mut failures = Vec::new();
+    for (path, vmf) in corpus() {
+        let sources = vmf.solids().cloned().collect::<Vec<_>>();
+        let mut document = Document::new(vmf);
+        for source in sources {
+            if source.sides.iter().any(|side| side.displacement.is_some()) {
+                *skipped.entry("displacements").or_insert(0) += 1;
+                continue;
+            }
+            if subobject::solid(&document, source.id).is_err() {
+                *skipped.entry("ambiguous identity").or_insert(0) += 1;
+                continue;
+            }
+            let before = match subobject::topology(&source) {
+                Ok(shape) => shape,
+                Err(_) => {
+                    *skipped.entry("unsupported topology").or_insert(0) += 1;
+                    continue;
+                }
+            };
+            if before
+                .vertices
+                .iter()
+                .any(|vertex| (vertex.position + delta).abs().max_element() > 65_536.0)
+            {
+                *skipped.entry("coordinate bounds").or_insert(0) += 1;
+                continue;
+            }
+            if source.sides.iter().any(|side| {
+                let plane = map_core::Plane::from_points(side.plane.0).unwrap();
+                side.u_axis
+                    .axis
+                    .cross(side.v_axis.axis)
+                    .dot(plane.normal)
+                    .abs()
+                    < 1e-10
+            }) {
+                *skipped.entry("degenerate texture projection").or_insert(0) += 1;
+                continue;
+            }
+            let components = before
+                .faces
+                .iter()
+                .map(|face| subobject::Component {
+                    solid: source.id,
+                    sides: vec![face.side],
+                })
+                .collect::<Vec<_>>();
+            let plan =
+                match subobject::plan_move_with_texture_lock(&document, &components, delta, true) {
+                    Ok(plan) => plan,
+                    Err(error) => {
+                        failures.push(format!("{} brush {}: {error}", path.display(), source.id));
+                        continue;
+                    }
+                };
+            document
+                .edit("attached translation", |tx| subobject::apply(tx, &plan))
+                .unwrap();
+            let (_, changed) = subobject::solid(&document, source.id).unwrap();
+            let after = subobject::topology(changed).unwrap();
+            for vertex in &before.vertices {
+                let point = after.vertices[after.resolve(&vertex.sides).unwrap()[0]].position;
+                assert!(
+                    (vertex.position + delta).abs_diff_eq(point, 1e-5),
+                    "{} brush {}",
+                    path.display(),
+                    source.id
+                );
+                for side_id in &vertex.sides {
+                    let old = source
+                        .sides
+                        .iter()
+                        .find(|side| side.id == *side_id)
+                        .unwrap();
+                    let new = changed
+                        .sides
+                        .iter()
+                        .find(|side| side.id == *side_id)
+                        .unwrap();
+                    assert!(
+                        texel_uv(old, vertex.position).abs_diff_eq(texel_uv(new, point), 0.0001),
+                        "{} brush {} face {side_id}",
+                        path.display(),
+                        source.id
+                    );
+                }
+            }
+            for old in &source.sides {
+                let new = changed.sides.iter().find(|side| side.id == old.id).unwrap();
+                let mut expected = old.clone();
+                expected.plane = new.plane;
+                expected.u_axis = new.u_axis;
+                expected.v_axis = new.v_axis;
+                assert_eq!(*new, expected);
+            }
+            document.undo().unwrap();
+            assert_eq!(subobject::solid(&document, source.id).unwrap().1, &source);
+            moved += 1;
+        }
+    }
+    eprintln!(
+        "attached component translations: {moved}; skipped: {skipped:?}; rejected: {}",
+        failures.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "{}",
+        failures.into_iter().take(30).collect::<Vec<_>>().join("\n")
+    );
+}

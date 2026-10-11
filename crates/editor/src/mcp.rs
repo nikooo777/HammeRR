@@ -445,6 +445,9 @@ struct PointfileNavigateArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct HollowArgs {
+    /// Source faces to leave open; each source brush must keep at least one wall.
+    #[serde(default)]
+    open_faces: Vec<FaceRef>,
     ids: Option<Vec<String>>,
     /// Wall thickness along each face normal, from 0.125 to 4096 units.
     thickness: f64,
@@ -2704,7 +2707,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview hollowing selected brushes or brush entities into closed convex wall pieces. Thickness is 0.125–4096 units along face normals. outward=false insets walls inside the source bounds; true expands outside and preserves the original cavity. Requires latest stamp from get_hollow_preview. At most 16 source brushes, 64 sides each and 256 output walls; displacements, ambiguous IDs and invalid/thin inner geometry reject atomically. Existing surfaces retain metadata; generated inner faces inherit their corresponding source face's material, world projection and lighting. render_view uses the draft. Apply/Cancel use its token."
+        description = "Preview hollowing selected brushes or brush entities into convex wall pieces. Optional open_faces leaves those source boundaries open and unexpanded; each source must retain at least one wall. Thickness is 0.125–4096 units along face normals. outward=false insets walls inside the source bounds; true expands outside and preserves the original cavity. Requires latest stamp from get_hollow_preview. At most 16 source brushes, 64 sides each and 256 output walls; displacements, ambiguous IDs and invalid/thin inner geometry reject atomically. Existing surfaces retain metadata; generated inner faces inherit their corresponding source face's material, world projection and lighting. render_view uses the draft. Apply/Cancel use its token."
     )]
     fn preview_hollow(&self, Parameters(args): Parameters<HollowArgs>) -> ToolResult {
         run(|| {
@@ -2715,19 +2718,20 @@ impl EditorServer {
                 map_core::hollow::Spec {
                     thickness: args.thickness,
                     outward: args.outward,
+                    open_faces: args.open_faces.iter().map(face_id).collect(),
                 },
                 &args.stamp,
             )?;
-            Ok(session.hollow_state())
+            Ok(session.hollow_report())
         })
     }
 
     #[tool(
-        description = "Inspect the shared hollow preview, stamp, token, source snapshot, parameters, generated brush IDs, cavity centers/bounds and limits. The cavity center is an interior vertex average, suitable for Look inside. No map edits.",
+        description = "Inspect selected source faces (solid/side IDs, normals, centers, materials), the shared hollow preview, open_faces, stamp, token, source snapshot, parameters, generated brush IDs, cavity centers/bounds and limits. The cavity center is an interior vertex average, suitable for Look inside. No map edits.",
         annotations(read_only_hint = true)
     )]
     fn get_hollow_preview(&self) -> ToolResult {
-        ok(self.session().hollow_state())
+        ok(self.session().hollow_report())
     }
 
     #[tool(
@@ -2750,7 +2754,7 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             session.cancel_hollow(args.token.parse().map_err(|_| "Invalid hollow token")?)?;
-            Ok(session.hollow_state())
+            Ok(session.hollow_report())
         })
     }
 

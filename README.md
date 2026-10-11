@@ -222,6 +222,11 @@ wall thickness and choose whether walls build **Inside the original size** or
 the original shape as the empty interior. Thickness is measured perpendicular
 to each face, including slopes.
 
+Under **Openings**, check any source faces that should stay open, such as the
+roof or one side. Unchecked faces become walls, and each source must keep at
+least one wall. The original boundary stays in place at an opening, so an open
+roof keeps the side walls at full height.
+
 **Preview walls** shows the proposed shell. **Look inside** moves the camera
 into a cavity; select its number when hollowing several brushes. Wireframe also
 reveals the walls from outside. **Create walls** replaces the original solids
@@ -232,11 +237,13 @@ face's material, world-space texture mapping and lighting settings. Brush
 entities retain ownership of their walls. The tool rejects invalid inner space,
 displacements and ambiguous geometry before replacing a valid preview. Limits
 are 16 source brushes, 64 sides per brush, 256 output walls and thickness from
-0.125 to 4096 units. Carving and intentionally open shells remain future work.
+0.125 to 4096 units. Carving remains future work.
 
 | Hollow controls | Inside the shared preview |
 | --- | --- |
-| ![Wall thickness, inward/outward construction and cancellable shell preview](docs/images/hollow-brushes.png) | ![Textured interior of a hollowed brush before applying](docs/images/hollow-interior.png) |
+| ![Wall thickness, opening faces and cancellable shell preview](docs/images/hollow-brushes.png) | ![Textured interior of a hollowed brush before applying](docs/images/hollow-interior.png) |
+
+![An open roof and front face, with full-height side walls](docs/images/hollow-open-shell.png)
 
 ### Brush clipping
 
@@ -730,6 +737,10 @@ to `preview_hollow` with thickness, direction and optional object IDs. The resul
 lists planned wall IDs and cavity centers/bounds. Inspect the rendered draft,
 optionally use `look_inside_hollow`, then apply or cancel its exact token.
 Map/selection edits and competing geometry tools invalidate the draft.
+The state also lists source `faces` with IDs, normals, centers and materials.
+Pass selected `{solid, side}` references as `open_faces` to leave those faces
+open; omit the array for a closed shell. Invalid openings retain the last valid
+preview. A shell with openings needs other world geometry to seal the map.
 
 `clip_brushes` accepts a plane normal/distance, three points, or a snapped
 planar line. Use `preview: true` to inspect the shared cut before committing

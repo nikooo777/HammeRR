@@ -1,3 +1,4 @@
+export { MaterialReplaceWindow } from "material-replace.slint";
 export { PrimitiveWindow } from "primitive.slint";
 export { LightingWindow, LightingGroup } from "lighting.slint";
 export { ContextWindow, ContextRow } from "context.slint";
@@ -1408,6 +1409,7 @@ export component AppWindow inherits Window {
     callback selection-mode-changed(int);
     callback edit-face-textures();
     callback edit-face-lighting();
+    callback replace-materials();
     callback surface-view-changed();
     callback sample-face-texture();
     callback browse-material(key: string);
@@ -1983,6 +1985,8 @@ export component AppWindow inherits Window {
                             accepted => { root.material-changed(); root.apply-material(); }
                         }
                     }
+
+                    Button { text: "Replace materials…"; clicked => { root.replace-materials(); } }
 
                     SectionTitle {
                         text: "ACTIVITY";

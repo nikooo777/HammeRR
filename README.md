@@ -31,6 +31,7 @@ and the shared entity inspector and activity panel.*
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
 | Design context | Map briefs, object notes and editor-only regions; shared drafts, search, relevant-context retrieval, bounded storage and undo. |
 | Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, fitting and placement, with cancellable previews and grouped material thumbnails. |
+| Material replacement | Exact map/object/face searches, explicit hidden-face handling, matching-face selection, guarded previews and atomic replacement. |
 | Face lighting | Batch lightmap scales and smoothing groups, mixed-value controls, cancellable previews, and density/group viewport diagnostics. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
@@ -236,6 +237,21 @@ Blank texture fields preserve existing values when selections are mixed.
 Fitting uses the material's real dimensions. Categories are inferred from
 material paths; favorites and recent applications last for the session.
 
+### Replace a material
+
+Open **Replace materials…** and choose the source material. Search the whole
+map, selected objects, or selected faces. **Find faces** reports matches and
+how many hidden faces were skipped; enable **Include hidden faces** to include
+them. Matching uses the exact material path and ignores case.
+
+**Select matches** selects every result. Choose a replacement with its material
+preview, then **Preview replacement** and **Replace faces**. **Cancel**, Escape
+or closing the dialog discards its draft. Replacement preserves UV placement,
+lighting settings and hidden flags, and undoes in one step. Changed maps or
+search selections require a fresh search before applying.
+
+![Material replacement scope, match counts, previews and cancellation](docs/images/material-replacement.png)
+
 ### Face lighting
 
 Select faces and open **Face lighting…**. Set a lightmap scale in world units
@@ -433,6 +449,7 @@ For example, place a warm light:
 | Design context | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `commit_face_preview`, `cancel_face_preview` |
+| Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials`, `commit_face_preview`, `cancel_face_preview` |
 | Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
@@ -460,16 +477,17 @@ or `cancel_face_preview` to guard against another client replacing the draft.
 from 1 to 32. The same options on `render_view` inspect a view without changing
 the user's settings.
 
-The repeatable lighting checks run through MCP and save a fixture, rendered
+The repeatable surface checks run through MCP and save fixtures, rendered
 views and a JSON report:
 
 ```sh
-python scripts/validate_face_lighting.py --output /tmp/hammerr-lighting-check
+python -B scripts/validate_face_lighting.py --output /tmp/hammerr-lighting-check
+python -B scripts/validate_material_replacement.py --output /tmp/hammerr-material-check
 ```
 
 Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`
 to check an idle GUI session with a clean map and empty undo/redo history.
-The script temporarily opens its fixture, then restores the original file,
+Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
 `clip_brushes` accepts a plane normal/distance, three points, or a snapped

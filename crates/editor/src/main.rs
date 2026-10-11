@@ -4510,12 +4510,14 @@ mod tests {
         let controller = compile_ui::Controller::new(&shared).unwrap();
         controller.show(&lock(&shared)).unwrap();
         assert!(controller.window.get_summary().contains("No build"));
+        assert!(!controller.window.get_launch_ready());
         let path = directory.path().join("room.bsp");
         let request = lock(&shared)
             .begin_compile(Actor::User, Some(&path))
             .unwrap();
         controller.refresh(&lock(&shared));
         assert!(controller.window.get_cancellable());
+        assert!(!controller.window.get_launch_ready());
         assert!(controller.window.get_summary().contains("Waiting"));
         controller.window.invoke_cancel_build();
         let result = request.run();
@@ -4544,6 +4546,8 @@ mod tests {
         lock(&shared).finish_compile(Actor::Agent, &result);
         controller.show(&lock(&shared)).unwrap();
         assert!(controller.window.get_summary().starts_with("Compiled in"));
+        assert!(controller.window.get_launch_ready());
+        assert!(controller.window.get_launch_details().contains("room.bsp"));
         assert!(
             controller
                 .window
@@ -4554,6 +4558,26 @@ mod tests {
         controller.window.invoke_close_dialog();
         assert!(!controller.window.window().is_visible());
         assert_eq!(lock(&shared).compile_status()["job"]["status"], "completed");
+        controller.window.invoke_play_build();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while lock(&shared).launching() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "game launch timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(lock(&shared).game_running());
+        controller.refresh(&lock(&shared));
+        assert!(!controller.window.get_launch_ready());
+        lock(&shared).stop_game(Actor::User).unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_launch_ready());
+        lock(&shared).new_map(Actor::Agent, true).unwrap();
+        controller.window.invoke_play_build();
+        assert!(!lock(&shared).launching());
+        controller.refresh(&lock(&shared));
+        assert!(!controller.window.get_launch_ready());
     }
 
     #[test]

@@ -1474,7 +1474,7 @@ impl Session {
         self.game_run.as_ref().is_some_and(game::Run::running)
     }
 
-    pub fn begin_launch(&mut self, actor: Actor) -> Result<LaunchRequest, String> {
+    pub fn launch_readiness(&self) -> Result<&Path, String> {
         if self.closing {
             return Err("the editor is closing".into());
         }
@@ -1495,9 +1495,18 @@ impl Session {
                 "the map changed since compilation; compile it again before launching".into(),
             );
         }
+        if !compiled.path.is_file() {
+            return Err("the compiled BSP is missing; compile the map again".into());
+        }
+        game::Install::from_game(&self.game)?;
+        Ok(&compiled.path)
+    }
+
+    pub fn begin_launch(&mut self, actor: Actor) -> Result<LaunchRequest, String> {
+        let bsp = self.launch_readiness()?.to_owned();
         let request = LaunchRequest {
             install: game::Install::from_game(&self.game)?,
-            bsp: compiled.path.clone(),
+            bsp,
         };
         self.launching = true;
         self.log(actor, "launching CS:S");

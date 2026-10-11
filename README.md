@@ -623,6 +623,7 @@ hidden counts and the compiler's visibility policy.
 | **Compile** | Build the current snapshot, including unsaved edits, into a BSP beside the VMF. Unsaved maps prompt for an output filename. |
 | **Run Map** | Compile and launch the snapshot in the installed Linux CS:S client with `-insecure`. |
 | **Build details…** | Inspect the current stage, elapsed time, snapshot freshness and compile diagnostics. |
+| **Play built map** | Launch the last successful build from Build details without compiling again. |
 | **Cancel build** | Stop the active build while preserving previous output. |
 | **Game Log** | Read console and launcher output. |
 | **Stop Map** | Stop the game process started by this editor. |
@@ -633,10 +634,18 @@ for the worker to stop; cancelled builds keep the previous BSP and pointfile.
 Output is published atomically, and a build cannot be cancelled after publication.
 Closing Build details leaves the build running.
 
+**Play built map** shows the BSP it will launch. It becomes available after a
+successful compile and again after the managed game stops. Map changes, missing
+output, an unavailable Linux client or an active build/game disable it with an
+explanation. A failed rebuild retains the previous successful build when that
+snapshot is still current. Launches always include `-insecure`.
+
 Through MCP, `start_compile` returns immediately with a job token. Poll
 `get_compile_status`; pass that token to `cancel_compile`. The existing
 `compile_map` and `run_map` calls wait for completion and expose the same status.
 A map edit marks the build snapshot stale and prevents launching it.
+`get_compile_status.launch` reports readiness, the BSP path or the reason play
+is unavailable; `launch_game` performs the same launch as **Play built map**.
 
 ![Build status with stage, output path and structured diagnostics](docs/images/build-status.png)
 

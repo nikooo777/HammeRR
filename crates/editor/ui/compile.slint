@@ -9,7 +9,10 @@ export component CompileWindow inherits Window {
     in property <string> diagnostics;
     in property <string> message;
     in property <bool> cancellable;
+    in property <bool> launch-ready;
+    in property <string> launch-details;
     callback cancel-build();
+    callback play-build();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -26,9 +29,11 @@ export component CompileWindow inherits Window {
         Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
         Text { text: "Diagnostics"; font-weight: 600; }
         TextEdit { text: root.diagnostics; read-only: true; vertical-stretch: 1; }
+        Text { text: root.launch-details; wrap: word-wrap; color: #bac2ce; }
         Text { text: root.message; wrap: word-wrap; color: #bac2ce; }
         HorizontalLayout {
             Button { text: "Cancel build"; enabled: root.cancellable; clicked => { root.cancel-build(); } }
+            Button { text: "Play built map"; enabled: root.launch-ready; clicked => { root.play-build(); } }
             Rectangle { horizontal-stretch: 1; }
             Button { text: "Close"; clicked => { root.close-dialog(); } }
         }

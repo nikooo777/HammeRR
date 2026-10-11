@@ -178,11 +178,8 @@ impl Controller {
             let (window, shared) = (window.as_weak(), shared.clone());
             move || {
                 let window = window.unwrap();
-                let mode = match window.get_view_mode() {
-                    1 => render::SurfaceView::LightmapDensity,
-                    2 => render::SurfaceView::SmoothingGroups,
-                    _ => render::SurfaceView::Textured,
-                };
+                let mode =
+                    render::SurfaceView::from_index(window.get_view_mode()).unwrap_or_default();
                 let result = lock(&shared).set_surface_view(mode, window.get_view_group() as u32);
                 window.set_message(result.err().unwrap_or_default().into());
             }
@@ -282,11 +279,7 @@ impl Controller {
                 );
             }
         }
-        self.window.set_view_mode(match session.view().surface {
-            render::SurfaceView::Textured => 0,
-            render::SurfaceView::LightmapDensity => 1,
-            render::SurfaceView::SmoothingGroups => 2,
-        });
+        self.window.set_view_mode(session.view().surface.index());
         self.window
             .set_view_group(session.view().smoothing_group as i32);
     }

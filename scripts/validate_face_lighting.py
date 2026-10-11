@@ -402,13 +402,11 @@ def validate(client, output):
             "shared hard-edge group view",
         )
         top = {"projection": "top", "center": [0, 0, 0], "ortho_height": 600}
-        check(
-            client.render(output / "top-textured.png", camera=top, surface="textured")
-            == client.render(
-                output / "top-density.png", camera=top, surface="lightmap_density"
-            ),
-            "planar wireframe unchanged",
-        )
+        planar_renders = {
+            client.render(output / f"top-{mode}.png", camera=top, surface=mode)
+            for mode in ["textured", "wireframe", "lightmap_density"]
+        }
+        check(len(planar_renders) == 3, "planar camera honors explicit viewport modes")
         client.call("save_map", {"path": str(output / "lighting.vmf")})
         client.call("open_map", {"path": str(output / "lighting.vmf")})
         check(

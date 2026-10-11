@@ -63,7 +63,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let uv_dx = dpdx(in.uv);
     let uv_dy = dpdy(in.uv);
     let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
-    if globals.surface_view.x != 0u && in.lightmap.z != 0.0 {
+    if globals.surface_view.x == 3u && in.lightmap.z != 0.0 {
+        let shade = 0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
+        return vec4<f32>(vec3<f32>(0.65) * in.color.rgb * shade, 1.0);
+    }
+    if (globals.surface_view.x == 1u || globals.surface_view.x == 2u) && in.lightmap.z != 0.0 {
         if globals.surface_view.x == 2u {
             let member = (in.smoothing & (1u << globals.surface_view.y)) != 0u;
             let base = select(vec3<f32>(0.065, 0.08, 0.11), vec3<f32>(0.1, 0.7, 0.8), member);

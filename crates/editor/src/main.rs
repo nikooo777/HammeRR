@@ -3123,11 +3123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
             let app = app.unwrap();
-            let mode = match app.get_surface_view() {
-                1 => render::SurfaceView::LightmapDensity,
-                2 => render::SurfaceView::SmoothingGroups,
-                _ => render::SurfaceView::Textured,
-            };
+            let mode = render::SurfaceView::from_index(app.get_surface_view()).unwrap_or_default();
             let result = lock(&session_of(&ui))
                 .set_surface_view(mode, app.get_smoothing_view_group() as u32);
             if let Err(error) = result {
@@ -3517,11 +3513,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         refresh_surface_dialog(window, &mut session, target);
                     }
                     app.set_show_tools(session.view().tool_textures);
-                    app.set_surface_view(match session.view().surface {
-                        render::SurfaceView::Textured => 0,
-                        render::SurfaceView::LightmapDensity => 1,
-                        render::SurfaceView::SmoothingGroups => 2,
-                    });
+                    app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
                     panel_dirty = true;
@@ -3562,11 +3554,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         refresh_material_catalog(window, &mut session);
                     }
                     app.set_show_tools(session.view().tool_textures);
-                    app.set_surface_view(match session.view().surface {
-                        render::SurfaceView::Textured => 0,
-                        render::SurfaceView::LightmapDensity => 1,
-                        render::SurfaceView::SmoothingGroups => 2,
-                    });
+                    app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
                     if !session.spatial().draw_block {
@@ -4917,7 +4905,17 @@ mod tests {
         window.invoke_toggle_group(2, true);
         window.set_lightmap_scale("4".into());
         window.invoke_edited();
-        window.set_view_mode(1);
+        let original_history = lock(&shared).document().undo_labels().count();
+        for mode in render::SurfaceView::ALL {
+            window.set_view_mode(mode.index());
+            window.invoke_view_changed();
+            assert_eq!(lock(&shared).view().surface, mode);
+            assert_eq!(
+                lock(&shared).document().undo_labels().count(),
+                original_history
+            );
+        }
+        window.set_view_mode(render::SurfaceView::LightmapDensity.index());
         window.invoke_view_changed();
         window.invoke_preview_edit();
         assert_eq!(lock(&shared).document().vmf(), &before);

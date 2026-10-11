@@ -75,11 +75,11 @@ export component LightingWindow inherits Window {
             Text { text: "Viewport inspection"; font-weight: 600; }
             HorizontalLayout {
                 spacing: 10px;
-                ComboBox { model: ["Textured", "Lightmap density", "Group membership"]; current-index <=> root.view-mode; selected => { root.view-changed(); } }
-                if root.view-mode == 2: SpinBox { minimum: 1; maximum: 32; value <=> root.view-group; edited => { root.view-changed(); } }
+                ComboBox { model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Group membership"]; current-index <=> root.view-mode; selected => { root.view-changed(); } }
+                if root.view-mode == 4: SpinBox { minimum: 1; maximum: 32; value <=> root.view-group; edited => { root.view-changed(); } }
             }
             Text {
-                text: root.view-mode == 1 ? "One grid cell per lighting pixel · blue ≤8, green ≤16, orange ≤32, red >32. Magenta marks invalid values." : root.view-mode == 2 ? "Cyan marks faces in group \{root.view-group}; gray marks other faces." : "Inspect authored density and group membership in perspective.";
+                text: root.view-mode == 3 ? "One grid cell per lighting pixel · blue ≤8, green ≤16, orange ≤32, red >32. Magenta marks invalid values." : root.view-mode == 4 ? "Cyan marks faces in group \{root.view-group}; gray marks other faces." : "Choose a view mode to inspect surfaces in any projection.";
                 color: #aeb9c8; wrap: word-wrap;
             }
             Text { text: "These settings are saved in the VMF. Baked lighting is still pending in the native compiler."; color: #aeb9c8; wrap: word-wrap; }

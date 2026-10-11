@@ -23,7 +23,7 @@ and the shared entity inspector and activity panel.*
 | Area | Available now |
 | --- | --- |
 | Maps and content | VMF editing and saving; byte-for-byte round trips for unmodified files; game materials from Steam libraries, search paths and VPK archives. |
-| Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
+| Viewport and brushes | Textured, flat, wireframe and diagnostic modes in every projection; grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquee or 3D volume selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
@@ -93,6 +93,23 @@ cargo test --workspace -j 8
 **Grid** accepts spacing from 0.125 to 4096 units. **Snap** and **Show grid**
 are independent. In planar views, arrows move within the displayed plane;
 PgUp/PgDn move along its depth axis.
+
+### Viewport modes
+
+Choose **Textured**, **Flat shading**, **Wireframe**, **Lightmap density** or
+**Smoothing groups** in the **Viewport** section. Modes work in Perspective,
+Top, Front and Side. Planar cameras now honor the selected mode; choose
+**Wireframe** for the traditional outline view or to see geometry through solids.
+Terrain wireframes include the displaced triangle edges. Light icons, selection
+highlights and editing guides remain visible.
+
+Flat shading ignores material textures and transparency to show solid geometry.
+Density and smoothing views inspect authored metadata; they do not preview baked
+lighting. Tool-brush visibility uses the same filter in every mode.
+
+| Flat shading | Wireframe |
+| --- | --- |
+| ![Untextured geometry and a light helper](docs/images/flat-view.png) | ![Brush edges and the same light helper](docs/images/wireframe-view.png) |
 
 ### Saved camera views
 
@@ -308,8 +325,8 @@ the current selection's values. **Preview settings**, **Apply settings** and
 **Cancel** share the same draft and undo behavior as face texture editing.
 
 Choose **Lightmap density** to inspect the authored grid, or **Group membership**
-to highlight one group. These views work in perspective; planar views retain
-wireframes. The native compiler preserves the settings but does not yet bake
+to highlight one group. These views work in perspective and planar cameras; choose Wireframe for
+outline editing. The native compiler preserves the settings but does not yet bake
 lighting or compute smoothed lighting normals.
 
 | Face lighting controls | Authored lightmap density |
@@ -518,7 +535,7 @@ Pass the returned `state.preview_token` as `token` to `commit_face_preview`
 or `cancel_face_preview` to guard against another client replacing the draft.
 `smoothing_groups` replaces memberships; `[]` clears them. `smoothing_add` and
 `smoothing_remove` preserve unrelated groups. `set_view` shares `surface` values
-`textured`, `lightmap_density` and `smoothing_groups`, with `smoothing_group`
+`textured`, `flat`, `wireframe`, `lightmap_density` and `smoothing_groups`, with `smoothing_group`
 from 1 to 32. The same options on `render_view` inspect a view without changing
 the user's settings.
 
@@ -532,6 +549,7 @@ python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
 python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
+python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
 ```
 
 Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`

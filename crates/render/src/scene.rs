@@ -1,6 +1,6 @@
 //! Converts a VMF into GPU-ready triangle batches, one per material.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use glam::{DVec3, Vec3};
 use map_core::query::POINT_ENTITY_HALF_SIZE;
@@ -146,12 +146,7 @@ impl Builder<'_> {
                     };
                     self.stats.displacements += 1;
                     self.add_displacement(material, &mesh, uv, tint, side);
-                    self.push_wire_loop(
-                        mesh.outline()
-                            .into_iter()
-                            .map(|i| mesh.positions[i].as_vec3()),
-                        tool,
-                    );
+                    self.push_displacement_wire(&mesh, tool);
                     if selected {
                         self.push_loop(
                             mesh.outline()
@@ -198,6 +193,26 @@ impl Builder<'_> {
             let b = points[(index + 1) % points.len()];
             lines.extend([a, b].map(|point| LineVertex {
                 position: point.to_array(),
+                color: WIRE_EDGE,
+            }));
+        }
+    }
+
+    fn push_displacement_wire(&mut self, mesh: &DisplacementMesh, tool: bool) {
+        let mut edges = BTreeSet::new();
+        for [a, b, c] in mesh.triangles() {
+            for (a, b) in [(a, b), (b, c), (c, a)] {
+                edges.insert((a.min(b), a.max(b)));
+            }
+        }
+        let lines = if tool {
+            &mut self.tool_wire_lines
+        } else {
+            &mut self.wire_lines
+        };
+        for (a, b) in edges {
+            lines.extend([a, b].map(|index| LineVertex {
+                position: mesh.positions[index].as_vec3().to_array(),
                 color: WIRE_EDGE,
             }));
         }
@@ -647,6 +662,56 @@ impl SceneMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn displacement_wireframe_includes_raised_internal_edges_once() {
+        let mut document = map_core::Document::empty();
+        document
+            .edit("terrain", |tx| {
+                map_core::edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "brick/test")
+            })
+            .unwrap();
+        let mut vmf = document.vmf().clone();
+        let side = vmf.world.solids[0]
+            .sides
+            .iter_mut()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+            .unwrap();
+        let mut distances = vec![vec![0.0; 5]; 5];
+        distances[2][2] = 32.0;
+        side.displacement = Some(source_formats::vmf::DispInfo {
+            power: 2,
+            start_position: DVec3::new(0.0, 0.0, 64.0),
+            normals: Some(vec![vec![DVec3::Z; 5]; 5]),
+            distances: Some(distances),
+            flags: None,
+            elevation: 0.0,
+            subdivided: false,
+            offsets: None,
+            offset_normals: None,
+            alphas: None,
+            triangle_tags: None,
+            allowed_verts: None,
+            extra_properties: Default::default(),
+            extra: Vec::new(),
+        });
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        let mut materials = MaterialLibrary::default();
+        let mesh = SceneMesh::build(&vmf, &fs, &mut materials, &HashSet::new());
+        assert_eq!(mesh.stats.displacements, 1);
+        assert_eq!(mesh.wire_lines.len(), 112);
+        assert!(mesh.wire_lines.iter().any(|line| line.position[2] == 96.0));
+        assert!(mesh.tool_wire_lines.is_empty());
+        for side in &mut vmf.world.solids[0].sides {
+            side.material = "tools/toolsnodraw".into();
+        }
+        let mesh = SceneMesh::build(&vmf, &fs, &mut materials, &HashSet::new());
+        assert_eq!(mesh.wire_lines.len() + mesh.tool_wire_lines.len(), 112);
+    }
 
     #[test]
     fn surface_diagnostic_vertices_keep_exact_masks_and_authored_coordinates() {

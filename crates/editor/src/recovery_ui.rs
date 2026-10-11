@@ -82,7 +82,14 @@ pub fn refresh(window: &RecoveryWindow, session: &Session) {
     let page = (window.get_page().max(0) as usize).min(entries.len().saturating_sub(1) / PAGE_SIZE);
     window.set_page(page as i32);
     window.set_has_next(entries.len() > (page + 1) * PAGE_SIZE);
-    window.set_summary(format!("{} recovery snapshots", entries.len()).into());
+    window.set_summary(
+        format!(
+            "{} recovery snapshot{}",
+            entries.len(),
+            if entries.len() == 1 { "" } else { "s" }
+        )
+        .into(),
+    );
     if let Some(entry) = entries
         .iter()
         .find(|entry| entry.id == window.get_selected_id().as_str())

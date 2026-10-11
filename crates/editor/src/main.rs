@@ -43,7 +43,7 @@ usage: editor [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port <
   --fgd        entity definition file (default: installed CS:S SDK FGD)
   --mcp-port   port for the MCP server at http://127.0.0.1:<port>/mcp (default 7377)
   --no-mcp     don't start the MCP server
-  --headless   no window; serve MCP over stdin/stdout instead";
+  --headless   no window; serve MCP over stdin/stdout; graphics initialized on first render";
 
 const DEFAULT_MCP_PORT: u16 = 7377;
 const BLOCK_SIZE: f64 = 128.0;
@@ -2369,7 +2369,6 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
-    let ctx = GpuContext::new()?;
     let session = Arc::new(Mutex::new(Session::new(mount_game(args.gameinfo))));
     lock(&session).configure_recovery(recovery::default_directory());
     let _recovery_worker = recovery::Worker::start(&session)?;
@@ -2390,14 +2389,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map
         .as_ref()
         .map(|map| lock(&session).open(Actor::User, map, true));
-    let server = EditorServer::new(session.clone(), ctx.clone());
-
     if args.headless {
         if let Some(Err(message)) = &open_message {
             eprintln!("{message}");
         }
-        return Ok(mcp::serve_stdio(server)?);
+        return Ok(mcp::serve_stdio(EditorServer::new(session.clone(), None))?);
     }
+
+    let ctx = GpuContext::new()?;
+    let server = EditorServer::new(session.clone(), Some(ctx.clone()));
 
     let mcp_status = match args.mcp_port {
         Some(port) => {

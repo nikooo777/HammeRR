@@ -1350,21 +1350,36 @@ struct Offscreen {
     scene: Option<(u64, GpuScene)>,
 }
 
+impl Offscreen {
+    fn new(ctx: GpuContext) -> Self {
+        Self {
+            renderer: Renderer::new(&ctx),
+            ctx,
+            scene: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct OffscreenState {
+    renderer: Option<Offscreen>,
+    error: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct EditorServer {
     session: SharedSession,
-    offscreen: Arc<Mutex<Offscreen>>,
+    offscreen: Arc<Mutex<OffscreenState>>,
     tool_router: ToolRouter<Self>,
 }
 
 impl EditorServer {
-    pub fn new(session: SharedSession, ctx: GpuContext) -> Self {
+    pub fn new(session: SharedSession, ctx: Option<GpuContext>) -> Self {
         Self {
             session,
-            offscreen: Arc::new(Mutex::new(Offscreen {
-                renderer: Renderer::new(&ctx),
-                ctx,
-                scene: None,
+            offscreen: Arc::new(Mutex::new(OffscreenState {
+                renderer: ctx.map(Offscreen::new),
+                error: None,
             })),
             tool_router: Self::tool_router(),
         }
@@ -1374,16 +1389,74 @@ impl EditorServer {
         lock(&self.session)
     }
 
-    fn render_png(&self, camera: &Camera, size: (u32, u32), view: ViewOptions) -> Vec<u8> {
+    fn render_png(
+        &self,
+        camera: &Camera,
+        size: (u32, u32),
+        view: ViewOptions,
+    ) -> Result<Vec<u8>, String> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.try_render_png(camera, size, view)
+        })) {
+            Ok(result) => result,
+            Err(payload) => {
+                let detail = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("graphics backend panic");
+                let error = format!("Rendering failed: {detail}");
+                let mut state = self
+                    .offscreen
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                state.renderer = None;
+                state.error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn rendering_status(&self) -> Value {
+        let state = self
+            .offscreen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        json!({"initialized": state.renderer.is_some(), "adapter": state.renderer.as_ref().map(|renderer| renderer.ctx.adapter.get_info().name), "error": state.error})
+    }
+
+    fn try_render_png(
+        &self,
+        camera: &Camera,
+        size: (u32, u32),
+        view: ViewOptions,
+    ) -> Result<Vec<u8>, String> {
         let mut offscreen = self
             .offscreen
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        if offscreen.renderer.is_none() {
+            let ctx = match GpuContext::new() {
+                Ok(ctx) => ctx,
+                Err(error) => {
+                    let error = format!(
+                        "Rendering unavailable: {error}. Map editing and compilation remain available."
+                    );
+                    offscreen.error = Some(error.clone());
+                    return Err(error);
+                }
+            };
+            offscreen.renderer = Some(Offscreen::new(ctx));
+            offscreen.error = None;
+        }
         let Offscreen {
             ctx,
             renderer,
             scene,
-        } = &mut *offscreen;
+        } = offscreen
+            .renderer
+            .as_mut()
+            .expect("renderer was initialized");
         {
             let mut session = self.session();
             let serial = session.scene_serial();
@@ -1401,8 +1474,8 @@ impl EditorServer {
         encoder
             .write_header()
             .and_then(|mut w| w.write_image_data(&pixels))
-            .expect("encoding a PNG in memory cannot fail");
-        png
+            .map_err(|error| format!("Could not encode render: {error}"))?;
+        Ok(png)
     }
 }
 
@@ -1672,6 +1745,7 @@ impl EditorServer {
         annotations(read_only_hint = true)
     )]
     fn get_map_info(&self) -> ToolResult {
+        let rendering = self.rendering_status();
         let mut session = self.session();
         session.poll_game();
         let doc = session.document();
@@ -1684,6 +1758,7 @@ impl EditorServer {
             .map(|e| format!("{}: {}", e.actor.label(), e.text))
             .collect();
         ok(json!({
+            "rendering": rendering,
             "path": session.path().map(|p| p.display().to_string()),
             "title": session.title(),
             "unsaved_changes": doc.is_dirty(),
@@ -3153,7 +3228,10 @@ impl EditorServer {
         if let Some(leak) = args.leak_path {
             view.leak_path = leak;
         }
-        let png = self.render_png(&camera, size, view);
+        let png = match self.render_png(&camera, size, view) {
+            Ok(png) => png,
+            Err(error) => return fail(error),
+        };
         let data = base64::engine::general_purpose::STANDARD.encode(png);
         let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1,
             "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path,
@@ -3401,5 +3479,45 @@ mod tests {
         assert_eq!(parse_id("entity 7"), Ok(ObjectId::Entity(7)));
         assert!(parse_id("7").is_err());
         assert!(parse_id("prop:7").is_err());
+    }
+}
+
+#[cfg(test)]
+mod headless_tests {
+    use super::*;
+
+    fn value(result: ToolResult) -> Value {
+        let result = result.unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+    }
+
+    #[test]
+    fn headless_map_tools_and_status_do_not_initialize_graphics() {
+        let session = Arc::new(Mutex::new(Session::new(Err("no game needed".into()))));
+        let server = EditorServer::new(session.clone(), None);
+        assert_eq!(
+            value(server.get_map_info())["rendering"]["initialized"],
+            false
+        );
+        let result = value(
+            server.create_block(Parameters(
+                serde_json::from_value(json!({
+                    "mins": [0,0,0], "maxs": [64,64,64], "material": "brick/test"
+                }))
+                .unwrap(),
+            )),
+        );
+        let id = result["id"].as_str().unwrap();
+        let objects = value(server.get_objects(Parameters(
+            serde_json::from_value(json!({"ids": [id]})).unwrap(),
+        )));
+        assert_eq!(objects["objects"][0]["faces"].as_array().unwrap().len(), 6);
+        assert_eq!(value(server.get_map_info())["world_brushes"], 1);
+        assert!(server.offscreen.lock().unwrap().renderer.is_none());
+        let output = value(server.undo(Parameters(serde_json::from_value(json!({})).unwrap())));
+        assert!(output.is_object());
+        assert_eq!(lock(&session).document().objects().count(), 0);
+        assert!(server.offscreen.lock().unwrap().renderer.is_none());
     }
 }

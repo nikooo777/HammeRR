@@ -31,6 +31,12 @@ const UNSUPPORTED: &[&str] = &[
     "info_lighting",
 ];
 
+pub fn unsupported_entity_class(classname: &str) -> bool {
+    UNSUPPORTED
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(classname))
+}
+
 #[derive(Debug, Clone)]
 pub struct MapSide {
     /// Outward-facing plane.
@@ -173,7 +179,7 @@ impl<'a> Map<'a> {
                 }
                 continue;
             }
-            if UNSUPPORTED.contains(&classname.as_str()) {
+            if unsupported_entity_class(&classname) {
                 report.diagnostics.push(Diagnostic::warning(
                     format!("{classname} is not compiled yet and was left out"),
                     Some(object),

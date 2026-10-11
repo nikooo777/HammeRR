@@ -1323,6 +1323,41 @@ pub struct EntityComponentArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MapChecksArgs {
+    /// Filter severity: error, warning or info.
+    pub severity: Option<String>,
+    /// Search issue codes, messages, IDs and source paths.
+    pub query: Option<String>,
+    pub offset: Option<usize>,
+    /// Page size, capped at 200; default 50.
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MapIssueArgs {
+    /// Current report token returned by run_map_checks.
+    pub report: String,
+    /// Issue ID within that report.
+    pub issue: String,
+    #[serde(default)]
+    pub frame: bool,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MapFixesArgs {
+    pub report: String,
+    /// Between 1 and 200 issue IDs with an advertised repair.
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MapFixTokenArgs {
+    /// Exact token from preview_map_fixes; stale or replaced previews are rejected.
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileArgs {
     /// Output .bsp path; defaults to the current map filename with a .bsp extension.
     pub path: Option<String>,
@@ -1615,6 +1650,90 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Check applied map data for geometry/ID problems, invalid UVs, entity properties/connections, missing material/model paths, spawn setup and native-compiler gaps. Does not change map data; replaces the shared issue report and repair preview. Hidden content is included. This is not a leak or playability test."
+    )]
+    fn run_map_checks(&self) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.run_map_checks(Actor::Agent);
+            session.map_checks_json(None, "", 0, 50)
+        })
+    }
+
+    #[tool(
+        description = "Read the shared map-check report with severity/search filtering and pagination. Stale reports remain readable; rerun checks before selecting or repairing an issue. Includes explicit repair preview state and check limitations.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_map_checks(&self, Parameters(args): Parameters<MapChecksArgs>) -> ToolResult {
+        run(|| {
+            self.session().map_checks_json(
+                args.severity.as_deref(),
+                args.query.as_deref().unwrap_or_default(),
+                args.offset.unwrap_or_default(),
+                args.limit.unwrap_or(50),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Select the object or face of a current map issue, optionally framing it in the viewport. Does not reveal hidden content. Rejects map-wide issues, ambiguous IDs, stale reports and replaced report tokens."
+    )]
+    fn select_map_issue(&self, Parameters(args): Parameters<MapIssueArgs>) -> ToolResult {
+        run(|| {
+            let report = args.report.parse().map_err(|_| "Invalid report token")?;
+            let issue = args.issue.parse().map_err(|_| "Invalid issue ID")?;
+            self.session().select_map_issue(
+                Actor::Agent,
+                report,
+                issue,
+                args.frame,
+                args.aspect.unwrap_or(1.0),
+            )?;
+            Ok(json!({"selected":args.issue,"framed":args.frame}))
+        })
+    }
+
+    #[tool(
+        description = "Review explicit repairs for selected issues in the current report. Returns before/after values without changing the map or undo history. Currently repairs invalid texture projections and zero lightmap scales. Use apply_map_fixes or cancel_map_fixes with the returned preview token."
+    )]
+    fn preview_map_fixes(&self, Parameters(args): Parameters<MapFixesArgs>) -> ToolResult {
+        run(|| {
+            let report = args.report.parse().map_err(|_| "Invalid report token")?;
+            let issues = args
+                .issues
+                .iter()
+                .map(|id| id.parse().map_err(|_| "Invalid issue ID"))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut session = self.session();
+            session.preview_map_fixes(report, &issues)?;
+            Ok(session.map_fix_preview_json())
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact reviewed map-repair preview as one undoable edit, then rerun checks. Rejects stale maps, changed definitions and replaced previews."
+    )]
+    fn apply_map_fixes(&self, Parameters(args): Parameters<MapFixTokenArgs>) -> ToolResult {
+        run(|| {
+            let token = args.token.parse().map_err(|_| "Invalid preview token")?;
+            let mut session = self.session();
+            let repaired = session.apply_map_fixes(Actor::Agent, token)?;
+            Ok(json!({"repaired":repaired,"checks":session.map_checks_json(None,"",0,50)?}))
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact map-repair preview without changing map data or undo history. Does not clear the issue report."
+    )]
+    fn cancel_map_fixes(&self, Parameters(args): Parameters<MapFixTokenArgs>) -> ToolResult {
+        run(|| {
+            let token = args.token.parse().map_err(|_| "Invalid preview token")?;
+            self.session().cancel_map_fixes(token)?;
+            Ok(json!({"cancelled":true}))
+        })
+    }
+
+    #[tool(
         description = "Compile the current map snapshot into a fullbright Source BSP. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks."
     )]
     async fn compile_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
@@ -1759,6 +1878,7 @@ impl EditorServer {
             .collect();
         ok(json!({
             "rendering": rendering,
+            "map_checks": {"report":session.map_check_report().map(|report|report.token.to_string()),"stale":session.map_checks_stale()},
             "path": session.path().map(|p| p.display().to_string()),
             "title": session.title(),
             "unsaved_changes": doc.is_dirty(),

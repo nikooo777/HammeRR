@@ -1,3 +1,4 @@
+mod checks_ui;
 mod connection_ui;
 mod game;
 mod inspector;
@@ -134,6 +135,8 @@ struct Ui {
     properties_window: Option<PropertiesWindow>,
     report_window: Option<ReportWindow>,
     recovery_window: Option<RecoveryWindow>,
+    checks_window: Option<ChecksWindow>,
+    seen_checks: (u64, u64, u64),
     seen_recovery: (u64, u64),
     seen_management: (u64, u64, u64),
     rename_window: Option<RenameWindow>,
@@ -2451,6 +2454,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         properties_window: None,
         report_window: None,
         recovery_window: None,
+        checks_window: None,
+        seen_checks: (0, 0, 0),
         seen_recovery: (0, 0),
         seen_management: (0, 0, 0),
         rename_window: None,
@@ -2599,6 +2604,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_object_report({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_report_window(&app.unwrap(), &ui)
+    });
+    app.on_map_checks({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            if ui.borrow().checks_window.is_none() {
+                match ChecksWindow::new() {
+                    Ok(window) => {
+                        checks_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().checks_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui.borrow().checks_window.as_ref().unwrap().clone_strong();
+            window.set_aspect(
+                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
+            );
+            window.set_message("".into());
+            checks_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.set_message(error.to_string().into());
+            }
+        }
     });
     app.on_recovery({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3183,6 +3215,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     session.scene_serial(),
                     session.definitions_serial(),
                 );
+                let checks = (
+                    session.map_check_serial(),
+                    session.scene_serial(),
+                    session.definitions_serial(),
+                );
+                if checks != ui.seen_checks {
+                    ui.seen_checks = checks;
+                    if let Some(window) = &ui.checks_window
+                        && window.window().is_visible()
+                    {
+                        checks_ui::refresh(window, &session);
+                    }
+                }
                 let recovery = (session.recovery_serial(), session.scene_serial());
                 if recovery != ui.seen_recovery {
                     ui.seen_recovery = recovery;
@@ -3987,6 +4032,96 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn map_checks_controls_share_selection_repair_cancel_and_stale_guards() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let mut vmf = session.document().vmf().clone();
+        vmf.world.solids[0].sides[0].u_axis.scale = 0.0;
+        vmf.world.solids[0].sides[1].lightmap_scale = 0;
+        let path = directory.path().join("courtyard.vmf");
+        std::fs::write(
+            &path,
+            vmf.write(&source_formats::keyvalues::WriteOptions::default()),
+        )
+        .unwrap();
+        session.open(Actor::User, &path, true).unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let window = ChecksWindow::new().unwrap();
+        checks_ui::bind(&window, &shared);
+        checks_ui::refresh(&window, &lock(&shared));
+        assert!(!window.get_can_repair());
+        window.show().unwrap();
+        window.invoke_run_checks();
+        assert!(window.get_rows().row_count() >= 6);
+        window.invoke_inspect("0".into());
+        assert_eq!(window.get_detail_title(), "Invalid texture projection");
+        assert!(window.get_can_select() && window.get_can_repair());
+        window.invoke_navigate(true);
+        assert_eq!(lock(&shared).selected_faces().len(), 1);
+        let before = lock(&shared).document().vmf().clone();
+        window.invoke_review_repair();
+        assert!(!window.get_preview_token().is_empty());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        save_ui_snapshot(window.window(), "map-checks");
+        for label in [
+            "Run checks",
+            "Select issue",
+            "Focus issue",
+            "Review repair…",
+            "Cancel repair",
+            "Apply repair",
+            "Cancel / close",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_cancel_repair();
+        assert!(lock(&shared).map_fix_draft().is_none());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.invoke_review_repair();
+        window.invoke_apply_repair();
+        assert_eq!(lock(&shared).document().undo_labels().count(), 1);
+        assert_ne!(lock(&shared).document().vmf(), &before);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        checks_ui::refresh(&window, &lock(&shared));
+        assert!(window.get_stale());
+        assert!(!window.get_can_repair());
+        window.invoke_run_checks();
+        window.invoke_inspect("0".into());
+        window.invoke_review_repair();
+        let old = window.get_preview_token();
+        let report = lock(&shared).map_check_report().unwrap().token;
+        lock(&shared).preview_map_fixes(report, &[1]).unwrap();
+        window.set_preview_token(old);
+        window.invoke_apply_repair();
+        assert!(window.get_message().contains("replaced"));
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.set_query("missing_team_spawn".into());
+        window.invoke_filter();
+        assert_eq!(window.get_rows().row_count(), 2);
+        window.invoke_cancel();
+        assert!(lock(&shared).map_fix_draft().is_none());
+        assert_eq!(lock(&shared).document().vmf(), &before);
     }
 
     #[test]

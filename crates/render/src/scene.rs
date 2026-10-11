@@ -20,6 +20,13 @@ const SELECTED_TINT: [u8; 3] = [255, 130, 130];
 const SELECTED_EDGE: [u8; 4] = [255, 64, 64, 255];
 const WIRE_EDGE: [u8; 4] = [151, 169, 191, 255];
 
+fn lightmap_vertex(side: &source_formats::vmf::Side, point: DVec3) -> [f32; 3] {
+    map_core::surface::lightmap_uv(side, point)
+        .map(|uv| [uv.x as f32, uv.y as f32, side.lightmap_scale as f32])
+        .filter(|values| values.iter().all(|value| value.is_finite()))
+        .unwrap_or([0.0, 0.0, -1.0])
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -28,6 +35,8 @@ pub struct Vertex {
     pub uv: [f32; 2],
     /// RGB tint; alpha blends brush layers or marks an emissive helper surface.
     pub color: [u8; 4],
+    pub lightmap: [f32; 3],
+    pub smoothing: u32,
 }
 
 #[repr(C)]
@@ -136,7 +145,7 @@ impl Builder<'_> {
                         continue;
                     };
                     self.stats.displacements += 1;
-                    self.add_displacement(material, &mesh, uv, tint);
+                    self.add_displacement(material, &mesh, uv, tint, side);
                     self.push_wire_loop(
                         mesh.outline()
                             .into_iter()
@@ -162,6 +171,8 @@ impl Builder<'_> {
                             normal,
                             uv: uv(p),
                             color: [tint[0], tint[1], tint[2], 0],
+                            lightmap: lightmap_vertex(side, p),
+                            smoothing: side.smoothing_groups.unwrap_or(0),
                         });
                     }
                     let indices = &mut self.indices[material];
@@ -198,6 +209,7 @@ impl Builder<'_> {
         mesh: &DisplacementMesh,
         uv: impl Fn(DVec3) -> [f32; 2],
         tint: [u8; 3],
+        side: &source_formats::vmf::Side,
     ) {
         let triangles: Vec<[usize; 3]> = mesh.triangles().collect();
         let mut normals = vec![DVec3::ZERO; mesh.positions.len()];
@@ -218,6 +230,8 @@ impl Builder<'_> {
                 normal: normals[i].normalize_or_zero().as_vec3().to_array(),
                 uv: uv(mesh.base_positions[i]),
                 color: [tint[0], tint[1], tint[2], alpha],
+                lightmap: lightmap_vertex(side, mesh.base_positions[i]),
+                smoothing: side.smoothing_groups.unwrap_or(0),
             });
         }
         self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
@@ -267,6 +281,8 @@ impl Builder<'_> {
                     normal: normal.to_array(),
                     uv: [0.0, 0.0],
                     color: [r, g, b, 0],
+                    lightmap: [0.0; 3],
+                    smoothing: 0,
                 });
             }
             self.indices[material].extend([
@@ -306,6 +322,8 @@ impl Builder<'_> {
                 normal: normal.to_array(),
                 uv: [0.0; 2],
                 color: [color[0], color[1], color[2], 0],
+                lightmap: [0.0; 3],
+                smoothing: 0,
             });
         }
         self.indices[material].extend([first, first + 1, first + 2]);
@@ -629,6 +647,60 @@ impl SceneMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surface_diagnostic_vertices_keep_exact_masks_and_authored_coordinates() {
+        let mut document = map_core::Document::empty();
+        document
+            .edit("brush", |tx| {
+                map_core::edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "brick/test")
+            })
+            .unwrap();
+        let mut vmf = document.vmf().clone();
+        for side in &mut vmf.world.solids[0].sides {
+            side.lightmap_scale = 8;
+            side.smoothing_groups = Some(0x8000_0001);
+            side.u_axis.offset = 12.0;
+        }
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        let mut materials = MaterialLibrary::default();
+        let mesh = SceneMesh::build(&vmf, &fs, &mut materials, &HashSet::new());
+        assert!(!mesh.vertices.is_empty());
+        for vertex in &mesh.vertices {
+            assert_eq!(vertex.smoothing, 0x8000_0001);
+            assert_eq!(vertex.lightmap[2], 8.0);
+            let normal = Vec3::from_array(vertex.normal).as_dvec3();
+            let side = vmf.world.solids[0]
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == normal)
+                .unwrap();
+            let expected =
+                map_core::surface::lightmap_uv(side, Vec3::from_array(vertex.position).as_dvec3())
+                    .unwrap()
+                    .as_vec2();
+            assert_eq!(&vertex.lightmap[..2], expected.as_ref());
+        }
+        for side in &mut vmf.world.solids[0].sides {
+            side.lightmap_scale = 0;
+        }
+        let mesh = SceneMesh::build(&vmf, &fs, &mut materials, &HashSet::new());
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|vertex| vertex.lightmap[2] == -1.0)
+        );
+        assert!(
+            light_mesh("light", false)
+                .vertices
+                .iter()
+                .all(|vertex| vertex.lightmap == [0.0; 3] && vertex.smoothing == 0)
+        );
+    }
 
     fn light_mesh(classname: &str, selected: bool) -> SceneMesh {
         let mut vmf = map_core::Document::empty().vmf().clone();

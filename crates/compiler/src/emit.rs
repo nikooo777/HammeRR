@@ -103,6 +103,7 @@ impl Geometry {
             lightmap_mins,
             lightmap_size,
             original_face: index(original, "original face")?,
+            smoothing_groups: face.smoothing_groups,
             ..bsp::Face::default()
         })
     }

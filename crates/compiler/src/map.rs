@@ -43,6 +43,7 @@ pub struct MapSide {
     pub plane: usize,
     pub material: usize,
     pub texinfo: usize,
+    pub smoothing_groups: u32,
     /// The side's polygon; `None` for bevels.
     pub winding: Option<Winding>,
     pub bevel: bool,
@@ -265,6 +266,7 @@ impl<'a> Map<'a> {
                 plane,
                 material,
                 texinfo,
+                smoothing_groups: side.smoothing_groups.unwrap_or(0),
                 winding: Some(Winding(face.vertices.clone())),
                 bevel: false,
                 visible,
@@ -314,6 +316,7 @@ impl<'a> Map<'a> {
                     plane,
                     material: first.material,
                     texinfo: first.texinfo,
+                    smoothing_groups: 0,
                     winding: None,
                     bevel: true,
                     visible: false,
@@ -353,8 +356,13 @@ impl<'a> Map<'a> {
             [a.x as f32, a.y as f32, a.z as f32, axis.offset as f32]
         };
         let lightmap_vec = |axis: &source_formats::vmf::UvAxis| {
-            let a = axis.axis.normalize_or_zero() / lightmap_scale;
-            [a.x as f32, a.y as f32, a.z as f32, 0.0]
+            let a = axis.axis / lightmap_scale;
+            [
+                a.x as f32,
+                a.y as f32,
+                a.z as f32,
+                (axis.offset * axis.scale / lightmap_scale) as f32,
+            ]
         };
         self.texinfos.add(bsp::TexInfo {
             texture_vecs: [vec(&side.u_axis), vec(&side.v_axis)],

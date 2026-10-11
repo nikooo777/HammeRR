@@ -41,6 +41,7 @@ pub use manipulation::{AreaPreview, Pointer, TransformDrag, TransformPreview, Tr
 const LOG_LENGTH: usize = 50;
 
 struct FacePreview {
+    token: u64,
     document: Document,
     edits: Vec<(FaceId, SurfaceEdit)>,
 }
@@ -105,6 +106,7 @@ pub struct Session {
     face_selection: BTreeSet<FaceId>,
     face_mode: bool,
     face_preview: Option<FacePreview>,
+    face_preview_serial: u64,
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
     checks: checks::State,
@@ -220,6 +222,7 @@ impl Session {
             face_selection: BTreeSet::new(),
             face_mode: false,
             face_preview: None,
+            face_preview_serial: 0,
             surface_sample: None,
             recovery: recovery::State::default(),
             checks: checks::State::default(),
@@ -487,6 +490,17 @@ impl Session {
         self.face_preview.is_some()
     }
 
+    pub fn face_preview_token(&self) -> Option<u64> {
+        self.face_preview.as_ref().map(|preview| preview.token)
+    }
+
+    pub fn check_face_preview_token(&self, token: Option<u64>) -> Result<(), String> {
+        if token.is_some() && self.face_preview_token() != token {
+            return Err("Face preview was closed or replaced".into());
+        }
+        Ok(())
+    }
+
     pub fn preview_side(&self, face: FaceId) -> Option<&source_formats::vmf::Side> {
         surface::side(&self.face_preview.as_ref()?.document, face)
     }
@@ -560,7 +574,7 @@ impl Session {
         if preview {
             let mut document = self.document.clone();
             let changed = document
-                .edit("preview face textures", |tx| {
+                .edit("preview face settings", |tx| {
                     edits.iter().try_fold(0, |count, (face, patch)| {
                         surface::edit_faces(tx, &[*face], patch).map(|changed| count + changed)
                     })
@@ -572,7 +586,12 @@ impl Session {
             self.cancel_transform_preview();
             self.cancel_area_selection();
             self.view_serial += 1;
-            self.face_preview = Some(FacePreview { document, edits });
+            self.face_preview_serial += 1;
+            self.face_preview = Some(FacePreview {
+                token: self.face_preview_serial,
+                document,
+                edits,
+            });
             self.scene_serial += 1;
             Ok(changed)
         } else {
@@ -585,7 +604,7 @@ impl Session {
         actor: Actor,
         edits: Vec<(FaceId, SurfaceEdit)>,
     ) -> Result<usize, String> {
-        let changed = self.edit(actor, "edit face textures", |tx| {
+        let changed = self.edit(actor, "edit face settings", |tx| {
             edits.iter().try_fold(0, |count, (face, patch)| {
                 surface::edit_faces(tx, &[*face], patch).map(|changed| count + changed)
             })

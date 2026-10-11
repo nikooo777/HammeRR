@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use glam::{DQuat, DVec3};
+use glam::{DQuat, DVec2, DVec3};
 use source_formats::vmf::{Side, Solid, UvAxis};
 
 use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction};
@@ -24,6 +24,47 @@ pub struct SurfaceEdit {
     pub alignment: Option<Alignment>,
     pub justify_u: Option<(Justify, u32)>,
     pub justify_v: Option<(Justify, u32)>,
+    pub lightmap_scale: Option<u32>,
+    pub smoothing_groups: Option<u32>,
+    pub smoothing_add: u32,
+    pub smoothing_remove: u32,
+}
+
+pub const MAX_LIGHTMAP_SCALE: u32 = 1024;
+pub const HARD_EDGE_GROUPS: u32 = 0xff00_0000;
+
+pub fn smoothing_mask(groups: &[u32]) -> Result<u32, EditError> {
+    groups.iter().try_fold(0, |mask, &group| {
+        if !(1..=32).contains(&group) {
+            Err(invalid("Smoothing group numbers must be between 1 and 32"))
+        } else {
+            Ok(mask | (1 << (group - 1)))
+        }
+    })
+}
+
+pub fn smoothing_numbers(mask: u32) -> Vec<u32> {
+    (1..=32)
+        .filter(|group| mask & (1 << (group - 1)) != 0)
+        .collect()
+}
+
+pub fn lightmap_uv(side: &Side, point: DVec3) -> Option<DVec2> {
+    if side.lightmap_scale == 0 {
+        return None;
+    }
+    let normal = Plane::from_points(side.plane.0)?.normal;
+    if !side.u_axis.axis.is_finite()
+        || !side.v_axis.axis.is_finite()
+        || side.u_axis.axis.cross(side.v_axis.axis).dot(normal).abs() < 1e-8
+    {
+        return None;
+    }
+    let uv = DVec2::new(
+        point.dot(side.u_axis.axis) + side.u_axis.scale * side.u_axis.offset,
+        point.dot(side.v_axis.axis) + side.v_axis.scale * side.v_axis.offset,
+    ) / f64::from(side.lightmap_scale);
+    uv.is_finite().then_some(uv)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +222,18 @@ fn invalid(message: &str) -> EditError {
 }
 
 fn update(side: &mut Side, edit: &SurfaceEdit, points: &[glam::DVec3]) -> Result<(), EditError> {
+    if let Some(scale) = edit.lightmap_scale {
+        side.lightmap_scale = scale;
+    }
+    if edit.smoothing_groups.is_some() || edit.smoothing_add != 0 || edit.smoothing_remove != 0 {
+        side.smoothing_groups = Some(
+            (edit
+                .smoothing_groups
+                .unwrap_or(side.smoothing_groups.unwrap_or(0))
+                | edit.smoothing_add)
+                & !edit.smoothing_remove,
+        );
+    }
     let normal = Plane::from_points(side.plane.0)
         .ok_or_else(|| invalid("face has an invalid plane"))?
         .normal;
@@ -311,6 +364,19 @@ pub fn edit_faces(
     if edit.fit.is_some_and(|size| size.contains(&0)) {
         return Err(invalid("texture dimensions must be positive"));
     }
+    if edit
+        .lightmap_scale
+        .is_some_and(|scale| !(1..=MAX_LIGHTMAP_SCALE).contains(&scale))
+    {
+        return Err(invalid(
+            "Lightmap scale must be 1–1024 world units per lighting pixel",
+        ));
+    }
+    if edit.smoothing_add & edit.smoothing_remove != 0 {
+        return Err(invalid(
+            "A smoothing group cannot be added and removed in the same edit",
+        ));
+    }
     let mut changed = 0;
     for face in faces.iter().copied().collect::<BTreeSet<_>>() {
         let owner = tx
@@ -377,6 +443,175 @@ mod tests {
             .unwrap()
             .id;
         (doc, FaceId { solid: id, side })
+    }
+
+    #[test]
+    fn lighting_edits_preserve_mixed_memberships_neighbors_and_roundtrip() {
+        let (mut doc, face) = fixture();
+        let other = FaceId {
+            solid: face.solid,
+            side: doc
+                .solid(face.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| side.id != face.side)
+                .unwrap()
+                .id,
+        };
+        for (face, groups) in [(face, vec![1, 25]), (other, vec![2, 32])] {
+            doc.edit("initial groups", |tx| {
+                edit_faces(
+                    tx,
+                    &[face],
+                    &SurfaceEdit {
+                        smoothing_groups: Some(smoothing_mask(&groups)?),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        }
+        let before = doc.vmf().clone();
+        let patch = SurfaceEdit {
+            lightmap_scale: Some(8),
+            smoothing_add: smoothing_mask(&[3, 25]).unwrap(),
+            smoothing_remove: smoothing_mask(&[1, 32]).unwrap(),
+            ..Default::default()
+        };
+        assert_eq!(
+            doc.edit("lighting", |tx| edit_faces(
+                tx,
+                &[face, other, face],
+                &patch
+            ))
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            smoothing_numbers(side(&doc, face).unwrap().smoothing_groups.unwrap()),
+            vec![3, 25]
+        );
+        assert_eq!(
+            smoothing_numbers(side(&doc, other).unwrap().smoothing_groups.unwrap()),
+            vec![2, 3, 25]
+        );
+        for old in &before.world.solids[0].sides {
+            let new = doc
+                .solid(face.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| side.id == old.id)
+                .unwrap();
+            let mut expected = old.clone();
+            if [face.side, other.side].contains(&old.id) {
+                expected.lightmap_scale = 8;
+                expected.smoothing_groups = Some(
+                    (old.smoothing_groups.unwrap() | patch.smoothing_add) & !patch.smoothing_remove,
+                );
+            }
+            assert_eq!(*new, expected);
+        }
+        let after = doc.vmf().clone();
+        assert_eq!(
+            Vmf::parse(&doc.vmf().write(&WriteOptions::default())).unwrap(),
+            after
+        );
+        doc.undo().unwrap();
+        assert_eq!(doc.vmf(), &before);
+        doc.redo().unwrap();
+        assert_eq!(doc.vmf(), &after);
+        doc.edit("clear groups", |tx| {
+            edit_faces(
+                tx,
+                &[face, other],
+                &SurfaceEdit {
+                    smoothing_groups: Some(0),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        assert_eq!(side(&doc, face).unwrap().smoothing_groups, Some(0));
+        assert_eq!(side(&doc, other).unwrap().smoothing_groups, Some(0));
+    }
+
+    #[test]
+    fn lighting_validation_rejects_bad_batches_without_history_or_metadata_changes() {
+        let (mut doc, face) = fixture();
+        assert_eq!(smoothing_mask(&[1, 1, 24, 25, 32]).unwrap(), 0x8180_0001);
+        assert_eq!(
+            smoothing_mask(&[25, 26, 27, 28, 29, 30, 31, 32]).unwrap(),
+            HARD_EDGE_GROUPS
+        );
+        assert!(smoothing_mask(&[0]).is_err());
+        assert!(smoothing_mask(&[33]).is_err());
+        let before = doc.vmf().clone();
+        let revision = doc.revision();
+        for patch in [
+            SurfaceEdit {
+                lightmap_scale: Some(0),
+                ..Default::default()
+            },
+            SurfaceEdit {
+                lightmap_scale: Some(1025),
+                ..Default::default()
+            },
+            SurfaceEdit {
+                smoothing_add: 1,
+                smoothing_remove: 1,
+                ..Default::default()
+            },
+        ] {
+            assert!(
+                doc.edit("invalid lighting", |tx| edit_faces(tx, &[face], &patch))
+                    .is_err()
+            );
+            assert_eq!(doc.vmf(), &before);
+            assert_eq!(doc.revision(), revision);
+        }
+        assert!(
+            doc.edit("invalid target", |tx| edit_faces(
+                tx,
+                &[
+                    face,
+                    FaceId {
+                        solid: face.solid,
+                        side: u32::MAX
+                    }
+                ],
+                &SurfaceEdit {
+                    lightmap_scale: Some(4),
+                    ..Default::default()
+                }
+            ))
+            .is_err()
+        );
+        assert_eq!(doc.vmf(), &before);
+        assert_eq!(doc.revision(), revision);
+    }
+
+    #[test]
+    fn authored_lightmap_coordinates_follow_uv_axes_and_texture_shift() {
+        let (doc, face) = fixture();
+        let mut side = side(&doc, face).unwrap().clone();
+        side.u_axis.axis = DVec3::new(2.0, 0.5, 0.0);
+        side.u_axis.scale = -0.25;
+        side.u_axis.offset = 12.0;
+        side.v_axis.axis = DVec3::new(0.25, -1.0, 0.0);
+        side.v_axis.scale = 0.5;
+        side.v_axis.offset = 4.0;
+        side.lightmap_scale = 8;
+        assert_eq!(
+            lightmap_uv(&side, DVec3::new(16.0, 24.0, 16.0)),
+            Some(DVec2::new(41.0 / 8.0, -18.0 / 8.0))
+        );
+        side.lightmap_scale = 0;
+        assert_eq!(lightmap_uv(&side, DVec3::ZERO), None);
+        side.lightmap_scale = 8;
+        side.u_axis.axis = DVec3::Z;
+        assert_eq!(lightmap_uv(&side, DVec3::ZERO), None);
     }
 
     #[test]

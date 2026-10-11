@@ -1,4 +1,5 @@
 export { PrimitiveWindow } from "primitive.slint";
+export { LightingWindow, LightingGroup } from "lighting.slint";
 export { ContextWindow, ContextRow } from "context.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
@@ -1358,6 +1359,8 @@ export component AppWindow inherits Window {
     }
     in-out property <bool> show-tools: true;
     in-out property <bool> show-leak: true;
+    in-out property <int> surface-view;
+    in-out property <int> smoothing-view-group: 1;
     in-out property <string> material: "dev/dev_measuregeneric01";
 
     in property <string> selection-title: "Nothing selected";
@@ -1404,6 +1407,8 @@ export component AppWindow inherits Window {
     callback apply-material();
     callback selection-mode-changed(int);
     callback edit-face-textures();
+    callback edit-face-lighting();
+    callback surface-view-changed();
     callback sample-face-texture();
     callback browse-material(key: string);
     callback material-changed();
@@ -1799,6 +1804,16 @@ export component AppWindow inherits Window {
                         text: "SELECTION";
                     }
                     ComboBox {
+                        model: ["Textured surfaces", "Lightmap density", "Smoothing group membership"];
+                        current-index <=> root.surface-view;
+                        selected => { root.surface-view-changed(); }
+                    }
+                    if root.surface-view == 2: HorizontalLayout {
+                        Text { text: "Highlight group"; color: #c8ccd4; vertical-alignment: center; }
+                        SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }
+                    }
+                    if root.surface-view != 0: Text { text: root.projection-index == 0 ? "Authored settings · baked lighting is pending" : "Switch to Perspective to see surface diagnostics"; color: #aeb9c8; wrap: word-wrap; }
+                    ComboBox {
                         model: ["Objects", "Faces · materials & textures"];
                         current-index: root.face-mode ? 1 : 0;
                         selected => { root.selection-mode-changed(self.current-index); }
@@ -1951,6 +1966,7 @@ export component AppWindow inherits Window {
                         SectionTitle { text: root.face-mode ? "FACE MATERIAL" : "BRUSH MATERIAL"; }
                         if root.has-faces: Button { text: "Sample face texture"; enabled: root.can-sample-face; clicked => { root.sample-face-texture(); } }
                         if root.has-faces: Button { text: "Edit face textures…"; clicked => { root.edit-face-textures(); } }
+                        if root.has-faces: Button { text: "Face lighting…"; clicked => { root.edit-face-lighting(); } }
                         HorizontalLayout {
                             spacing: 10px;
                             if root.has-material-preview: Image { width: 64px; height: 64px; source: root.material-preview; image-fit: contain; }

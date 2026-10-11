@@ -4,6 +4,7 @@ mod context_ui;
 mod game;
 mod inspector;
 mod interaction;
+mod lighting_ui;
 mod management_ui;
 mod materials;
 mod mcp;
@@ -153,6 +154,7 @@ struct Ui {
     material_target: Option<(u32, String, u64)>,
     surface_window: Option<SurfaceWindow>,
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
+    lighting: Option<lighting_ui::Controller>,
     material_for_faces: bool,
     material_for_clip: bool,
     material_for_primitive: bool,
@@ -2510,6 +2512,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         material_target: None,
         surface_window: None,
         surface_target: None,
+        lighting: None,
         material_for_faces: false,
         material_for_clip: false,
         material_for_primitive: false,
@@ -2775,6 +2778,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
     });
+    app.on_edit_face_lighting({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().lighting.is_none() {
+                match lighting_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().lighting = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.lighting.as_ref().unwrap();
+            let result = controller.initialize(&mut lock(&shared));
+            match result {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
+    });
     app.on_sample_face_texture({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -2917,6 +2944,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(error) = result {
                 let app = app.unwrap();
                 refresh_panel(&app, &mut session);
+                app.set_message(error.into());
+            }
+        }
+    });
+    app.on_surface_view_changed({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            let mode = match app.get_surface_view() {
+                1 => render::SurfaceView::LightmapDensity,
+                2 => render::SurfaceView::SmoothingGroups,
+                _ => render::SurfaceView::Textured,
+            };
+            let result = lock(&session_of(&ui))
+                .set_surface_view(mode, app.get_smoothing_view_group() as u32);
+            if let Err(error) = result {
                 app.set_message(error.into());
             }
         }
@@ -3267,6 +3310,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.seen_scene = session.scene_serial();
                     let mesh = session.build_scene();
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                    if let Some(controller) = &ui.lighting
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(window) = &ui.surface_window
                         && window.window().is_visible()
                         && let Some(target) = &ui.surface_target
@@ -3274,6 +3322,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         refresh_surface_dialog(window, &mut session, target);
                     }
                     app.set_show_tools(session.view().tool_textures);
+                    app.set_surface_view(match session.view().surface {
+                        render::SurfaceView::Textured => 0,
+                        render::SurfaceView::LightmapDensity => 1,
+                        render::SurfaceView::SmoothingGroups => 2,
+                    });
+                    app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
                     panel_dirty = true;
                 }
@@ -3282,6 +3336,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
+                    if let Some(controller) = &ui.lighting
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(window) = &ui.surface_window
                         && window.window().is_visible()
                     {
@@ -3293,6 +3352,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         refresh_material_catalog(window, &mut session);
                     }
                     app.set_show_tools(session.view().tool_textures);
+                    app.set_surface_view(match session.view().surface {
+                        render::SurfaceView::Textured => 0,
+                        render::SurfaceView::LightmapDensity => 1,
+                        render::SurfaceView::SmoothingGroups => 2,
+                    });
+                    app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
                     if !session.spatial().draw_block {
                         ui.brush_drag = None;
@@ -4156,6 +4221,190 @@ mod tests {
                 .unwrap()
                 .write_image_data(image.as_bytes())
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn lighting_controls_preserve_mixed_groups_guard_previews_and_cancel() {
+        use map_core::surface::{self, FaceId, SurfaceEdit};
+        use slint::Model;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let faces = session.document().solid(id).unwrap().sides[..2]
+            .iter()
+            .map(|side| FaceId {
+                solid: id,
+                side: side.id,
+            })
+            .collect::<Vec<_>>();
+        session
+            .edit_faces(
+                Actor::Agent,
+                &faces[..1],
+                SurfaceEdit {
+                    lightmap_scale: Some(8),
+                    smoothing_groups: Some(1),
+                    ..Default::default()
+                },
+                false,
+                false,
+            )
+            .unwrap();
+        session
+            .edit_faces(
+                Actor::Agent,
+                &faces[1..],
+                SurfaceEdit {
+                    smoothing_groups: Some(2),
+                    ..Default::default()
+                },
+                false,
+                false,
+            )
+            .unwrap();
+        session.select_faces(&faces, SelectMode::Replace).unwrap();
+        let before = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = lighting_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        assert!(window.get_lightmap_scale().is_empty());
+        assert_eq!(window.get_groups().row_data(0).unwrap().state, -1);
+        assert_eq!(window.get_groups().row_data(1).unwrap().state, -1);
+        window.show().unwrap();
+        window.invoke_toggle_group(2, true);
+        window.set_lightmap_scale("4".into());
+        window.invoke_edited();
+        window.set_view_mode(1);
+        window.invoke_view_changed();
+        window.invoke_preview_edit();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        for (face, mask) in faces.iter().zip([5, 6]) {
+            let session = lock(&shared);
+            let side = session.preview_side(*face).unwrap();
+            assert_eq!(side.smoothing_groups, Some(mask));
+            assert_eq!(side.lightmap_scale, 4);
+        }
+        controller.refresh(&lock(&shared));
+        save_ui_snapshot(window.window(), "face-lighting");
+        for label in ["Cancel", "Preview settings", "Apply settings"] {
+            assert_dialog_button_visible(window, label);
+        }
+        window.set_lightmap_scale("0".into());
+        window.invoke_edited();
+        assert!(!lock(&shared).has_face_preview());
+        window.invoke_preview_edit();
+        assert!(!lock(&shared).has_face_preview());
+        assert!(window.get_message().contains("1–1024"));
+        window.set_lightmap_scale("8".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        let old = lock(&shared).face_preview_token();
+        lock(&shared)
+            .edit_faces(
+                Actor::Agent,
+                &faces,
+                SurfaceEdit {
+                    lightmap_scale: Some(32),
+                    ..Default::default()
+                },
+                false,
+                true,
+            )
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(!window.get_can_apply());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        let replacement = lock(&shared).face_preview_token();
+        assert_ne!(old, replacement);
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).face_preview_token(), replacement);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.show().unwrap();
+        window.invoke_clear_groups();
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        for face in &faces {
+            assert_eq!(
+                surface::side(lock(&shared).document(), *face)
+                    .unwrap()
+                    .smoothing_groups,
+                Some(0)
+            );
+        }
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.show().unwrap();
+        window.invoke_toggle_group(31, true);
+        window.invoke_reset_groups();
+        assert_eq!(window.get_groups().row_data(31).unwrap().action, 0);
+        window.invoke_preview_edit();
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::Escape.into(),
+            });
+        assert!(!window.window().is_visible());
+        assert!(!lock(&shared).has_face_preview());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_lightmap_scale("32".into());
+        window.invoke_edited();
+        lock(&shared)
+            .select_faces(&faces[..1], SelectMode::Replace)
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(window.get_stale());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.invoke_cancel();
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("imported-lightmap-scale.vmf");
+        let mut imported = before.clone();
+        for side in &mut imported.world.solids[0].sides {
+            side.lightmap_scale = 2048;
+        }
+        std::fs::write(
+            &path,
+            imported.write(&source_formats::keyvalues::WriteOptions::default()),
+        )
+        .unwrap();
+        lock(&shared).open(Actor::User, &path, true).unwrap();
+        lock(&shared)
+            .select_faces(&faces, SelectMode::Replace)
+            .unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        assert_eq!(window.get_lightmap_scale(), "2048");
+        window.invoke_toggle_group(31, true);
+        window.invoke_apply();
+        for face in &faces {
+            let session = lock(&shared);
+            let side = surface::side(session.document(), *face).unwrap();
+            assert_eq!(side.lightmap_scale, 2048);
+            assert_ne!(side.smoothing_groups.unwrap() & (1 << 31), 0);
         }
     }
 

@@ -2,6 +2,34 @@ use super::*;
 use map_core::surface::{PaintMode, SurfaceSample};
 
 impl Session {
+    pub fn surface_view_options(
+        &self,
+        mode: Option<render::SurfaceView>,
+        group: Option<u32>,
+    ) -> Result<render::ViewOptions, String> {
+        let mut view = self.view();
+        if let Some(mode) = mode {
+            view.surface = mode;
+        }
+        if let Some(group) = group {
+            if !(1..=32).contains(&group) {
+                return Err("Choose a smoothing group from 1 to 32".into());
+            }
+            view.smoothing_group = group;
+        }
+        Ok(view)
+    }
+
+    pub fn set_surface_view(
+        &mut self,
+        mode: render::SurfaceView,
+        group: u32,
+    ) -> Result<(), String> {
+        let view = self.surface_view_options(Some(mode), Some(group))?;
+        self.set_view(view);
+        Ok(())
+    }
+
     pub fn sample_face_texture(&mut self, face: FaceId) -> Result<(), String> {
         let sample = surface::sample(&self.document, face).map_err(|error| error.to_string())?;
         self.surface_sample = Some(sample);
@@ -40,6 +68,77 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lighting_previews_tokens_and_diagnostic_settings_share_session_state() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let ObjectId::Solid(id) = session
+                .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
+                .unwrap()
+            else {
+                panic!()
+            };
+            let face = FaceId {
+                solid: id,
+                side: session.document().solid(id).unwrap().sides[0].id,
+            };
+            session.select_faces(&[face], SelectMode::Replace).unwrap();
+            let before = session.document().vmf().clone();
+            let history = session.document().undo_labels().count();
+            let patch = SurfaceEdit {
+                lightmap_scale: Some(8),
+                smoothing_add: surface::smoothing_mask(&[1, 32]).unwrap(),
+                ..Default::default()
+            };
+            session
+                .edit_faces(actor, &[face], patch.clone(), false, true)
+                .unwrap();
+            let token = session.face_preview_token();
+            assert_eq!(session.preview_side(face).unwrap().lightmap_scale, 8);
+            assert_eq!(session.document().vmf(), &before);
+            assert_eq!(session.document().undo_labels().count(), history);
+            session
+                .set_surface_view(render::SurfaceView::LightmapDensity, 32)
+                .unwrap();
+            assert_eq!(session.face_preview_token(), token);
+            assert_eq!(session.view().surface, render::SurfaceView::LightmapDensity);
+            let view = session.view();
+            assert!(
+                session
+                    .set_surface_view(render::SurfaceView::Textured, 0)
+                    .is_err()
+            );
+            assert_eq!(session.view(), view);
+            session
+                .edit_faces(
+                    actor,
+                    &[face],
+                    SurfaceEdit {
+                        lightmap_scale: Some(4),
+                        ..patch
+                    },
+                    false,
+                    true,
+                )
+                .unwrap();
+            assert!(session.check_face_preview_token(token).is_err());
+            session
+                .check_face_preview_token(session.face_preview_token())
+                .unwrap();
+            session.commit_face_preview(actor).unwrap();
+            assert_eq!(session.document().undo_labels().count(), history + 1);
+            assert_eq!(
+                surface::side(session.document(), face)
+                    .unwrap()
+                    .smoothing_groups,
+                Some(0x8000_0001)
+            );
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &before);
+            assert!(session.check_face_preview_token(token).is_err());
+        }
+    }
 
     #[test]
     fn sampling_is_read_only_and_paint_previews_are_atomic_and_cancellable() {

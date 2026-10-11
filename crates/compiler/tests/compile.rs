@@ -1,6 +1,60 @@
 mod common;
 
 #[test]
+fn authored_lightmap_projection_and_distinct_smoothing_groups_reach_the_bsp() {
+    use glam::DVec3;
+    use map_core::{ObjectId, Plane, edit};
+    use source_formats::bsp::{Face, TexInfo};
+    let mut document = map_core::Document::new(common::room());
+    document
+        .edit("lighting fixture", |tx| {
+            for (x, group) in [(0.0, 1u32), (64.0, 0x8000_0000)] {
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::new(x, 32.0, 0.0),
+                    DVec3::new(x + 64.0, 96.0, 32.0),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let side = tx
+                    .solid_mut(id)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+                    .unwrap();
+                side.smoothing_groups = Some(group);
+                side.lightmap_scale = 8;
+                side.u_axis.axis = DVec3::new(2.0, 0.5, 0.0);
+                side.u_axis.offset = 12.0;
+                side.u_axis.scale = -0.25;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let output = compiler::compile(document.vmf(), &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let bsp = output.bsp.unwrap();
+    let faces = bsp.records::<Face>().unwrap();
+    let texinfos = bsp.records::<TexInfo>().unwrap();
+    for group in [1, 0x8000_0000] {
+        let authored = faces
+            .iter()
+            .filter(|face| face.smoothing_groups == group)
+            .collect::<Vec<_>>();
+        assert!(!authored.is_empty());
+        for face in authored {
+            assert_eq!(
+                texinfos[face.texinfo as usize].lightmap_vecs[0],
+                [0.25, 0.0625, 0.0, -0.375]
+            );
+            assert_eq!(face.light_offset, -1);
+        }
+    }
+}
+
+#[test]
 fn authored_primitives_compile_as_ordinary_closed_world_brushes() {
     use glam::DVec3;
     use map_core::primitive::{self, Axis, Shape, Spec};

@@ -13,6 +13,7 @@ const MAX_LIGHTMAP_EXTENT: i32 = 32;
 pub struct Face {
     pub plane: usize,
     pub texinfo: usize,
+    pub smoothing_groups: u32,
     pub winding: Winding,
     pub node: Option<usize>,
     pub leaves: Vec<usize>,
@@ -67,6 +68,7 @@ fn subdivide(face: Face, map: &Map, output: &mut Vec<Face>) {
         pending.push(Face {
             plane: face.plane,
             texinfo: face.texinfo,
+            smoothing_groups: face.smoothing_groups,
             winding: front,
             node: face.node,
             leaves: face.leaves.clone(),
@@ -79,7 +81,7 @@ fn subdivide(face: Face, map: &Map, output: &mut Vec<Face>) {
 }
 
 pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
-    let mut groups: BTreeMap<(Option<usize>, usize, usize), Vec<Face>> = BTreeMap::new();
+    let mut groups: BTreeMap<(Option<usize>, usize, usize, u32), Vec<Face>> = BTreeMap::new();
     for &brush_index in &map.entities[entity].brushes {
         let brush = &map.brushes[brush_index];
         for side in brush.sides.iter().filter(|s| s.visible && !s.bevel) {
@@ -110,11 +112,12 @@ pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
                     }
                     None if !node.solid() && winding.area() > ON_EPSILON * ON_EPSILON => {
                         groups
-                            .entry((on_node, side.plane, side.texinfo))
+                            .entry((on_node, side.plane, side.texinfo, side.smoothing_groups))
                             .or_default()
                             .push(Face {
                                 plane: side.plane,
                                 texinfo: side.texinfo,
+                                smoothing_groups: side.smoothing_groups,
                                 winding,
                                 node: on_node,
                                 leaves: vec![index],

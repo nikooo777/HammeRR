@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use glam::DQuat;
-use source_formats::vmf::{Side, Solid};
+use glam::{DQuat, DVec3};
+use source_formats::vmf::{Side, Solid, UvAxis};
 
 use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction};
 
@@ -20,6 +20,149 @@ pub struct SurfaceEdit {
     pub scale_v: Option<f64>,
     pub rotation: Option<f64>,
     pub fit: Option<[u32; 2]>,
+    pub projection: Option<Projection>,
+    pub alignment: Option<Alignment>,
+    pub justify_u: Option<(Justify, u32)>,
+    pub justify_v: Option<(Justify, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Projection {
+    pub u: UvAxis,
+    pub v: UvAxis,
+    pub rotation: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alignment {
+    World,
+    Face,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Justify {
+    Start,
+    Center,
+    End,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SurfaceSample {
+    pub face: FaceId,
+    pub material: String,
+    pub projection: Projection,
+    pub normal: DVec3,
+    pub vertices: Vec<DVec3>,
+    pub displaced: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaintMode {
+    Material,
+    Projection,
+    Wrap,
+}
+
+pub fn face_vertices(doc: &Document, face: FaceId) -> Result<Vec<DVec3>, EditError> {
+    let brush = solid(doc, face.solid).ok_or_else(|| invalid("brush does not exist"))?;
+    let index = brush
+        .sides
+        .iter()
+        .position(|side| side.id == face.side)
+        .ok_or_else(|| invalid("face does not belong to this brush"))?;
+    BrushGeometry::from_solid(brush)
+        .map_err(|error| invalid(&error.to_string()))?
+        .faces
+        .into_iter()
+        .find(|face| face.side == index)
+        .map(|face| face.vertices)
+        .ok_or_else(|| invalid("face has no visible surface"))
+}
+
+pub fn sample(doc: &Document, face: FaceId) -> Result<SurfaceSample, EditError> {
+    let side = side(doc, face).ok_or_else(|| invalid("face does not exist"))?;
+    Ok(SurfaceSample {
+        face,
+        material: side.material.clone(),
+        projection: Projection {
+            u: side.u_axis,
+            v: side.v_axis,
+            rotation: side.rotation,
+        },
+        normal: Plane::from_points(side.plane.0)
+            .ok_or_else(|| invalid("face has an invalid plane"))?
+            .normal,
+        vertices: face_vertices(doc, face)?,
+        displaced: side.displacement.is_some(),
+    })
+}
+
+fn shared_edge(source: &[DVec3], target: &[DVec3]) -> Option<(DVec3, DVec3)> {
+    for (a, b) in source
+        .iter()
+        .zip(source.iter().cycle().skip(1))
+        .take(source.len())
+    {
+        let length = a.distance(*b);
+        if length < 1e-6 {
+            continue;
+        }
+        let direction = (*b - *a) / length;
+        for (c, d) in target
+            .iter()
+            .zip(target.iter().cycle().skip(1))
+            .take(target.len())
+        {
+            if (*c - *a).cross(direction).length() > 1e-4
+                || (*d - *a).cross(direction).length() > 1e-4
+            {
+                continue;
+            }
+            let c = (*c - *a).dot(direction);
+            let d = (*d - *a).dot(direction);
+            let lo = c.min(d).max(0.0);
+            let hi = c.max(d).min(length);
+            if hi - lo > 1e-4 {
+                return Some((*a + direction * ((lo + hi) * 0.5), direction));
+            }
+        }
+    }
+    None
+}
+
+pub fn paint_edit(
+    doc: &Document,
+    target: FaceId,
+    sample: &SurfaceSample,
+    mode: PaintMode,
+) -> Result<SurfaceEdit, EditError> {
+    let mut edit = SurfaceEdit {
+        material: Some(sample.material.clone()),
+        ..Default::default()
+    };
+    if mode == PaintMode::Material {
+        return Ok(edit);
+    }
+    let mut projection = sample.projection.clone();
+    if mode == PaintMode::Wrap {
+        let target = self::sample(doc, target)?;
+        if sample.displaced || target.displaced {
+            return Err(invalid("edge wrapping does not support displacement faces"));
+        }
+        let (anchor, edge) = shared_edge(&sample.vertices, &target.vertices)
+            .ok_or_else(|| invalid("edge wrapping requires faces with a shared edge; use projection for parallel surfaces"))?;
+        let angle = edge
+            .dot(sample.normal.cross(target.normal))
+            .atan2(sample.normal.dot(target.normal));
+        let turn = DQuat::from_axis_angle(edge, angle);
+        for axis in [&mut projection.u, &mut projection.v] {
+            let old = axis.axis;
+            axis.axis = turn * old;
+            axis.offset += anchor.dot(old - axis.axis) / axis.scale;
+        }
+    }
+    edit.projection = Some(projection);
+    Ok(edit)
 }
 
 pub fn solid(doc: &Document, id: u32) -> Option<&Solid> {
@@ -38,6 +181,25 @@ fn invalid(message: &str) -> EditError {
 }
 
 fn update(side: &mut Side, edit: &SurfaceEdit, points: &[glam::DVec3]) -> Result<(), EditError> {
+    let normal = Plane::from_points(side.plane.0)
+        .ok_or_else(|| invalid("face has an invalid plane"))?
+        .normal;
+    if let Some(projection) = &edit.projection {
+        side.u_axis = projection.u;
+        side.v_axis = projection.v;
+        side.rotation = projection.rotation;
+    }
+    if let Some(alignment) = edit.alignment {
+        let (mut u, mut v) = crate::edit::world_texture_axes(normal);
+        if alignment == Alignment::Face {
+            u = (u - normal * normal.dot(u)).normalize();
+            let tangent = normal.cross(u).normalize();
+            v = tangent * tangent.dot(v).signum();
+        }
+        side.u_axis.axis = u;
+        side.v_axis.axis = v;
+        side.rotation = 0.0;
+    }
     if let Some(material) = &edit.material {
         if material.trim().is_empty() {
             return Err(invalid("material must not be empty"));
@@ -45,9 +207,6 @@ fn update(side: &mut Side, edit: &SurfaceEdit, points: &[glam::DVec3]) -> Result
         side.material = material.trim().to_ascii_uppercase();
     }
     if let Some(rotation) = edit.rotation {
-        let normal = Plane::from_points(side.plane.0)
-            .ok_or_else(|| invalid("face has an invalid plane"))?
-            .normal;
         let turn = DQuat::from_axis_angle(normal, (rotation - side.rotation).to_radians());
         side.u_axis.axis = turn * side.u_axis.axis;
         side.v_axis.axis = turn * side.v_axis.axis;
@@ -84,6 +243,27 @@ fn update(side: &mut Side, edit: &SurfaceEdit, points: &[glam::DVec3]) -> Result
             };
         }
     }
+    for (axis, justify) in [
+        (&mut side.u_axis, edit.justify_u),
+        (&mut side.v_axis, edit.justify_v),
+    ] {
+        if let Some((placement, pixels)) = justify {
+            if pixels == 0 {
+                return Err(invalid("texture dimensions must be positive"));
+            }
+            let (lo, hi) = points
+                .iter()
+                .map(|point| point.dot(axis.axis) / axis.scale + axis.offset)
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), value| {
+                    (lo.min(value), hi.max(value))
+                });
+            axis.offset += match placement {
+                Justify::Start => -lo,
+                Justify::Center => (f64::from(pixels) - lo - hi) * 0.5,
+                Justify::End => f64::from(pixels) - hi,
+            };
+        }
+    }
     if !side.u_axis.axis.is_finite()
         || !side.v_axis.axis.is_finite()
         || !side.u_axis.offset.is_finite()
@@ -92,9 +272,16 @@ fn update(side: &mut Side, edit: &SurfaceEdit, points: &[glam::DVec3]) -> Result
         || !side.v_axis.scale.is_finite()
         || side.u_axis.scale.abs() < 1e-8
         || side.v_axis.scale.abs() < 1e-8
+        || !side.rotation.is_finite()
     {
         return Err(invalid(
             "texture projection must have finite axes and nonzero scales",
+        ));
+    }
+    let area = side.u_axis.axis.cross(side.v_axis.axis).dot(normal).abs();
+    if area < 1e-8 * side.u_axis.axis.length() * side.v_axis.axis.length() || area < 1e-12 {
+        return Err(invalid(
+            "texture projection collapses on this face; use face alignment or edge wrapping",
         ));
     }
     Ok(())
@@ -361,5 +548,219 @@ mod tests {
         assert_eq!(side(&doc, face).unwrap().u_axis.offset, 64.0);
         doc.undo().unwrap();
         assert_eq!(doc.vmf(), &before);
+    }
+
+    fn uv_bounds(doc: &Document, face: FaceId) -> (DVec2, DVec2) {
+        face_vertices(doc, face)
+            .unwrap()
+            .into_iter()
+            .map(|point| texel_uv(side(doc, face).unwrap(), point))
+            .fold(
+                (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+                |(lo, hi), uv| (lo.min(uv), hi.max(uv)),
+            )
+    }
+
+    #[test]
+    fn justify_preserves_scale_and_handles_rotated_mirrored_axes() {
+        for placement in [Justify::Start, Justify::Center, Justify::End] {
+            let (mut doc, face) = fixture();
+            doc.edit("justify", |tx| {
+                edit_faces(
+                    tx,
+                    &[face],
+                    &SurfaceEdit {
+                        rotation: Some(31.0),
+                        scale_u: Some(-0.75),
+                        scale_v: Some(0.5),
+                        shift_u: Some(999.0),
+                        shift_v: Some(-999.0),
+                        justify_u: Some((placement, 256)),
+                        justify_v: Some((placement, 128)),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+            let (lo, hi) = uv_bounds(&doc, face);
+            match placement {
+                Justify::Start => assert!(lo.abs_diff_eq(DVec2::ZERO, 1e-8)),
+                Justify::Center => {
+                    assert!(((lo + hi) * 0.5).abs_diff_eq(DVec2::new(128.0, 64.0), 1e-8))
+                }
+                Justify::End => assert!(hi.abs_diff_eq(DVec2::new(256.0, 128.0), 1e-8)),
+            }
+            assert_eq!(side(&doc, face).unwrap().u_axis.scale, -0.75);
+            assert_eq!(side(&doc, face).unwrap().v_axis.scale, 0.5);
+        }
+    }
+
+    #[test]
+    fn edge_wrap_matches_texels_along_the_entire_seam_and_roundtrips() {
+        let (mut doc, face) = fixture();
+        doc.edit("source", |tx| {
+            edit_faces(
+                tx,
+                &[face],
+                &SurfaceEdit {
+                    rotation: Some(23.0),
+                    scale_u: Some(-0.4),
+                    scale_v: Some(0.7),
+                    shift_u: Some(17.0),
+                    shift_v: Some(-31.0),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        let source = sample(&doc, face).unwrap();
+        let target = FaceId {
+            solid: face.solid,
+            side: doc
+                .solid(face.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::NEG_Y)
+                .unwrap()
+                .id,
+        };
+        let original = doc.vmf().clone();
+        let patch = paint_edit(&doc, target, &source, PaintMode::Wrap).unwrap();
+        doc.edit("wrap", |tx| edit_faces(tx, &[target], &patch))
+            .unwrap();
+        for x in [0.0, 31.0, 64.0, 128.0] {
+            let point = DVec3::new(x, 0.0, 16.0);
+            assert!(
+                texel_uv(side(&doc, face).unwrap(), point)
+                    .abs_diff_eq(texel_uv(side(&doc, target).unwrap(), point), 1e-8)
+            );
+        }
+        assert_eq!(side(&doc, target).unwrap().u_axis.scale, -0.4);
+        let reopened =
+            Document::new(Vmf::parse(&doc.vmf().write(&WriteOptions::default())).unwrap());
+        for point in face_vertices(&doc, target).unwrap() {
+            assert!(
+                texel_uv(side(&doc, target).unwrap(), point)
+                    .abs_diff_eq(texel_uv(side(&reopened, target).unwrap(), point), 1e-5)
+            );
+        }
+        doc.undo().unwrap();
+        assert_eq!(doc.vmf(), &original);
+        doc.redo().unwrap();
+        assert_eq!(side(&doc, face).unwrap().u_axis, source.projection.u);
+    }
+
+    #[test]
+    fn shared_edges_can_overlap_partially_but_corner_contact_is_not_a_seam() {
+        let square = [
+            DVec3::ZERO,
+            DVec3::X * 8.0,
+            DVec3::new(8.0, 8.0, 0.0),
+            DVec3::Y * 8.0,
+        ];
+        let partial = [
+            DVec3::new(2.0, 0.0, 0.0),
+            DVec3::new(5.0, 0.0, 0.0),
+            DVec3::new(5.0, -4.0, 0.0),
+        ];
+        assert!(shared_edge(&square, &partial).is_some());
+        let corner = [
+            DVec3::new(8.0, 0.0, 0.0),
+            DVec3::new(9.0, 0.0, 0.0),
+            DVec3::new(9.0, -4.0, 0.0),
+        ];
+        assert!(shared_edge(&square, &corner).is_none());
+    }
+
+    #[test]
+    fn invalid_projection_and_wrap_reject_without_modifying_document() {
+        let (mut doc, face) = fixture();
+        let source = sample(&doc, face).unwrap();
+        let wall = FaceId {
+            solid: face.solid,
+            side: doc
+                .solid(face.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::NEG_Y)
+                .unwrap()
+                .id,
+        };
+        let bottom = FaceId {
+            solid: face.solid,
+            side: doc
+                .solid(face.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::NEG_Z)
+                .unwrap()
+                .id,
+        };
+        let patch = paint_edit(&doc, wall, &source, PaintMode::Projection).unwrap();
+        let original = doc.vmf().clone();
+        assert!(
+            doc.edit("collapsed", |tx| edit_faces(tx, &[face, wall], &patch))
+                .is_err()
+        );
+        assert_eq!(doc.vmf(), &original);
+        assert!(paint_edit(&doc, bottom, &source, PaintMode::Wrap).is_err());
+        let mut displaced = source.clone();
+        displaced.displaced = true;
+        assert!(paint_edit(&doc, wall, &displaced, PaintMode::Wrap).is_err());
+        let patch = paint_edit(&doc, wall, &source, PaintMode::Material).unwrap();
+        doc.edit("material", |tx| edit_faces(tx, &[wall], &patch))
+            .unwrap();
+        assert_eq!(doc.vmf(), &original);
+    }
+
+    #[test]
+    fn face_alignment_is_tangent_while_world_alignment_uses_cardinal_axes() {
+        let (mut doc, face) = fixture();
+        let turn = DQuat::from_rotation_x(0.4) * DQuat::from_rotation_y(0.2);
+        doc.edit("slope", |tx| {
+            for side in &mut tx.solid_mut(face.solid)?.sides {
+                for point in &mut side.plane.0 {
+                    *point = turn * *point;
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        doc.edit("face", |tx| {
+            edit_faces(
+                tx,
+                &[face],
+                &SurfaceEdit {
+                    alignment: Some(Alignment::Face),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        let result = side(&doc, face).unwrap();
+        let normal = Plane::from_points(result.plane.0).unwrap().normal;
+        assert!(normal.dot(result.u_axis.axis).abs() < 1e-8);
+        assert!(normal.dot(result.v_axis.axis).abs() < 1e-8);
+        assert!(result.u_axis.axis.dot(result.v_axis.axis).abs() < 1e-8);
+        assert!((result.u_axis.axis.length() - 1.0).abs() < 1e-8);
+        doc.edit("world", |tx| {
+            edit_faces(
+                tx,
+                &[face],
+                &SurfaceEdit {
+                    alignment: Some(Alignment::World),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        let result = side(&doc, face).unwrap();
+        assert_eq!(
+            (result.u_axis.axis, result.v_axis.axis),
+            crate::edit::world_texture_axes(normal)
+        );
     }
 }

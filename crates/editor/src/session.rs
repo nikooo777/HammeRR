@@ -22,6 +22,7 @@ use crate::spatial;
 
 mod clipping;
 mod management;
+mod surfaces;
 pub use clipping::ClipPreview;
 pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
 mod connections;
@@ -97,6 +98,7 @@ pub struct Session {
     face_selection: BTreeSet<FaceId>,
     face_mode: bool,
     face_preview: Option<FacePreview>,
+    surface_sample: Option<surface::SurfaceSample>,
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
@@ -207,6 +209,7 @@ impl Session {
             face_selection: BTreeSet::new(),
             face_mode: false,
             face_preview: None,
+            surface_sample: None,
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
@@ -511,15 +514,34 @@ impl Session {
                 .unwrap_or(&side.material)
                 .to_owned();
             let mut patch = patch.clone();
-            if fit {
+            if fit || patch.justify_u.is_some() || patch.justify_v.is_some() {
                 let material = self.material_preview(&name)?;
                 if material.missing {
-                    return Err(format!("cannot fit {name}: texture dimensions unavailable"));
+                    return Err(format!(
+                        "cannot place {name}: texture dimensions unavailable"
+                    ));
                 }
-                patch.fit = Some([material.width, material.height]);
+                if fit {
+                    patch.fit = Some([material.width, material.height]);
+                }
+                if let Some((placement, _)) = patch.justify_u {
+                    patch.justify_u = Some((placement, material.width));
+                }
+                if let Some((placement, _)) = patch.justify_v {
+                    patch.justify_v = Some((placement, material.height));
+                }
             }
             edits.push((face, patch));
         }
+        self.preview_or_apply_faces(actor, edits, preview)
+    }
+
+    fn preview_or_apply_faces(
+        &mut self,
+        actor: Actor,
+        edits: Vec<(FaceId, SurfaceEdit)>,
+        preview: bool,
+    ) -> Result<usize, String> {
         if preview {
             let mut document = self.document.clone();
             let changed = document
@@ -938,6 +960,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.surface_sample = None;
         self.property_draft = None;
         self.management_serial += 1;
         self.visibility_restore = None;

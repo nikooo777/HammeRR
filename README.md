@@ -26,7 +26,7 @@ and the shared entity inspector and activity panel.*
 | Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Selection | Object and face marquee selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
-| Face materials | Individual face selection, UV offset/scale/rotation, texture fitting, cancellable previews, and a grouped material browser with thumbnails. |
+| Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, fitting and placement, with cancellable previews and grouped material thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
 | Map management | World settings, mixed-value property batches and default resets; object reports, search, selection, framing and visibility restore. |
@@ -128,9 +128,15 @@ cross stay unchanged. Intersected displacements cannot be clipped yet.
 
 Choose **Faces · materials & textures**, then select surfaces with click
 and Ctrl+click. **Apply** assigns the chosen material to those faces.
-**Edit face textures…** controls offsets, scales, rotation and one-tile
-fitting. **Preview textures** shows a draft; **Apply textures** commits it
+**Edit face textures…** controls offsets, scales, rotation, one-tile
+fitting, edge/center placement and world/face alignment. **Preview textures** shows a draft; **Apply textures** commits it
 in one undo step. **Cancel**, Escape or closing the dialog discards it.
+
+To reuse a texture, select one source face and choose **Sample face texture**.
+Select targets, open **Edit face textures…**, then choose material painting,
+projection copying or wrapping across a shared edge. Wrapping keeps the seam
+continuous; each target must touch the source. Samples retain their captured
+values until sampled again or another map is opened.
 
 **Browse materials…** offers thumbnail pages, a larger preview, search,
 folder/category groups, and map-used, recent and favorite materials.
@@ -316,7 +322,7 @@ For example, place a warm light:
 | Map reports and visibility | `get_object_report`, `select_object_report`, `set_object_visibility` |
 | World settings and property batches | `get_property_inspector`, `begin_property_edit`, `update_property_edit`, `get_property_edit`, `commit_property_edit`, `cancel_property_edit` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
-| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `commit_face_preview`, `cancel_face_preview` |
+| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `commit_face_preview`, `cancel_face_preview` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
 | Compile and play | `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
@@ -426,8 +432,8 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes world settings, more brush tools, displacement
-editing, model rendering and further texture alignment tools.
+Editor work ahead includes recovery/autosave, vertex and edge editing,
+displacement tools, model rendering, paint strokes and grouped texture fitting.
 
 ## Project layout
 

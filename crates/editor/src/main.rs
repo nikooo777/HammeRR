@@ -4,6 +4,7 @@ mod components_ui;
 mod connection_ui;
 mod context_ui;
 mod game;
+mod hollow_ui;
 mod inspector;
 mod interaction;
 mod lighting_ui;
@@ -150,6 +151,7 @@ struct Ui {
     statistics_window: Option<StatisticsWindow>,
     pointfile_window: Option<PointfileWindow>,
     components_window: Option<ComponentsWindow>,
+    hollow_window: Option<HollowWindow>,
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
@@ -2669,6 +2671,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         statistics_window: None,
         pointfile_window: None,
         components_window: None,
+        hollow_window: None,
         recovery_window: None,
         checks_window: None,
         context_window: None,
@@ -2885,6 +2888,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_object_report({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_report_window(&app.unwrap(), &ui)
+    });
+    app.on_hollow_brushes({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if ui.borrow().hollow_window.is_none() {
+                match HollowWindow::new() {
+                    Ok(window) => {
+                        hollow_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().hollow_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui.borrow().hollow_window.as_ref().unwrap().clone_strong();
+            hollow_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
     });
     app.on_brush_components({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3891,6 +3916,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                if let Some(window) = &ui.hollow_window
+                    && window.window().is_visible()
+                {
+                    hollow_ui::refresh_changed(window, &lock(&ui.session));
+                }
                 if let Some(window) = &ui.components_window
                     && window.window().is_visible()
                 {
@@ -5010,6 +5040,88 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &valid);
         assert_eq!(lock(&shared).render_document().vmf(), &valid);
         assert!(lock(&shared).component_selection().is_empty());
+        window.set_kind(2);
+        window.invoke_refresh();
+        let bottom = window
+            .get_rows()
+            .iter()
+            .find(|row| row.label.starts_with("Bottom"))
+            .unwrap();
+        window.invoke_choose(bottom.key);
+        window.set_move_z("-16".into());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(
+            lock(&shared)
+                .component_selection()
+                .iter()
+                .next()
+                .unwrap()
+                .sides
+                .len(),
+            1
+        );
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-faces");
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &valid);
+    }
+
+    #[test]
+    fn hollow_controls_preview_validate_look_inside_apply_and_cancel() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(256.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = HollowWindow::new().unwrap();
+        hollow_ui::bind(&window, &shared);
+        hollow_ui::refresh(&window, &lock(&shared));
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        let valid = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "hollow-brushes");
+        for label in ["Cancel", "Create walls", "Preview walls", "Look inside"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_look_inside();
+        assert_eq!(lock(&shared).camera().position, Vec3::splat(128.0));
+        window.set_thickness("128".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert!(!window.get_message().is_empty());
+        assert_eq!(lock(&shared).render_document().vmf(), &valid);
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.set_thickness("16".into());
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &valid);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        hollow_ui::refresh(&window, &lock(&shared));
+        window.invoke_preview_edit();
+        window.invoke_cancel();
+        assert!(!window.window().is_visible());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {

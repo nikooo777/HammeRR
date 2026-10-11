@@ -1,3 +1,4 @@
+export { HollowWindow } from "hollow.slint";
 export { ComponentsWindow, ComponentRow } from "components.slint";
 export { SavedViewsWindow, SavedViewRow } from "saved-views.slint";
 export { CompileWindow } from "compile.slint";
@@ -1587,6 +1588,7 @@ export component AppWindow inherits Window {
     callback design-context();
     callback brush-shapes();
     callback brush-components();
+    callback hollow-brushes();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -2048,7 +2050,12 @@ export component AppWindow inherits Window {
                         toggled => { if self.checked { root.handles-mode-index = root.transform-mode + 1; root.transform-tool-changed(); } }
                     }
                     Button {
-                        text: "Edit vertices and edges…";
+                        text: "Hollow brushes…";
+                        enabled: root.can-clip;
+                        clicked => { root.hollow-brushes(); }
+                    }
+                    Button {
+                        text: "Reshape brushes…";
                         enabled: root.can-clip;
                         clicked => { root.brush-components(); }
                     }

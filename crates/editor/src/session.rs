@@ -25,6 +25,7 @@ mod clipping;
 pub mod compilation;
 pub mod components;
 pub mod context;
+pub mod hollowing;
 mod management;
 pub mod material_search;
 pub mod paint;
@@ -134,6 +135,7 @@ pub struct Session {
     paint: paint::State,
     pointfile: pointfiles::State,
     components: components::State,
+    hollowing: hollowing::State,
     volume: volume::State,
     connection_draft: Option<ConnectionDraft>,
     connection_serial: u64,
@@ -226,6 +228,7 @@ impl Session {
             paint: paint::State::default(),
             pointfile: pointfiles::State::default(),
             components: components::State::default(),
+            hollowing: hollowing::State::default(),
             volume: volume::State::default(),
             connection_draft: None,
             connection_serial: 0,
@@ -574,6 +577,7 @@ impl Session {
                 })
                 .map_err(|error| error.to_string())?;
             self.cancel_clip_preview();
+            self.clear_hollow_preview();
             self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();
@@ -969,6 +973,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_face_preview();
         self.cancel_clip_preview();
+        self.clear_hollow_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -1338,6 +1343,7 @@ impl Session {
         }
         self.cancel_block_preview();
         self.cancel_clip_preview();
+        self.clear_hollow_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -1362,6 +1368,7 @@ impl Session {
 
     pub fn preview_block(&mut self, mins: DVec3, maxs: DVec3) -> Result<(), String> {
         spatial::validate_bounds(mins, maxs)?;
+        self.clear_hollow_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -1624,6 +1631,12 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
+            .or_else(|| {
+                self.hollowing
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
@@ -1662,6 +1675,12 @@ impl Session {
             })
             .or_else(|| {
                 self.components
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
+                self.hollowing
                     .preview
                     .as_ref()
                     .map(|preview| &preview.document)
@@ -1751,6 +1770,9 @@ impl Session {
         } else {
             (selected, selected_faces)
         };
+        let selected = self.hollowing.preview.as_ref().map_or(selected, |preview| {
+            preview.result.objects.iter().copied().collect()
+        });
         let selected_faces = if self.primitives.preview.is_some() {
             HashSet::new()
         } else {
@@ -1768,6 +1790,12 @@ impl Session {
             })
             .or_else(|| {
                 self.components
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
+                self.hollowing
                     .preview
                     .as_ref()
                     .map(|preview| &preview.document)

@@ -8,6 +8,7 @@ pub mod context;
 pub mod displacement;
 pub mod document;
 pub mod edit;
+pub mod hollow;
 pub mod picking;
 pub mod plane;
 pub mod primitive;

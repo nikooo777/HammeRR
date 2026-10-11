@@ -192,7 +192,12 @@ impl Topology {
         if sides.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(invalid("Component face IDs must be unique"));
         }
-        let result = if sides.len() == 2 {
+        let result = if sides.len() == 1 {
+            self.faces
+                .iter()
+                .find(|face| face.side == sides[0])
+                .map(|face| face.vertices.clone())
+        } else if sides.len() == 2 {
             self.edges
                 .iter()
                 .find(|edge| edge.sides == sides)
@@ -205,7 +210,7 @@ impl Topology {
         };
         result.ok_or_else(|| {
             invalid(format!(
-                "Brush {} has no vertex or edge incident to faces {sides:?}",
+                "Brush {} has no face, vertex or edge incident to faces {sides:?}",
                 self.solid
             ))
         })
@@ -224,7 +229,7 @@ pub fn plan_move(
     delta: DVec3,
 ) -> Result<Vec<Replacement>, EditError> {
     if components.is_empty() || components.len() > MAX_COMPONENTS {
-        return Err(invalid("Select between 1 and 512 vertices or edges"));
+        return Err(invalid("Select between 1 and 512 faces, vertices or edges"));
     }
     if !delta.is_finite() || delta.abs().max_element() > MAX_COORDINATE || delta == DVec3::ZERO {
         return Err(invalid(
@@ -440,6 +445,48 @@ mod tests {
                     .abs_diff_eq(vertex.position, EPSILON)
             );
         }
+    }
+
+    #[test]
+    fn face_selection_moves_its_corners_once_even_with_overlapping_edges() {
+        let mut document = Document::empty();
+        let id = block(&mut document, DVec3::ZERO, 64.0);
+        let shape = topology(document.solid(id).unwrap()).unwrap();
+        let face = &shape.faces[0];
+        let delta = DVec3::new(16.0, 0.0, 0.0);
+        let whole_face = Component {
+            solid: id,
+            sides: vec![face.side],
+        };
+        let corners = face
+            .vertices
+            .iter()
+            .map(|index| Component {
+                solid: id,
+                sides: shape.vertices[*index].sides.clone(),
+            })
+            .collect::<Vec<_>>();
+        let first = plan_move(&document, std::slice::from_ref(&whole_face), delta).unwrap();
+        let second = plan_move(&document, &corners, delta).unwrap();
+        assert_eq!(first[0].solid, second[0].solid);
+        let edge = shape
+            .edges
+            .iter()
+            .find(|edge| edge.sides.contains(&face.side))
+            .unwrap();
+        let overlap = plan_move(
+            &document,
+            &[
+                whole_face,
+                Component {
+                    solid: id,
+                    sides: edge.sides.clone(),
+                },
+            ],
+            delta,
+        )
+        .unwrap();
+        assert_eq!(first[0].solid, overlap[0].solid);
     }
 
     #[test]

@@ -39,14 +39,14 @@ export component ComponentsWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Select edges or corners, then preview a precise move."; color: #aeb9c8; }
+            Text { text: "Select faces, edges or corners, then preview a precise move."; color: #aeb9c8; }
             HorizontalLayout {
                 spacing: 20px;
                 VerticalLayout {
                     horizontal-stretch: 1; spacing: 10px;
                     HorizontalLayout {
                         spacing: 8px;
-                        ComboBox { model: ["Edges", "Vertices"]; current-index <=> root.kind; selected => { root.refresh(); } }
+                        ComboBox { model: ["Edges", "Vertices", "Faces"]; current-index <=> root.kind; selected => { root.refresh(); } }
                         Button { text: "Refresh"; clicked => { root.refresh(); } }
                     }
                     Text { text: root.summary; wrap: word-wrap; color: #aeb9c8; }

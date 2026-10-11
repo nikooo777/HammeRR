@@ -98,7 +98,7 @@ impl Session {
                 "solid":shape.solid,
                 "vertices":shape.vertices.iter().map(|vertex| json!({"sides":vertex.sides,"position":vertex.position.to_array(),"selected":selected(&vertex.sides)})).collect::<Vec<_>>(),
                 "edges":shape.edges.iter().map(|edge| json!({"sides":edge.sides,"vertices":edge.vertices,"positions":edge.vertices.map(|index|shape.vertices[index].position.to_array()),"selected":selected(&edge.sides)})).collect::<Vec<_>>(),
-                "faces":shape.faces.iter().map(|face|json!({"side":face.side,"vertices":face.vertices})).collect::<Vec<_>>(),
+                "faces":shape.faces.iter().map(|face|json!({"side":face.side,"vertices":face.vertices,"selected":selected(&[face.side])})).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>();
         Ok(json!({
@@ -117,7 +117,7 @@ impl Session {
     ) -> Result<(), String> {
         self.check_component_stamp(stamp)?;
         if components.len() > subobject::MAX_COMPONENTS {
-            return Err("Select at most 512 vertices or edges".into());
+            return Err("Select at most 512 faces, vertices or edges".into());
         }
         let mut shapes = BTreeMap::new();
         let mut owners = BTreeSet::new();
@@ -177,6 +177,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_face_preview();
         self.cancel_clip_preview();
+        self.clear_hollow_preview();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.cancel_transform_preview();
@@ -322,6 +323,11 @@ impl Session {
                 if self.components.selection.contains(&Component {
                     solid: shape.solid,
                     sides: edge.sides.clone(),
+                }) || edge.sides.iter().any(|side| {
+                    self.components.selection.contains(&Component {
+                        solid: shape.solid,
+                        sides: vec![*side],
+                    })
                 }) {
                     for index in edge.vertices {
                         mesh.lines.push(render::scene::LineVertex {

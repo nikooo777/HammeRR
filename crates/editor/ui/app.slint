@@ -1155,6 +1155,83 @@ export component RecoveryWindow inherits Window {
     }
 }
 
+export struct StatisticRow { name: string, count: string }
+
+component StatisticCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> detail;
+    background: #25262a; border-radius: 8px;
+    VerticalLayout {
+        padding: 16px; spacing: 8px;
+        Text { text: root.label; color: #b6bac3; }
+        Text { text: root.value; font-size: 30px; font-weight: 600; }
+        Text { text: root.detail; font-size: 12px; color: #b6bac3; wrap: word-wrap; }
+    }
+}
+
+export component StatisticsWindow inherits Window {
+    title: "Map statistics - HammeRR";
+    preferred-width: 840px; preferred-height: 680px;
+    in property <string> brushes;
+    in property <string> brush-detail;
+    in property <string> faces;
+    in property <string> face-detail;
+    in property <string> entities;
+    in property <string> entity-detail;
+    in property <string> details;
+    in property <string> summary;
+    in property <string> generation;
+    in property <string> revision;
+    in property <[StatisticRow]> rows;
+    in property <bool> has-next;
+    in-out property <int> section;
+    in-out property <int> page;
+    callback refresh();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 14px;
+            Text { text: "Map statistics"; font-size: 24px; font-weight: 600; }
+            Text { text: "Current map, including hidden objects. Previews are excluded."; color: #b6bac3; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 12px;
+                StatisticCard { label: "Brushes"; value: root.brushes; detail: root.brush-detail; }
+                StatisticCard { label: "Brush sides"; value: root.faces; detail: root.face-detail; }
+                StatisticCard { label: "Entities"; value: root.entities; detail: root.entity-detail; }
+            }
+            Text { text: root.details; wrap: word-wrap; color: #b6bac3; }
+            HorizontalLayout {
+                spacing: 12px;
+                ComboBox { model: ["Materials · sides", "Entity classes · entities", "Model paths · references", "Lightmap scales · sides", "Terrain powers · displacements"]; current-index <=> root.section; selected => { root.page = 0; root.refresh(); } }
+                Button { text: "Refresh"; clicked => { root.refresh(); } }
+            }
+            HorizontalLayout {
+                Text { text: root.section == 0 ? "Material" : root.section == 1 ? "Entity class" : root.section == 2 ? "Model path" : root.section == 3 ? "Units per lightmap texel" : "Displacement power"; color: #b6bac3; horizontal-stretch: 1; }
+                Text { text: "Count"; color: #b6bac3; width: 80px; horizontal-alignment: right; }
+            }
+            ListView {
+                for row in root.rows: HorizontalLayout {
+                    spacing: 12px; padding-top: 5px; padding-bottom: 5px;
+                    Text { text: row.name == "" ? "(empty path)" : row.name; wrap: word-wrap; horizontal-stretch: 1; }
+                    Text { text: row.count; width: 80px; horizontal-alignment: right; }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: root.summary; vertical-alignment: center; horizontal-stretch: 1; }
+                Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.refresh(); } }
+                Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.refresh(); } }
+            }
+            Text { text: "Authored counts, not compiled BSP budgets. Brush sides count plane records. Hidden brushes include those inside hidden entities. Locate IDs with Object report."; wrap: word-wrap; color: #9298a4; font-size: 12px; }
+            Button { text: "Close"; clicked => { root.cancel(); } }
+        }
+    }
+}
+
 export component ReportWindow inherits Window {
     title: "Object report - HammeRR";
     preferred-width: 960px; preferred-height: 760px;
@@ -1446,6 +1523,7 @@ export component AppWindow inherits Window {
     callback world-settings();
     callback batch-properties();
     callback object-report();
+    callback map-statistics();
     callback recovery();
     callback map-checks();
     callback design-context();
@@ -1964,6 +2042,7 @@ export component AppWindow inherits Window {
                         Button { text: "World settings…"; clicked => { root.world-settings(); } }
                         Button { text: "Object report…"; clicked => { root.object-report(); } }
                     }
+                    Button { text: "Map statistics…"; clicked => { root.map-statistics(); } }
                     HorizontalLayout {
                         spacing: 6px;
                         Button { text: "Check map…"; clicked => { root.map-checks(); } }

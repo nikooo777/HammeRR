@@ -420,6 +420,15 @@ fn camera_json(camera: &Camera) -> Value {
     })
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct StatisticsArgs {
+    #[serde(default)]
+    section: crate::session::statistics::Section,
+    #[serde(default)]
+    offset: usize,
+    limit: Option<usize>,
+}
+
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct CameraSpec {
     /// "perspective", "top" (XY), "front" (XZ), or "side" (YZ).
@@ -2619,6 +2628,21 @@ impl EditorServer {
             Ok(Err(error)) => fail(error),
             Err(error) => fail(error.to_string()),
         }
+    }
+
+    #[tool(
+        description = "Authored map statistics shared with Map statistics in the editor. Counts committed data including hidden objects and nested entity brushes; previews are excluded. Objects count world brushes plus entities, brush_sides count authored planes (not rendered or compiled faces). Lists materials by side usage, entity classes by entity count, external model paths by entity references, lightmap scales and displacement powers by side count. Material paths normalize case, slashes, materials/ and .vmt. Hidden brushes inherit entity visibility. Counts are not compiled BSP budgets or asset validation. Rows sort by descending usage then name. Default 50 rows, maximum 200; follow next_offset for all entries.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_map_statistics(&self, Parameters(args): Parameters<StatisticsArgs>) -> ToolResult {
+        run(|| {
+            let report = self.session().map_statistics(
+                args.section,
+                args.offset,
+                args.limit.unwrap_or(crate::session::statistics::PAGE_SIZE),
+            )?;
+            serde_json::to_value(report).map_err(|error| error.to_string())
+        })
     }
 
     #[tool(

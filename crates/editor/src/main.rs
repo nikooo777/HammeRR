@@ -234,8 +234,18 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
         Some(render::handles::Mode::Rotate) => 2,
         Some(render::handles::Mode::Scale) => 3,
     };
+    let index = if session.paint_enabled() { 4 } else { index };
     app.set_handles_mode_index(index);
-    if index > 0 {
+    app.set_paint_radius(session.paint_radius() as f32);
+    app.set_has_paint_preview(session.paint_stroke().is_some());
+    app.set_paint_token(
+        session
+            .paint_stroke()
+            .map(|stroke| stroke.token.to_string())
+            .unwrap_or_default()
+            .into(),
+    );
+    if index > 0 && index < 4 {
         app.set_transform_mode(index - 1);
     }
     app.set_transform_space_index(i32::from(tool.local));
@@ -254,7 +264,10 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
     app.set_area_rule_index(i32::from(
         session.area_rule() == map_core::region::Match::Contained,
     ));
-    app.set_area_mode_index(match session.area_mode() {
+    let selection_mode = session
+        .paint_stroke()
+        .map_or(session.area_mode(), |stroke| stroke.spec.mode);
+    app.set_area_mode_index(match selection_mode {
         SelectMode::Replace => 0,
         SelectMode::Add => 1,
         SelectMode::Remove => 2,
@@ -282,6 +295,17 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
         }
     } else if let Some(preview) = session.transform_preview() {
         format!("{} objects · transform preview", preview.ids.len())
+    } else if let Some(stroke) = session.paint_stroke() {
+        format!(
+            "{} {} · paint preview",
+            stroke.objects.len() + stroke.faces.len(),
+            match (stroke.spec.faces, stroke.objects.len() + stroke.faces.len()) {
+                (true, 1) => "face",
+                (true, _) => "faces",
+                (false, 1) => "object",
+                (false, _) => "objects",
+            }
+        )
     } else if let Some(preview) = session.area_preview() {
         if preview.faces {
             format!(
@@ -305,7 +329,8 @@ fn transform_tool_from_controls(app: &AppWindow) -> Result<TransformTool, String
         0 => None,
         1 => Some(render::handles::Mode::Move),
         2 => Some(render::handles::Mode::Rotate),
-        _ => Some(render::handles::Mode::Scale),
+        3 => Some(render::handles::Mode::Scale),
+        _ => None,
     };
     let pivot = match app.get_transform_pivot_mode() {
         0 => None,
@@ -335,11 +360,33 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
             let app = app.unwrap();
             let mut session = lock(&shared);
             let result = transform_tool_from_controls(&app)
-                .and_then(|tool| session.set_transform_tool(Actor::User, tool));
+                .and_then(|tool| session.set_transform_tool(Actor::User, tool))
+                .and_then(|()| {
+                    session.set_paint_tool(
+                        Actor::User,
+                        app.get_handles_mode_index() == 4,
+                        f64::from(app.get_paint_radius()),
+                    )
+                });
             if let Err(error) = result {
                 app.set_message(error.into());
             }
             refresh_spatial(&app, &session);
+        }
+    });
+    app.on_paint_settings_changed({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            if let Err(error) = session.set_paint_tool(
+                Actor::User,
+                app.get_handles_mode_index() == 4,
+                f64::from(app.get_paint_radius()),
+            ) {
+                app.set_message(error.into());
+            }
+            refresh_interaction(&app, &session);
         }
     });
     app.on_area_settings_changed({
@@ -358,6 +405,7 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
                 3 => SelectMode::Toggle,
                 _ => SelectMode::Replace,
             };
+            session.cancel_area_selection();
             session.set_area_settings(rule, mode);
             refresh_interaction(&app, &session);
         }
@@ -379,7 +427,16 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
         move || {
             let app = app.unwrap();
             let mut session = lock(&shared);
-            if let Err(error) = session.commit_area_selection() {
+            let result = if app.get_has_paint_preview() {
+                app.get_paint_token()
+                    .parse()
+                    .map_err(|_| "Paint preview changed; refresh it".to_string())
+                    .and_then(|token| session.commit_paint_selection(Actor::User, token))
+                    .map(|_| ())
+            } else {
+                session.commit_area_selection().map(|_| ())
+            };
+            if let Err(error) = result {
                 app.set_message(error.into());
             }
             refresh_panel(&app, &mut session);
@@ -389,11 +446,23 @@ fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
     app.on_cancel_interaction({
         let app = app.as_weak();
         move || {
+            let app = app.unwrap();
             let mut session = lock(&shared);
-            session.cancel_transform_preview();
-            session.cancel_area_selection();
-            session.clear_volume_selection();
-            refresh_interaction(&app.unwrap(), &session);
+            if session.paint_stroke().is_some() {
+                let result = app
+                    .get_paint_token()
+                    .parse()
+                    .map_err(|_| "Paint preview changed; refresh it".to_string())
+                    .and_then(|token| session.cancel_paint_selection(token));
+                if let Err(error) = result {
+                    app.set_message(error.into());
+                }
+            } else {
+                session.cancel_transform_preview();
+                session.cancel_area_selection();
+                session.clear_volume_selection();
+            }
+            refresh_interaction(&app, &session);
         }
     });
 }
@@ -2363,6 +2432,7 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
                 || session.transform_preview().is_some()
                 || session.transform_drag().is_some()
                 || session.area_preview().is_some()
+                || session.paint_stroke().is_some()
             {
                 ui.interaction.cancel(&mut session);
                 refresh_interaction(app, &session);
@@ -3844,6 +3914,55 @@ mod tests {
             .unwrap()
             .invoke_accessible_default_action();
             assert!(!app.get_has_area_preview());
+            assert_eq!(
+                lock(&shared).selected_ids(),
+                if apply { vec![id] } else { vec![] }
+            );
+            assert_eq!(lock(&shared).document().vmf(), &original);
+            assert_eq!(lock(&shared).document().undo_labels().count(), 1);
+        }
+        app.set_rotation_step("15".into());
+        app.set_handles_mode_index(4);
+        app.set_paint_radius(24.0);
+        app.invoke_transform_tool_changed();
+        assert!(lock(&shared).paint_enabled());
+        assert_eq!(lock(&shared).paint_radius(), 24.0);
+        app.set_paint_radius(32.0);
+        app.invoke_paint_settings_changed();
+        assert_eq!(lock(&shared).paint_radius(), 32.0);
+        lock(&shared).select(&[], SelectMode::Replace).unwrap();
+        for apply in [false, true] {
+            let mut state = lock(&shared);
+            let spec = session::paint::Spec {
+                camera: state.camera(),
+                pointer: Pointer {
+                    position: DVec2::new(400.0, 300.0),
+                    size: (800, 600),
+                },
+                radius: state.paint_radius(),
+                mode: SelectMode::Replace,
+                faces: false,
+            };
+            let old = state.begin_paint_selection(spec).unwrap();
+            refresh_interaction(&app, &state);
+            let current = state.begin_paint_selection(spec).unwrap();
+            drop(state);
+            app.invoke_cancel_interaction();
+            assert_eq!(lock(&shared).paint_stroke().unwrap().token, current);
+            assert_ne!(old, current);
+            refresh_interaction(&app, &lock(&shared));
+            save_ui_snapshot(app.window(), "paint-selection-controls");
+            for label in ["Apply selection", "Cancel"] {
+                assert_dialog_button_visible(&app, label);
+            }
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                if apply { "Apply selection" } else { "Cancel" },
+            )
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+            assert!(!app.get_has_paint_preview());
             assert_eq!(
                 lock(&shared).selected_ids(),
                 if apply { vec![id] } else { vec![] }

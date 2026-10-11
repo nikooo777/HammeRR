@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use base64::Engine;
-use glam::{DVec3, Vec3};
+use glam::{DVec2, DVec3, Vec3};
 use map_core::edit::{self, FaceTarget};
 use map_core::query::{self, Hit, Ray};
 use map_core::{Document, ObjectId, Plane};
@@ -164,6 +164,9 @@ select_area selects objects or faces through a pixel rectangle in any projection
 contained/intersecting and replace/add/remove/toggle. Use preview: true, inspect \
 get_area_selection and render_view, then commit_area_selection or cancel_area_selection. \
 select_volume queries a world-space box, with shared candidate previews, framing and token-guarded commit/cancel. \
+set_paint_tool configures a circular selection brush; begin_paint_selection starts a visible-hit stroke, \
+update_paint_selection extends its pixel path, and get_paint_selection exposes candidates and limits. \
+Use its token with commit_paint_selection or cancel_paint_selection; render_view shows the shared preview. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -785,6 +788,31 @@ pub struct TransformToolArgs {
     pub texture_lock: Option<bool>,
     /// Rotation snapping in degrees, 0 disables it. Shared Snap also controls snapping.
     pub angle_step: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PaintToolArgs {
+    pub enabled: Option<bool>,
+    /// Brush radius in screen pixels, from 2 to 64.
+    pub radius: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BeginPaintArgs {
+    pub pointer: PointerArgs,
+    pub radius: Option<f64>,
+    /// objects or faces; omitted uses the current selection mode.
+    pub selection_mode: Option<String>,
+    /// replace, add, remove or toggle; omitted uses the shared selection rule.
+    pub mode: Option<String>,
+    pub camera: Option<CameraSpec>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UpdatePaintArgs {
+    pub token: String,
+    /// Ordered screen-space points. Segments between them are sampled; at most 256 per call.
+    pub points: Vec<[f64; 2]>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2609,6 +2637,7 @@ impl EditorServer {
             "transform": transform_state(&session),
             "area_selection": area_state(&session),
             "volume_selection": {"preview":session.volume_preview().map(|preview|preview.token.to_string())},
+            "paint_selection": session.paint_selection_json(0, 100),
             "connection_draft": connection_draft_json(&session),
             "rename_draft": rename_draft_json(&session),
             "property_draft": session.property_draft(),
@@ -3930,6 +3959,108 @@ impl EditorServer {
                 .unwrap_or(session.area_mode());
             session.set_area_settings(rule, mode);
             Ok(area_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Enable/disable the shared Paint selection tool and set its screen-space brush radius (2–64 pixels). Changing settings cancels the active stroke; selection/history remain unchanged. UI equivalent: Paint selection and Radius."
+    )]
+    fn set_paint_tool(&self, Parameters(args): Parameters<PaintToolArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let enabled = args.enabled.unwrap_or(session.paint_enabled());
+            let radius = args.radius.unwrap_or(session.paint_radius());
+            session.set_paint_tool(Actor::Agent, enabled, radius)?;
+            Ok(session.paint_selection_json(0, 100))
+        })
+    }
+
+    #[tool(
+        description = "Begin a paint-selection preview at a viewport point and return its token. Uses a circular brush on a fixed 2-pixel sample lattice, nearest visible object/face hits and a spatial picking index. Does not change selection/history until commit. Optional camera override leaves the user's camera unchanged. Width/height stay fixed during the stroke. Map, camera, selection, visibility or incompatible tool changes invalidate it. Terrain uses supporting faces; face strokes ignore point helpers. Inspect limits before large strokes."
+    )]
+    fn begin_paint_selection(&self, Parameters(args): Parameters<BeginPaintArgs>) -> ToolResult {
+        run(|| {
+            let pointer = args.pointer.resolve()?;
+            let mut session = self.session();
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, pointer.size.0 as f32 / pointer.size.1 as f32)?;
+            let faces = match args.selection_mode.as_deref() {
+                None => session.face_mode(),
+                Some("objects") => false,
+                Some("faces") => true,
+                _ => return Err("selection_mode must be objects or faces".into()),
+            };
+            let radius = args.radius.unwrap_or(session.paint_radius());
+            let mode = args
+                .mode
+                .as_deref()
+                .map(parse_select_mode)
+                .transpose()?
+                .unwrap_or(session.area_mode());
+            session.begin_paint_selection(crate::session::paint::Spec {
+                camera,
+                pointer,
+                radius,
+                mode,
+                faces,
+            })?;
+            Ok(session.paint_selection_json(0, 100))
+        })
+    }
+
+    #[tool(
+        description = "Extend the exact active paint stroke through up to 256 ordered screen-space points. Continuous segments fill gaps between updates. Revisited samples and hits are deduplicated, including toggle selection. Invalid or over-budget updates leave the previous preview intact; apply/cancel and start another stroke if its budget is full."
+    )]
+    fn update_paint_selection(&self, Parameters(args): Parameters<UpdatePaintArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let points = args
+                .points
+                .into_iter()
+                .map(DVec2::from_array)
+                .collect::<Vec<_>>();
+            session.update_paint_selection(parse_token(&args.token)?, &points)?;
+            Ok(session.paint_selection_json(0, 100))
+        })
+    }
+
+    #[tool(
+        description = "Inspect Paint selection settings, active stroke token/camera/cursor, sampled-pixel count, matches, limits and visibility rules. offset/limit paginate matches, up to 500 per page. Previews are shared with the UI and appear in render_view.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_paint_selection(
+        &self,
+        Parameters(args): Parameters<MaterialSearchPageArgs>,
+    ) -> ToolResult {
+        ok(self
+            .session()
+            .paint_selection_json(args.offset.unwrap_or(0), args.limit.unwrap_or(100)))
+    }
+
+    #[tool(
+        description = "Commit the exact paint-selection stroke using its replace/add/remove/toggle rule. Each matched object/face is combined once. Changes selection only, without map edits or undo history; equivalent to releasing a human paint drag or Apply selection."
+    )]
+    fn commit_paint_selection(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let matches =
+                session.commit_paint_selection(Actor::Agent, parse_token(&args.token)?)?;
+            Ok(
+                json!({"matched_objects":matches.objects.len(),"matched_faces":matches.faces.len(),"selected_objects":session.selected_ids().len(),"selected_faces":session.selected_faces().len()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Cancel the exact active paint stroke, discarding its highlights and brush guide while preserving selection and history. Stale tokens cannot cancel another client's stroke."
+    )]
+    fn cancel_paint_selection(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_paint_selection(parse_token(&args.token)?)?;
+            Ok(session.paint_selection_json(0, 100))
         })
     }
 

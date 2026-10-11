@@ -17,6 +17,7 @@ struct AreaDrag {
 pub struct Interaction {
     area: Option<AreaDrag>,
     handle_epoch: Option<u64>,
+    paint_token: Option<u64>,
 }
 
 impl Interaction {
@@ -27,6 +28,23 @@ impl Interaction {
         control: bool,
     ) -> Result<bool, String> {
         pointer.validate()?;
+        if session.paint_enabled() {
+            let token = session.begin_paint_selection(crate::session::paint::Spec {
+                camera: session.camera(),
+                pointer,
+                radius: session.paint_radius(),
+                mode: if control {
+                    SelectMode::Toggle
+                } else {
+                    session.area_mode()
+                },
+                faces: session.face_mode(),
+            })?;
+            self.paint_token = Some(token);
+            self.area = None;
+            self.handle_epoch = None;
+            return Ok(true);
+        }
         if let Some(handle) = session.pick_transform_handle(pointer) {
             session.begin_transform_drag(handle, Some(pointer))?;
             self.handle_epoch = Some(session.interaction_epoch());
@@ -50,6 +68,22 @@ impl Interaction {
     }
 
     pub fn moved(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if let Some(token) = self.paint_token {
+            let Some(stroke) = session
+                .paint_stroke()
+                .filter(|stroke| stroke.token == token)
+            else {
+                self.paint_token = None;
+                return Ok(true);
+            };
+            if stroke.spec.pointer.size != pointer.size {
+                session.cancel_paint_selection(token)?;
+                self.paint_token = None;
+                return Err("Viewport resized; start a new paint stroke".into());
+            }
+            session.update_paint_selection(token, &[pointer.position])?;
+            return Ok(true);
+        }
         if let Some(epoch) = self.handle_epoch {
             if epoch != session.interaction_epoch() {
                 self.handle_epoch = None;
@@ -79,6 +113,21 @@ impl Interaction {
     }
 
     pub fn up(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if let Some(token) = self.paint_token.take() {
+            let Some(stroke) = session
+                .paint_stroke()
+                .filter(|stroke| stroke.token == token)
+            else {
+                return Ok(true);
+            };
+            if stroke.spec.pointer.size != pointer.size {
+                session.cancel_paint_selection(token)?;
+                return Err("Viewport resized; start a new paint stroke".into());
+            }
+            session.update_paint_selection(token, &[pointer.position])?;
+            session.commit_paint_selection(Actor::User, token)?;
+            return Ok(true);
+        }
         if let Some(epoch) = self.handle_epoch.take() {
             if epoch != session.interaction_epoch() {
                 return Ok(true);
@@ -129,12 +178,16 @@ impl Interaction {
     pub fn cancel(&mut self, session: &mut Session) {
         self.area = None;
         self.handle_epoch = None;
+        if let Some(token) = self.paint_token.take() {
+            let _ = session.cancel_paint_selection(token);
+            return;
+        }
         session.cancel_transform_preview();
         session.cancel_area_selection();
     }
 
     pub fn active(&self) -> bool {
-        self.area.is_some() || self.handle_epoch.is_some()
+        self.area.is_some() || self.handle_epoch.is_some() || self.paint_token.is_some()
     }
 }
 
@@ -174,6 +227,65 @@ mod tests {
             )
             .unwrap();
         session
+    }
+
+    #[test]
+    fn paint_gestures_share_strokes_and_preserve_replacements_on_cancel_or_release() {
+        for projection in [
+            Projection::Top,
+            Projection::Front,
+            Projection::Side,
+            Projection::Perspective,
+        ] {
+            let mut session = fixture(projection, None);
+            let expected = session.selected_ids();
+            session.select(&[], SelectMode::Replace).unwrap();
+            session.set_paint_tool(Actor::User, true, 12.0).unwrap();
+            let pointer = Pointer {
+                position: DVec2::new(400.0, 300.0),
+                size: (800, 600),
+            };
+            let mut interaction = Interaction::default();
+            interaction.down(&mut session, pointer, false).unwrap();
+            assert!(session.selected_ids().is_empty());
+            let token = session.paint_stroke().unwrap().token;
+            session
+                .update_paint_selection(token, &[pointer.position])
+                .unwrap();
+            interaction.up(&mut session, pointer).unwrap();
+            assert_eq!(session.selected_ids(), expected);
+            interaction.down(&mut session, pointer, true).unwrap();
+            interaction.moved(&mut session, pointer).unwrap();
+            interaction.up(&mut session, pointer).unwrap();
+            assert!(session.selected_ids().is_empty());
+            for cancel in [true, false] {
+                interaction.down(&mut session, pointer, false).unwrap();
+                let spec = session.paint_stroke().unwrap().spec;
+                let replacement = session.begin_paint_selection(spec).unwrap();
+                if cancel {
+                    interaction.cancel(&mut session);
+                } else {
+                    interaction.up(&mut session, pointer).unwrap();
+                }
+                assert_eq!(session.paint_stroke().unwrap().token, replacement);
+                session.cancel_paint_selection(replacement).unwrap();
+            }
+            interaction.down(&mut session, pointer, false).unwrap();
+            assert!(
+                interaction
+                    .moved(
+                        &mut session,
+                        Pointer {
+                            size: (801, 600),
+                            ..pointer
+                        }
+                    )
+                    .is_err()
+            );
+            assert!(session.paint_stroke().is_none());
+            assert!(session.selected_ids().is_empty());
+            assert_eq!(session.document().undo_labels().count(), 1);
+        }
     }
 
     #[test]

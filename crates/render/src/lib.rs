@@ -10,8 +10,8 @@ pub mod scene;
 
 pub use camera::{Camera, Projection};
 pub use gpu::{
-    AreaGuide, COLOR_FORMAT, ClipGuide, GpuContext, GpuScene, RenderTarget, Renderer, SurfaceView,
-    ViewOptions,
+    AreaGuide, COLOR_FORMAT, ClipGuide, GpuContext, GpuScene, PaintGuide, RenderTarget, Renderer,
+    SurfaceView, ViewOptions,
 };
 pub use materials::{MaterialId, MaterialLibrary};
 pub use scene::SceneMesh;

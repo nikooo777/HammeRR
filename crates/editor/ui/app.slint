@@ -1361,6 +1361,10 @@ export component AppWindow inherits Window {
     in-out property <int> area-mode-index;
     in property <bool> has-transform-preview;
     in property <bool> has-area-preview;
+    in property <bool> has-paint-preview;
+    in property <string> paint-token;
+    in-out property <float> paint-radius: 12;
+    callback paint-settings-changed();
     in property <string> interaction-summary;
     changed transform-mode => {
         root.transform-x = root.transform-mode == 2 ? "1" : "0";
@@ -1669,7 +1673,7 @@ export component AppWindow inherits Window {
                 if !root.drawing-block && !root.clipping: Rectangle {
                     x: 12px;
                     y: 64px;
-                    width: min(900px, parent.width - 24px);
+                    width: min(root.handles-mode-index == 4 ? 550px : 900px, parent.width - 24px);
                     height: 44px;
                     background: #20252eee;
                     border-color: #394252;
@@ -1679,18 +1683,18 @@ export component AppWindow inherits Window {
                         padding: 7px;
                         spacing: 8px;
                         ComboBox {
-                            width: 135px;
-                            model: ["Select", "Move handles", "Rotate handles", "Scale handles"];
+                            width: 150px;
+                            model: ["Select", "Move handles", "Rotate handles", "Scale handles", "Paint selection"];
                             current-index <=> root.handles-mode-index;
                             selected => { root.transform-tool-changed(); }
                         }
-                        if root.handles-mode-index != 0: ComboBox {
+                        if root.handles-mode-index > 0 && root.handles-mode-index < 4: ComboBox {
                             width: 125px;
                             model: ["World axes", "Local axes"];
                             current-index <=> root.transform-space-index;
                             selected => { root.transform-tool-changed(); }
                         }
-                        if root.handles-mode-index != 0: CheckBox {
+                        if root.handles-mode-index > 0 && root.handles-mode-index < 4: CheckBox {
                             text: "Texture lock";
                             checked <=> root.transform-texture-lock;
                             toggled => { root.transform-tool-changed(); }
@@ -1700,8 +1704,14 @@ export component AppWindow inherits Window {
                             Text { text: "Angle snap · °"; color: #c8ccd4; vertical-alignment: center; }
                             LineEdit { width: 65px; text <=> root.rotation-step; input-type: decimal; accepted => { root.transform-tool-changed(); } }
                         }
-                        Text { text: "Area"; color: #c8ccd4; vertical-alignment: center; }
-                        ComboBox {
+                        if root.handles-mode-index == 4: HorizontalLayout {
+                            spacing: 6px;
+                            horizontal-stretch: 0;
+                            Text { text: "Radius · " + round(root.paint-radius) + " px"; color: #c8ccd4; vertical-alignment: center; horizontal-stretch: 0; }
+                            Slider { width: 120px; minimum: 2; maximum: 64; value: root.paint-radius; changed(value) => { root.paint-radius = round(value); root.paint-settings-changed(); } }
+                        }
+                        if root.handles-mode-index != 4: Text { text: "Area"; color: #c8ccd4; vertical-alignment: center; }
+                        if root.handles-mode-index != 4: ComboBox {
                             width: 125px;
                             model: ["Intersects", "Fully inside"];
                             current-index <=> root.area-rule-index;
@@ -1715,7 +1725,7 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if root.has-transform-preview || root.has-area-preview: Rectangle {
+                if root.has-transform-preview || root.has-area-preview || root.has-paint-preview: Rectangle {
                     x: 12px;
                     y: 118px;
                     width: min(700px, parent.width - 24px);
@@ -1813,7 +1823,7 @@ export component AppWindow inherits Window {
                     background: #000000a0;
 
                     hint := Text {
-                        text: root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
+                        text: root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates · F frames · Esc cancels";
                         color: #c8ccd4;
                         font-size: 12px;
                     }

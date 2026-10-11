@@ -37,7 +37,7 @@ and the shared entity inspector and activity panel.*
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
 | Map management | World settings, mixed-value property batches and default resets; object reports, search, selection, framing and visibility restore. |
 | Humans and agents | Shared map, selection, camera, previews and undo history. MCP edits appear live in the editor. |
-| Build and play | Native BSP compilation, leak detection and viewport paths, CS:S launch controls, and game logs. |
+| Build and play | Native BSP compilation, shared stage/status reporting and cancellation, leak paths, CS:S launch controls, and game logs. |
 
 ## Quick start
 
@@ -481,7 +481,7 @@ For example, place a warm light:
 | Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
-| Compile and play | `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
+| Compile and play | `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
 
 `edit_faces` supports material, UV offsets/scales, rotation, fitting, lightmap
 scale, smoothing groups and non-destructive previews. Commit or cancel the
@@ -505,14 +505,15 @@ or `cancel_face_preview` to guard against another client replacing the draft.
 from 1 to 32. The same options on `render_view` inspect a view without changing
 the user's settings.
 
-The repeatable surface checks run through MCP and save fixtures, rendered
-views and a JSON report:
+The repeatable workflow checks run through MCP and save fixtures, rendered
+views where relevant, and a JSON report:
 
 ```sh
 python -B scripts/validate_face_lighting.py --output /tmp/hammerr-lighting-check
 python -B scripts/validate_material_replacement.py --output /tmp/hammerr-material-check
 python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
 python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-check
+python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 ```
 
 Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`
@@ -580,11 +581,25 @@ hidden counts and the compiler's visibility policy.
 | --- | --- |
 | **Compile** | Build the current snapshot, including unsaved edits, into a BSP beside the VMF. Unsaved maps prompt for an output filename. |
 | **Run Map** | Compile and launch the snapshot in the installed Linux CS:S client with `-insecure`. |
+| **Build details…** | Inspect the current stage, elapsed time, snapshot freshness and compile diagnostics. |
+| **Cancel build** | Stop the active build while preserving previous output. |
 | **Game Log** | Read console and launcher output. |
 | **Stop Map** | Stop the game process started by this editor. |
 | **Leak path** | Toggle the red leak path drawn through geometry after a failed compile. |
 
-Compilation runs in the background. Maps need sealed world geometry and
+Compilation reports stages as it runs in the background. **Cancel build** waits
+for the worker to stop; cancelled builds keep the previous BSP and pointfile.
+Output is published atomically, and a build cannot be cancelled after publication.
+Closing Build details leaves the build running.
+
+Through MCP, `start_compile` returns immediately with a job token. Poll
+`get_compile_status`; pass that token to `cancel_compile`. The existing
+`compile_map` and `run_map` calls wait for completion and expose the same status.
+A map edit marks the build snapshot stale and prevents launching it.
+
+![Build status with stage, output path and structured diagnostics](docs/images/build-status.png)
+
+Maps need sealed world geometry and
 at least one point entity in open space. A leak produces a `.lin` pointfile
 and preserves any existing BSP. Editing hides the previous leak path until
 the next compilation.
@@ -626,8 +641,8 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes whole-map validation, vertex and edge editing,
-displacement tools, model rendering, paint strokes and grouped texture fitting.
+Editor work ahead includes broader map checks, vertex and edge editing,
+displacement tools, model rendering, paint strokes and chained texture seams.
 
 ## Project layout
 

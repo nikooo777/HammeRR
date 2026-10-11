@@ -1,4 +1,5 @@
 mod checks_ui;
+mod compile_ui;
 mod connection_ui;
 mod context_ui;
 mod game;
@@ -163,6 +164,7 @@ struct Ui {
     material_replace: Option<material_replace_ui::Controller>,
     surface_group: Option<surface_group_ui::Controller>,
     volume: Option<volume_ui::Controller>,
+    compile_status: Option<compile_ui::Controller>,
     material_for_group: bool,
     material_for_replace: Option<bool>,
     material_for_faces: bool,
@@ -2174,35 +2176,8 @@ fn save(app: &AppWindow, ui: &SharedUi) {
 }
 
 fn start_compile(app: &AppWindow, session: SharedSession, path: Option<&Path>, play: bool) {
-    let busy = {
-        let session = lock(&session);
-        session.game_running() || session.launching()
-    };
-    if play && busy {
-        app.set_message(
-            "CS:S is already launching or running; close it before running another map".into(),
-        );
-        return;
-    }
-    let request = match lock(&session).begin_compile(Actor::User, path) {
-        Ok(request) => request,
-        Err(message) => {
-            app.set_message(message.into());
-            return;
-        }
-    };
-    let worker_session = session.clone();
-    let spawned = std::thread::Builder::new()
-        .name("map-compile".into())
-        .spawn(move || {
-            let result = request.run();
-            lock(&worker_session).finish_compile(Actor::User, &result);
-            if play && result.as_ref().is_ok_and(|r| r.output.bsp.is_some()) {
-                let _ = mcp::launch(&worker_session, Actor::User);
-            }
-        });
-    if let Err(error) = spawned {
-        lock(&session).finish_compile(Actor::User, &Err(error.to_string()));
+    if let Err(error) = mcp::start_compile(&session, Actor::User, path, play) {
+        app.set_message(error.into());
     }
 }
 
@@ -2569,6 +2544,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         material_replace: None,
         surface_group: None,
         volume: None,
+        compile_status: None,
         material_for_group: false,
         material_for_replace: None,
         material_for_faces: false,
@@ -2606,6 +2582,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_save_map({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || save(&app.unwrap(), &ui)
+    });
+    app.on_build_status({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.compile_status.is_none() {
+                match compile_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.compile_status = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.compile_status.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_cancel_build({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let session = session_of(&ui);
+            let mut session = lock(&session);
+            if let Ok(token) = app.unwrap().get_compile_token().parse() {
+                report(
+                    &app.unwrap(),
+                    session
+                        .cancel_compile(Actor::User, token)
+                        .map(|()| "Cancelling compilation".into()),
+                );
+            }
+        }
     });
     app.on_compile_map({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3417,6 +3426,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let mut session = lock(&ui.session);
                 session.poll_game();
+                app.set_compile_label(session.compile_label().into());
+                app.set_compile_token(
+                    session
+                        .compile_token()
+                        .map(|token| token.to_string())
+                        .unwrap_or_default()
+                        .into(),
+                );
+                app.set_compile_cancellable(session.compile_cancellable());
                 if ui
                     .clip_drag
                     .is_some_and(|drag| drag.epoch != session.clip_epoch())
@@ -3631,6 +3649,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                if let Some(controller) = &ui.compile_status
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
                 if let Some(window) = &ui.game_log_window {
                     let text = lock(&ui.session)
                         .game_log(game::DEFAULT_LOG_LINES)
@@ -4393,6 +4416,67 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn compile_controls_share_cancel_status_and_guard_replaced_jobs() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (directory, game, _) = game::tests::fixture(true);
+        let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
+        let controller = compile_ui::Controller::new(&shared).unwrap();
+        controller.show(&lock(&shared)).unwrap();
+        assert!(controller.window.get_summary().contains("No build"));
+        let path = directory.path().join("room.bsp");
+        let request = lock(&shared)
+            .begin_compile(Actor::User, Some(&path))
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_cancellable());
+        assert!(controller.window.get_summary().contains("Waiting"));
+        controller.window.invoke_cancel_build();
+        let result = request.run();
+        lock(&shared).finish_compile(Actor::User, &result);
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_summary().contains("cancelled"));
+        assert!(!controller.window.get_cancellable());
+        let request = lock(&shared)
+            .begin_compile(Actor::Agent, Some(&path))
+            .unwrap();
+        controller.window.invoke_cancel_build();
+        assert!(controller.window.get_message().contains("replaced"));
+        assert_eq!(lock(&shared).compile_status()["job"]["status"], "running");
+        let result = request.run();
+        lock(&shared).finish_compile(Actor::Agent, &result);
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_summary().contains("failed"));
+        assert!(!controller.window.get_diagnostics().is_empty());
+        let vmf_path = directory.path().join("room.vmf");
+        std::fs::write(&vmf_path, test_assets::room().write(&Default::default())).unwrap();
+        lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
+        let request = lock(&shared)
+            .begin_compile(Actor::Agent, Some(&path))
+            .unwrap();
+        let result = request.run();
+        lock(&shared).finish_compile(Actor::Agent, &result);
+        controller.show(&lock(&shared)).unwrap();
+        assert!(controller.window.get_summary().starts_with("Compiled in"));
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("current map snapshot")
+        );
+        save_ui_snapshot(controller.window.window(), "build-status");
+        controller.window.invoke_close_dialog();
+        assert!(!controller.window.window().is_visible());
+        assert_eq!(lock(&shared).compile_status()["job"]["status"], "completed");
     }
 
     #[test]

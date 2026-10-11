@@ -143,7 +143,12 @@ fn entity_text(map: &Map, models: &[Model]) -> Result<String, String> {
     Ok(text)
 }
 
-pub fn build(map: &Map, models: &[Model], revision: i32) -> Result<Bsp, String> {
+pub fn build(
+    map: &Map,
+    models: &[Model],
+    revision: i32,
+    control: &crate::Control,
+) -> Result<Bsp, String> {
     index::<u16>(map.planes.len().saturating_sub(1), "plane")?;
     index::<i16>(map.texinfos.infos.len().saturating_sub(1), "texinfo")?;
     let mut bsp = Bsp::new();
@@ -157,8 +162,10 @@ pub fn build(map: &Map, models: &[Model], revision: i32) -> Result<Bsp, String> 
     }];
     let mut mappings = Vec::new();
     for model in models {
+        control.checkpoint()?;
         let mut mapping = vec![0i32; model.tree.nodes.len()];
         for node_index in model.tree.preorder() {
+            control.checkpoint()?;
             if model.tree.nodes[node_index].split.is_some() {
                 mapping[node_index] = index(nodes.len(), "node")?;
                 nodes.push(bsp::Node::default());
@@ -185,6 +192,7 @@ pub fn build(map: &Map, models: &[Model], revision: i32) -> Result<Bsp, String> 
             groups.entry(face.node).or_default().push(face);
         }
         for node_index in model.tree.preorder() {
+            control.checkpoint()?;
             let node = &model.tree.nodes[node_index];
             let (mins, maxs) = short_bounds(node.volume.bounds())?;
             if let Some((plane, children)) = node.split {
@@ -228,6 +236,7 @@ pub fn build(map: &Map, models: &[Model], revision: i32) -> Result<Bsp, String> 
             }
         }
         for &brush in &map.entities[model.entity].brushes {
+            control.checkpoint()?;
             let id = index(brush, "leaf brush")?;
             for leaf in model.tree.brush_leaves(&map.brushes[brush], &map.planes) {
                 leaf_brushes[(-1 - mapping[leaf]) as usize].push(id);
@@ -267,6 +276,7 @@ pub fn build(map: &Map, models: &[Model], revision: i32) -> Result<Bsp, String> 
     let mut brushes = Vec::new();
     let mut sides = Vec::new();
     for brush in &map.brushes {
+        control.checkpoint()?;
         brushes.push(bsp::Brush {
             first_side: index(sides.len(), "brush side")?,
             side_count: index(brush.sides.len(), "brush side count")?,

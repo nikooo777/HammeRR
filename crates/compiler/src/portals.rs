@@ -7,7 +7,7 @@ use crate::map::MapEntity;
 use crate::planes::PlaneSet;
 use crate::tree::Tree;
 use crate::winding::{Side, Winding};
-use crate::{Diagnostic, Report};
+use crate::{Control, Diagnostic, Report};
 
 #[derive(Debug)]
 pub struct Portal {
@@ -27,9 +27,11 @@ fn connect(
     leaves: [usize; 2],
     winding: Winding,
     portals: &mut Vec<Portal>,
-) {
+    control: &Control,
+) -> Result<(), String> {
     let mut pending = vec![(leaves, winding)];
     while let Some((leaves, winding)) = pending.pop() {
+        control.checkpoint()?;
         if winding.is_tiny() {
             continue;
         }
@@ -57,11 +59,21 @@ fn connect(
             }
         }
     }
+    Ok(())
 }
 
 pub fn build(tree: &Tree, planes: &PlaneSet) -> Vec<Portal> {
+    build_controlled(tree, planes, &Control::default()).expect("uncancelled portals")
+}
+
+pub fn build_controlled(
+    tree: &Tree,
+    planes: &PlaneSet,
+    control: &Control,
+) -> Result<Vec<Portal>, String> {
     let mut portals = Vec::new();
     for (index, node) in tree.nodes.iter().enumerate() {
+        control.checkpoint()?;
         let Some((split, children)) = node.split else {
             continue;
         };
@@ -72,7 +84,7 @@ pub fn build(tree: &Tree, planes: &PlaneSet) -> Vec<Portal> {
             winding = winding.and_then(|w| w.clip_back(clip.normal, clip.dist));
         }
         if let Some(winding) = winding {
-            connect(tree, planes, children, winding, &mut portals);
+            connect(tree, planes, children, winding, &mut portals, control)?;
         }
         debug_assert!(index < children[0] && index < children[1]);
     }
@@ -84,9 +96,10 @@ pub fn build(tree: &Tree, planes: &PlaneSet) -> Vec<Portal> {
             [0, outside],
             side.winding.clone(),
             &mut portals,
-        );
+            control,
+        )?;
     }
-    portals
+    Ok(portals)
 }
 
 pub fn flood(
@@ -96,6 +109,19 @@ pub fn flood(
     entities: &[MapEntity],
     report: &mut Report,
 ) -> Option<Leak> {
+    flood_controlled(tree, planes, portals, entities, report, &Control::default())
+        .expect("uncancelled flood")
+}
+
+pub fn flood_controlled(
+    tree: &mut Tree,
+    planes: &PlaneSet,
+    portals: &[Portal],
+    entities: &[MapEntity],
+    report: &mut Report,
+    control: &Control,
+) -> Result<Option<Leak>, String> {
+    control.checkpoint()?;
     let outside = tree.nodes.len();
     let mut edges = vec![Vec::new(); outside + 1];
     for (index, portal) in portals.iter().enumerate() {
@@ -108,6 +134,7 @@ pub fn flood(
     let mut seeds = vec![None; outside + 1];
     let mut pending = VecDeque::new();
     for entity in entities {
+        control.checkpoint()?;
         let Some(origin) = entity.origin else {
             continue;
         };
@@ -130,9 +157,10 @@ pub fn flood(
             None,
             None,
         ));
-        return None;
+        return Ok(None);
     }
     while let Some(leaf) = pending.pop_front() {
+        control.checkpoint()?;
         if leaf == outside {
             let mut points = Vec::new();
             let mut cursor = outside;
@@ -148,7 +176,7 @@ pub fn flood(
                 Some(format!("entity:{entity}")),
                 Some(origin),
             ));
-            return Some(Leak { entity, points });
+            return Ok(Some(Leak { entity, points }));
         }
         for &(next, portal) in &edges[leaf] {
             if reached[next] || tree.nodes.get(next).is_some_and(|node| node.solid()) {
@@ -165,5 +193,5 @@ pub fn flood(
         }
     }
     tree.prune();
-    None
+    Ok(None)
 }

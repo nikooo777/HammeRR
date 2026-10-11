@@ -1155,6 +1155,62 @@ export component RecoveryWindow inherits Window {
     }
 }
 
+export component PointfileWindow inherits Window {
+    title: "Pointfile - HammeRR";
+    preferred-width: 660px; preferred-height: 360px;
+    in-out property <string> path;
+    in property <string> source;
+    in property <string> summary;
+    in property <string> position;
+    in property <string> message;
+    in property <string> token;
+    in property <string> stamp;
+    in property <float> aspect: 1.6;
+    in property <bool> current;
+    in property <bool> has-path;
+    in property <int> total;
+    in-out property <int> point: 1;
+    callback load(); callback browse(); callback clear(); callback frame();
+    callback navigate(int); callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 14px;
+            Text { text: "Follow a leak path"; font-size: 24px; font-weight: 600; }
+            Text { text: "Load a pointfile or explore the latest compile's leak. Navigation moves the editor camera."; wrap: word-wrap; color: #b6bac3; }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.path; placeholder-text: "Path to a .lin pointfile"; horizontal-stretch: 1; }
+                Button { text: "Browse…"; clicked => { root.browse(); } }
+                Button { text: "Load"; enabled: root.path != ""; clicked => { root.load(); } }
+            }
+            Text { text: root.source; wrap: word-wrap; }
+            Text { text: root.summary; wrap: word-wrap; color: root.has-path && !root.current ? #efa47c : #b6bac3; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Point"; vertical-alignment: center; }
+                SpinBox { preferred-width: 110px; horizontal-stretch: 0; value <=> root.point; minimum: 1; maximum: max(1, root.total); enabled: root.current; }
+                Text { text: "of " + root.total; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Go"; enabled: root.current; clicked => { root.navigate(root.point - 1); } }
+                Button { text: "Previous"; enabled: root.current && root.point > 1; clicked => { root.navigate(root.point - 2); } }
+                Button { text: "Next"; enabled: root.current && root.point < root.total; clicked => { root.navigate(root.point); } }
+            }
+            Text { text: root.position; color: #b6bac3; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: #efa47c; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Frame path"; enabled: root.current; clicked => { root.frame(); } }
+                Button { text: "Unload path"; enabled: root.has-path; clicked => { root.clear(); } }
+                Button { text: "Close"; clicked => { root.cancel(); } }
+            }
+        }
+    }
+}
+
 export struct StatisticRow { name: string, count: string }
 
 component StatisticCard inherits Rectangle {
@@ -1524,6 +1580,7 @@ export component AppWindow inherits Window {
     callback batch-properties();
     callback object-report();
     callback map-statistics();
+    callback pointfile();
     callback recovery();
     callback map-checks();
     callback design-context();
@@ -2042,7 +2099,11 @@ export component AppWindow inherits Window {
                         Button { text: "World settings…"; clicked => { root.world-settings(); } }
                         Button { text: "Object report…"; clicked => { root.object-report(); } }
                     }
-                    Button { text: "Map statistics…"; clicked => { root.map-statistics(); } }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: "Map statistics…"; clicked => { root.map-statistics(); } }
+                        Button { text: "Pointfile…"; clicked => { root.pointfile(); } }
+                    }
                     HorizontalLayout {
                         spacing: 6px;
                         Button { text: "Check map…"; clicked => { root.map-checks(); } }

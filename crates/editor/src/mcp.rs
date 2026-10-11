@@ -421,6 +421,31 @@ fn camera_json(camera: &Camera) -> Value {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PointfileLoadArgs {
+    path: String,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PointfileQueryArgs {
+    #[serde(default)]
+    offset: usize,
+    limit: Option<usize>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PointfileTokenArgs {
+    token: Option<String>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PointfileActionArgs {
+    token: Option<String>,
+    aspect: Option<f32>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PointfileNavigateArgs {
+    index: usize,
+    token: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct StatisticsArgs {
     #[serde(default)]
     section: crate::session::statistics::Section,
@@ -2631,6 +2656,70 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Load an external .lin/.pts pointfile into the shared leak-path renderer. Requires a regular UTF-8 file ≤2 MiB containing 2–65536 lines of XYZ coordinates within ±1000000; blank lines allowed. Validates completely before replacing a path. Enables leak visibility without moving the camera or editing map/history. The path becomes stale after map edits and clears on map replacement or a current compile result."
+    )]
+    fn load_pointfile(&self, Parameters(args): Parameters<PointfileLoadArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.load_pointfile(Actor::Agent, std::path::Path::new(&args.path))?;
+            serde_json::to_value(session.pointfile_report(0, 50)?)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared external or current compiled leak path: source, stale/current state, token, current point, bounds, length and paginated XYZ points. Indices/offsets start at zero; limit defaults to 50, maximum 200. Stale external paths remain inspectable but cannot render or navigate. Shared with the Pointfile window.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_pointfile(&self, Parameters(args): Parameters<PointfileQueryArgs>) -> ToolResult {
+        run(|| {
+            serde_json::to_value(
+                self.session()
+                    .pointfile_report(args.offset, args.limit.unwrap_or(50))?,
+            )
+            .map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Unload the shared external or compiled leak path without deleting any file or editing the map. Optional token rejects another client's replacement path."
+    )]
+    fn clear_pointfile(&self, Parameters(args): Parameters<PointfileTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.clear_pointfile(args.token.as_deref())?;
+            serde_json::to_value(session.pointfile_report(0, 1)?).map_err(|error| error.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Move the shared camera to a zero-based point index on the current path. Perspective aims along the next nonzero segment, or continues the last segment at the end; planar views center on the point and retain zoom. Optional token guards replacements; stale paths reject navigation. Does not edit map/history or selection."
+    )]
+    fn navigate_pointfile(
+        &self,
+        Parameters(args): Parameters<PointfileNavigateArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.navigate_pointfile(args.index, args.token.as_deref())?;
+            Ok(
+                json!({"camera":camera_json(&session.camera()), "pointfile":session.pointfile_report(0, 1)?}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Frame the entire current pointfile in the shared camera. Aspect is viewport width/height (default 1, range 0.01–100); optional token guards replacement. Stale paths and paths exceeding planar zoom limits reject framing without moving the camera. Shared with Frame path in the Pointfile window."
+    )]
+    fn frame_pointfile(&self, Parameters(args): Parameters<PointfileActionArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.frame_pointfile(args.aspect.unwrap_or(1.0), args.token.as_deref())?;
+            Ok(camera_json(&session.camera()))
+        })
+    }
+
+    #[tool(
         description = "Authored map statistics shared with Map statistics in the editor. Counts committed data including hidden objects and nested entity brushes; previews are excluded. Objects count world brushes plus entities, brush_sides count authored planes (not rendered or compiled faces). Lists materials by side usage, entity classes by entity count, external model paths by entity references, lightmap scales and displacement powers by side count. Material paths normalize case, slashes, materials/ and .vmt. Hidden brushes inherit entity visibility. Counts are not compiled BSP budgets or asset validation. Rows sort by descending usage then name. Default 50 rows, maximum 200; follow next_offset for all entries.",
         annotations(read_only_hint = true)
     )]
@@ -2676,6 +2765,7 @@ impl EditorServer {
             "compiling": session.compiling(),
             "launching": session.launching(),
             "game_running": session.game_running(),
+            "pointfile": session.pointfile_report(0, 1).ok(),
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
             "view": view_state(session.view()),
             "spatial": session.spatial(),

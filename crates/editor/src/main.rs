@@ -10,6 +10,7 @@ mod management_ui;
 mod material_replace_ui;
 mod materials;
 mod mcp;
+mod pointfile_ui;
 mod primitive_ui;
 mod recovery;
 mod recovery_ui;
@@ -146,6 +147,7 @@ struct Ui {
     properties_window: Option<PropertiesWindow>,
     report_window: Option<ReportWindow>,
     statistics_window: Option<StatisticsWindow>,
+    pointfile_window: Option<PointfileWindow>,
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
@@ -2663,6 +2665,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         properties_window: None,
         report_window: None,
         statistics_window: None,
+        pointfile_window: None,
         recovery_window: None,
         checks_window: None,
         context_window: None,
@@ -2879,6 +2882,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_object_report({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_report_window(&app.unwrap(), &ui)
+    });
+    app.on_pointfile({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if ui.borrow().pointfile_window.is_none() {
+                match PointfileWindow::new() {
+                    Ok(window) => {
+                        pointfile_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().pointfile_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let app = app.unwrap();
+            let window = ui
+                .borrow()
+                .pointfile_window
+                .as_ref()
+                .unwrap()
+                .clone_strong();
+            window.set_aspect(
+                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
+            );
+            pointfile_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.set_message(error.to_string().into());
+            }
+        }
     });
     app.on_map_statistics({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3827,6 +3861,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                if let Some(window) = &ui.pointfile_window
+                    && window.window().is_visible()
+                {
+                    window.set_aspect(
+                        (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
+                    );
+                    pointfile_ui::refresh_changed(window, &lock(&ui.session));
+                }
                 if let Some(window) = &ui.statistics_window
                     && window.window().is_visible()
                 {
@@ -4808,6 +4850,48 @@ mod tests {
         lock(&shared).new_map(Actor::Agent, true).unwrap();
         statistics_ui::refresh_changed(&window, &lock(&shared));
         assert_eq!(window.get_brushes(), "0");
+    }
+
+    #[test]
+    fn pointfile_controls_load_navigate_unload_and_close_without_map_edits() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("courtyard.lin");
+        std::fs::write(&path, "0 0 64\n128 0 64\n128 128 64\n256 128 128\n").unwrap();
+        let state = Session::new(Err("no assets needed".into()));
+        let before = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = PointfileWindow::new().unwrap();
+        pointfile_ui::bind(&window, &shared);
+        pointfile_ui::refresh(&window, &lock(&shared));
+        assert!(!window.get_current());
+        window.set_path(path.display().to_string().into());
+        window.invoke_load();
+        assert_eq!(window.get_total(), 4);
+        assert!(window.get_current());
+        window.invoke_navigate(1);
+        assert_eq!(window.get_point(), 2);
+        assert_eq!(lock(&shared).camera().position, Vec3::new(128.0, 0.0, 64.0));
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "pointfile");
+        for label in ["Load", "Go", "Frame path", "Unload path", "Close"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_frame();
+        window.invoke_cancel();
+        assert!(!window.window().is_visible());
+        assert!(lock(&shared).pointfile_points().is_some());
+        window.invoke_clear();
+        assert!(!window.get_has_path());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert_eq!(lock(&shared).document().undo_labels().count(), 0);
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {

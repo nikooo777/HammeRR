@@ -225,6 +225,30 @@ revision markers; `get_object_report` provides ID lookup and navigation targets.
 
 ![Authored map totals and paginated material usage](docs/images/map-statistics.png)
 
+### Pointfiles and leak navigation
+
+Open **Pointfile…** to load a `.lin` path or explore the current compile's leak.
+**Browse…** chooses a file; **Load** validates it and shows the red path without
+moving the camera. Use **Frame path**, enter a point number and **Go**, or step
+with **Previous** and **Next**. Perspective follows the path's direction;
+planar views center on the point while keeping their zoom.
+
+**Unload path** removes the overlay without deleting the file. Closing the
+window leaves the path loaded. Map edits make external paths stale and hide
+them until reloaded; a current compile result replaces them, and opening a map
+clears them. Loading and navigation do not change map data or undo history.
+Files accept 2–65,536 finite XYZ points, up to 2 MiB. Paths too large for
+planar zoom explain the limit; use perspective framing or individual points.
+
+MCP shares this through `load_pointfile`, `get_pointfile`, `frame_pointfile`,
+`navigate_pointfile` and `clear_pointfile`. Inspection exposes path length,
+bounds, paginated coordinates, current/stale state and a token for guarded
+actions. MCP point indices start at zero; the human controls start at one.
+
+| Pointfile controls | Loaded path in the existing demo map |
+| --- | --- |
+| ![Pointfile loading, framing and point-by-point navigation](docs/images/pointfile.png) | ![Red pointfile path drawn through geometry](docs/images/pointfile-viewport.png) |
+
 ### Check a map
 
 Open **Check map…** and choose **Run checks**. Filter errors and warnings,
@@ -552,6 +576,7 @@ For example, place a warm light:
 
 | Task | Tools |
 | --- | --- |
+| Pointfiles | `load_pointfile`, `get_pointfile`, `navigate_pointfile`, `frame_pointfile`, `clear_pointfile` |
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
@@ -614,6 +639,7 @@ python -B scripts/validate_paint_selection.py --output /tmp/hammerr-paint-check
 python -B scripts/validate_texture_strokes.py --output /tmp/hammerr-texture-check
 python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
 python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-check
+python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check

@@ -30,7 +30,7 @@ and the shared entity inspector and activity panel.*
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
 | Design context | Map briefs, object notes and editor-only regions; shared drafts, search, relevant-context retrieval, bounded storage and undo. |
-| Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, fitting and placement, with cancellable previews and grouped material thumbnails. |
+| Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, per-face/grouped fitting, view projection and placement, with cancellable previews and grouped material thumbnails. |
 | Material replacement | Exact map/object/face searches, explicit hidden-face handling, matching-face selection, guarded previews and atomic replacement. |
 | Face lighting | Batch lightmap scales and smoothing groups, mixed-value controls, cancellable previews, and density/group viewport diagnostics. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
@@ -236,6 +236,24 @@ Choosing a thumbnail selects a candidate; **Use material** accepts it.
 Blank texture fields preserve existing values when selections are mixed.
 Fitting uses the material's real dimensions. Categories are inferred from
 material paths; favorites and recent applications last for the session.
+
+### Map textures across faces
+
+Select faces and open **Map textures together…**. **Fit faces together** uses
+one face's texture direction and fits across the combined bounds of coplanar
+faces. **Project along current view** uses the camera's right and down directions
+for a shared parallel projection. Faces edge-on to that view are rejected.
+
+Choose a shared material and set the horizontal/vertical tile counts. **1 × 1**
+fits one tile across the whole group; **2 × 1** repeats it twice horizontally.
+Fractions enlarge the texture. **Preview mapping**, **Apply mapping** and
+**Cancel** share the face-preview workflow and one-step undo. Geometry and
+face lighting remain unchanged. View projection uses the camera at preview time
+and does not add perspective distortion.
+
+| Grouped texture controls | One texture fitted across adjoining faces |
+| --- | --- |
+| ![Shared material, reference direction and tile counts](docs/images/grouped-textures.png) | ![Continuous grouped texture mapping created through MCP](docs/images/grouped-textures-viewport.png) |
 
 ### Replace a material
 
@@ -448,7 +466,7 @@ For example, place a warm light:
 | Map checks | `run_map_checks`, `get_map_checks`, `select_map_issue`, `preview_map_fixes`, `apply_map_fixes`, `cancel_map_fixes` |
 | Design context | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
-| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `commit_face_preview`, `cancel_face_preview` |
+| Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials`, `commit_face_preview`, `cancel_face_preview` |
 | Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
@@ -483,6 +501,7 @@ views and a JSON report:
 ```sh
 python -B scripts/validate_face_lighting.py --output /tmp/hammerr-lighting-check
 python -B scripts/validate_material_replacement.py --output /tmp/hammerr-material-check
+python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
 ```
 
 Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`

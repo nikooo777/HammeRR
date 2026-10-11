@@ -16,6 +16,9 @@ mod rename_ui;
 mod session;
 mod spatial;
 mod steam;
+mod surface_group_ui;
+#[cfg(test)]
+mod test_assets;
 mod viewport;
 
 use std::cell::RefCell;
@@ -157,6 +160,8 @@ struct Ui {
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     lighting: Option<lighting_ui::Controller>,
     material_replace: Option<material_replace_ui::Controller>,
+    surface_group: Option<surface_group_ui::Controller>,
+    material_for_group: bool,
     material_for_replace: Option<bool>,
     material_for_faces: bool,
     material_for_clip: bool,
@@ -1781,6 +1786,10 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                             return;
                         }
                     }
+                } else if ui.borrow().material_for_group {
+                    if let Some(controller) = &ui.borrow().surface_group {
+                        controller.choose_material(&mut session, &material);
+                    }
                 } else if ui.borrow().material_for_faces {
                     if let Some(surface) = &ui.borrow().surface_window {
                         surface.set_material(material.clone());
@@ -1809,6 +1818,7 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         "@replace-target" => Some(true),
         _ => None,
     };
+    ui.borrow_mut().material_for_group = key == "@group";
     ui.borrow_mut().material_for_faces = key == "@faces";
     ui.borrow_mut().material_for_clip = key == "@clip";
     ui.borrow_mut().material_for_primitive = key == "@primitive";
@@ -1823,6 +1833,7 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         || key == "@clip"
         || key == "@primitive"
         || key.starts_with("@replace-")
+        || key == "@group"
     {
         None
     } else {
@@ -1846,6 +1857,12 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             .primitive_window
             .as_ref()
             .map(|window| window.get_material().to_string())
+            .unwrap_or_default()
+    } else if key == "@group" {
+        ui.borrow()
+            .surface_group
+            .as_ref()
+            .map(|controller| controller.window.get_material().to_string())
             .unwrap_or_default()
     } else if key == "@clip" {
         app.get_clip_material().to_string()
@@ -2543,6 +2560,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_target: None,
         lighting: None,
         material_replace: None,
+        surface_group: None,
+        material_for_group: false,
         material_for_replace: None,
         material_for_faces: false,
         material_for_clip: false,
@@ -2808,6 +2827,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_edit_face_textures({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
+    });
+    app.on_map_face_group({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().surface_group.is_none() {
+                match surface_group_ui::Controller::new(&shared) {
+                    Ok(controller) => {
+                        controller.window.on_browse({
+                            let (app, ui) = (app.clone(), ui.clone());
+                            move || show_material_window(&app.unwrap(), &ui, "@group")
+                        });
+                        ui.borrow_mut().surface_group = Some(controller);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.surface_group.as_ref().unwrap();
+            match controller.initialize(&mut lock(&shared)) {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
     });
     app.on_replace_materials({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3376,6 +3424,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.seen_scene = session.scene_serial();
                     let mesh = session.build_scene();
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                    if let Some(controller) = &ui.surface_group
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.material_replace
                         && controller.window.window().is_visible()
                     {
@@ -3407,6 +3460,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
+                    if let Some(controller) = &ui.surface_group
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.material_replace
                         && controller.window.window().is_visible()
                     {
@@ -4298,6 +4356,103 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn grouped_surface_controls_apply_exact_preview_and_preserve_foreign_drafts() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (_directory, game) = test_assets::game();
+        let mut session = Session::new(Ok(game));
+        let mut faces = Vec::new();
+        for x in [0.0, 128.0] {
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    Actor::User,
+                    DVec3::new(x, 0.0, 0.0),
+                    DVec3::new(x + 128.0, 64.0, 16.0),
+                    "test/checker",
+                    false,
+                )
+                .unwrap()
+            else {
+                panic!()
+            };
+            let side = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+                .unwrap()
+                .id;
+            faces.push(map_core::surface::FaceId { solid, side });
+        }
+        session.select_faces(&faces, SelectMode::Replace).unwrap();
+        let before = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = surface_group_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        window.show().unwrap();
+        window.invoke_preview_edit();
+        assert!(lock(&shared).has_face_preview());
+        save_ui_snapshot(window.window(), "grouped-textures");
+        for label in [
+            "Cancel",
+            "Choose material…",
+            "Preview mapping",
+            "Apply mapping",
+        ] {
+            assert_dialog_button_visible(window, label);
+        }
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert!(!lock(&shared).has_face_preview());
+        window.invoke_preview_edit();
+        lock(&shared)
+            .edit_faces(
+                Actor::Agent,
+                &faces,
+                map_core::surface::SurfaceEdit {
+                    shift_u: Some(25.0),
+                    ..Default::default()
+                },
+                false,
+                true,
+            )
+            .unwrap();
+        let foreign = lock(&shared).face_preview_token();
+        window.invoke_apply();
+        assert!(window.get_message().contains("Another face preview"));
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).face_preview_token(), foreign);
+        window.set_projection(1);
+        window.invoke_edited();
+        window.set_repeats_u("2".into());
+        window.invoke_preview_edit();
+        assert_ne!(lock(&shared).face_preview_token(), foreign);
+        save_ui_snapshot(window.window(), "view-projected-textures");
+        let draft = lock(&shared).face_preview_document().unwrap().vmf().clone();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &draft);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        lock(&shared)
+            .select_faces(&faces[..1], SelectMode::Replace)
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(window.get_stale());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &before);
     }
 
     #[test]

@@ -1472,6 +1472,9 @@ export component AppWindow inherits Window {
     in property <bool> clipping;
     in property <bool> has-clip-preview;
     in property <string> clip-summary;
+    in property <bool> clip-point-mode;
+    in property <int> clip-point-count;
+    in property <string> clip-points-summary;
     in-out property <int> clip-keep-index: 2;
     in-out property <string> clip-normal-x: "1";
     in-out property <string> clip-normal-y: "0";
@@ -1546,6 +1549,7 @@ export component AppWindow inherits Window {
     callback frame-selection();
     callback saved-views();
     callback start-clip();
+    callback clip-points-action(int);
     callback preview-clip-plane();
     callback clip-settings-changed();
     callback clip-inputs-changed();
@@ -1937,7 +1941,13 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         padding: 10px;
                         spacing: 6px;
-                        Text { text: "Clip brushes · drag a cut line in a planar view, or enter a plane"; color: #d7e5ef; font-size: 13px; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Clip brushes"; color: #d7e5ef; font-size: 13px; vertical-alignment: center; }
+                            Button { text: root.clip-point-mode ? "Use plane / line" : "Pick three points"; clicked => { root.clip-points-action(root.clip-point-mode ? 3 : 0); } }
+                            if root.clip-point-mode: Button { text: "Remove last point"; enabled: root.clip-point-count > 0; clicked => { root.clip-points-action(1); } }
+                            if root.clip-point-mode: Button { text: "Start again"; enabled: root.clip-point-count > 0; clicked => { root.clip-points-action(2); } }
+                        }
                         HorizontalLayout {
                             spacing: 8px;
                             Text { text: "Keep"; color: #c8ccd4; vertical-alignment: center; }
@@ -1949,7 +1959,8 @@ export component AppWindow inherits Window {
                             }
                             Text { text: "Cyan arrow points to the front side"; color: #9dd8f1; vertical-alignment: center; }
                         }
-                        HorizontalLayout {
+                        if root.clip-point-mode: Text { text: root.clip-points-summary; color: #ffc66d; font-size: 12px; wrap: word-wrap; }
+                        if !root.clip-point-mode: HorizontalLayout {
                             spacing: 6px;
                             Text { text: "Normal X"; color: #dc858d; vertical-alignment: center; }
                             LineEdit { width: 65px; text <=> root.clip-normal-x; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }

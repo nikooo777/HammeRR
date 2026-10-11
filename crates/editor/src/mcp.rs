@@ -515,6 +515,29 @@ struct ComponentMoveArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentMoveOptionsArgs {
+    enabled: Option<bool>,
+    snap: Option<bool>,
+    texture_lock: Option<bool>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct BeginComponentDragArgs {
+    handle: String,
+    pointer: Option<PointerArgs>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateComponentDragArgs {
+    token: String,
+    pointer: Option<PointerArgs>,
+    /// Total world-unit offsets along the handle axes since begin; view uses screen right/up.
+    offset: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct StatisticsArgs {
     #[serde(default)]
     section: crate::session::statistics::Section,
@@ -1398,12 +1421,34 @@ pub struct ClipToolArgs {
     pub enabled: bool,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ClipPointsArgs {
+    /// Zero to three world points; three define a VMF-wound plane and preview the cut.
+    points: Vec<[f64; 3]>,
+    keep: Option<String>,
+    /// Empty string restores inheritance; omitted retains the existing choice.
+    material: Option<String>,
+    /// Use current grid/snap; defaults to true on a new draft.
+    snap: Option<bool>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PickClipPointArgs {
+    x: f64,
+    y: f64,
+    width: Option<u32>,
+    height: Option<u32>,
+    camera: Option<CameraSpec>,
+    snapshot: String,
+}
+
 fn clip_result(result: &map_core::clip::ClipResult) -> Value {
     json!({"cuts": result.cuts.iter().map(|cut| json!({"source": cut.source, "solids": cut.solids})).collect::<Vec<_>>(), "objects": result.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "unchanged": result.unchanged})
 }
 
 fn clip_state(session: &Session) -> Value {
-    json!({"enabled": session.clip_tool(), "preview": session.clip_preview().map(|preview| json!({
+    json!({"enabled": session.clip_tool(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "preview": session.clip_preview().map(|preview| json!({
         "plane": {"normal": preview.plane.normal.to_array(), "distance": preview.plane.dist},
         "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
         "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
@@ -4210,6 +4255,63 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Start or revise shared three-point clipping. Pass zero to three world points and the latest get_clip_preview snapshot. Zero starts over; removing the last point discards only the preview. Three distinct, noncollinear points create the same guarded cut preview as human viewport picking. Grid snapping is optional; keep/material choices persist. Invalid inputs preserve the last valid draft. Use commit_clip_preview or cancel_clip_preview to finish; set_clip_tool enabled=false exits."
+    )]
+    fn set_clip_points(&self, Parameters(args): Parameters<ClipPointsArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let previous = session.clip_points();
+            let keep = match args.keep.as_deref() {
+                Some("front") => map_core::clip::Keep::Front,
+                Some("back") => map_core::clip::Keep::Back,
+                Some("both") => map_core::clip::Keep::Both,
+                None => previous.map_or(map_core::clip::Keep::Both, |d| d.keep),
+                _ => return Err("keep must be front, back or both".into()),
+            };
+            let material = match args.material {
+                Some(value) => (!value.trim().is_empty()).then(|| value.trim().to_owned()),
+                None => previous.and_then(|d| d.material.clone()),
+            };
+            let snap = args.snap.unwrap_or(previous.is_none_or(|d| d.snap));
+            session.set_clip_points(
+                Actor::Agent,
+                crate::session::clip_points::Draft {
+                    points: args.points.into_iter().map(DVec3::from_array).collect(),
+                    keep,
+                    material,
+                    snap,
+                },
+                &args.snapshot,
+            )?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Add the next cut point by picking a visible brush surface, matching a human viewport click. Start with set_clip_points first; accepts at most three points. Ignores point-entity helpers and hidden/tool-filtered brushes, uses the committed source map, and applies the draft's grid snapping. The third point previews the cut. Optional camera override does not move the user. Supply the latest clipping snapshot."
+    )]
+    fn pick_clip_point(&self, Parameters(args): Parameters<PickClipPointArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let size = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)?;
+            let point = session.pick_clip_point(
+                Actor::Agent,
+                camera,
+                crate::session::Pointer {
+                    position: glam::DVec2::new(args.x, args.y),
+                    size,
+                },
+                &args.snapshot,
+            )?;
+            Ok(json!({"point":point.to_array(),"state":clip_state(&session)}))
+        })
+    }
+
+    #[tool(
         description = "Clip selected world brushes or brush entities by normal/distance, three VMF-wound points, or a snapped planar line. Keep front (positive-normal arrow side), back or both. Non-crossing brushes stay unchanged; point entities and intersected displacements are rejected atomically. Existing UVs/metadata survive; caps use material or inherit the first source material. preview=true leaves document and undo untouched; inspect with get_clip_preview and render_view, then commit or cancel."
     )]
     fn clip_brushes(&self, Parameters(args): Parameters<ClipArgs>) -> ToolResult {
@@ -4339,6 +4441,121 @@ impl EditorServer {
                 "origin": guide.map(|guide| guide.origin.to_array()),
                 "handles": shapes.iter().map(|shape| json!({"handle": shape.handle.name(), "color": shape.color, "segments": shape.segments.iter().map(|points| points.map(|point| point.to_array())).collect::<Vec<_>>(), "pixel_segments": shape.segments.iter().filter_map(|points| Some([render::handles::project(&camera, points[0], size)?.to_array(), render::handles::project(&camera, points[1], size)?.to_array()])).collect::<Vec<_>>()})).collect::<Vec<_>>() }),
             )
+        })
+    }
+
+    #[tool(
+        description = "Inspect component move settings, current drag and visible axis/plane/view handle paths. Uses the same guides and hit testing as the viewport. Optional camera/point inspect without changing the user's view. Select components first; handles follow the last valid movement preview.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_component_handles(&self, Parameters(args): Parameters<HandlesArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let size = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)?;
+            let guide = session.component_guide();
+            let shapes = guide.map_or_else(Vec::new, |guide| {
+                render::handles::shapes(&camera, size, &guide)
+            });
+            let picked = if let (Some(guide), Some(point)) = (guide, args.point) {
+                let point = glam::Vec2::new(point[0] as f32, point[1] as f32);
+                if !point.is_finite() {
+                    return Err("Handle point must be finite".into());
+                }
+                render::handles::pick(&camera, size, &guide, point)
+                    .map(render::handles::Handle::name)
+            } else {
+                None
+            };
+            Ok(
+                json!({"state":session.component_report(&[])?, "camera":camera_json(&camera), "width":size.0,"height":size.1,
+                "picked":picked, "origin":guide.map(|g|g.origin.to_array()),
+                "handles":shapes.iter().map(|shape|json!({"handle":shape.handle.name(), "color":shape.color,
+                    "segments":shape.segments.iter().map(|points|points.map(|p|p.to_array())).collect::<Vec<_>>(),
+                    "pixel_segments":shape.segments.iter().filter_map(|points|Some([render::handles::project(&camera,points[0],size)?.to_array(),render::handles::project(&camera,points[1],size)?.to_array()])).collect::<Vec<_>>()
+                })).collect::<Vec<_>>() }),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Set shared component move-handle visibility, grid snapping and corner texture attachment. Requires the latest component snapshot; omitted settings remain unchanged. A change cancels an active handle drag. Equivalent to the Reshape brushes controls."
+    )]
+    fn set_component_move_options(
+        &self,
+        Parameters(args): Parameters<ComponentMoveOptionsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mut options = session.component_move_options();
+            options.enabled = args.enabled.unwrap_or(options.enabled);
+            options.snap = args.snap.unwrap_or(options.snap);
+            options.texture_lock = args.texture_lock.unwrap_or(options.texture_lock);
+            session.set_component_move_options(options, &args.snapshot)?;
+            session.component_report(&[])
+        })
+    }
+
+    #[tool(
+        description = "Begin a guarded component move drag for selected faces/edges/corners. handle is x/y/z, xy/xz/yz or view. Optional pointer starts viewport dragging; otherwise use numeric offsets. Captures camera and starting preview offset; retains fixed picking scope. Returns drag.token; geometry remains unchanged until commit."
+    )]
+    fn begin_component_drag(
+        &self,
+        Parameters(args): Parameters<BeginComponentDragArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let handle =
+                render::handles::Handle::parse(&args.handle).ok_or("Unknown move handle")?;
+            session.begin_component_drag(
+                handle,
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+                &args.snapshot,
+            )?;
+            session.component_report(&[])
+        })
+    }
+
+    #[tool(
+        description = "Update the exact component drag token using either pointer or offset, a total pair of world-unit amounts since begin. Axis handles require second amount zero; plane handles use world axes and view uses captured screen right/up. Shared snap and texture attachment apply. Invalid geometry preserves the last valid draft and blocks commit until a valid update. Returning to zero creates no edit."
+    )]
+    fn update_component_drag(
+        &self,
+        Parameters(args): Parameters<UpdateComponentDragArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.update_component_drag(
+                parse_token(&args.token)?,
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+                args.offset.map(glam::DVec2::from_array),
+            )?;
+            session.component_report(&[])
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact component drag token as one undo step using the last valid preview. Rejects an invalid last update or replaced drag. Keeps component selection and viewport picking scope for the next move; a zero-offset drag changes nothing."
+    )]
+    fn commit_component_drag(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.commit_component_drag(Actor::Agent, parse_token(&args.token)?)?;
+            session.component_report(&[])
+        })
+    }
+
+    #[tool(
+        description = "Cancel the exact component drag token and its preview without changing map or history. Keeps selection and picking scope. Camera, source, selection or tool changes also invalidate the gesture; stale tokens cannot cancel newer work."
+    )]
+    fn cancel_component_drag(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_component_drag(parse_token(&args.token)?)?;
+            session.component_report(&[])
         })
     }
 

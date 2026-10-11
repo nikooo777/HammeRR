@@ -71,6 +71,10 @@ impl Session {
 
     pub fn cancel_clip_preview(&mut self) {
         self.clip_epoch += 1;
+        if self.clip_points.take().is_some() {
+            self.scene_serial += 1;
+            self.view_serial += 1;
+        }
         self.clear_clip_preview();
     }
 
@@ -142,6 +146,7 @@ impl Session {
             self.clear_volume_selection();
             self.cancel_area_selection();
             self.clip_tool = true;
+            self.clip_points = None;
             self.spatial.draw_block = false;
             self.cancel_face_preview();
             self.cancel_block_preview();

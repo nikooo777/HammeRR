@@ -125,7 +125,7 @@ pub struct AreaPreview {
     revision: u64,
 }
 
-fn axis_parameter(
+pub(super) fn axis_parameter(
     pointer: Pointer,
     camera: Camera,
     pivot: DVec3,
@@ -141,7 +141,7 @@ fn axis_parameter(
     Ok((delta.dot(axis) - delta.dot(direction) * dot) / denominator)
 }
 
-fn plane_parameter(
+pub(super) fn plane_parameter(
     pointer: Pointer,
     camera: Camera,
     pivot: DVec3,
@@ -232,7 +232,10 @@ impl Session {
         {
             return Err("Pivot must be finite and rotation snap between 0 and 180 degrees".into());
         }
-        if tool == self.transform_tool && !self.paint.enabled && self.component_picking().is_none()
+        if tool == self.transform_tool
+            && !self.paint.enabled
+            && self.component_picking().is_none()
+            && self.component_selection().is_empty()
         {
             return Ok(());
         }
@@ -696,6 +699,7 @@ impl Session {
     }
 
     pub fn interaction_camera_changed(&mut self) {
+        self.clear_component_drag();
         if self.transform_drag.is_some() {
             self.cancel_transform_preview();
         }

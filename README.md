@@ -27,8 +27,8 @@ and the shared entity inspector and activity panel.*
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush hollowing | Inward/outward wall shells with inherited materials and lighting, cavity inspection, cancellable previews and one-step undo. |
-| Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
-| Brush components | Viewport and list selection of faces, edges and corners, plus convex shape corrections, with shared previews, grid snapping, invalid-solid feedback and atomic undo. |
+| Brush clipping | Planar cut gestures, three-point surface picking or exact planes, keep either side or both, cap materials, cancellable previews and one-step undo. |
+| Brush components | Viewport/list selection of faces, edges and corners; axis/plane move handles and exact offsets, with texture attachment, guarded previews and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
@@ -195,14 +195,20 @@ Face clicks select the nearest visible brush surface. Hidden brushes have no
 guides and cannot be picked. The list still provides precise access to every
 component in the selected scope.
 
-Enter an XYZ offset in world units. **Use editor grid snapping** follows the
-shared grid and Snap setting.
+Drag a colored arrow to move along a world axis, a plane square to move along
+two axes, or the center square to move within the view plane. Release applies
+one undo step; Escape cancels. **Show viewport move handles** toggles the guides.
+Selection and the original brush scope remain available after applying a move.
+
+Alternatively, enter an XYZ offset in world units. **Use editor grid snapping**
+follows the shared grid and Snap setting for both handles and numeric previews.
 **Preview move** shows the proposed shape; **Apply move** records one undo step.
 **Cancel** discards the draft and clears the component markers.
 
 Orange marks selected components; blue marks available corners and edges. Offsets are
 measured from the committed map, so revising a preview does not accumulate moves.
-Invalid offsets leave the last valid preview visible. Faces must remain flat
+Invalid offsets leave the last valid preview visible and block drag commit until
+the next valid update. Zero total displacement adds no history. Faces must remain flat
 and the brush convex: moving one corner of a box usually requires moving its
 connected edge or the whole face together. Splitting, welding and displacement
 movement are not supported yet. Existing face IDs, materials, lighting fields
@@ -218,7 +224,7 @@ collapse edges or alter topology are rejected before the map is changed.
 
 | Component controls | Shared shape preview |
 | --- | --- |
-| ![Face, vertex and edge selection, precise offsets and Apply/Cancel controls](docs/images/brush-components.png) | ![Flat-shaded convex brush with its selected edge moved upward](docs/images/component-preview.png) |
+| ![Face, vertex and edge selection, precise offsets and Apply/Cancel controls](docs/images/brush-components.png) | ![Selected top face moved upward with shared viewport handles](docs/images/component-preview.png) |
 
 The same height change with world anchoring and with texture attachment:
 
@@ -264,6 +270,14 @@ Draw a cut in Top, Front or Side, or enter a plane normal and distance.
 Choose **Arrow side**, **Opposite side** or **Both sides**, and optionally
 browse for the cut-face material. **Apply cut** commits the preview in one
 undo step; **Cancel cut** or Escape discards it.
+
+Choose **Pick three points** to click visible brush surfaces in any view.
+You can change views between points. Orange markers show their positions;
+the third distinct, noncollinear point previews the cut. **Remove last point**
+lets you revise it, **Start again** clears the points, and **Use plane / line**
+returns to the other controls. Point placement follows editor snapping.
+
+![Three-point cut with point markers and the shared plane preview](docs/images/three-point-cut.png)
 
 Existing faces keep their texture projections. Brushes the plane does not
 cross stay unchanged. Intersected displacements cannot be clipped yet.
@@ -662,9 +676,10 @@ For example, place a warm light:
 | Transform handles and previews | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
-| Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
+| Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
+| Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
@@ -722,6 +737,7 @@ python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-ch
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
+python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tools-check
 python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
@@ -755,6 +771,16 @@ Queries do not change selection. Edges are clipped at the near plane and use
 perspective-correct world positions. Use `enabled: false` on
 `set_component_picking` to exit the mode and clear its draft and guides.
 
+`get_component_handles` exposes the same world/pixel paths and hit tests as the
+viewport. Configure snapping and texture attachment with
+`set_component_move_options`, then `begin_component_drag` with a handle and the
+latest component snapshot. Updates use its `drag.token` and either viewport
+pointers or a total two-value `offset`. Axis handles require a zero second
+value; plane handles use world axes and `view` uses captured screen right/up.
+Commit or cancel that exact drag token. Invalid geometry preserves the preceding
+valid draft; camera, selection, source and competing-tool changes invalidate
+the gesture. A numeric preview can also become the starting offset for a drag.
+
 For hollowing, get the current `stamp` from `get_hollow_preview`, then pass it
 to `preview_hollow` with thickness, direction and optional object IDs. The result
 lists planned wall IDs and cavity centers/bounds. Inspect the rendered draft,
@@ -770,6 +796,13 @@ preview. A shell with openings needs other world geometry to seal the map.
 planar line. Use `preview: true` to inspect the shared cut before committing
 or cancelling it. `get_clip_preview` reports the resulting brushes and faces;
 `render_view` and picking use the same preview geometry as the viewport.
+
+For interactive three-point cuts, pass zero to three world coordinates to
+`set_clip_points` with the latest `get_clip_preview.snapshot`. Alternatively,
+start with an empty point array, then call `pick_clip_point` with viewport pixels
+and that snapshot. It picks committed brush surfaces and applies the shared snap
+setting. The third point previews the plane. Revise the array to remove or replace
+points; existing clip commit/cancel calls finish the draft.
 
 `transform_objects` accepts `space: "world"` or `"local"` and `preview: true`.
 Handle tools support numeric amounts and viewport pointers, with updates
@@ -915,7 +948,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes direct component manipulation, splitting and welding,
+Editor work ahead includes component splitting/welding, 3D cut-plane handles,
 carving, displacement tools, model rendering and broader map checks.
 
 ## Project layout

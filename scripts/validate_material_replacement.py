@@ -114,6 +114,14 @@ def preserved_map(client):
                 },
             )
         restored = client.call("get_map_info")
+        component_options = original.get("components", {}).get("move_options")
+        if component_options:
+            state = client.call("get_brush_components")
+            restored_options = client.call(
+                "set_component_move_options",
+                {**component_options, "snapshot": state["snapshot"]},
+            )["move_options"]
+            assert restored_options == component_options
         for key in [
             "path",
             "unsaved_changes",

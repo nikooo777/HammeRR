@@ -12,6 +12,13 @@ struct ComponentClick {
     control: bool,
 }
 
+struct ClipPointClick {
+    start: Pointer,
+    camera: Camera,
+    stamp: String,
+    view_serial: u64,
+}
+
 struct AreaDrag {
     start: Pointer,
     camera: Camera,
@@ -23,7 +30,9 @@ struct AreaDrag {
 
 #[derive(Default)]
 pub struct Interaction {
+    clip_point: Option<ClipPointClick>,
     component: Option<ComponentClick>,
+    component_drag: Option<u64>,
     area: Option<AreaDrag>,
     handle_epoch: Option<u64>,
     paint_token: Option<u64>,
@@ -37,6 +46,28 @@ impl Interaction {
         control: bool,
     ) -> Result<bool, String> {
         pointer.validate()?;
+        if session.clip_points().is_some() {
+            *self = Self::default();
+            self.clip_point = Some(ClipPointClick {
+                start: pointer,
+                camera: session.camera(),
+                stamp: session.clip_point_stamp(),
+                view_serial: session.view_serial(),
+            });
+            return Ok(true);
+        }
+        if !control && let Some(handle) = session.pick_component_handle(pointer) {
+            self.component_drag = Some(session.begin_component_drag(
+                handle,
+                Some(pointer),
+                &session.component_stamp(),
+            )?);
+            self.component = None;
+            self.area = None;
+            self.handle_epoch = None;
+            self.paint_token = None;
+            return Ok(true);
+        }
         if session.component_picking().is_some() {
             self.area = None;
             self.handle_epoch = None;
@@ -96,6 +127,18 @@ impl Interaction {
     }
 
     pub fn moved(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if self.clip_point.is_some() {
+            return Ok(true);
+        }
+        if let Some(token) = self.component_drag {
+            if session
+                .component_drag()
+                .is_some_and(|drag| drag.token == token)
+            {
+                session.update_component_drag(token, Some(pointer), None)?;
+            }
+            return Ok(true);
+        }
         if self.component.is_some() {
             return Ok(true);
         }
@@ -142,6 +185,28 @@ impl Interaction {
     }
 
     pub fn up(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if let Some(click) = self.clip_point.take() {
+            if click.stamp == session.clip_point_stamp()
+                && click.camera == session.camera()
+                && click.view_serial == session.view_serial()
+                && click.start.size == pointer.size
+                && pointer.validate().is_ok()
+                && pointer.position.distance(click.start.position) < DRAG_THRESHOLD
+            {
+                session.pick_clip_point(Actor::User, click.camera, pointer, &click.stamp)?;
+            }
+            return Ok(true);
+        }
+        if let Some(token) = self.component_drag.take() {
+            if session
+                .component_drag()
+                .is_some_and(|drag| drag.token == token)
+            {
+                session.update_component_drag(token, Some(pointer), None)?;
+                session.commit_component_drag(Actor::User, token)?;
+            }
+            return Ok(true);
+        }
         if let Some(click) = self.component.take() {
             if click.snapshot != session.component_stamp()
                 || click.camera != session.camera()
@@ -242,6 +307,10 @@ impl Interaction {
     }
 
     pub fn cancel(&mut self, session: &mut Session) {
+        self.clip_point = None;
+        if let Some(token) = self.component_drag.take() {
+            let _ = session.cancel_component_drag(token);
+        }
         self.component = None;
         self.area = None;
         self.handle_epoch = None;
@@ -255,6 +324,8 @@ impl Interaction {
 
     pub fn active(&self) -> bool {
         self.component.is_some()
+            || self.clip_point.is_some()
+            || self.component_drag.is_some()
             || self.area.is_some()
             || self.handle_epoch.is_some()
             || self.paint_token.is_some()

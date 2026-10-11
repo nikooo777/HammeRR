@@ -299,7 +299,14 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
     });
     app.set_has_transform_preview(session.transform_preview().is_some());
     app.set_has_area_preview(session.area_preview().is_some());
-    let summary = if let Some(picking) = session.component_picking() {
+    let summary = if let Some(drag) = session.component_drag() {
+        drag.error.clone().unwrap_or_else(|| {
+            format!(
+                "Move components · {} · release applies · Esc cancels",
+                drag.handle.name()
+            )
+        })
+    } else if let Some(picking) = session.component_picking() {
         picking.hint()
     } else if let Some(drag) = session.transform_drag() {
         let transform = session.transform_preview().map(|preview| preview.transform);
@@ -541,6 +548,25 @@ fn refresh_clip(app: &AppWindow, session: &Session) {
     app.set_can_clip(session.can_clip_selection());
     app.set_clipping(session.clip_tool());
     app.set_has_clip_preview(session.clip_preview().is_some());
+    app.set_clip_point_mode(session.clip_points().is_some());
+    app.set_clip_point_count(session.clip_points().map_or(0, |d| d.points.len() as i32));
+    if let Some(draft) = session.clip_points() {
+        let positions = draft
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| format!("{}: {:.2}, {:.2}, {:.2}", i + 1, p.x, p.y, p.z))
+            .collect::<Vec<_>>()
+            .join("  ·  ");
+        app.set_clip_points_summary(
+            format!(
+                "{} / 3 points · click brush surfaces in any view · editor snapping applies\n{}",
+                draft.points.len(),
+                positions
+            )
+            .into(),
+        );
+    }
     if let Some(preview) = session.clip_preview() {
         app.set_clip_normal_x(preview.plane.normal.x.to_string().into());
         app.set_clip_normal_y(preview.plane.normal.y.to_string().into());
@@ -635,7 +661,48 @@ fn cancel_clip(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
 }
 
+fn change_clip_points(
+    app: &AppWindow,
+    session: &mut Session,
+    points: Vec<DVec3>,
+) -> Result<(), String> {
+    let material = app.get_clip_material().trim().to_owned();
+    session.set_clip_points(
+        Actor::User,
+        session::clip_points::Draft {
+            points,
+            keep: clip_keep(app),
+            material: (!material.is_empty()).then_some(material),
+            snap: true,
+        },
+        &session.clip_point_stamp(),
+    )
+}
+
 fn bind_clip_controls(app: &AppWindow, shared: SharedSession) {
+    app.on_clip_points_action({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move |action| {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            if action == 3 {
+                session.cancel_clip_preview();
+                refresh_clip(&app, &session);
+                return;
+            }
+            let mut points = session
+                .clip_points()
+                .map_or_else(Vec::new, |d| d.points.clone());
+            if action == 1 {
+                points.pop();
+            } else {
+                points.clear();
+            }
+            let result = change_clip_points(&app, &mut session, points);
+            app.set_message(result.err().unwrap_or_default().into());
+            refresh_clip(&app, &session);
+        }
+    });
     app.on_start_clip({
         let (app, shared) = (app.as_weak(), shared.clone());
         move || {
@@ -656,6 +723,12 @@ fn bind_clip_controls(app: &AppWindow, shared: SharedSession) {
         move || {
             let app = app.unwrap();
             let mut session = lock(&shared);
+            if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
+                let result = change_clip_points(&app, &mut session, points);
+                app.set_message(result.err().unwrap_or_default().into());
+                refresh_clip(&app, &session);
+                return;
+            }
             if let Some(plane) = session.clip_preview().map(|preview| preview.plane)
                 && let Err(error) = preview_clip(&app, &mut session, plane)
             {
@@ -668,9 +741,15 @@ fn bind_clip_controls(app: &AppWindow, shared: SharedSession) {
     app.on_clip_inputs_changed({
         let (app, shared) = (app.as_weak(), shared.clone());
         move || {
+            let app = app.unwrap();
             let mut session = lock(&shared);
-            session.cancel_clip_preview();
-            refresh_clip(&app.unwrap(), &session);
+            if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
+                let result = change_clip_points(&app, &mut session, points);
+                app.set_message(result.err().unwrap_or_default().into());
+            } else {
+                session.cancel_clip_preview();
+            }
+            refresh_clip(&app, &session);
         }
     });
     app.on_apply_clip({
@@ -1920,7 +1999,14 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     }
                 } else if ui.borrow().material_for_clip {
                     app.set_clip_material(material);
-                    session.cancel_clip_preview();
+                    if let Some(points) = session.clip_points().map(|d| d.points.clone()) {
+                        if let Err(error) = change_clip_points(&app, &mut session, points) {
+                            window.set_detail(error.into());
+                            return;
+                        }
+                    } else {
+                        session.cancel_clip_preview();
+                    }
                     refresh_clip(&app, &session);
                 } else if ui.borrow().material_for_primitive {
                     if let Some(primitive) = &ui.borrow().primitive_window {
@@ -2473,8 +2559,13 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         .iter()
         .any(|value| key == key_text(*value))
     };
-    if object_shortcut && lock(&session_of(ui)).component_picking().is_some() {
-        app.set_message("Use Reshape brushes to move components. Stop viewport picking before editing whole objects.".into());
+    let components_active = {
+        let shared = session_of(ui);
+        let session = lock(&shared);
+        session.component_picking().is_some() || !session.component_selection().is_empty()
+    };
+    if object_shortcut && components_active {
+        app.set_message("Use Reshape brushes or its move handles. Finish component editing before editing whole objects.".into());
         return true;
     }
     if control {
@@ -3456,6 +3547,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if button == 0 {
                 let shared = ui.session.clone();
                 let mut session = lock(&shared);
+                if session.clip_points().is_some() {
+                    session.publish_camera(ui.viewport.camera);
+                    let pointer = session::Pointer {
+                        position: glam::DVec2::new(f64::from(x), f64::from(y)),
+                        size: (
+                            viewport_size.0.round().max(1.0) as u32,
+                            viewport_size.1.round().max(1.0) as u32,
+                        ),
+                    };
+                    let result = if down {
+                        ui.interaction.down(&mut session, pointer, control)
+                    } else {
+                        ui.interaction.up(&mut session, pointer)
+                    };
+                    if let Err(error) = result {
+                        app.set_message(error.into());
+                    }
+                    refresh_clip(&app, &session);
+                    return;
+                }
                 if down
                     && session.clip_tool()
                     && ui.viewport.camera.projection != Projection::Perspective
@@ -4441,6 +4552,40 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf().world.solids.len(), 2);
         assert_eq!(lock(&shared).document().undo_labels().count(), 2);
         lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        app.invoke_start_clip();
+        app.invoke_clip_points_action(0);
+        assert!(app.get_clip_point_mode());
+        let points = vec![
+            DVec3::new(64.0, 0.0, 0.0),
+            DVec3::new(64.0, 96.0, 0.0),
+            DVec3::new(64.0, 96.0, 64.0),
+        ];
+        change_clip_points(&app, &mut lock(&shared), points.clone()).unwrap();
+        refresh_clip(&app, &lock(&shared));
+        assert!(app.get_has_clip_preview());
+        app.set_clip_material("tools/toolsnodraw".into());
+        app.invoke_clip_inputs_changed();
+        assert_eq!(lock(&shared).clip_points().unwrap().points, points);
+        assert_eq!(
+            lock(&shared).clip_preview().unwrap().material.as_deref(),
+            Some("tools/toolsnodraw")
+        );
+        save_ui_snapshot(app.window(), "three-point-clipping");
+        for label in [
+            "Use plane / line",
+            "Remove last point",
+            "Start again",
+            "Apply cut",
+            "Cancel cut",
+        ] {
+            assert_dialog_button_visible(&app, label);
+        }
+        app.invoke_clip_points_action(1);
+        assert_eq!(app.get_clip_point_count(), 2);
+        assert!(!app.get_has_clip_preview());
+        app.invoke_cancel_clip();
+        assert!(lock(&shared).clip_points().is_none());
         assert_eq!(lock(&shared).document().vmf(), &original);
     }
 

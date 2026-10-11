@@ -138,7 +138,7 @@ pub fn sample(doc: &Document, face: FaceId) -> Result<SurfaceSample, EditError> 
     })
 }
 
-fn shared_edge(source: &[DVec3], target: &[DVec3]) -> Option<(DVec3, DVec3)> {
+pub(crate) fn shared_edge(source: &[DVec3], target: &[DVec3]) -> Option<(DVec3, DVec3)> {
     for (a, b) in source
         .iter()
         .zip(source.iter().cycle().skip(1))

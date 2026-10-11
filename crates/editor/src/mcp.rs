@@ -176,6 +176,7 @@ provides grouped catalog metadata; set_material_favorite shares browser favorite
 find_material_faces creates an exact map/selection material report with explicit hidden handling. \
 Use its token with select_material_faces or replace_materials; get_material_search paginates results. \
 project_face_group fits a continuous tiled texture across coplanar faces or projects along the current view. \
+propagate_face_texture folds a sample through selected connected faces and rejects disconnected targets or incompatible loops. \
 clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
 Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview \
 or cancel_clip_preview. Keep front (arrow side), back, or both; displacements cannot be clipped. \
@@ -1116,6 +1117,15 @@ pub struct RestoreRecoveryArgs {
     /// Optional stale-map guard; supply both generation and revision from get_recovery.status.
     pub generation: Option<u64>,
     pub revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TextureChainArgs {
+    /// Connected target faces, including intermediate surfaces; omitted uses selected faces.
+    pub faces: Option<Vec<FaceRef>>,
+    /// Review the shared draft, then use commit_face_preview or cancel_face_preview with its token.
+    #[serde(default)]
+    pub preview: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3676,7 +3686,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Sample committed material and UV projection from one face into the shared texture sample. Select a source, sample it, then select targets and call paint_face_texture. The sample is a snapshot, survives selection/source edits, and clears on map replacement. Does not edit the map."
+        description = "Sample committed material and UV projection from one face into the shared texture sample. Select a source, sample it, then select targets and call paint_face_texture. The sample is a snapshot, survives selection/source edits, and clears on map replacement. Sampling cancels existing face and texture-stroke previews without map or undo edits."
     )]
     fn sample_face_texture(&self, Parameters(args): Parameters<SampleFaceArgs>) -> ToolResult {
         run(|| {
@@ -3698,6 +3708,26 @@ impl EditorServer {
     )]
     fn get_surface_sample(&self) -> ToolResult {
         ok(json!({"sample": surface_sample_state(&self.session())}))
+    }
+
+    #[tool(
+        description = "Propagate a sampled texture through up to 256 connected target faces, folding its UV projection at each shared edge. Unlike single-edge wrap, targets can connect through other selected targets. Returns deterministic parent/face links and the shared face-preview token. Rejects disconnected targets, displacements and loops with incompatible seams; select an open strip to leave a seam. Source included in targets is skipped. Preserves geometry, lighting metadata and selection; preview/commit/cancel and one-step undo match Wrap connected faces in the UI. Invalid batches preserve the previous draft."
+    )]
+    fn propagate_face_texture(&self, Parameters(args): Parameters<TextureChainArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args
+                .faces
+                .as_ref()
+                .map(|faces| faces.iter().map(face_id).collect::<Vec<_>>())
+                .unwrap_or_else(|| session.selected_faces());
+            let result = session.propagate_face_texture(Actor::Agent, &faces, args.preview)?;
+            let face_json =
+                |face: map_core::surface::FaceId| json!({"solid":face.solid,"side":face.side});
+            Ok(
+                json!({"faces_changed":result.changed,"source_in_targets":result.source_in_targets,"links":result.links.into_iter().map(|link|json!({"parent":face_json(link.parent),"face":face_json(link.face)})).collect::<Vec<_>>(),"max_targets":map_core::texture_chain::MAX_FACES,"state":face_state(&session)}),
+            )
+        })
     }
 
     #[tool(

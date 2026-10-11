@@ -1367,6 +1367,11 @@ fn apply_surface_dialog(
     {
         return Err("Map or face selection changed. Cancel and reopen texture editing.".into());
     }
+    if window.get_operation_index() == 4 {
+        return session
+            .propagate_face_texture(Actor::User, &target.0, preview)
+            .map(|result| result.changed);
+    }
     if window.get_operation_index() != 0 {
         use map_core::surface::PaintMode;
         return session.paint_face_texture(
@@ -5912,6 +5917,8 @@ mod tests {
         surface.set_sample_label("dev/dev_measuregeneric01 · brush 2, face 6".into());
         surface.set_sample_preview(surface.get_preview());
         save_ui_snapshot(surface.window(), "face-wrap");
+        surface.set_operation_index(4);
+        save_ui_snapshot(surface.window(), "face-chain");
         for label in ["Cancel", "Preview textures", "Apply textures"] {
             assert_dialog_button_visible(&surface, label);
         }
@@ -5980,6 +5987,42 @@ mod tests {
         session.undo(Actor::User).unwrap();
         assert_eq!(session.document().vmf(), &original);
         assert!(apply_surface_dialog(&window, &mut session, &target, false).is_err());
+        let targets = session
+            .document()
+            .solid(id)
+            .unwrap()
+            .sides
+            .iter()
+            .filter(|side| {
+                let normal = map_core::Plane::from_points(side.plane.0).unwrap().normal;
+                normal == DVec3::NEG_Y || normal == DVec3::NEG_Z
+            })
+            .map(|side| map_core::surface::FaceId {
+                solid: id,
+                side: side.id,
+            })
+            .collect::<Vec<_>>();
+        session.select_faces(&targets, SelectMode::Replace).unwrap();
+        let target = (
+            session.selected_faces(),
+            session.document_generation(),
+            session.document().revision(),
+        );
+        window.set_operation_index(4);
+        assert_eq!(
+            apply_surface_dialog(&window, &mut session, &target, true).unwrap(),
+            2
+        );
+        let preview = session.face_preview_document().unwrap().vmf().clone();
+        session.cancel_face_preview();
+        assert_eq!(session.document().vmf(), &original);
+        assert_eq!(
+            apply_surface_dialog(&window, &mut session, &target, false).unwrap(),
+            2
+        );
+        assert_eq!(session.document().vmf(), &preview);
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.document().vmf(), &original);
         window.set_alignment_index(2);
         window.set_justify_u_index(1);
         window.set_justify_v_index(3);

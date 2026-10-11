@@ -17,6 +17,7 @@ pub mod region;
 pub mod saved_views;
 pub mod surface;
 pub mod surface_group;
+pub mod texture_chain;
 pub mod transform;
 
 pub use brush::{BrushError, BrushGeometry, Face, texel_uv};

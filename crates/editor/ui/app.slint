@@ -693,7 +693,7 @@ export component SurfaceWindow inherits Window {
             spacing: 12px;
             Text { text: root.selection-label; font-size: 18px; }
             ComboBox {
-                model: ["Edit texture settings", "Paint sampled material", "Copy sampled projection", "Wrap across a shared edge"];
+                model: ["Edit texture settings", "Paint sampled material", "Copy sampled projection", "Wrap across a shared edge", "Wrap connected faces"];
                 current-index <=> root.operation-index;
             }
             if root.operation-index != 0: VerticalLayout {
@@ -708,7 +708,7 @@ export component SurfaceWindow inherits Window {
                     }
                 }
                 Text {
-                    text: root.operation-index == 1 ? "Apply the sampled material. Keep the target faces' offsets, scale and rotation." : root.operation-index == 2 ? "Copy the material and its world-space texture projection. Useful for matching parallel surfaces." : "Fold the sampled projection around each shared edge so the texture meets continuously. Each target must touch the sampled face.";
+                    text: root.operation-index == 1 ? "Apply the sampled material. Keep the target faces' offsets, scale and rotation." : root.operation-index == 2 ? "Copy the material and its world-space texture projection. Useful for matching parallel surfaces." : root.operation-index == 3 ? "Fold the sampled projection around each shared edge so the texture meets continuously. Each target must touch the sampled face." : "Carry the sampled texture through connected faces, folding it at each shared edge. Include intermediate faces. Disconnected targets and closed loops that need a seam are rejected; select an open strip to leave a seam.";
                     wrap: word-wrap;
                 }
                 Text { text: "The sample keeps its captured values even if the source is edited. Sample again to refresh it."; color: #969ca8; wrap: word-wrap; }

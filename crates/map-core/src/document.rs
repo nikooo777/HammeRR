@@ -477,6 +477,18 @@ impl Transaction<'_> {
         self.doc.take(id).ok_or(EditError::NotFound(id))
     }
 
+    pub(crate) fn set_editor_metadata(&mut self, key: &str, node: Option<Node>) {
+        self.extra.get_or_insert_with(|| self.doc.vmf.extra.clone());
+        let existing = self.doc.vmf.extra.iter().position(|node| node.key == key);
+        self.doc.vmf.extra.retain(|node| node.key != key);
+        if let Some(node) = node {
+            let index = existing
+                .unwrap_or(self.doc.vmf.extra.len())
+                .min(self.doc.vmf.extra.len());
+            self.doc.vmf.extra.insert(index, node);
+        }
+    }
+
     pub fn set_context(&mut self, metadata: Metadata) -> Result<(), EditError> {
         metadata.validate().map_err(EditError::Invalid)?;
         self.extra.get_or_insert_with(|| self.doc.vmf.extra.clone());

@@ -24,6 +24,7 @@ and the shared entity inspector and activity panel.*
 | --- | --- |
 | Maps and content | VMF editing and saving; byte-for-byte round trips for unmodified files; game materials from Steam libraries, search paths and VPK archives. |
 | Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
+| Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquee or 3D volume selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
@@ -81,6 +82,7 @@ cargo test --workspace -j 8
 | Change projection | Choose **Perspective**, **Top · XY**, **Front · XZ** or **Side · YZ**. |
 | Pan / zoom in planar views | Right-drag / mouse wheel; zoom follows the cursor. |
 | Frame selection or map | **Frame · F**; frames the map when nothing is selected. |
+| Save / return to a camera | **Saved views…** beside Frame. |
 | Select / toggle selection | Click / Ctrl+click. |
 | Select an area | Left-drag away from a handle; choose **Intersects** or **Fully inside** and a selection rule. Ctrl+drag toggles. |
 | Transform with handles | Choose **Move handles**, **Rotate handles** or **Scale handles**; drag a handle and release to apply. Escape cancels. |
@@ -91,6 +93,20 @@ cargo test --workspace -j 8
 **Grid** accepts spacing from 0.125 to 4096 units. **Snap** and **Show grid**
 are independent. In planar views, arrows move within the displayed plane;
 PgUp/PgDn move along its depth axis.
+
+### Saved camera views
+
+Open **Saved views…**, name the current camera and choose **Save current as new**.
+Select a view and **Go to view** to restore its projection, position, direction,
+field of view and planar zoom. **Rename** changes its name; **Replace with current**
+updates its camera. **Delete view** removes it. These edits use map undo and
+persist when you save the VMF; moving to a saved view leaves the map unchanged.
+
+A map can hold 64 views with names up to 80 characters. **Cancel / close**
+discards the name field; applied changes remain undoable. Existing Hammer
+camera records are preserved separately.
+
+![Named camera views and shared restore/edit controls](docs/images/saved-views.png)
 
 ### Brushes and transforms
 
@@ -480,6 +496,7 @@ For example, place a warm light:
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials`, `commit_face_preview`, `cancel_face_preview` |
 | Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
+| Saved cameras | `get_camera_views`, `save_camera_view`, `restore_camera_view`, `rename_camera_view`, `delete_camera_view` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
 | Compile and play | `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
 
@@ -514,6 +531,7 @@ python -B scripts/validate_material_replacement.py --output /tmp/hammerr-materia
 python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
 python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
+python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 ```
 
 Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`
@@ -542,6 +560,11 @@ or `faces`), a match rule and a combination mode. Use `preview: true`, inspect
 the paginated matches, then pass the returned preview token to commit, cancel
 or frame. Camera changes preserve the box; map, selection and visibility
 changes invalidate its candidates.
+
+`save_camera_view` stores the current shared camera under `name`; `replace_id`
+updates an existing view. Pass both `generation` and `revision` from
+`get_camera_views` to guard saved-view actions against map changes. Restore
+moves the camera without changing selection, map data or edit history.
 
 `begin_connection_edit` starts an addition or edits an outgoing `index`.
 `update_connection_draft` accepts readable fields; `delay` and `times` are

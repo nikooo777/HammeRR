@@ -1,0 +1,77 @@
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct SavedViewRow { id: string, name: string, projection: string }
+
+export component SavedViewsWindow inherits Window {
+    title: "Saved views - HammeRR";
+    width: 660px;
+    height: 590px;
+    in property <[SavedViewRow]> views;
+    in property <string> selected-id;
+    in property <string> current;
+    in property <string> message;
+    in property <bool> editable: true;
+    in-out property <string> view-name;
+    callback choose(string);
+    callback save-new();
+    callback replace-view();
+    callback rename-view();
+    callback restore-view();
+    callback delete-view();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+    }
+    VerticalLayout {
+        padding: 24px;
+        spacing: 14px;
+        Text { text: "Saved views"; font-size: 24px; font-weight: 600; }
+        Text { text: "Return to named camera positions. Views are stored in this map."; wrap: word-wrap; color: #bac2ce; }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 6px;
+                if root.views.length == 0: Text { text: "No saved views yet. Name the current view below."; color: #bac2ce; wrap: word-wrap; }
+                for view in root.views: Rectangle {
+                    height: 48px;
+                    background: view.id == root.selected-id ? #304c65 : #262b33;
+                    border-radius: 6px;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        Text { text: view.name; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        Text { text: view.projection; vertical-alignment: center; color: #bac2ce; }
+                    }
+                    TouchArea { clicked => { root.choose(view.id); } }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Go to view"; enabled: root.selected-id != "" && root.editable; clicked => { root.restore-view(); } }
+            Button { text: "Delete view"; enabled: root.selected-id != "" && root.editable; clicked => { root.delete-view(); } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        Text { text: root.current; color: #bac2ce; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 10px;
+            Text { text: "View name"; vertical-alignment: center; }
+            LineEdit { text <=> root.view-name; placeholder-text: "Courtyard entrance"; horizontal-stretch: 1; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Save current as new"; enabled: root.editable && root.view-name != ""; clicked => { root.save-new(); } }
+            Button { text: "Replace with current"; enabled: root.editable && root.selected-id != "" && root.view-name != ""; clicked => { root.replace-view(); } }
+            Button { text: "Rename"; enabled: root.editable && root.selected-id != "" && root.view-name != ""; clicked => { root.rename-view(); } }
+        }
+        Text { text: root.message; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            Text { text: "Map undo restores changed views. Save the VMF to keep them."; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; color: #bac2ce; }
+            Button { text: "Cancel / close"; clicked => { root.close-dialog(); } }
+        }
+    }
+}

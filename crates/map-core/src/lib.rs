@@ -13,6 +13,7 @@ pub mod primitive;
 pub mod query;
 pub mod references;
 pub mod region;
+pub mod saved_views;
 pub mod surface;
 pub mod surface_group;
 pub mod transform;

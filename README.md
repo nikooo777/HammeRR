@@ -27,6 +27,7 @@ and the shared entity inspector and activity panel.*
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
+| Brush components | Precise vertex/edge selection and convex shape corrections, with shared previews, grid snapping, invalid-solid feedback and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
@@ -178,6 +179,31 @@ supporting brush faces for selection queries.
 | ![Volume bounds, match rules and cancellation](docs/images/volume-selection.png) | ![Blue volume guide and matching brush](docs/images/volume-preview.png) |
 
 ![Paint selection with a pixel-radius brush, candidate highlights and Apply/Cancel](docs/images/paint-selection.png)
+
+### Vertices and edges
+
+Select brushes, then open **Edit vertices and edges…**. Choose **Edges** or
+**Vertices**, check the components to move, and enter an XYZ offset in world
+units. **Use editor grid snapping** follows the shared grid and Snap setting.
+**Preview move** shows the proposed shape; **Apply move** records one undo step.
+**Cancel** discards the draft and clears the component markers.
+
+Orange marks selected corners and edges; blue marks other corners. Offsets are
+measured from the committed map, so revising a preview does not accumulate moves.
+Invalid offsets leave the last valid preview visible. Faces must remain flat
+and the brush convex: moving one corner of a box usually requires moving its
+connected edge or face corners together. Splitting, welding and displacement
+movement are not supported yet. Existing face IDs, materials, lighting fields
+and unknown metadata are retained; texture projections stay anchored in world
+space during reshaping.
+
+The first version supports 512 selected components across 16 brushes, with up
+to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
+collapse edges or alter topology are rejected before the map is changed.
+
+| Component controls | Shared shape preview |
+| --- | --- |
+| ![Vertex and edge selection, precise offsets and Apply/Cancel controls](docs/images/brush-components.png) | ![Flat-shaded convex brush with its selected edge moved upward](docs/images/component-preview.png) |
 
 ### Brush clipping
 
@@ -585,6 +611,7 @@ For example, place a warm light:
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
+| Brush components | `get_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
@@ -640,6 +667,7 @@ python -B scripts/validate_texture_strokes.py --output /tmp/hammerr-texture-chec
 python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
 python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-check
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
+python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
@@ -649,6 +677,14 @@ Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`
 to check an idle GUI session with a clean map and empty undo/redo history.
 Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
+
+Component queries return full stored precision. Use each response's `snapshot`
+when selecting components or previewing a move, and the preview's `token` for
+Apply/Cancel. Two incident side IDs identify an edge; three or more identify a
+vertex. Vertex-array indices describe that response only. `render_view` and the
+human viewport show the same draft. Map edits and competing geometry tools
+invalidate it. Camera and map coordinates in MCP responses retain their full
+precision, so reusing a reported camera preserves its orientation precisely.
 
 `clip_brushes` accepts a plane normal/distance, three points, or a snapped
 planar line. Use `preview: true` to inspect the shared cut before committing

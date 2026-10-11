@@ -1,0 +1,103 @@
+import { Button, CheckBox, ComboBox, LineEdit, ListView } from "std-widgets.slint";
+
+export struct ComponentRow {
+    key: string,
+    label: string,
+    detail: string,
+    selected: bool,
+}
+
+export component ComponentsWindow inherits Window {
+    title: "Brush components - HammeRR";
+    preferred-width: 880px;
+    preferred-height: 720px;
+    in property <[ComponentRow]> rows;
+    in property <string> stamp;
+    in property <string> token;
+    in property <string> summary;
+    in property <string> preview-summary;
+    in property <string> message;
+    in property <bool> ready;
+    in property <bool> has-selection;
+    in-out property <int> kind;
+    in-out property <string> move-x: "0";
+    in-out property <string> move-y: "0";
+    in-out property <string> move-z: "16";
+    in-out property <bool> snap: true;
+    callback refresh();
+    callback choose(string);
+    callback select-all();
+    callback clear();
+    callback edited();
+    callback preview-edit();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px; spacing: 14px;
+            Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
+            Text { text: "Select edges or corners, then preview a precise move."; color: #aeb9c8; }
+            HorizontalLayout {
+                spacing: 20px;
+                VerticalLayout {
+                    horizontal-stretch: 1; spacing: 10px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ComboBox { model: ["Edges", "Vertices"]; current-index <=> root.kind; selected => { root.refresh(); } }
+                        Button { text: "Refresh"; clicked => { root.refresh(); } }
+                    }
+                    Text { text: root.summary; wrap: word-wrap; color: #aeb9c8; }
+                    ListView {
+                        vertical-stretch: 1;
+                        for row in root.rows: VerticalLayout {
+                            spacing: 4px; padding-top: 5px; padding-bottom: 7px;
+                            CheckBox { text: row.label; checked: row.selected; toggled => { root.choose(row.key); } }
+                            Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Select all shown"; enabled: root.rows.length > 0; clicked => { root.select-all(); } }
+                        Button { text: "Clear selection"; enabled: root.has-selection; clicked => { root.clear(); } }
+                    }
+                }
+                VerticalLayout {
+                    width: 290px; spacing: 12px;
+                    Text { text: "Move selection"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Offset from the current map · world units"; wrap: word-wrap; color: #aeb9c8; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "X"; width: 65px; vertical-alignment: center; }
+                        LineEdit { text <=> root.move-x; input-type: decimal; accessible-label: "X offset"; edited => { root.edited(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Y"; width: 65px; vertical-alignment: center; }
+                        LineEdit { text <=> root.move-y; input-type: decimal; accessible-label: "Y offset"; edited => { root.edited(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Z · up"; width: 65px; vertical-alignment: center; }
+                        LineEdit { text <=> root.move-z; input-type: decimal; accessible-label: "Z offset"; edited => { root.edited(); } }
+                    }
+                    CheckBox { text: "Use editor grid snapping"; checked <=> root.snap; toggled => { root.edited(); } }
+                    Button { text: "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
+                    Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
+                    Rectangle { vertical-stretch: 1; }
+                    Text { text: "Orange marks selected corners and edges. Blue marks other corners."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    Text { text: "Faces must stay flat and the brush convex. Move an entire edge or face's corners together. Textures stay anchored in world space."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                }
+            }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

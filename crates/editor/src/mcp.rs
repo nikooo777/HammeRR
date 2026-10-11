@@ -169,6 +169,7 @@ update_paint_selection extends its pixel path, and get_paint_selection exposes c
 Use its token with commit_paint_selection or cancel_paint_selection; render_view shows the shared preview. \
 For sampled material/projection strokes, sample_face_texture then begin_texture_stroke, update_texture_stroke, \
 get_texture_stroke and commit_texture_stroke or cancel_texture_stroke share one undoable preview with the UI. \
+get_brush_components exposes precise vertices/edges with stable incident-face IDs. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures remain world-anchored. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -265,12 +266,8 @@ fn vec3(v: [f64; 3]) -> DVec3 {
     DVec3::from_array(v)
 }
 
-fn round(v: f64) -> f64 {
-    (v * 1000.0).round() / 1000.0
-}
-
 fn point(v: DVec3) -> Value {
-    json!([round(v.x), round(v.y), round(v.z)])
+    json!(v.to_array())
 }
 
 fn bounds_json(bounds: Option<(DVec3, DVec3)>) -> Value {
@@ -402,7 +399,7 @@ fn hit_json(doc: &Document, hit: &Hit) -> Value {
         "solid": hit.solid,
         "side": hit.side,
         "material": material,
-        "distance": round(hit.distance),
+        "distance": hit.distance,
         "point": point(hit.point),
     })
 }
@@ -410,9 +407,9 @@ fn hit_json(doc: &Document, hit: &Hit) -> Value {
 fn camera_json(camera: &Camera) -> Value {
     json!({
         "position": point(camera.position.as_dvec3()),
-        "yaw": round(f64::from(camera.yaw_degrees)),
-        "pitch": round(f64::from(camera.pitch_degrees)),
-        "fov": round(f64::from(camera.fov_y_degrees)),
+        "yaw": camera.yaw_degrees,
+        "pitch": camera.pitch_degrees,
+        "fov": camera.fov_y_degrees,
         "forward": point(camera.forward().as_dvec3()),
         "projection": camera.projection.name(),
         "ortho_height": camera.ortho_height,
@@ -443,6 +440,34 @@ struct PointfileActionArgs {
 struct PointfileNavigateArgs {
     index: usize,
     token: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentRef {
+    solid: u32,
+    /// Two incident face IDs identify an edge; three or more identify a vertex.
+    sides: Vec<u32>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentQueryArgs {
+    /// Numeric brush IDs, including brushes inside entities. Defaults to selection.
+    solids: Option<Vec<u32>>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentSelectionArgs {
+    components: Vec<ComponentRef>,
+    /// Exact snapshot from get_brush_components or the last component operation.
+    snapshot: String,
+    /// replace (default), add, remove or toggle.
+    mode: Option<String>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentMoveArgs {
+    delta: [f64; 3],
+    /// Snap the offset using the editor's current grid and snap setting.
+    #[serde(default)]
+    snap: bool,
+    snapshot: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2656,6 +2681,109 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the current component preview when present. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections remain anchored in world space.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_brush_components(&self, Parameters(args): Parameters<ComponentQueryArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            session.component_report(&args.solids.unwrap_or_else(|| session.component_solids()))
+        })
+    }
+
+    #[tool(
+        description = "Select shared brush vertices or edges using solid + sides from get_brush_components. Two incident side IDs identify an edge; three or more identify a vertex. Requires the latest snapshot. Supports replace/add/remove/toggle; empty replace clears components. Selecting components cancels other geometry drafts, highlights vertices/edges in the viewport and selects their owning objects. At most 512 components in 16 brushes."
+    )]
+    fn select_brush_components(
+        &self,
+        Parameters(args): Parameters<ComponentSelectionArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mode = parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?;
+            let components = args
+                .components
+                .into_iter()
+                .map(|component| map_core::subobject::Component {
+                    solid: component.solid,
+                    sides: component.sides,
+                })
+                .collect::<Vec<_>>();
+            let mut session = self.session();
+            session.select_components(&components, mode, &args.snapshot)?;
+            session.component_report(
+                &session
+                    .component_selection()
+                    .iter()
+                    .map(|component| component.solid)
+                    .collect::<Vec<_>>(),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Preview moving selected brush vertices/edges by a total world-space delta from committed geometry. Requires the latest component snapshot; optional snap honors the shared grid. Preserves face/solid IDs, ownership, material, world-anchored UV projection and metadata. Rejects nonplanar faces, collapsed edges, concavity, changed topology, displacements or coordinates outside ±65536. Invalid updates preserve the last valid draft. render_view and get_brush_components show the draft; Apply is one undo step. Source edits or other geometry tools invalidate the draft."
+    )]
+    fn preview_component_move(
+        &self,
+        Parameters(args): Parameters<ComponentMoveArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_component_move(vec3(args.delta), args.snap, &args.snapshot)?;
+            session.component_report(
+                &session
+                    .component_selection()
+                    .iter()
+                    .map(|component| component.solid)
+                    .collect::<Vec<_>>(),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact component preview token as one shared undo step. Selection remains available for another move; stored geometry is identical to the preview. Stale tokens reject without editing."
+    )]
+    fn commit_component_move(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.commit_component_move(
+                Actor::Agent,
+                args.token
+                    .parse()
+                    .map_err(|_| "Invalid component preview token")?,
+            )?;
+            session.component_report(
+                &session
+                    .component_selection()
+                    .iter()
+                    .map(|component| component.solid)
+                    .collect::<Vec<_>>(),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Cancel the exact component preview token without changing the map, history or component selection. Stale tokens cannot cancel a replacement preview. Clear markers with select_brush_components using an empty replacement selection."
+    )]
+    fn cancel_component_move(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_component_move(
+                args.token
+                    .parse()
+                    .map_err(|_| "Invalid component preview token")?,
+            )?;
+            session.component_report(
+                &session
+                    .component_selection()
+                    .iter()
+                    .map(|component| component.solid)
+                    .collect::<Vec<_>>(),
+            )
+        })
+    }
+
+    #[tool(
         description = "Load an external .lin/.pts pointfile into the shared leak-path renderer. Requires a regular UTF-8 file ≤2 MiB containing 2–65536 lines of XYZ coordinates within ±1000000; blank lines allowed. Validates completely before replacing a path. Enables leak visibility without moving the camera or editing map/history. The path becomes stale after map edits and clears on map replacement or a current compile result."
     )]
     fn load_pointfile(&self, Parameters(args): Parameters<PointfileLoadArgs>) -> ToolResult {
@@ -2766,6 +2894,7 @@ impl EditorServer {
             "launching": session.launching(),
             "game_running": session.game_running(),
             "pointfile": session.pointfile_report(0, 1).ok(),
+            "components": session.component_report(&[]).ok(),
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
             "view": view_state(session.view()),
             "spatial": session.spatial(),
@@ -4879,6 +5008,31 @@ mod tests {
         );
         assert!(lock(&shared).game_running());
         lock(&shared).stop_game(Actor::User).unwrap();
+    }
+
+    #[test]
+    fn coordinates_and_camera_round_trip_without_display_rounding() {
+        let point_value = DVec3::new(0.000_123_456_789, -31_234.123_456_789, 1.0 / 3.0);
+        let decoded: [f64; 3] = serde_json::from_value(point(point_value)).unwrap();
+        assert_eq!(decoded, point_value.to_array());
+        let mut session = Session::new(Err("no assets needed".into()));
+        let mut camera = session.camera();
+        camera.position = Vec3::new(0.000_123_456, -1_234.567_9, 321.123_44);
+        camera.yaw_degrees = 27.123_456;
+        camera.pitch_degrees = -12.987_654;
+        camera.fov_y_degrees = 73.123_45;
+        session.set_camera(camera);
+        let spec: CameraSpec = serde_json::from_value(camera_json(&camera)).unwrap();
+        assert_eq!(spec.resolve(&session, 1.0).unwrap(), camera);
+        for projection in [Projection::Top, Projection::Front, Projection::Side] {
+            let planar = Camera::planar(projection, camera.position, 231.123_45);
+            let mut value = camera_json(&planar);
+            for key in ["center", "yaw", "pitch"] {
+                value.as_object_mut().unwrap().remove(key);
+            }
+            let spec: CameraSpec = serde_json::from_value(value).unwrap();
+            assert_eq!(spec.resolve(&session, 1.0).unwrap(), planar);
+        }
     }
 
     #[test]

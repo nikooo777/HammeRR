@@ -242,6 +242,7 @@ impl Session {
         if tool.mode.is_some() {
             self.clip_tool = false;
             self.cancel_clip_preview();
+            self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();
             self.spatial.draw_block = false;
@@ -266,6 +267,7 @@ impl Session {
             || self.clip_tool
             || self.spatial.draw_block
             || self.volume_preview().is_some()
+            || !self.component_selection().is_empty()
         {
             return None;
         }
@@ -333,6 +335,7 @@ impl Session {
         }
         self.select(ids, SelectMode::Replace)?;
         self.cancel_clip_preview();
+        self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.clip_tool = false;
@@ -628,6 +631,7 @@ impl Session {
             self.cancel_transform_preview();
         }
         self.cancel_clip_preview();
+        self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.clip_tool = false;

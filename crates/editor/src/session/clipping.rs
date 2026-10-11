@@ -41,6 +41,7 @@ impl Session {
             return Ok(());
         }
         self.cancel_clip_preview();
+        self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.cancel_transform_preview();
@@ -134,6 +135,7 @@ impl Session {
                 .ok_or("Selected brushes have no bounds")?;
             self.select(ids, SelectMode::Replace)?;
             self.cancel_transform_preview();
+            self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();
             self.cancel_area_selection();

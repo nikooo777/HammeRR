@@ -108,7 +108,11 @@ fn geometry(solid: &Solid) -> std::result::Result<BrushGeometry, EditError> {
     Ok(geometry)
 }
 
-fn half(solid: &Solid, plane: Plane, material: &str) -> std::result::Result<Solid, EditError> {
+pub(crate) fn half(
+    solid: &Solid,
+    plane: Plane,
+    material: &str,
+) -> std::result::Result<Solid, EditError> {
     let mut part = solid.clone();
     let (u, v) = world_texture_axes(plane.normal);
     part.sides.push(Side {

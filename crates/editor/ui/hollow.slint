@@ -1,0 +1,63 @@
+import { Button, ComboBox, LineEdit, SpinBox } from "std-widgets.slint";
+
+export component HollowWindow inherits Window {
+    title: "Hollow brushes - HammeRR";
+    preferred-width: 620px; preferred-height: 520px;
+    in property <string> stamp;
+    in property <string> token;
+    in property <string> summary;
+    in property <string> selection-label;
+    in property <string> message;
+    in property <bool> ready;
+    in property <bool> can-preview;
+    in property <int> cavities;
+    in-out property <int> cavity: 1;
+    in-out property <int> direction;
+    in-out property <string> thickness: "16";
+    callback edited();
+    callback preview-edit();
+    callback look-inside();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px; spacing: 16px;
+            Text { text: "Turn solids into walls"; font-size: 24px; font-weight: 600; }
+            Text { text: root.selection-label; color: #aeb9c8; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 16px;
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Wall thickness · units"; font-weight: 600; }
+                    LineEdit { text <=> root.thickness; input-type: decimal; accessible-label: "Wall thickness"; edited => { root.edited(); } }
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Build walls"; font-weight: 600; }
+                    ComboBox { model: ["Inside the original size", "Outside the original size"]; current-index <=> root.direction; selected => { root.edited(); } }
+                }
+            }
+            Text { text: root.direction == 0 ? "The outer shape stays the same. Walls reduce the space inside." : "The original shape becomes the empty space. Walls grow outward."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "Each face becomes a separate convex wall. Inner surfaces inherit its material and texture mapping. The entire shell stays in its original world or entity."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                if root.cavities > 1: Text { text: "Cavity"; vertical-alignment: center; }
+                if root.cavities > 1: SpinBox { minimum: 1; maximum: max(1,root.cavities); value <=> root.cavity; }
+                Button { text: "Look inside"; enabled: root.token != ""; clicked => { root.look-inside(); } }
+            }
+            Text { text: "Look inside moves the camera into the preview. Use Wireframe for an outside view of the walls. Cancel keeps the camera position."; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+            if root.message != "": Text { text: root.message; color: #ffc66d; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Preview walls"; enabled: root.can-preview; clicked => { root.preview-edit(); } }
+                Button { text: "Create walls"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

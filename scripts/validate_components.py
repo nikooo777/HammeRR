@@ -183,6 +183,36 @@ def validate(client, output):
         check(detail(client, ids) == after, "Redo restores edited brush")
         client.call("undo")
         shape = inspect(solid_ids)["brushes"][0]
+        top = next(
+            face
+            for face in shape["faces"]
+            if all(
+                abs(shape["vertices"][index]["position"][2] - 64) < 1e-5
+                for index in face["vertices"]
+            )
+        )
+        whole_face = {"solid": shape["solid"], "sides": [top["side"]]}
+        select([whole_face])
+        face_draft = preview([0, 0, 16])
+        check(
+            sum(
+                abs(vertex["position"][2] - 80) < 1e-5
+                for vertex in face_draft["brushes"][0]["vertices"]
+            )
+            == 4,
+            "Whole-face selection moves all four corners",
+        )
+        check(
+            next(
+                face
+                for face in face_draft["brushes"][0]["faces"]
+                if face["side"] == top["side"]
+            )["selected"],
+            "Face geometry selection is inspectable",
+        )
+        client.call("commit_component_move", {"token": face_draft["preview"]["token"]})
+        client.call("undo")
+        check(detail(client, ids) == original, "Face movement is one reversible edit")
         vertex = {"solid": shape["solid"], "sides": shape["vertices"][0]["sides"]}
         select([vertex])
         result = client.call(

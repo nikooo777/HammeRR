@@ -169,7 +169,7 @@ update_paint_selection extends its pixel path, and get_paint_selection exposes c
 Use its token with commit_paint_selection or cancel_paint_selection; render_view shows the shared preview. \
 For sampled material/projection strokes, sample_face_texture then begin_texture_stroke, update_texture_stroke, \
 get_texture_stroke and commit_texture_stroke or cancel_texture_stroke share one undoable preview with the UI. \
-get_brush_components exposes precise vertices/edges with stable incident-face IDs. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures remain world-anchored. \
+get_brush_components exposes precise faces/vertices/edges with stable incident-face IDs. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures remain world-anchored. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -178,6 +178,7 @@ find_material_faces creates an exact map/selection material report with explicit
 Use its token with select_material_faces or replace_materials; get_material_search paginates results. \
 project_face_group fits a continuous tiled texture across coplanar faces or projects along the current view. \
 propagate_face_texture folds a sample through selected connected faces and rejects disconnected targets or incompatible loops. \
+preview_hollow builds inward/outward wall shells with shared geometry and cavity inspection. Get the stamp from get_hollow_preview, inspect with look_inside_hollow, then commit_hollow or cancel_hollow using the token. \
 clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
 Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview \
 or cancel_clip_preview. Keep front (arrow side), back, or both; displacements cannot be clipped. \
@@ -443,9 +444,28 @@ struct PointfileNavigateArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct HollowArgs {
+    ids: Option<Vec<String>>,
+    /// Wall thickness along each face normal, from 0.125 to 4096 units.
+    thickness: f64,
+    /// Grow outside the source (keep its interior size). Default: inset walls.
+    #[serde(default)]
+    outward: bool,
+    /// Latest stamp from get_hollow_preview.
+    stamp: String,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct HollowInsideArgs {
+    token: String,
+    /// Zero-based cavity index from the preview result. Default: first cavity.
+    #[serde(default)]
+    index: usize,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentRef {
     solid: u32,
-    /// Two incident face IDs identify an edge; three or more identify a vertex.
+    /// One side identifies a whole face; two incident side IDs identify an edge; three or more identify a vertex.
     sides: Vec<u32>,
 }
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2681,6 +2701,71 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Preview hollowing selected brushes or brush entities into closed convex wall pieces. Thickness is 0.125–4096 units along face normals. outward=false insets walls inside the source bounds; true expands outside and preserves the original cavity. Requires latest stamp from get_hollow_preview. At most 16 source brushes, 64 sides each and 256 output walls; displacements, ambiguous IDs and invalid/thin inner geometry reject atomically. Existing surfaces retain metadata; generated inner faces inherit their corresponding source face's material, world projection and lighting. render_view uses the draft. Apply/Cancel use its token."
+    )]
+    fn preview_hollow(&self, Parameters(args): Parameters<HollowArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            session.preview_hollow(
+                &ids,
+                map_core::hollow::Spec {
+                    thickness: args.thickness,
+                    outward: args.outward,
+                },
+                &args.stamp,
+            )?;
+            Ok(session.hollow_state())
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared hollow preview, stamp, token, source snapshot, parameters, generated brush IDs, cavity centers/bounds and limits. The cavity center is an interior vertex average, suitable for Look inside. No map edits.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_hollow_preview(&self) -> ToolResult {
+        ok(self.session().hollow_state())
+    }
+
+    #[tool(
+        description = "Apply the exact hollow preview as one undo step. Selects generated wall objects, preserves entity ownership and verifies generated geometry/IDs match the preview. Source edits, selection changes and other geometry tools invalidate the token."
+    )]
+    fn commit_hollow(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let result = self.session().commit_hollow(
+                Actor::Agent,
+                args.token.parse().map_err(|_| "Invalid hollow token")?,
+            )?;
+            Ok(crate::session::hollowing::result_json(&result))
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact hollow preview token without changing map data or history. Stale tokens cannot cancel a replacement draft. Camera movement from Look inside is retained."
+    )]
+    fn cancel_hollow(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_hollow(args.token.parse().map_err(|_| "Invalid hollow token")?)?;
+            Ok(session.hollow_state())
+        })
+    }
+
+    #[tool(
+        description = "Move the shared perspective camera inside a cavity of the exact hollow preview (zero-based index). Shares the editor's Look inside control. Preserves field of view, preview, map and history; invalid indices/tokens leave the camera unchanged."
+    )]
+    fn look_inside_hollow(&self, Parameters(args): Parameters<HollowInsideArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.look_inside_hollow(
+                args.token.parse().map_err(|_| "Invalid hollow token")?,
+                args.index,
+            )?;
+            Ok(camera_json(&session.camera()))
+        })
+    }
+
+    #[tool(
         description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the current component preview when present. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections remain anchored in world space.",
         annotations(read_only_hint = true)
     )]
@@ -2692,7 +2777,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Select shared brush vertices or edges using solid + sides from get_brush_components. Two incident side IDs identify an edge; three or more identify a vertex. Requires the latest snapshot. Supports replace/add/remove/toggle; empty replace clears components. Selecting components cancels other geometry drafts, highlights vertices/edges in the viewport and selects their owning objects. At most 512 components in 16 brushes."
+        description = "Select shared brush faces, vertices or edges using solid + sides from get_brush_components. One side identifies a whole face; two incident side IDs identify an edge; three or more identify a vertex. Requires the latest snapshot. Supports replace/add/remove/toggle; empty replace clears components. Selecting components cancels other geometry drafts, highlights vertices/edges in the viewport and selects their owning objects. At most 512 components in 16 brushes."
     )]
     fn select_brush_components(
         &self,
@@ -2721,7 +2806,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview moving selected brush vertices/edges by a total world-space delta from committed geometry. Requires the latest component snapshot; optional snap honors the shared grid. Preserves face/solid IDs, ownership, material, world-anchored UV projection and metadata. Rejects nonplanar faces, collapsed edges, concavity, changed topology, displacements or coordinates outside ±65536. Invalid updates preserve the last valid draft. render_view and get_brush_components show the draft; Apply is one undo step. Source edits or other geometry tools invalidate the draft."
+        description = "Preview moving selected brush faces/vertices/edges by a total world-space delta from committed geometry. Requires the latest component snapshot; optional snap honors the shared grid. Preserves face/solid IDs, ownership, material, world-anchored UV projection and metadata. Rejects nonplanar faces, collapsed edges, concavity, changed topology, displacements or coordinates outside ±65536. Invalid updates preserve the last valid draft. render_view and get_brush_components show the draft; Apply is one undo step. Source edits or other geometry tools invalidate the draft."
     )]
     fn preview_component_move(
         &self,
@@ -2895,6 +2980,7 @@ impl EditorServer {
             "game_running": session.game_running(),
             "pointfile": session.pointfile_report(0, 1).ok(),
             "components": session.component_report(&[]).ok(),
+            "hollow": session.hollow_state(),
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
             "view": view_state(session.view()),
             "spatial": session.spatial(),

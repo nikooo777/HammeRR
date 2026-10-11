@@ -26,8 +26,9 @@ and the shared entity inspector and activity panel.*
 | Viewport and brushes | Textured, flat, wireframe and diagnostic modes in every projection; grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
+| Brush hollowing | Inward/outward wall shells with inherited materials and lighting, cavity inspection, cancellable previews and one-step undo. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
-| Brush components | Precise vertex/edge selection and convex shape corrections, with shared previews, grid snapping, invalid-solid feedback and atomic undo. |
+| Brush components | Precise face/vertex/edge selection and convex shape corrections, with shared previews, grid snapping, invalid-solid feedback and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
@@ -180,10 +181,9 @@ supporting brush faces for selection queries.
 
 ![Paint selection with a pixel-radius brush, candidate highlights and Apply/Cancel](docs/images/paint-selection.png)
 
-### Vertices and edges
+### Vertices, edges and faces
 
-Select brushes, then open **Edit vertices and edges…**. Choose **Edges** or
-**Vertices**, check the components to move, and enter an XYZ offset in world
+Select brushes, then open **Reshape brushes…**. Choose **Edges**, **Vertices** or **Faces**, check the components to move, and enter an XYZ offset in world
 units. **Use editor grid snapping** follows the shared grid and Snap setting.
 **Preview move** shows the proposed shape; **Apply move** records one undo step.
 **Cancel** discards the draft and clears the component markers.
@@ -192,7 +192,7 @@ Orange marks selected corners and edges; blue marks other corners. Offsets are
 measured from the committed map, so revising a preview does not accumulate moves.
 Invalid offsets leave the last valid preview visible. Faces must remain flat
 and the brush convex: moving one corner of a box usually requires moving its
-connected edge or face corners together. Splitting, welding and displacement
+connected edge or the whole face together. Splitting, welding and displacement
 movement are not supported yet. Existing face IDs, materials, lighting fields
 and unknown metadata are retained; texture projections stay anchored in world
 space during reshaping.
@@ -203,7 +203,31 @@ collapse edges or alter topology are rejected before the map is changed.
 
 | Component controls | Shared shape preview |
 | --- | --- |
-| ![Vertex and edge selection, precise offsets and Apply/Cancel controls](docs/images/brush-components.png) | ![Flat-shaded convex brush with its selected edge moved upward](docs/images/component-preview.png) |
+| ![Face, vertex and edge selection, precise offsets and Apply/Cancel controls](docs/images/brush-components.png) | ![Flat-shaded convex brush with its selected edge moved upward](docs/images/component-preview.png) |
+
+### Hollow brushes
+
+Select solid brushes or brush entities, then open **Hollow brushes…**. Set the
+wall thickness and choose whether walls build **Inside the original size** or
+**Outside the original size**. Inside preserves the outer shape; outside keeps
+the original shape as the empty interior. Thickness is measured perpendicular
+to each face, including slopes.
+
+**Preview walls** shows the proposed shell. **Look inside** moves the camera
+into a cavity; select its number when hollowing several brushes. Wireframe also
+reveals the walls from outside. **Create walls** replaces the original solids
+in one undo step. **Cancel** discards the draft and retains camera navigation.
+
+Each wall is an ordinary convex VMF brush. Inner surfaces inherit their source
+face's material, world-space texture mapping and lighting settings. Brush
+entities retain ownership of their walls. The tool rejects invalid inner space,
+displacements and ambiguous geometry before replacing a valid preview. Limits
+are 16 source brushes, 64 sides per brush, 256 output walls and thickness from
+0.125 to 4096 units. Carving and intentionally open shells remain future work.
+
+| Hollow controls | Inside the shared preview |
+| --- | --- |
+| ![Wall thickness, inward/outward construction and cancellable shell preview](docs/images/hollow-brushes.png) | ![Textured interior of a hollowed brush before applying](docs/images/hollow-interior.png) |
 
 ### Brush clipping
 
@@ -611,6 +635,7 @@ For example, place a warm light:
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
+| Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush components | `get_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -668,6 +693,7 @@ python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
 python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-check
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
+python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
@@ -680,11 +706,17 @@ camera, selection and view.
 
 Component queries return full stored precision. Use each response's `snapshot`
 when selecting components or previewing a move, and the preview's `token` for
-Apply/Cancel. Two incident side IDs identify an edge; three or more identify a
-vertex. Vertex-array indices describe that response only. `render_view` and the
+Apply/Cancel. One side ID selects a whole face, two incident side IDs identify an edge,
+and three or more identify a vertex. Vertex-array indices describe that response only. `render_view` and the
 human viewport show the same draft. Map edits and competing geometry tools
 invalidate it. Camera and map coordinates in MCP responses retain their full
 precision, so reusing a reported camera preserves its orientation precisely.
+
+For hollowing, get the current `stamp` from `get_hollow_preview`, then pass it
+to `preview_hollow` with thickness, direction and optional object IDs. The result
+lists planned wall IDs and cavity centers/bounds. Inspect the rendered draft,
+optionally use `look_inside_hollow`, then apply or cancel its exact token.
+Map/selection edits and competing geometry tools invalidate the draft.
 
 `clip_brushes` accepts a plane normal/distance, three points, or a snapped
 planar line. Use `preview: true` to inspect the shared cut before committing
@@ -835,8 +867,8 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes broader map checks, vertex and edge editing,
-displacement tools, model rendering, vertex and edge editing.
+Editor work ahead includes direct component manipulation, splitting and welding,
+carving, displacement tools, model rendering and broader map checks.
 
 ## Project layout
 

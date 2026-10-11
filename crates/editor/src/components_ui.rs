@@ -90,7 +90,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     selected: session.component_selection().contains(&component),
                 });
             }
-        } else {
+        } else if window.get_kind() == 1 {
             for (index, vertex) in shape.vertices.iter().enumerate() {
                 let component = Component {
                     solid: shape.solid,
@@ -109,6 +109,45 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     )
                     .into(),
                     detail: format!("X, Y, Z: {}", position(vertex.position)).into(),
+                    selected: session.component_selection().contains(&component),
+                });
+            }
+        } else {
+            for face in &shape.faces {
+                let component = Component {
+                    solid: shape.solid,
+                    sides: vec![face.side],
+                };
+                let points = face
+                    .vertices
+                    .iter()
+                    .map(|index| shape.vertices[*index].position)
+                    .collect::<Vec<_>>();
+                let normal = points[1..]
+                    .windows(2)
+                    .find_map(|pair| map_core::Plane::from_points([points[0], pair[0], pair[1]]))
+                    .map_or(DVec3::ZERO, |plane| plane.normal);
+                let direction = if normal.z > 0.999 {
+                    "Top (+Z)"
+                } else if normal.z < -0.999 {
+                    "Bottom (−Z)"
+                } else if normal.x > 0.999 {
+                    "Right (+X)"
+                } else if normal.x < -0.999 {
+                    "Left (−X)"
+                } else if normal.y > 0.999 {
+                    "Back (+Y)"
+                } else if normal.y < -0.999 {
+                    "Front (−Y)"
+                } else {
+                    "Sloped face"
+                };
+                let center = points.iter().sum::<DVec3>() / points.len() as f64;
+                rows.push(ComponentRow {
+                    key: key(&component).into(),
+                    label: format!("{direction} · face {}", face.side).into(),
+                    detail: format!("{} corners · center {}", points.len(), position(center))
+                        .into(),
                     selected: session.component_selection().contains(&component),
                 });
             }

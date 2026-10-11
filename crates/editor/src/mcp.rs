@@ -1330,6 +1330,68 @@ pub struct ContextScopeArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PrimitiveArgs {
+    /// wedge, cylinder, cone, sphere or arch. Results are editable convex VMF brushes.
+    pub shape: String,
+    pub mins: [f64; 3],
+    pub maxs: [f64; 3],
+    /// Extrusion/pole axis: x, y or z (default z). A y-axis arch lies in XZ.
+    pub axis: Option<String>,
+    /// Curved-shape sides/arch pieces, 3..64; default 12.
+    pub segments: Option<u32>,
+    /// Sphere latitude bands, 2..32; segments * bands <= 256; default 6.
+    pub bands: Option<u32>,
+    /// Arch inset subtracted from both ellipse radii; default 16 units.
+    pub inset: Option<f64>,
+    pub start_angle: Option<f64>,
+    /// Arch angular span, 1..360 degrees; default 180.
+    pub sweep_angle: Option<f64>,
+    pub material: Option<String>,
+    /// Preview without changing the map, selection or history; default false.
+    #[serde(default)]
+    pub preview: bool,
+}
+
+impl PrimitiveArgs {
+    fn spec(&self) -> Result<map_core::primitive::Spec, String> {
+        use map_core::primitive::{Axis, Shape, Spec};
+        let mut spec = Spec {
+            shape: Shape::parse(&self.shape).map_err(|error| error.to_string())?,
+            mins: vec3(self.mins),
+            maxs: vec3(self.maxs),
+            axis: Axis::parse(self.axis.as_deref().unwrap_or("z"))
+                .map_err(|error| error.to_string())?,
+            ..Spec::default()
+        };
+        if let Some(value) = self.segments {
+            spec.segments = value;
+        }
+        if let Some(value) = self.bands {
+            spec.bands = value;
+        }
+        if let Some(value) = self.inset {
+            spec.inset = value;
+        }
+        if let Some(value) = self.start_angle {
+            spec.start_angle = value;
+        }
+        if let Some(value) = self.sweep_angle {
+            spec.sweep_angle = value;
+        }
+        if let Some(value) = &self.material {
+            spec.material = value.clone();
+        }
+        Ok(spec)
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PrimitiveFrameArgs {
+    pub token: String,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum ContextNumber {
     Number(f64),
@@ -1731,6 +1793,89 @@ impl EditorServer {
             self.session()
                 .delete_recovery_snapshot(Actor::Agent, &args.id)?;
             Ok(json!({"deleted": args.id}))
+        })
+    }
+
+    #[tool(
+        description = "Create a wedge, cylinder, cone, faceted sphere or segmented arch in one undoable edit, or set preview=true for shared cancellable geometry. Curves are inscribed in mins/maxs; arch bounds describe the full ellipse and its sweep chooses the built portion. Axis controls extrusion/poles; wedges rise along the first transverse axis. get_primitive_preview returns actual bounds and a guarded token for commit/cancel/framing. Defaults to nodraw material."
+    )]
+    fn create_primitive(&self, Parameters(args): Parameters<PrimitiveArgs>) -> ToolResult {
+        run(|| {
+            let spec = args.spec()?;
+            let mut session = self.session();
+            let ids = session.create_primitive(Actor::Agent, spec, args.preview)?;
+            let doc = if args.preview {
+                session.render_document()
+            } else {
+                session.document()
+            };
+            Ok(
+                json!({"preview":args.preview,"objects":ids.iter().map(|&id|summary(doc,id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared primitive preview, source generation/revision, parameters, temporary brush/face IDs, actual bounds and complexity limits. Preview geometry is used by rendering and ray queries; get_objects and compilation still inspect the applied map.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_primitive_preview(&self) -> ToolResult {
+        ok(self.session().primitive_state())
+    }
+
+    #[tool(
+        description = "Commit the exact primitive preview token as one undoable edit and select the generated brushes. Rejects closed, replaced or stale previews."
+    )]
+    fn commit_primitive_preview(
+        &self,
+        Parameters(args): Parameters<MapFixTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let token = args
+                .token
+                .parse()
+                .map_err(|_| "Invalid primitive preview token")?;
+            let mut session = self.session();
+            let ids = session.commit_primitive_preview(Actor::Agent, token)?;
+            Ok(
+                json!({"objects":ids.iter().map(|&id|summary(session.document(),id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact primitive preview without changing applied geometry, selection or history. A replaced preview token cannot cancel another preview."
+    )]
+    fn cancel_primitive_preview(
+        &self,
+        Parameters(args): Parameters<MapFixTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let token = args
+                .token
+                .parse()
+                .map_err(|_| "Invalid primitive preview token")?;
+            let mut session = self.session();
+            session.cancel_primitive_preview(token)?;
+            Ok(session.primitive_state())
+        })
+    }
+
+    #[tool(
+        description = "Frame the exact primitive preview in the current projection without applying it or changing selection."
+    )]
+    fn frame_primitive_preview(
+        &self,
+        Parameters(args): Parameters<PrimitiveFrameArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let token = args
+                .token
+                .parse()
+                .map_err(|_| "Invalid primitive preview token")?;
+            let mut session = self.session();
+            session.frame_primitive_preview(token, args.aspect.unwrap_or(1.0))?;
+            Ok(session.primitive_state())
         })
     }
 
@@ -2138,6 +2283,7 @@ impl EditorServer {
         ok(json!({
             "rendering": rendering,
             "context": session.context_state(),
+            "primitive": session.primitive_state(),
             "map_checks": {"report":session.map_check_report().map(|report|report.token.to_string()),"stale":session.map_checks_stale()},
             "path": session.path().map(|p| p.display().to_string()),
             "title": session.title(),

@@ -41,6 +41,7 @@ impl Session {
             return Ok(());
         }
         self.cancel_clip_preview();
+        self.clear_primitive_preview();
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.clip_tool = enabled;
@@ -131,6 +132,7 @@ impl Session {
                 .ok_or("Selected brushes have no bounds")?;
             self.select(ids, SelectMode::Replace)?;
             self.cancel_transform_preview();
+            self.clear_primitive_preview();
             self.cancel_area_selection();
             self.clip_tool = true;
             self.spatial.draw_block = false;

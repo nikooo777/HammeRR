@@ -26,6 +26,7 @@ and the shared entity inspector and activity panel.*
 | Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Selection | Object and face marquee selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
+| Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
 | Design context | Map briefs, object notes and editor-only regions; shared drafts, search, relevant-context retrieval, bounded storage and undo. |
@@ -128,6 +129,24 @@ undo step; **Cancel cut** or Escape discards it.
 
 Existing faces keep their texture projections. Brushes the plane does not
 cross stay unchanged. Intersected displacements cannot be clipped yet.
+
+### Brush shapes
+
+Open **Brush shapes…**, choose a shape and enter its world bounds. Cylinders,
+cones and spheres use segment counts; arches also have an inset, start angle
+and sweep. Choose the height/depth axis and browse for the face material.
+**Preview shape** shows the geometry without changing the map. **Focus preview**
+frames it; **Add shape** creates and selects every brush in one undo step.
+**Cancel**, Escape or closing the window discards the preview.
+
+Curves are polygonal and inscribed in the supplied bounds. Arch bounds describe
+the full ellipse; a 180° sweep builds half of it, and 360° builds a ring. The
+preview reports the actual size and face count. Arches consist of separate
+convex brushes; all shapes remain ordinary editable VMF geometry.
+
+| Shape controls | Shapes created through MCP |
+| --- | --- |
+| ![Brush shape dimensions, material preview and cancellation controls](docs/images/brush-shapes.png) | ![Wedge, cylinder, cone, sphere and segmented arch](docs/images/brush-primitives.png) |
 
 ### Check a map
 
@@ -381,6 +400,7 @@ For example, place a warm light:
 | Transform handles and previews | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `commit_clip_preview`, `cancel_clip_preview` |
+| Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
 | References and renaming | `get_entity_references`, `begin_entity_rename`, `update_entity_rename`, `commit_entity_rename`, `cancel_entity_rename` |

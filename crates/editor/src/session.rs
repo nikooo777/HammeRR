@@ -24,6 +24,7 @@ pub mod checks;
 mod clipping;
 pub mod context;
 mod management;
+pub mod primitives;
 mod recovery;
 mod surfaces;
 pub use clipping::ClipPreview;
@@ -108,6 +109,7 @@ pub struct Session {
     recovery: recovery::State,
     checks: checks::State,
     context: context::State,
+    primitives: primitives::State,
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
@@ -222,6 +224,7 @@ impl Session {
             recovery: recovery::State::default(),
             checks: checks::State::default(),
             context: context::State::default(),
+            primitives: primitives::State::default(),
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
@@ -564,6 +567,7 @@ impl Session {
                 })
                 .map_err(|error| error.to_string())?;
             self.cancel_clip_preview();
+            self.clear_primitive_preview();
             self.clip_tool = false;
             self.cancel_transform_preview();
             self.cancel_area_selection();
@@ -951,6 +955,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_face_preview();
         self.cancel_clip_preview();
+        self.clear_primitive_preview();
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.view_serial += 1;
@@ -1269,7 +1274,7 @@ impl Session {
         Ok(())
     }
 
-    fn selection_bounds(&self) -> Option<(DVec3, DVec3)> {
+    pub fn selection_bounds(&self) -> Option<(DVec3, DVec3)> {
         if !self.face_mode {
             return query::bounds_of(&self.document, &self.selected_ids());
         }
@@ -1307,6 +1312,7 @@ impl Session {
         }
         self.cancel_block_preview();
         self.cancel_clip_preview();
+        self.clear_primitive_preview();
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.view_serial += 1;
@@ -1328,6 +1334,7 @@ impl Session {
 
     pub fn preview_block(&mut self, mins: DVec3, maxs: DVec3) -> Result<(), String> {
         spatial::validate_bounds(mins, maxs)?;
+        self.clear_primitive_preview();
         if self.block_preview != Some((mins, maxs)) {
             self.block_preview = Some((mins, maxs));
             self.view_serial += 1;
@@ -1668,9 +1675,15 @@ impl Session {
 
     fn hidden_tool_brushes(&mut self) -> HashSet<u32> {
         let document = self
-            .transform_preview
+            .primitives
+            .preview
             .as_ref()
             .map(|preview| &preview.document)
+            .or_else(|| {
+                self.transform_preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
             .unwrap_or(&self.document);
@@ -1691,9 +1704,15 @@ impl Session {
     }
 
     pub fn render_document(&self) -> &Document {
-        self.transform_preview
+        self.primitives
+            .preview
             .as_ref()
             .map(|preview| &preview.document)
+            .or_else(|| {
+                self.transform_preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
             .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
             .unwrap_or(&self.document)
@@ -1704,6 +1723,11 @@ impl Session {
             || self.selection.iter().copied().collect(),
             |preview| preview.result.objects.iter().copied().collect(),
         );
+        let selected = self
+            .primitives
+            .preview
+            .as_ref()
+            .map_or(selected, |preview| preview.ids.iter().copied().collect());
         let selected = self
             .area_preview
             .as_ref()
@@ -1721,20 +1745,26 @@ impl Session {
                 )
             },
         );
+        let selected_faces = if self.primitives.preview.is_some() {
+            HashSet::new()
+        } else {
+            selected_faces
+        };
+        let document = self
+            .primitives
+            .preview
+            .as_ref()
+            .map(|preview| &preview.document)
+            .or_else(|| {
+                self.transform_preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
+            .unwrap_or(&self.document);
         let mut mesh = SceneMesh::build_with_faces(
-            self.transform_preview
-                .as_ref()
-                .map(|preview| preview.document.vmf())
-                .unwrap_or_else(|| {
-                    self.clip_preview
-                        .as_ref()
-                        .map(|preview| preview.document.vmf())
-                        .unwrap_or_else(|| {
-                            self.face_preview
-                                .as_ref()
-                                .map_or(self.document.vmf(), |preview| preview.document.vmf())
-                        })
-                }),
+            document.vmf(),
             &self.game,
             &mut self.materials,
             &selected,

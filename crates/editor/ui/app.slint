@@ -1,3 +1,4 @@
+export { SavedViewsWindow, SavedViewRow } from "saved-views.slint";
 export { CompileWindow } from "compile.slint";
 export { VolumeWindow } from "volume.slint";
 export { SurfaceGroupWindow } from "surface-group.slint";
@@ -1400,6 +1401,7 @@ export component AppWindow inherits Window {
     callback projection-changed(int);
     callback spatial-changed();
     callback frame-selection();
+    callback saved-views();
     callback start-clip();
     callback preview-clip-plane();
     callback clip-settings-changed();
@@ -1640,7 +1642,7 @@ export component AppWindow inherits Window {
                 Rectangle {
                     x: 12px;
                     y: 12px;
-                    width: min(680px, parent.width - 24px);
+                    width: min(790px, parent.width - 24px);
                     height: 42px;
                     background: #20252eee;
                     border-color: #394252;
@@ -1656,6 +1658,7 @@ export component AppWindow inherits Window {
                             selected => { root.projection-changed(self.current-index); }
                         }
                         Button { text: "Frame · F"; clicked => { root.frame-selection(); } }
+                        Button { text: "Saved views…"; clicked => { root.saved-views(); } }
                         Text { text: "Grid"; vertical-alignment: center; color: #c8ccd4; }
                         LineEdit { width: 65px; text <=> root.grid-size; input-type: decimal; accepted => { root.spatial-changed(); } }
                         CheckBox { text: "Snap"; checked <=> root.snap-grid; toggled => { root.spatial-changed(); } }

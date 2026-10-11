@@ -28,6 +28,7 @@ mod management;
 pub mod material_search;
 pub mod primitives;
 mod recovery;
+pub mod saved_views;
 mod surfaces;
 pub mod volume;
 pub use clipping::ClipPreview;

@@ -134,7 +134,7 @@ Materials are paths under materials/ without extension, e.g. 'tools/toolsnodraw'
 Verify work visually with render_view (focus on objects, or an explicit camera) and \
 pick_at_pixel to identify what is at a point in a rendered image. Save with save_map. \
 set_camera selects perspective/top/front/side; planar cameras accept center and ortho_height. \
-frame_selection frames the selection or whole map. draw_block uses plane coordinates \
+frame_selection frames the selection or whole map. Named cameras persist through save_camera_view, get_camera_views, restore_camera_view, rename_camera_view and delete_camera_view; use generation/revision guards for stale-state protection. draw_block uses plane coordinates \
 (top XY, front XZ, side YZ), shared snapping and depth; preview=true leaves the map \
 and undo history untouched. Inspect get_map_info.block_preview and cancel with cancel_block_preview. \
 transform_objects applies exact move/rotation/positive scale, with an optional world-space pivot \
@@ -1674,6 +1674,40 @@ pub struct CompileTokenArgs {
     pub token: String,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct CameraViewSaveArgs {
+    pub name: String,
+    pub replace_id: Option<u32>,
+    pub generation: Option<u64>,
+    pub revision: Option<u64>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct CameraViewIdArgs {
+    pub id: u32,
+    pub generation: Option<u64>,
+    pub revision: Option<u64>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct CameraViewRenameArgs {
+    pub id: u32,
+    pub name: String,
+    pub generation: Option<u64>,
+    pub revision: Option<u64>,
+}
+
+fn camera_view_guard(
+    generation: Option<u64>,
+    revision: Option<u64>,
+) -> Result<Option<crate::session::saved_views::Guard>, String> {
+    match (generation, revision) {
+        (None, None) => Ok(None),
+        (Some(generation), Some(revision)) => Ok(Some((generation, revision))),
+        _ => Err("Supply both generation and revision from get_camera_views".into()),
+    }
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileArgs {
     /// Output .bsp path; defaults to the current map filename with a .bsp extension.
@@ -2304,6 +2338,61 @@ impl EditorServer {
             let token = args.token.parse().map_err(|_| "Invalid preview token")?;
             self.session().cancel_map_fixes(token)?;
             Ok(json!({"cancelled":true}))
+        })
+    }
+
+    #[tool(
+        description = "List named camera views stored in this VMF, including projection, position, orientation, field of view and planar zoom. Also returns generation/revision guards. Up to 64 views; names up to 80 characters. Imported Hammer cameras remain preserved separately."
+    )]
+    fn get_camera_views(&self) -> ToolResult {
+        run(|| self.session().camera_views_json())
+    }
+
+    #[tool(
+        description = "Save the current shared camera as a named view in the map. Optional replace_id replaces that view's camera and name. Adds one undo step; save the VMF to persist. Duplicate names are rejected. Optional generation/revision guards prevent stale edits."
+    )]
+    fn save_camera_view(&self, Parameters(args): Parameters<CameraViewSaveArgs>) -> ToolResult {
+        run(|| {
+            let guard = camera_view_guard(args.generation, args.revision)?;
+            let mut session = self.session();
+            let id = session.save_camera_view(Actor::Agent, &args.name, args.replace_id, guard)?;
+            Ok(json!({"id":id,"state":session.camera_views_json()?}))
+        })
+    }
+
+    #[tool(
+        description = "Rename a saved camera view without changing its camera. One undoable map edit; optional generation/revision guards from get_camera_views."
+    )]
+    fn rename_camera_view(&self, Parameters(args): Parameters<CameraViewRenameArgs>) -> ToolResult {
+        run(|| {
+            let guard = camera_view_guard(args.generation, args.revision)?;
+            let mut session = self.session();
+            session.rename_camera_view(Actor::Agent, args.id, &args.name, guard)?;
+            session.camera_views_json()
+        })
+    }
+
+    #[tool(
+        description = "Restore a named camera view into the shared viewport without changing map data, selection or undo history. Restores perspective or planar projection and zoom. Optional generation/revision guards reject stale view IDs."
+    )]
+    fn restore_camera_view(&self, Parameters(args): Parameters<CameraViewIdArgs>) -> ToolResult {
+        run(|| {
+            let guard = camera_view_guard(args.generation, args.revision)?;
+            let mut session = self.session();
+            session.restore_camera_view(Actor::Agent, args.id, guard)?;
+            Ok(camera_json(&session.camera()))
+        })
+    }
+
+    #[tool(
+        description = "Delete a named camera view in one undoable map edit. Optional generation/revision guards reject stale IDs. Does not move the current camera."
+    )]
+    fn delete_camera_view(&self, Parameters(args): Parameters<CameraViewIdArgs>) -> ToolResult {
+        run(|| {
+            let guard = camera_view_guard(args.generation, args.revision)?;
+            let mut session = self.session();
+            session.delete_camera_view(Actor::Agent, args.id, guard)?;
+            session.camera_views_json()
         })
     }
 

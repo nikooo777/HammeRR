@@ -14,6 +14,7 @@ mod primitive_ui;
 mod recovery;
 mod recovery_ui;
 mod rename_ui;
+mod saved_views_ui;
 mod session;
 mod spatial;
 mod steam;
@@ -165,6 +166,7 @@ struct Ui {
     surface_group: Option<surface_group_ui::Controller>,
     volume: Option<volume_ui::Controller>,
     compile_status: Option<compile_ui::Controller>,
+    saved_views: Option<saved_views_ui::Controller>,
     material_for_group: bool,
     material_for_replace: Option<bool>,
     material_for_faces: bool,
@@ -2545,6 +2547,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_group: None,
         volume: None,
         compile_status: None,
+        saved_views: None,
         material_for_group: false,
         material_for_replace: None,
         material_for_faces: false,
@@ -2582,6 +2585,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_save_map({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || save(&app.unwrap(), &ui)
+    });
+    app.on_saved_views({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.saved_views.is_none() {
+                match saved_views_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.saved_views = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.saved_views.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
     });
     app.on_build_status({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3649,6 +3670,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                if let Some(controller) = &ui.saved_views
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
                 if let Some(controller) = &ui.compile_status
                     && controller.window.window().is_visible()
                 {
@@ -4416,6 +4442,69 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn saved_view_controls_restore_rename_replace_cancel_and_guard_map_changes() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let shared = Arc::new(Mutex::new(Session::new(Err("no assets".into()))));
+        let controller = saved_views_ui::Controller::new(&shared).unwrap();
+        controller.show(&lock(&shared)).unwrap();
+        controller.window.set_view_name("Courtyard entrance".into());
+        controller.window.invoke_save_new();
+        let original = lock(&shared).camera();
+        assert_eq!(lock(&shared).camera_views().unwrap().views.len(), 1);
+        lock(&shared).set_projection(Actor::Agent, render::Projection::Top);
+        controller.window.set_view_name("Top · route layout".into());
+        controller.window.invoke_save_new();
+        assert_eq!(lock(&shared).camera_views().unwrap().views.len(), 2);
+        controller.window.invoke_choose("1".into());
+        let history = lock(&shared).document().undo_labels().count();
+        controller.window.invoke_restore_view();
+        assert_eq!(lock(&shared).camera(), original);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        controller.window.set_view_name("Entrance overview".into());
+        controller.window.invoke_rename_view();
+        assert_eq!(
+            lock(&shared).camera_views().unwrap().views[0].name,
+            "Entrance overview"
+        );
+        lock(&shared).set_projection(Actor::Agent, render::Projection::Front);
+        controller.window.invoke_replace_view();
+        assert_eq!(
+            lock(&shared).camera_views().unwrap().views[0].projection,
+            "front"
+        );
+        let before = lock(&shared).document().vmf().clone();
+        controller.window.set_view_name("top · route layout".into());
+        controller.window.invoke_rename_view();
+        assert!(controller.window.get_message().contains("already"));
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        controller.window.invoke_choose("1".into());
+        save_ui_snapshot(controller.window.window(), "saved-views");
+        controller.window.invoke_close_dialog();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        controller.show(&lock(&shared)).unwrap();
+        controller.window.invoke_choose("1".into());
+        lock(&shared)
+            .rename_camera_view(Actor::Agent, 1, "Agent name", None)
+            .unwrap();
+        controller.window.invoke_delete_view();
+        assert!(controller.window.get_message().contains("Map changed"));
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_selected_id().is_empty());
+        controller.window.invoke_choose("1".into());
+        controller.window.invoke_delete_view();
+        assert_eq!(lock(&shared).camera_views().unwrap().views.len(), 1);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).camera_views().unwrap().views.len(), 2);
     }
 
     #[test]

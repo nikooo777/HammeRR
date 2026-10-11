@@ -677,3 +677,38 @@ fn cancellation_interrupts_world_tree_partitioning() {
             .any(|d| d.message == "Compilation cancelled")
     );
 }
+
+#[test]
+fn saved_camera_views_do_not_change_compiled_geometry_or_entities() {
+    let mut document = map_core::Document::new(common::room());
+    let game = common::empty_game();
+    let before = compiler::compile(document.vmf(), &game)
+        .bsp
+        .unwrap()
+        .to_bytes();
+    document
+        .edit("save camera", |tx| {
+            map_core::saved_views::Views {
+                views: vec![map_core::saved_views::View {
+                    id: 1,
+                    name: "Editor only".into(),
+                    projection: "top".into(),
+                    position: glam::DVec3::new(0.0, 0.0, 65536.0),
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    fov: 60.0,
+                    ortho_height: 1024.0,
+                    extra: Vec::new(),
+                }],
+                extra: Vec::new(),
+            }
+            .write(tx)
+        })
+        .unwrap();
+    let text = document.vmf().write(&Default::default());
+    let reopened = source_formats::vmf::Vmf::parse(&text).unwrap();
+    assert_eq!(
+        compiler::compile(&reopened, &game).bsp.unwrap().to_bytes(),
+        before
+    );
+}

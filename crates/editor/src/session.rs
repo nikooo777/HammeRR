@@ -28,6 +28,7 @@ pub mod material_search;
 pub mod primitives;
 mod recovery;
 mod surfaces;
+pub mod volume;
 pub use clipping::ClipPreview;
 pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
 pub use recovery::RecoveryRequest;
@@ -122,6 +123,7 @@ pub struct Session {
     transform_preview: Option<TransformPreview>,
     transform_drag: Option<TransformDrag>,
     area_preview: Option<AreaPreview>,
+    volume: volume::State,
     connection_draft: Option<ConnectionDraft>,
     connection_serial: u64,
     rename_draft: Option<RenameDraft>,
@@ -239,6 +241,7 @@ impl Session {
             transform_preview: None,
             transform_drag: None,
             area_preview: None,
+            volume: volume::State::default(),
             connection_draft: None,
             connection_serial: 0,
             rename_draft: None,
@@ -586,6 +589,7 @@ impl Session {
                 .map_err(|error| error.to_string())?;
             self.cancel_clip_preview();
             self.clear_primitive_preview();
+            self.clear_volume_selection();
             self.clip_tool = false;
             self.cancel_transform_preview();
             self.cancel_area_selection();
@@ -979,6 +983,7 @@ impl Session {
         self.cancel_face_preview();
         self.cancel_clip_preview();
         self.clear_primitive_preview();
+        self.clear_volume_selection();
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.view_serial += 1;
@@ -1236,6 +1241,7 @@ impl Session {
     pub fn set_view(&mut self, view: ViewOptions) {
         if self.view.tool_textures != view.tool_textures {
             self.cancel_area_selection();
+            self.clear_volume_selection();
         }
         self.view = view;
         self.view_serial += 1;
@@ -1337,6 +1343,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_clip_preview();
         self.clear_primitive_preview();
+        self.clear_volume_selection();
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.view_serial += 1;
@@ -1359,6 +1366,7 @@ impl Session {
     pub fn preview_block(&mut self, mins: DVec3, maxs: DVec3) -> Result<(), String> {
         spatial::validate_bounds(mins, maxs)?;
         self.clear_primitive_preview();
+        self.clear_volume_selection();
         if self.block_preview != Some((mins, maxs)) {
             self.block_preview = Some((mins, maxs));
             self.view_serial += 1;
@@ -1769,6 +1777,29 @@ impl Session {
                 )
             },
         );
+        let (selected, selected_faces) = if let Some(preview) = self.volume_preview() {
+            if preview.spec.faces {
+                (
+                    HashSet::new(),
+                    manipulation::combined_selection(
+                        &selected_faces,
+                        &preview.matches.faces,
+                        preview.spec.mode,
+                    ),
+                )
+            } else {
+                (
+                    manipulation::combined_selection(
+                        &selected,
+                        &preview.matches.objects,
+                        preview.spec.mode,
+                    ),
+                    HashSet::new(),
+                )
+            }
+        } else {
+            (selected, selected_faces)
+        };
         let selected_faces = if self.primitives.preview.is_some() {
             HashSet::new()
         } else {
@@ -1798,6 +1829,7 @@ impl Session {
             mesh.set_leak_path(&leak.points);
         }
         self.append_context_guides(&mut mesh);
+        self.append_volume_guide(&mut mesh);
         mesh
     }
 

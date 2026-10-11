@@ -242,6 +242,7 @@ impl Session {
             self.clip_tool = false;
             self.cancel_clip_preview();
             self.clear_primitive_preview();
+            self.clear_volume_selection();
             self.spatial.draw_block = false;
             self.cancel_block_preview();
         }
@@ -260,7 +261,11 @@ impl Session {
     }
 
     pub fn transform_guide(&self) -> Option<Guide> {
-        if self.face_mode || self.clip_tool || self.spatial.draw_block {
+        if self.face_mode
+            || self.clip_tool
+            || self.spatial.draw_block
+            || self.volume_preview().is_some()
+        {
             return None;
         }
         let mode = self.transform_tool.mode?;
@@ -328,6 +333,7 @@ impl Session {
         self.select(ids, SelectMode::Replace)?;
         self.cancel_clip_preview();
         self.clear_primitive_preview();
+        self.clear_volume_selection();
         self.clip_tool = false;
         self.cancel_face_preview();
         self.cancel_block_preview();
@@ -437,6 +443,7 @@ impl Session {
         }
         self.cancel_transform_preview();
         self.cancel_area_selection();
+        self.clear_volume_selection();
         self.transform_drag = Some(drag);
         self.view_serial += 1;
         Ok(())
@@ -460,6 +467,7 @@ impl Session {
             return Err("Map changed; start the transform again".into());
         }
         let result = self.drag_transform(&mut drag, pointer, amount);
+        self.clear_volume_selection();
         self.transform_drag = Some(drag);
         match result {
             Ok(transform) => {
@@ -620,6 +628,7 @@ impl Session {
         }
         self.cancel_clip_preview();
         self.clear_primitive_preview();
+        self.clear_volume_selection();
         self.clip_tool = false;
         self.cancel_face_preview();
         self.cancel_block_preview();

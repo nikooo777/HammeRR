@@ -42,6 +42,7 @@ impl Session {
         }
         self.cancel_clip_preview();
         self.clear_primitive_preview();
+        self.clear_volume_selection();
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.clip_tool = enabled;
@@ -133,6 +134,7 @@ impl Session {
             self.select(ids, SelectMode::Replace)?;
             self.cancel_transform_preview();
             self.clear_primitive_preview();
+            self.clear_volume_selection();
             self.cancel_area_selection();
             self.clip_tool = true;
             self.spatial.draw_block = false;

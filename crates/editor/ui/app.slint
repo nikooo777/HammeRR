@@ -1,3 +1,4 @@
+export { VolumeWindow } from "volume.slint";
 export { SurfaceGroupWindow } from "surface-group.slint";
 export { MaterialReplaceWindow } from "material-replace.slint";
 export { PrimitiveWindow } from "primitive.slint";
@@ -1412,6 +1413,7 @@ export component AppWindow inherits Window {
     callback edit-face-lighting();
     callback replace-materials();
     callback map-face-group();
+    callback select-volume();
     callback surface-view-changed();
     callback sample-face-texture();
     callback browse-material(key: string);
@@ -1822,6 +1824,8 @@ export component AppWindow inherits Window {
                         current-index: root.face-mode ? 1 : 0;
                         selected => { root.selection-mode-changed(self.current-index); }
                     }
+
+                    Button { text: "Select a volume…"; clicked => { root.select-volume(); } }
 
                     HorizontalLayout {
                         spacing: 6px;

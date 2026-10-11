@@ -86,6 +86,7 @@ impl Session {
             self.cancel_clip_preview();
             self.cancel_transform_preview();
             self.cancel_area_selection();
+            self.clear_volume_selection();
             self.cancel_face_preview();
             self.clip_tool = false;
             self.spatial.draw_block = false;

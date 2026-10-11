@@ -24,7 +24,7 @@ and the shared entity inspector and activity panel.*
 | --- | --- |
 | Maps and content | VMF editing and saving; byte-for-byte round trips for unmodified files; game materials from Steam libraries, search paths and VPK archives. |
 | Viewport and brushes | Textured perspective and planar views, grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
-| Selection | Object and face marquee selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
+| Selection | Object and face marquee or 3D volume selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
@@ -118,8 +118,17 @@ inside** requires all its visible brushes to fit; **Intersects** accepts any
 intersection. Selection previews highlight candidates without changing the
 map or adding undo history.
 
-Imported terrain uses its supporting brush faces for area queries. Volume
-and paint selection are still pending.
+Open **Select a volume…** to select inside exact XYZ bounds. Start from selection
+or map bounds, choose objects or faces and a selection rule, then **Preview
+matches**. The blue box and highlights survive camera changes; **Frame box**
+shows the region. **Select matches** applies it; **Cancel** leaves selection alone.
+
+Imported terrain uses its supporting brush faces for region queries. Paint
+selection is still pending.
+
+| Volume controls | Shared region preview |
+| --- | --- |
+| ![Volume bounds, match rules and cancellation](docs/images/volume-selection.png) | ![Blue volume guide and matching brush](docs/images/volume-preview.png) |
 
 ### Brush clipping
 
@@ -466,6 +475,7 @@ For example, place a warm light:
 | Map checks | `run_map_checks`, `get_map_checks`, `select_map_issue`, `preview_map_fixes`, `apply_map_fixes`, `cancel_map_fixes` |
 | Design context | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
+| Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials`, `commit_face_preview`, `cancel_face_preview` |
 | Face lighting and diagnostics | `edit_faces`, `get_face_selection`, `get_objects`, `commit_face_preview`, `cancel_face_preview`, `set_view`, `render_view` |
@@ -502,6 +512,7 @@ views and a JSON report:
 python -B scripts/validate_face_lighting.py --output /tmp/hammerr-lighting-check
 python -B scripts/validate_material_replacement.py --output /tmp/hammerr-material-check
 python -B scripts/validate_surface_group.py --output /tmp/hammerr-group-check
+python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-check
 ```
 
 Use a new output directory for each run. Add `--url http://127.0.0.1:7377/mcp`
@@ -524,6 +535,12 @@ can be inspected, applied or cancelled from the editor or MCP.
 override, plus `contained`/`intersecting` and selection rules. Use `preview:
 true` to inspect candidates before applying. Camera overrides leave the user's
 view unchanged; face mode returns stable solid/side IDs.
+
+`select_volume` takes world-space `mins`/`maxs`, `selection_mode` (`objects`
+or `faces`), a match rule and a combination mode. Use `preview: true`, inspect
+the paginated matches, then pass the returned preview token to commit, cancel
+or frame. Camera changes preserve the box; map, selection and visibility
+changes invalidate its candidates.
 
 `begin_connection_edit` starts an addition or edits an outgoing `index`.
 `update_connection_draft` accepts readable fields; `delay` and `times` are

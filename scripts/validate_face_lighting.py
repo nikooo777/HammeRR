@@ -171,6 +171,7 @@ def validate(client, output):
         original["transform"]["drag"],
         original["transform"]["preview"],
         original["area_selection"]["preview"],
+        original.get("volume_selection", {}).get("preview"),
         original["block_preview"],
         original["spatial"]["draw_block"],
         original["connection_draft"],

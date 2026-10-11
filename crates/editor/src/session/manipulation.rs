@@ -241,6 +241,7 @@ impl Session {
         if tool.mode.is_some() {
             self.clip_tool = false;
             self.cancel_clip_preview();
+            self.clear_primitive_preview();
             self.spatial.draw_block = false;
             self.cancel_block_preview();
         }
@@ -326,6 +327,7 @@ impl Session {
         }
         self.select(ids, SelectMode::Replace)?;
         self.cancel_clip_preview();
+        self.clear_primitive_preview();
         self.clip_tool = false;
         self.cancel_face_preview();
         self.cancel_block_preview();
@@ -617,6 +619,7 @@ impl Session {
             self.cancel_transform_preview();
         }
         self.cancel_clip_preview();
+        self.clear_primitive_preview();
         self.clip_tool = false;
         self.cancel_face_preview();
         self.cancel_block_preview();

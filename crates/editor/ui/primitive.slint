@@ -1,0 +1,131 @@
+import { Button, ComboBox, LineEdit, SpinBox } from "std-widgets.slint";
+
+export component PrimitiveWindow inherits Window {
+    title: "Brush shapes - HammeRR";
+    preferred-width: 760px; preferred-height: 710px;
+    in-out property <int> shape;
+    in-out property <int> axis: 2;
+    in-out property <int> segments: 12;
+    in-out property <int> bands: 6;
+    in-out property <string> min-x: "-64";
+    in-out property <string> min-y: "-64";
+    in-out property <string> min-z: "0";
+    in-out property <string> max-x: "64";
+    in-out property <string> max-y: "64";
+    in-out property <string> max-z: "128";
+    in-out property <string> inset: "16";
+    in-out property <string> start-angle: "0";
+    in-out property <string> sweep-angle: "180";
+    in-out property <string> material;
+    in property <image> material-image;
+    in property <string> token;
+    in property <string> summary: "Preview the shape to see it in the map.";
+    in property <string> actual-bounds;
+    in property <string> feedback;
+    in property <string> message;
+    in property <bool> can-preview;
+    in property <float> aspect: 1.6;
+    callback edited();
+    callback preview-shape();
+    callback apply();
+    callback focus-preview();
+    callback browse-material();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 22px; spacing: 14px;
+            Text { text: "Brush shapes"; font-size: 24px; font-weight: 600; }
+            Text { text: "Build editable geometry from a few dimensions."; color: #b5c0ce; }
+            HorizontalLayout {
+                spacing: 16px;
+                VerticalLayout {
+                    spacing: 5px;
+                    Text { text: "Shape"; font-weight: 600; }
+                    ComboBox { model: ["Wedge / ramp", "Cylinder", "Cone", "Faceted sphere", "Arch / ring"]; current-index <=> root.shape; selected => { root.edited(); } }
+                }
+                VerticalLayout {
+                    spacing: 5px;
+                    Text { text: root.shape == 3 ? "Pole axis" : "Height / depth axis"; font-weight: 600; }
+                    ComboBox { model: ["X · cross-section in YZ", "Y · cross-section in XZ", "Z · cross-section in XY"]; current-index <=> root.axis; selected => { root.edited(); } }
+                }
+            }
+            VerticalLayout {
+                spacing: 8px;
+                Text { text: root.shape == 4 ? "Full ellipse bounds · world units" : "Outer bounds · world units"; font-weight: 600; }
+                GridLayout {
+                    spacing: 7px;
+                    Row { Text { text: ""; } Text { text: "X"; } Text { text: "Y"; } Text { text: "Z"; } }
+                    Row {
+                        Text { text: "Minimum"; }
+                        LineEdit { text <=> root.min-x; edited => { root.edited(); } }
+                        LineEdit { text <=> root.min-y; edited => { root.edited(); } }
+                        LineEdit { text <=> root.min-z; edited => { root.edited(); } }
+                    }
+                    Row {
+                        Text { text: "Maximum"; }
+                        LineEdit { text <=> root.max-x; edited => { root.edited(); } }
+                        LineEdit { text <=> root.max-y; edited => { root.edited(); } }
+                        LineEdit { text <=> root.max-z; edited => { root.edited(); } }
+                    }
+                }
+                Text {
+                    text: root.shape == 0 ? (root.axis == 0 ? "Ramp rises along +Y; height is measured on X." : root.axis == 1 ? "Ramp rises along +X; height is measured on Y." : "Ramp rises along +X; height is measured on Z.") : root.shape == 4 ? "Bounds describe the full ellipse. The sweep chooses which part is built." : "Curves sit inside these bounds. Fewer segments create a more angular outline.";
+                    color: #9da7b5; wrap: word-wrap; font-size: 12px;
+                }
+            }
+            if root.shape != 0: HorizontalLayout {
+                spacing: 16px;
+                VerticalLayout {
+                    spacing: 5px;
+                    Text { text: root.shape == 4 ? "Arch pieces" : "Sides around the axis"; }
+                    SpinBox { minimum: 3; maximum: 64; value <=> root.segments; edited => { root.edited(); } }
+                }
+                if root.shape == 3: VerticalLayout {
+                    spacing: 5px;
+                    Text { text: "Latitude bands"; }
+                    SpinBox { minimum: 2; maximum: 32; value <=> root.bands; edited => { root.edited(); } }
+                }
+                if root.shape == 3: Text { text: "At most 256 faces\n(sides × bands)"; color: #9da7b5; }
+            }
+            if root.shape == 4: VerticalLayout {
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 14px;
+                    VerticalLayout { spacing: 5px; Text { text: "Wall inset · units"; } LineEdit { text <=> root.inset; edited => { root.edited(); } } }
+                    VerticalLayout { spacing: 5px; Text { text: "Start · degrees"; } LineEdit { text <=> root.start-angle; edited => { root.edited(); } } }
+                    VerticalLayout { spacing: 5px; Text { text: "Sweep · degrees"; } LineEdit { text <=> root.sweep-angle; edited => { root.edited(); } } }
+                }
+                Text { text: "Inset reduces both ellipse radii. Use a 360° sweep for a complete ring."; color: #9da7b5; font-size: 12px; wrap: word-wrap; }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Image { width: 66px; height: 66px; source: root.material-image; image-fit: contain; }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Material on new faces"; font-weight: 600; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.material; placeholder-text: "Choose a game material…"; edited => { root.edited(); } }
+                        Button { text: "Browse…"; clicked => { root.browse-material(); } }
+                    }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
+            if root.actual-bounds != "": Text { text: root.actual-bounds; color: #9da7b5; wrap: word-wrap; }
+            if root.feedback != "": Text { text: root.feedback; color: #efa47c; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: #efa47c; wrap: word-wrap; }
+            Text { text: "Preview leaves the map unchanged. Add shape creates every brush in one undo step."; color: #9da7b5; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Preview shape"; enabled: root.can-preview; clicked => { root.preview-shape(); } }
+                Button { text: "Focus preview"; enabled: root.token != ""; clicked => { root.focus-preview(); } }
+                Button { text: "Add shape"; enabled: root.token != ""; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

@@ -1,6 +1,46 @@
 mod common;
 
 #[test]
+fn authored_primitives_compile_as_ordinary_closed_world_brushes() {
+    use glam::DVec3;
+    use map_core::primitive::{self, Axis, Shape, Spec};
+    let mut document = map_core::Document::new(common::room());
+    let initial = document.vmf().solids().count();
+    let mut added = 0;
+    for (index, shape) in [
+        Shape::Wedge,
+        Shape::Cylinder,
+        Shape::Cone,
+        Shape::Sphere,
+        Shape::Arch,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let spec = Spec {
+            shape,
+            axis: Axis::Y,
+            mins: DVec3::new(-200.0 + index as f64 * 80.0, 80.0, 0.0),
+            maxs: DVec3::new(-136.0 + index as f64 * 80.0, 112.0, 64.0),
+            inset: 8.0,
+            material: "dev/dev_measuregeneric01".into(),
+            ..Spec::default()
+        };
+        added += document
+            .edit("primitive", |tx| primitive::create(tx, &spec))
+            .unwrap()
+            .len();
+    }
+    let saved = document.vmf().write(&Default::default());
+    let reopened = source_formats::vmf::Vmf::parse(&saved).unwrap();
+    let output = compiler::compile(&reopened, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.leak.is_none());
+    assert_eq!(output.stats.brushes, initial + added);
+    assert!(output.bsp.is_some());
+}
+
+#[test]
 fn design_context_never_changes_compiled_bsp_bytes() {
     use glam::DVec3;
     use map_core::context::{Region, Scope, set_note};

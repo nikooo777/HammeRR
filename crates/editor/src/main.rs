@@ -7,6 +7,7 @@ mod interaction;
 mod management_ui;
 mod materials;
 mod mcp;
+mod primitive_ui;
 mod recovery;
 mod recovery_ui;
 mod rename_ui;
@@ -138,6 +139,8 @@ struct Ui {
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
+    primitive_window: Option<PrimitiveWindow>,
+    seen_primitive: u64,
     seen_context: (u64, u64),
     seen_checks: (u64, u64, u64),
     seen_recovery: (u64, u64),
@@ -152,6 +155,8 @@ struct Ui {
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     material_for_faces: bool,
     material_for_clip: bool,
+    material_for_primitive: bool,
+    primitive_material_target: Option<(Option<u64>, u64)>,
     seen_definitions: u64,
 }
 
@@ -1752,6 +1757,21 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     app.set_clip_material(material);
                     session.cancel_clip_preview();
                     refresh_clip(&app, &session);
+                } else if ui.borrow().material_for_primitive {
+                    if let Some(primitive) = &ui.borrow().primitive_window {
+                        let Some(target) = ui.borrow().primitive_material_target else {
+                            return;
+                        };
+                        if let Err(error) = primitive_ui::choose_material(
+                            primitive,
+                            &mut session,
+                            target,
+                            &material,
+                        ) {
+                            window.set_detail(error.into());
+                            return;
+                        }
+                    }
                 } else if ui.borrow().material_for_faces {
                     if let Some(surface) = &ui.borrow().surface_window {
                         surface.set_material(material.clone());
@@ -1777,13 +1797,26 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     let mut session = lock(&shared);
     ui.borrow_mut().material_for_faces = key == "@faces";
     ui.borrow_mut().material_for_clip = key == "@clip";
-    let target = if key.is_empty() || key == "@faces" || key == "@clip" {
+    ui.borrow_mut().material_for_primitive = key == "@primitive";
+    ui.borrow_mut().primitive_material_target = (key == "@primitive").then(|| {
+        (
+            session.primitive_preview().map(|preview| preview.token),
+            session.document_generation(),
+        )
+    });
+    let target = if key.is_empty() || key == "@faces" || key == "@clip" || key == "@primitive" {
         None
     } else {
         single_selected_entity(&session)
             .map(|id| (id, key.to_owned(), session.document_generation()))
     };
-    let material = if key == "@clip" {
+    let material = if key == "@primitive" {
+        ui.borrow()
+            .primitive_window
+            .as_ref()
+            .map(|window| window.get_material().to_string())
+            .unwrap_or_default()
+    } else if key == "@clip" {
         app.get_clip_material().to_string()
     } else if key == "@faces" {
         ui.borrow()
@@ -2312,6 +2345,10 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
             cancel_clip(app, &mut session);
             return true;
         }
+        if session.primitive_preview().is_some() {
+            session.clear_primitive_preview();
+            return true;
+        }
         if cancelled || session.block_preview().is_some() {
             session.cancel_block_preview();
             return true;
@@ -2459,6 +2496,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recovery_window: None,
         checks_window: None,
         context_window: None,
+        primitive_window: None,
+        seen_primitive: 0,
         seen_context: (0, 0),
         seen_checks: (0, 0, 0),
         seen_recovery: (0, 0),
@@ -2473,6 +2512,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_target: None,
         material_for_faces: false,
         material_for_clip: false,
+        material_for_primitive: false,
+        primitive_material_target: None,
         seen_definitions: 0,
     }));
 
@@ -2632,6 +2673,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             window.set_message("".into());
             checks_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_brush_shapes({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            if ui.borrow().primitive_window.is_none() {
+                match PrimitiveWindow::new() {
+                    Ok(window) => {
+                        primitive_ui::bind(&window, &session_of(&ui));
+                        window.on_browse_material({
+                            let (app, ui) = (app.as_weak(), ui.clone());
+                            move || show_material_window(&app.unwrap(), &ui, "@primitive")
+                        });
+                        ui.borrow_mut().primitive_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui
+                .borrow()
+                .primitive_window
+                .as_ref()
+                .unwrap()
+                .clone_strong();
+            window.set_aspect(
+                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
+            );
+            primitive_ui::initialize(&window, &mut lock(&session_of(&ui)), &app.get_material());
             if let Err(error) = window.show() {
                 app.set_message(error.to_string().into());
             }
@@ -3258,6 +3334,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && window.window().is_visible()
                     {
                         checks_ui::refresh(window, &session);
+                    }
+                }
+                if session.primitive_serial() != ui.seen_primitive {
+                    ui.seen_primitive = session.primitive_serial();
+                    if let Some(window) = &ui.primitive_window
+                        && window.window().is_visible()
+                    {
+                        primitive_ui::refresh(window, &mut session);
                     }
                 }
                 let context = (session.context_serial(), session.scene_serial());
@@ -4073,6 +4157,103 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn primitive_controls_preview_validate_frame_apply_and_cancel_shared_geometry() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let session = Session::new(mount_game(None));
+        let shared = Arc::new(Mutex::new(session));
+        let window = PrimitiveWindow::new().unwrap();
+        primitive_ui::bind(&window, &shared);
+        primitive_ui::initialize(&window, &mut lock(&shared), "dev/dev_measuregeneric01");
+        window.show().unwrap();
+        let before = lock(&shared).document().vmf().clone();
+        window.set_shape(4);
+        window.set_axis(1);
+        window.set_min_y("-16".into());
+        window.set_max_y("16".into());
+        window.set_min_z("-128".into());
+        window.set_max_z("128".into());
+        window.set_min_x("-128".into());
+        window.set_max_x("128".into());
+        window.invoke_edited();
+        assert!(window.get_can_preview());
+        window.invoke_preview_shape();
+        assert!(!window.get_token().is_empty());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert_eq!(lock(&shared).primitive_preview().unwrap().ids.len(), 12);
+        window.invoke_focus_preview();
+        assert!(lock(&shared).primitive_preview().is_some());
+        save_ui_snapshot(window.window(), "brush-shapes");
+        for label in [
+            "Preview shape",
+            "Focus preview",
+            "Add shape",
+            "Browse…",
+            "Cancel",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.set_min_x("-".into());
+        window.invoke_edited();
+        assert!(!window.get_can_preview());
+        assert!(window.get_token().is_empty());
+        assert!(lock(&shared).primitive_preview().is_none());
+        window.set_min_x("-128".into());
+        window.invoke_edited();
+        window.invoke_preview_shape();
+        let old = window.get_token();
+        let material_target = {
+            let session = lock(&shared);
+            (
+                session.primitive_preview().map(|preview| preview.token),
+                session.document_generation(),
+            )
+        };
+        lock(&shared)
+            .create_primitive(Actor::Agent, map_core::primitive::Spec::default(), true)
+            .unwrap();
+        assert!(
+            primitive_ui::choose_material(
+                &window,
+                &mut lock(&shared),
+                material_target,
+                "brick/changed"
+            )
+            .is_err()
+        );
+        window.set_token(old);
+        window.invoke_apply();
+        assert!(window.get_message().contains("replaced"));
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert_eq!(window.get_shape(), 0);
+        window.invoke_cancel();
+        assert!(lock(&shared).primitive_preview().is_none());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.show().unwrap();
+        window.set_shape(3);
+        window.set_segments(12);
+        window.set_bands(6);
+        window.invoke_edited();
+        window.invoke_preview_shape();
+        window.invoke_apply();
+        assert!(lock(&shared).primitive_preview().is_none());
+        assert_eq!(lock(&shared).document().vmf().world.solids.len(), 1);
+        assert_eq!(
+            lock(&shared).document().vmf().world.solids[0].sides.len(),
+            72
+        );
+        assert_eq!(lock(&shared).selected_ids().len(), 1);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before);
     }
 
     #[test]

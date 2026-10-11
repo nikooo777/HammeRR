@@ -9,6 +9,7 @@ pub mod displacement;
 pub mod document;
 pub mod edit;
 pub mod plane;
+pub mod primitive;
 pub mod query;
 pub mod references;
 pub mod region;

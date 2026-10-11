@@ -171,20 +171,34 @@ impl Document {
         self.saved_revision = self.revision;
     }
 
+    pub fn mark_unsaved(&mut self) {
+        self.saved_revision = u64::MAX;
+    }
+
+    pub fn snapshot_for_save(&self) -> Vmf {
+        let mut vmf = self.vmf.clone();
+        Self::bump_vmf_version(&mut vmf);
+        vmf
+    }
+
     /// Bumps `mapversion` in both places Hammer stores it, as a save does.
     pub fn bump_map_version(&mut self) {
+        Self::bump_vmf_version(&mut self.vmf);
+    }
+
+    fn bump_vmf_version(vmf: &mut Vmf) {
         let bump = |props: &mut Properties| {
             let next = props
                 .get("mapversion")
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(0)
-                + 1;
+                .saturating_add(1);
             props.set("mapversion", next.to_string());
         };
-        if let Some(info) = &mut self.vmf.version_info {
+        if let Some(info) = &mut vmf.version_info {
             bump(info);
         }
-        bump(&mut self.vmf.world.properties);
+        bump(&mut vmf.world.properties);
     }
 
     pub fn solid(&self, id: u32) -> Option<&Solid> {

@@ -183,6 +183,8 @@ def validate(client, output):
         original["launching"],
         original["game_running"],
     ]
+    if "get_material_search" in schemas:
+        pending.append(client.call("get_material_search"))
     check(
         not any(pending),
         "idle session without previews, reports or running jobs required",
@@ -422,17 +424,19 @@ def validate(client, output):
             client.call("open_map", {"path": original["path"], "discard_changes": True})
         else:
             client.call("new_map", {"discard_changes": True})
-        client.call("select", {"ids": original["selection"]})
-        client.call(
-            "select_faces",
-            {
-                "faces": [
-                    {k: f[k] for k in ["solid", "side"]}
-                    for f in original["face_selection"]["faces"]
-                ]
-            },
-        )
-        client.call("set_selection_mode", {"mode": original["face_selection"]["mode"]})
+        if original["face_selection"]["mode"] == "faces":
+            client.call(
+                "select_faces",
+                {
+                    "faces": [
+                        {k: f[k] for k in ["solid", "side"]}
+                        for f in original["face_selection"]["faces"]
+                    ]
+                },
+            )
+        else:
+            client.call("set_selection_mode", {"mode": "objects"})
+            client.call("select", {"ids": original["selection"]})
         camera = original["camera"]
         client.call(
             "set_camera",

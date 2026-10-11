@@ -24,6 +24,7 @@ pub mod checks;
 mod clipping;
 pub mod context;
 mod management;
+pub mod material_search;
 pub mod primitives;
 mod recovery;
 mod surfaces;
@@ -110,6 +111,7 @@ pub struct Session {
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
     checks: checks::State,
+    material_search: material_search::State,
     context: context::State,
     primitives: primitives::State,
     clip_preview: Option<ClipPreview>,
@@ -226,6 +228,7 @@ impl Session {
             surface_sample: None,
             recovery: recovery::State::default(),
             checks: checks::State::default(),
+            material_search: material_search::State::default(),
             context: context::State::default(),
             primitives: primitives::State::default(),
             clip_preview: None,
@@ -997,6 +1000,7 @@ impl Session {
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
         self.surface_sample = None;
+        self.material_search.report = None;
         self.context.draft = None;
         self.context.focused = None;
         self.context.serial += 1;

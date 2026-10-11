@@ -6,6 +6,7 @@ mod inspector;
 mod interaction;
 mod lighting_ui;
 mod management_ui;
+mod material_replace_ui;
 mod materials;
 mod mcp;
 mod primitive_ui;
@@ -155,6 +156,8 @@ struct Ui {
     surface_window: Option<SurfaceWindow>,
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     lighting: Option<lighting_ui::Controller>,
+    material_replace: Option<material_replace_ui::Controller>,
+    material_for_replace: Option<bool>,
     material_for_faces: bool,
     material_for_clip: bool,
     material_for_primitive: bool,
@@ -1755,6 +1758,10 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                         window.set_detail(error.into());
                         return;
                     }
+                } else if let Some(replacement) = ui.borrow().material_for_replace {
+                    if let Some(controller) = &ui.borrow().material_replace {
+                        controller.choose_material(&mut session, replacement, &material);
+                    }
                 } else if ui.borrow().material_for_clip {
                     app.set_clip_material(material);
                     session.cancel_clip_preview();
@@ -1797,6 +1804,11 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     }
     let shared = session_of(ui);
     let mut session = lock(&shared);
+    ui.borrow_mut().material_for_replace = match key {
+        "@replace-source" => Some(false),
+        "@replace-target" => Some(true),
+        _ => None,
+    };
     ui.borrow_mut().material_for_faces = key == "@faces";
     ui.borrow_mut().material_for_clip = key == "@clip";
     ui.borrow_mut().material_for_primitive = key == "@primitive";
@@ -1806,13 +1818,30 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             session.document_generation(),
         )
     });
-    let target = if key.is_empty() || key == "@faces" || key == "@clip" || key == "@primitive" {
+    let target = if key.is_empty()
+        || key == "@faces"
+        || key == "@clip"
+        || key == "@primitive"
+        || key.starts_with("@replace-")
+    {
         None
     } else {
         single_selected_entity(&session)
             .map(|id| (id, key.to_owned(), session.document_generation()))
     };
-    let material = if key == "@primitive" {
+    let material = if let Some(replacement) = ui.borrow().material_for_replace {
+        ui.borrow()
+            .material_replace
+            .as_ref()
+            .map(|controller| {
+                if replacement {
+                    controller.window.get_replacement().to_string()
+                } else {
+                    controller.window.get_source().to_string()
+                }
+            })
+            .unwrap_or_default()
+    } else if key == "@primitive" {
         ui.borrow()
             .primitive_window
             .as_ref()
@@ -2513,6 +2542,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_window: None,
         surface_target: None,
         lighting: None,
+        material_replace: None,
+        material_for_replace: None,
         material_for_faces: false,
         material_for_clip: false,
         material_for_primitive: false,
@@ -2777,6 +2808,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_edit_face_textures({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
+    });
+    app.on_replace_materials({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().material_replace.is_none() {
+                match material_replace_ui::Controller::new(&shared) {
+                    Ok(controller) => {
+                        controller.window.on_browse({
+                            let (app, ui) = (app.clone(), ui.clone());
+                            move |replacement| {
+                                show_material_window(
+                                    &app.unwrap(),
+                                    &ui,
+                                    if replacement {
+                                        "@replace-target"
+                                    } else {
+                                        "@replace-source"
+                                    },
+                                )
+                            }
+                        });
+                        ui.borrow_mut().material_replace = Some(controller);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.material_replace.as_ref().unwrap();
+            controller.initialize(&mut lock(&shared), &app.unwrap().get_material());
+            let _ = controller.window.show();
+        }
     });
     app.on_edit_face_lighting({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3310,6 +3376,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.seen_scene = session.scene_serial();
                     let mesh = session.build_scene();
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                    if let Some(controller) = &ui.material_replace
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.lighting
                         && controller.window.window().is_visible()
                     {
@@ -3336,6 +3407,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
+                    if let Some(controller) = &ui.material_replace
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.lighting
                         && controller.window.window().is_visible()
                     {
@@ -4222,6 +4298,96 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn material_replacement_controls_preview_cancel_and_reject_foreign_drafts() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(mount_game(None));
+        session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "dev/dev_measuregeneric01",
+                false,
+            )
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(session));
+        let controller = material_replace_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared), "dev/dev_measuregeneric01");
+        let window = &controller.window;
+        window.invoke_find();
+        assert!(window.get_ready());
+        controller.choose_material(&mut lock(&shared), true, "dev/dev_measurewall01a");
+        window.invoke_preview_edit();
+        assert!(lock(&shared).has_face_preview());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "material-replacement");
+        for id in ["source-thumbnail", "replacement-thumbnail"] {
+            let image = i_slint_backend_testing::ElementHandle::find_by_element_id(
+                window,
+                &format!("MaterialReplaceWindow::{id}"),
+            )
+            .next()
+            .unwrap();
+            assert!(image.size().width <= 80.0 && image.size().height <= 80.0);
+        }
+
+        for label in [
+            "Cancel",
+            "Find faces",
+            "Select matches",
+            "Preview replacement",
+            "Replace faces",
+        ] {
+            assert_dialog_button_visible(window, label);
+        }
+        window.invoke_cancel();
+        assert!(!lock(&shared).has_face_preview());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.invoke_preview_edit();
+        let token = lock(&shared).material_search_report().unwrap().token;
+        lock(&shared)
+            .replace_materials(Actor::Agent, token, "wood/foreign", true)
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(!window.get_can_apply());
+        window.invoke_apply();
+        assert!(window.get_message().contains("Another face preview"));
+        let foreign = lock(&shared).face_preview_token();
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).face_preview_token(), foreign);
+        window.invoke_preview_edit();
+        window.set_replacement("metal/changed".into());
+        window.invoke_replacement_edited();
+        assert!(!lock(&shared).has_face_preview());
+        window.invoke_apply();
+        assert!(
+            lock(&shared)
+                .document()
+                .vmf()
+                .solids()
+                .flat_map(|solid| &solid.sides)
+                .all(|side| side.material == "METAL/CHANGED")
+        );
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.invoke_find();
+        lock(&shared).new_map(Actor::Agent, true).unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        assert!(lock(&shared).document().vmf().world.solids.is_empty());
     }
 
     #[test]

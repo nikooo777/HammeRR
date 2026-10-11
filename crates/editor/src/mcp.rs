@@ -86,6 +86,8 @@ select_faces switches to shared face selection; edit_faces changes material, UVs
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
 provides grouped catalog metadata; set_material_favorite shares browser favorites. \
+find_material_faces creates an exact map/selection material report with explicit hidden handling. \
+Use its token with select_material_faces or replace_materials; get_material_search paginates results. \
 clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
 Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview \
 or cancel_clip_preview. Keep front (arrow side), back, or both; displacements cannot be clipped. \
@@ -858,6 +860,29 @@ pub struct FacePreviewArgs {
 
 fn parse_token(value: &str) -> Result<u64, String> {
     value.parse().map_err(|_| "Invalid preview token".into())
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MaterialSearchPageArgs {
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SelectMaterialFacesArgs {
+    pub token: String,
+    /// replace (default), add, remove or toggle. Does not reveal hidden faces.
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReplaceMaterialsArgs {
+    /// Token returned by find_material_faces. Rejects changed map or search selection.
+    pub token: String,
+    pub material: String,
+    /// Draft without changing history; finish with commit_face_preview/cancel_face_preview.
+    #[serde(default)]
+    pub preview: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3210,6 +3235,70 @@ impl EditorServer {
     )]
     fn get_face_selection(&self) -> ToolResult {
         ok(face_state(&self.session()))
+    }
+
+    #[tool(
+        description = "Find faces with an exact material path in map, selected_objects or selected_faces. Case, backslashes, materials/ prefix and .vmt suffix are normalized; no wildcards. Hidden world brushes, entities and child brushes are excluded unless include_hidden=true. Stores a shared report and returns its token, counts and first 100 faces; no map or selection edit."
+    )]
+    fn find_material_faces(
+        &self,
+        Parameters(query): Parameters<crate::session::material_search::Query>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.find_material_faces(query)?;
+            Ok(session.material_search_json(0, 100))
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared material search report and stale status. Paginated faces, limit 1–500 (default 100).",
+        annotations(read_only_hint = true)
+    )]
+    fn get_material_search(
+        &self,
+        Parameters(args): Parameters<MaterialSearchPageArgs>,
+    ) -> ToolResult {
+        ok(self
+            .session()
+            .material_search_json(args.offset.unwrap_or(0), args.limit.unwrap_or(100)))
+    }
+
+    #[tool(
+        description = "Select all faces in a current material search, across all result pages. Requires report token, supports replace/add/remove/toggle. Hidden faces remain hidden. Selection-scoped results can become stale when selection changes; find again before replacement."
+    )]
+    fn select_material_faces(
+        &self,
+        Parameters(args): Parameters<SelectMaterialFacesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mode = match args.mode.as_deref().unwrap_or("replace") {
+                "replace" => SelectMode::Replace,
+                "add" => SelectMode::Add,
+                "remove" => SelectMode::Remove,
+                "toggle" => SelectMode::Toggle,
+                _ => return Err("mode must be replace, add, remove or toggle".into()),
+            };
+            let count = session.select_material_faces(parse_token(&args.token)?, mode)?;
+            Ok(json!({"matched":count, "state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Replace every matching face from a current material search in one undo step. Requires report token; rejects changed map/selection or replaced reports. Changes material only, preserving UVs, lighting, displacements and hidden flags. preview=true uses shared face preview with token-guarded commit/cancel. Exact replacement; no substring substitution."
+    )]
+    fn replace_materials(&self, Parameters(args): Parameters<ReplaceMaterialsArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let count = session.replace_materials(
+                Actor::Agent,
+                parse_token(&args.token)?,
+                &args.material,
+                args.preview,
+            )?;
+            Ok(json!({"faces_changed":count, "state":face_state(&session)}))
+        })
     }
 
     #[tool(

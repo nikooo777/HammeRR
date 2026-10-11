@@ -1,0 +1,86 @@
+import { Button, CheckBox, ComboBox, LineEdit } from "std-widgets.slint";
+
+export component MaterialReplaceWindow inherits Window {
+    title: "Replace materials - HammeRR";
+    preferred-width: 680px;
+    preferred-height: 590px;
+    in-out property <string> source;
+    in-out property <string> replacement;
+    in-out property <int> scope;
+    in-out property <bool> include-hidden;
+    in property <image> source-preview;
+    in property <image> replacement-preview;
+    in property <string> summary: "Choose a material and find its faces.";
+    in property <string> message;
+    in property <bool> ready;
+    in property <bool> can-apply;
+    callback search-edited();
+    callback replacement-edited();
+    callback browse(bool);
+    callback find();
+    callback select-matches();
+    callback preview-edit();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px;
+            spacing: 14px;
+            Text { text: "Replace materials"; font-size: 24px; font-weight: 600; }
+            Text { text: "Change a material across the map or within your selection."; color: #aeb9c8; }
+            HorizontalLayout {
+                spacing: 12px;
+                Rectangle {
+                    width: 80px; height: 80px; background: #20252d; border-radius: 6px;
+                    source-thumbnail := Image { width: parent.width; height: parent.height; source: root.source-preview; image-fit: contain; }
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Find this material"; font-weight: 600; }
+                    LineEdit { text <=> root.source; placeholder-text: "brick/brickwall001a"; edited => { root.search-edited(); } accepted => { root.find(); } }
+                    Button { text: "Choose source…"; clicked => { root.browse(false); } }
+                }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Search in"; vertical-alignment: center; }
+                ComboBox { model: ["Whole map", "Selected objects", "Selected faces"]; current-index <=> root.scope; selected => { root.search-edited(); } }
+                CheckBox { text: "Include hidden faces"; checked <=> root.include-hidden; toggled => { root.search-edited(); } }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Button { text: "Find faces"; clicked => { root.find(); } }
+                Button { text: "Select matches"; enabled: root.ready; clicked => { root.select-matches(); } }
+                Text { text: "Exact path · ignores case"; color: #aeb9c8; vertical-alignment: center; }
+            }
+            Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
+            Rectangle { height: 1px; background: #424a58; }
+            HorizontalLayout {
+                spacing: 12px;
+                Rectangle {
+                    width: 80px; height: 80px; background: #20252d; border-radius: 6px;
+                    replacement-thumbnail := Image { width: parent.width; height: parent.height; source: root.replacement-preview; image-fit: contain; }
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Replace with"; font-weight: 600; }
+                    LineEdit { text <=> root.replacement; placeholder-text: "Choose the new material"; edited => { root.replacement-edited(); } }
+                    Button { text: "Choose replacement…"; clicked => { root.browse(true); } }
+                }
+            }
+            Text { text: "UV placement and face lighting stay as authored. Hidden faces remain hidden."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: root.message; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 12px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Preview replacement"; enabled: root.ready; clicked => { root.preview-edit(); } }
+                Button { text: "Replace faces"; enabled: root.ready && root.can-apply; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

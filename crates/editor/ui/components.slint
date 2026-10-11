@@ -19,6 +19,8 @@ export component ComponentsWindow inherits Window {
     in property <string> message;
     in property <bool> ready;
     in property <bool> has-selection;
+    in property <bool> picking;
+    in property <string> picking-summary;
     in-out property <int> kind;
     in-out property <string> move-x: "0";
     in-out property <string> move-y: "0";
@@ -26,6 +28,8 @@ export component ComponentsWindow inherits Window {
     in-out property <bool> snap: true;
     in-out property <bool> texture-lock;
     callback refresh();
+    callback change-kind();
+    callback toggle-picking();
     callback choose(string);
     callback select-all();
     callback clear();
@@ -47,9 +51,11 @@ export component ComponentsWindow inherits Window {
                     horizontal-stretch: 1; spacing: 10px;
                     HorizontalLayout {
                         spacing: 8px;
-                        ComboBox { model: ["Edges", "Vertices", "Faces"]; current-index <=> root.kind; selected => { root.refresh(); } }
+                        ComboBox { model: ["Edges", "Vertices", "Faces"]; current-index <=> root.kind; selected => { root.change-kind(); } }
                         Button { text: "Refresh"; clicked => { root.refresh(); } }
                     }
+                    Button { text: root.picking ? "Stop viewport picking" : "Pick in viewport"; enabled: root.rows.length > 0 || root.picking; clicked => { root.toggle-picking(); } }
+                    if root.picking: Text { text: root.picking-summary; wrap: word-wrap; color: #9dd8f1; }
                     Text { text: root.summary; wrap: word-wrap; color: #aeb9c8; }
                     ListView {
                         vertical-stretch: 1;
@@ -89,7 +95,7 @@ export component ComponentsWindow inherits Window {
                     Button { text: "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     Rectangle { vertical-stretch: 1; }
-                    Text { text: "Orange marks selected corners and edges. Blue marks other corners."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    Text { text: root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                 }
             }

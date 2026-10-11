@@ -324,6 +324,65 @@ def validate(client, output):
             detail(client, [entity]) == before_entity,
             "Entity hollow is atomically reversible",
         )
+        wedge = client.call(
+            "create_primitive",
+            {
+                "shape": "wedge",
+                "mins": [-96, -80, 112],
+                "maxs": [96, 80, 224],
+                "material": "dev/dev_measuregeneric01",
+            },
+        )["objects"][0]["id"]
+        wedge_entity = client.call(
+            "tie_to_entity", {"ids": [wedge], "classname": "func_detail"}
+        )["id"]
+        wedge_before = detail(client, [wedge_entity])
+        choices = state()["faces"]
+        slope = next(
+            face
+            for face in choices
+            if sum(abs(value) > 0.01 for value in face["normal"]) > 1
+        )
+        slope_ref = {key: slope[key] for key in ["solid", "side"]}
+        for outward in [False, True]:
+            closed = preview(4, outward, ids=[wedge_entity])
+            center = closed["result"]["cavities"][0]["center"]
+            direction = [a - b for a, b in zip(slope["center"], center, strict=True)]
+            hit = client.call("raycast", {"origin": center, "direction": direction})
+            check(
+                hit.get("solid") in closed["result"]["brushes"],
+                "Closed sloped shell blocks a ray toward its sloped face",
+            )
+            opened = preview(4, outward, ids=[wedge_entity], open_faces=[slope_ref])
+            center = opened["result"]["cavities"][0]["center"]
+            direction = [a - b for a, b in zip(slope["center"], center, strict=True)]
+            hit = client.call("raycast", {"origin": center, "direction": direction})
+            check(
+                hit.get("solid") not in opened["result"]["brushes"],
+                "Opening the sloped face clears the passage in both wall directions",
+            )
+            check(
+                len(opened["result"]["brushes"]) == len(choices) - 1
+                and opened["result"]["objects"] == [wedge_entity],
+                "Sloped opening keeps the remaining walls in their entity",
+            )
+            client.call("commit_hollow", {"token": opened["token"]})
+            if outward:
+                compiled = client.call(
+                    "compile_map", {"path": str(output / "hollow-sloped.bsp")}
+                )
+                check(
+                    compiled["success"] and compiled["leak"] is None,
+                    "Sealed fixture with an open sloped brush entity compiles",
+                )
+                (output / "compile-sloped.json").write_text(
+                    json.dumps(compiled, indent=2) + "\n"
+                )
+            client.call("undo")
+            check(
+                detail(client, [wedge_entity]) == wedge_before,
+                "Sloped shell undo restores exact entity geometry",
+            )
         draft = preview(8, ids=[entity])
         client.call("select", {"ids": [block]})
         client.call("commit_hollow", {"token": draft["token"]}, error=True)

@@ -5,6 +5,7 @@ use map_core::subobject::Component;
 use slint::{ComponentHandle, Model, VecModel};
 
 use crate::mcp::{SharedSession, lock};
+use crate::session::component_picking::Kind;
 use crate::session::{Actor, SelectMode, Session};
 use crate::{ComponentRow, ComponentsWindow};
 
@@ -53,6 +54,15 @@ fn position(point: DVec3) -> String {
 
 pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_stamp(session.component_stamp().into());
+    window.set_picking(session.component_picking().is_some());
+    if let Some(picking) = session.component_picking() {
+        window.set_kind(match picking.kind {
+            Kind::Edge => 0,
+            Kind::Vertex => 1,
+            Kind::Face => 2,
+        });
+        window.set_picking_summary(picking.hint().into());
+    }
     window.set_has_selection(!session.component_selection().is_empty());
     let ids = session.component_solids();
     let shapes = match session.component_topology(&ids) {
@@ -222,7 +232,39 @@ fn selection(
     window.set_message(result.err().unwrap_or_default().into());
 }
 
+fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
+    let kind = match window.get_kind() {
+        1 => Kind::Vertex,
+        2 => Kind::Face,
+        _ => Kind::Edge,
+    };
+    let mut session = lock(shared);
+    let ids = session.component_solids();
+    let result =
+        session.set_component_picking(enabled.then_some(kind), &ids, window.get_stamp().as_str());
+    refresh(window, &session);
+    window.set_message(result.err().unwrap_or_default().into());
+}
+
 pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    window.on_toggle_picking({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            picking(&window, &shared, !window.get_picking());
+        }
+    });
+    window.on_change_kind({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            if window.get_picking() {
+                picking(&window, &shared, true);
+            } else {
+                refresh(&window, &lock(&shared));
+            }
+        }
+    });
     window.on_refresh({
         let (window, shared) = (window.as_weak(), shared.clone());
         move || refresh(&window.unwrap(), &lock(&shared))
@@ -337,11 +379,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             let window = window.unwrap();
             let mut session = lock(&shared);
             if session.component_stamp() == window.get_stamp().as_str() {
-                let _ = session.select_components(
-                    &[],
-                    SelectMode::Replace,
-                    window.get_stamp().as_str(),
-                );
+                let _ = session.set_component_picking(None, &[], window.get_stamp().as_str());
             }
             let _ = window.hide();
         }

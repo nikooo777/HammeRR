@@ -21,7 +21,8 @@ pub struct Preview {
 pub struct State {
     pub selection: BTreeSet<Component>,
     pub preview: Option<Preview>,
-    serial: u64,
+    pub(super) serial: u64,
+    pub picking: Option<super::component_picking::Picking>,
 }
 
 pub fn component_json(component: &Component) -> Value {
@@ -39,7 +40,7 @@ impl Session {
         )
     }
 
-    fn check_component_stamp(&self, stamp: &str) -> Result<(), String> {
+    pub(super) fn check_component_stamp(&self, stamp: &str) -> Result<(), String> {
         if stamp != self.component_stamp() {
             return Err("Map, selection or preview changed; inspect brush components again".into());
         }
@@ -51,7 +52,11 @@ impl Session {
     }
 
     pub fn clear_component_edit(&mut self) {
-        if !self.components.selection.is_empty() || self.components.preview.is_some() {
+        if !self.components.selection.is_empty()
+            || self.components.preview.is_some()
+            || self.components.picking.is_some()
+        {
+            self.components.picking = None;
             self.components.selection.clear();
             self.components.preview = None;
             self.components.serial += 1;
@@ -61,6 +66,9 @@ impl Session {
     }
 
     pub fn component_solids(&self) -> Vec<u32> {
+        if let Some(picking) = &self.components.picking {
+            return picking.solids.iter().copied().collect();
+        }
         self.selected_ids()
             .iter()
             .flat_map(|id| match id {
@@ -103,7 +111,7 @@ impl Session {
             })
         }).collect::<Vec<_>>();
         Ok(json!({
-            "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
+            "picking":self.components.picking, "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
             "brushes":brushes, "selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
             "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len()})),
             "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS},
@@ -172,6 +180,10 @@ impl Session {
                     .0,
             );
         }
+        let picking = self.components.picking.clone().filter(|picking| {
+            next.iter()
+                .all(|component| picking.solids.contains(&component.solid))
+        });
         if !owners.is_empty() {
             self.select(&owners.into_iter().collect::<Vec<_>>(), SelectMode::Replace)?;
         }
@@ -187,6 +199,7 @@ impl Session {
         self.clip_tool = false;
         self.paint.enabled = false;
         self.spatial.draw_block = false;
+        self.components.picking = picking;
         self.components.selection = next;
         self.components.preview = None;
         self.components.serial += 1;
@@ -277,17 +290,24 @@ impl Session {
         Ok(())
     }
 
-    pub fn append_component_guides(&self, mesh: &mut render::SceneMesh) {
-        let ids = self
-            .components
-            .selection
-            .iter()
-            .map(|component| component.solid)
-            .collect::<Vec<_>>();
+    pub fn append_component_guides(&mut self, mesh: &mut render::SceneMesh) {
+        let hidden = self.hidden_tool_brushes();
+        let ids = if self.components.picking.is_some() {
+            self.component_solids()
+        } else {
+            self.components
+                .selection
+                .iter()
+                .map(|component| component.solid)
+                .collect::<Vec<_>>()
+        };
         let Ok(shapes) = self.component_topology(&ids) else {
             return;
         };
         for shape in shapes {
+            if self.component_hidden(shape.solid, &hidden) {
+                continue;
+            }
             let mut selected_vertices = BTreeSet::new();
             for component in self
                 .components
@@ -328,7 +348,7 @@ impl Session {
                 }
             }
             for edge in &shape.edges {
-                if self.components.selection.contains(&Component {
+                let selected = self.components.selection.contains(&Component {
                     solid: shape.solid,
                     sides: edge.sides.clone(),
                 }) || edge.sides.iter().any(|side| {
@@ -336,11 +356,16 @@ impl Session {
                         solid: shape.solid,
                         sides: vec![*side],
                     })
-                }) {
+                });
+                if selected || self.components.picking.is_some() {
                     for index in edge.vertices {
                         mesh.lines.push(render::scene::LineVertex {
                             position: shape.vertices[index].position.as_vec3().to_array(),
-                            color: [255, 190, 65, 255],
+                            color: if selected {
+                                [255, 190, 65, 255]
+                            } else {
+                                [95, 215, 255, 255]
+                            },
                         });
                     }
                 }

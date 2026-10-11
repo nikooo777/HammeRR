@@ -30,6 +30,7 @@ def preserved_map(client):
             original.get("hollow", {}).get("preview"),
             original.get("components", {}).get("preview"),
             original.get("components", {}).get("selection"),
+            original.get("components", {}).get("picking"),
             original["block_preview"],
             original["spatial"]["draw_block"],
             original["connection_draft"],

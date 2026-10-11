@@ -232,18 +232,19 @@ impl Session {
         {
             return Err("Pivot must be finite and rotation snap between 0 and 180 degrees".into());
         }
-        if tool == self.transform_tool && !self.paint.enabled {
+        if tool == self.transform_tool && !self.paint.enabled && self.component_picking().is_none()
+        {
             return Ok(());
         }
         self.cancel_transform_preview();
         self.cancel_area_selection();
         self.transform_tool = tool;
         self.paint.enabled = false;
+        self.clear_component_edit();
         if tool.mode.is_some() {
             self.clip_tool = false;
             self.cancel_clip_preview();
             self.clear_hollow_preview();
-            self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();
             self.spatial.draw_block = false;
@@ -269,6 +270,7 @@ impl Session {
             || self.spatial.draw_block
             || self.volume_preview().is_some()
             || !self.component_selection().is_empty()
+            || self.component_picking().is_some()
             || self.hollowing.preview.is_some()
         {
             return None;

@@ -50,6 +50,23 @@ pub fn launch(session: &SharedSession, actor: Actor) -> Result<game::Log, String
     lock(session).finish_launch(actor, result)
 }
 
+pub fn start_launch(session: &SharedSession, actor: Actor) -> Result<(), String> {
+    let request = lock(session).begin_launch(actor)?;
+    let worker_session = session.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("game-launch".into())
+        .spawn(move || {
+            let result = request.run();
+            let _ = lock(&worker_session).finish_launch(actor, result);
+        })
+    {
+        let error = error.to_string();
+        let _ = lock(session).finish_launch(actor, Err(error.clone()));
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn finish_compile_worker(
     session: &SharedSession,
     actor: Actor,

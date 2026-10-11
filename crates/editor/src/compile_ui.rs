@@ -16,6 +16,16 @@ impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = CompileWindow::new()?;
         let token = Rc::new(Cell::new(None));
+        window.on_play_build({
+            let (shared, window) = (shared.clone(), window.as_weak());
+            move || {
+                let result = crate::mcp::start_launch(&shared, Actor::User);
+                window.unwrap().set_message(match result {
+                    Ok(()) => "Launching the last successful build with -insecure. Open Game Log for engine output.".into(),
+                    Err(error) => error.into(),
+                });
+            }
+        });
         window.on_cancel_build({
             let (shared, window, token) = (shared.clone(), window.as_weak(), token.clone());
             move || {
@@ -43,6 +53,19 @@ impl Controller {
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
+        let launch = &status["launch"];
+        self.window
+            .set_launch_ready(launch["ready"].as_bool().unwrap_or(false));
+        self.window.set_launch_details(
+            match launch["bsp"].as_str() {
+                Some(path) => format!("Ready to play without rebuilding: {path}"),
+                None => format!(
+                    "Play unavailable: {}",
+                    launch["reason"].as_str().unwrap_or_default()
+                ),
+            }
+            .into(),
+        );
         let job = &status["job"];
         if job.is_null() {
             self.window

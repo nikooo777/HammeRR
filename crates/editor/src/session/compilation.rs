@@ -227,7 +227,11 @@ impl Session {
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
                 "stale":!self.current_snapshot(&job.snapshot),"result":job.result})
         });
-        json!({"job":job})
+        let launch = match self.launch_readiness() {
+            Ok(path) => json!({"ready":true,"bsp":path.display().to_string(),"reason":null}),
+            Err(reason) => json!({"ready":false,"bsp":null,"reason":reason}),
+        };
+        json!({"job":job,"launch":launch})
     }
 
     pub fn compile_token(&self) -> Option<u64> {

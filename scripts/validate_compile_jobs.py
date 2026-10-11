@@ -43,6 +43,11 @@ def validate(client, output):
             "job" in client.call("get_compile_status"),
             "Compile status is inspectable before starting",
         )
+        launch = client.call("get_compile_status")["launch"]
+        check(
+            not launch["ready"] and launch["reason"],
+            "No build explains why play is unavailable",
+        )
         walls = []
         for mins, maxs in [
             ([-272, -272, -16], [272, 272, 0]),
@@ -90,6 +95,26 @@ def validate(client, output):
             "Compilation leaves edit history unchanged",
         )
         original_hash = hashlib.sha256(bsp.read_bytes()).hexdigest()
+        launch = client.call("get_compile_status")["launch"]
+        check(
+            launch["ready"] and launch["bsp"] == str(bsp),
+            "Current successful build is ready to play",
+        )
+        backup = bsp.with_suffix(".validation-backup.bsp")
+        bsp.rename(backup)
+        try:
+            launch = client.call("get_compile_status")["launch"]
+            check(
+                not launch["ready"] and "missing" in launch["reason"],
+                "Missing BSP disables play with a readable reason",
+            )
+            client.call("launch_game", error=True)
+            check(
+                not client.call("get_map_info")["launching"],
+                "Rejected missing-output launch leaves no pending launch",
+            )
+        finally:
+            backup.rename(bsp)
         client.call("compile_map", {"path": str(output / "blocking.bsp")})
         check(
             hashlib.sha256((output / "blocking.bsp").read_bytes()).hexdigest()
@@ -108,10 +133,20 @@ def validate(client, output):
             failed["status"] == "failed" and bool(failed["result"]["error"]),
             "Output write failures have terminal status",
         )
+        launch = client.call("get_compile_status")["launch"]
+        check(
+            launch["ready"] and launch["bsp"] == str(output / "blocking.bsp"),
+            "Failed rebuild retains the last current successful launch target",
+        )
         client.call("delete_objects", {"ids": [walls[-1]]})
         check(
             client.call("get_compile_status")["job"]["stale"],
             "Edits mark previous job snapshots stale",
+        )
+        launch = client.call("get_compile_status")["launch"]
+        check(
+            not launch["ready"] and "changed" in launch["reason"],
+            "Map edits disable launch with a readable reason",
         )
         client.call("start_compile", {"path": str(bsp)})
         leaked = wait_job(client)

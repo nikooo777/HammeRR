@@ -858,8 +858,65 @@ pub struct EditFacesArgs {
     pub scale_u: Option<f64>,
     pub scale_v: Option<f64>,
     pub rotation: Option<f64>,
+    /// world or face. Resets the projection basis and rotation before optional rotation is applied.
+    pub alignment: Option<String>,
+    /// left, center or right within one material tile; changes offset only, after fit.
+    pub justify_u: Option<String>,
+    /// top, center or bottom within one material tile; changes offset only, after fit.
+    pub justify_v: Option<String>,
     pub fit: Option<bool>,
     pub preview: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SampleFaceArgs {
+    /// Omit to sample the single selected face. Captures committed values, not a preview.
+    pub face: Option<FaceRef>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PaintFacesArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    /// material (default), projection (copy world-space UVs), or wrap (rotate UVs across a shared edge).
+    pub mode: Option<String>,
+    /// Use commit_face_preview or cancel_face_preview to finish the shared draft.
+    #[serde(default)]
+    pub preview: bool,
+}
+
+fn texture_justification(
+    value: Option<&str>,
+    vertical: bool,
+) -> Result<Option<(map_core::surface::Justify, u32)>, String> {
+    use map_core::surface::Justify;
+    let placement = match value {
+        None => return Ok(None),
+        Some("center") => Justify::Center,
+        Some("left") if !vertical => Justify::Start,
+        Some("right") if !vertical => Justify::End,
+        Some("top") if vertical => Justify::Start,
+        Some("bottom") if vertical => Justify::End,
+        _ => {
+            return Err(if vertical {
+                "justify_v must be top, center or bottom"
+            } else {
+                "justify_u must be left, center or right"
+            }
+            .into());
+        }
+    };
+    Ok(Some((placement, 0)))
+}
+
+fn surface_sample_state(session: &Session) -> Value {
+    session.surface_sample().map_or(Value::Null, |sample| json!({
+        "face": {"solid": sample.face.solid, "side": sample.face.side},
+        "material": sample.material, "uaxis": sample.projection.u.to_string(),
+        "vaxis": sample.projection.v.to_string(), "rotation": sample.projection.rotation,
+        "normal": sample.normal.to_array(), "vertices": sample.vertices.iter().map(|v| v.to_array()).collect::<Vec<_>>(),
+        "displacement": sample.displaced,
+        "source_unchanged": map_core::surface::sample(session.document(), sample.face).ok().as_ref() == Some(sample),
+    }))
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -885,6 +942,7 @@ fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
 
 fn face_state(session: &Session) -> Value {
     json!({"mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
+        "sample": surface_sample_state(session),
         "preview_faces": session.preview_faces().into_iter().filter_map(|face| {
             let side = session.preview_side(face)?;
             Some(json!({"solid": face.solid, "side": face.side, "material": side.material,
@@ -2386,11 +2444,65 @@ impl EditorServer {
                     scale_u: args.scale_u,
                     scale_v: args.scale_v,
                     rotation: args.rotation,
-                    fit: None,
+                    alignment: match args.alignment.as_deref() {
+                        None => None,
+                        Some("world") => Some(map_core::surface::Alignment::World),
+                        Some("face") => Some(map_core::surface::Alignment::Face),
+                        _ => return Err("alignment must be world or face".into()),
+                    },
+                    justify_u: texture_justification(args.justify_u.as_deref(), false)?,
+                    justify_v: texture_justification(args.justify_v.as_deref(), true)?,
+                    ..Default::default()
                 },
                 args.fit.unwrap_or(false),
                 args.preview.unwrap_or(false),
             )?;
+            Ok(json!({"faces_changed": changed, "state": face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Sample committed material and UV projection from one face into the shared texture sample. Select a source, sample it, then select targets and call paint_face_texture. The sample is a snapshot, survives selection/source edits, and clears on map replacement. Does not edit the map."
+    )]
+    fn sample_face_texture(&self, Parameters(args): Parameters<SampleFaceArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let face = match args.face {
+                Some(face) => face_id(&face),
+                None => match session.selected_faces().as_slice() {
+                    [face] => *face,
+                    _ => return Err("select exactly one source face or provide face".into()),
+                },
+            };
+            session.sample_face_texture(face)?;
+            Ok(json!({"sample": surface_sample_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Read the shared sampled material/projection, including original geometry and whether its source still matches. Null means no sample. Sampling does not automatically follow later source edits."
+    )]
+    fn get_surface_sample(&self) -> ToolResult {
+        ok(json!({"sample": surface_sample_state(&self.session())}))
+    }
+
+    #[tool(
+        description = "Paint sampled material onto target faces in one undo step. projection also copies UV vectors/scales/offsets and rejects projections that collapse on the target. wrap rotates around an actual shared edge and preserves its texel coordinates; displacements and unrelated faces are rejected. Omitted targets use selected faces. A failed batch changes nothing; preview shares commit_face_preview/cancel_face_preview and is invalidated by map or selection edits."
+    )]
+    fn paint_face_texture(&self, Parameters(args): Parameters<PaintFacesArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let mode = match args.mode.as_deref().unwrap_or("material") {
+                "material" => map_core::surface::PaintMode::Material,
+                "projection" => map_core::surface::PaintMode::Projection,
+                "wrap" => map_core::surface::PaintMode::Wrap,
+                _ => return Err("mode must be material, projection or wrap".into()),
+            };
+            let changed = session.paint_face_texture(Actor::Agent, &faces, mode, args.preview)?;
             Ok(json!({"faces_changed": changed, "state": face_state(&session)}))
         })
     }

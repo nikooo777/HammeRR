@@ -1165,6 +1165,13 @@ fn optional_number(value: SharedString) -> Result<Option<f64>, String> {
 }
 
 fn surface_patch(window: &SurfaceWindow) -> Result<map_core::surface::SurfaceEdit, String> {
+    use map_core::surface::{Alignment, Justify};
+    let justify = |index| match index {
+        1 => Some((Justify::Start, 0)),
+        2 => Some((Justify::Center, 0)),
+        3 => Some((Justify::End, 0)),
+        _ => None,
+    };
     Ok(map_core::surface::SurfaceEdit {
         material: (!window.get_material().trim().is_empty())
             .then(|| window.get_material().trim().to_owned()),
@@ -1173,7 +1180,14 @@ fn surface_patch(window: &SurfaceWindow) -> Result<map_core::surface::SurfaceEdi
         scale_u: optional_number(window.get_scale_u())?,
         scale_v: optional_number(window.get_scale_v())?,
         rotation: optional_number(window.get_rotation())?,
-        fit: None,
+        alignment: match window.get_alignment_index() {
+            1 => Some(Alignment::World),
+            2 => Some(Alignment::Face),
+            _ => None,
+        },
+        justify_u: justify(window.get_justify_u_index()),
+        justify_v: justify(window.get_justify_v_index()),
+        ..Default::default()
     })
 }
 
@@ -1188,6 +1202,19 @@ fn apply_surface_dialog(
         || session.selected_faces() != target.0
     {
         return Err("Map or face selection changed. Cancel and reopen texture editing.".into());
+    }
+    if window.get_operation_index() != 0 {
+        use map_core::surface::PaintMode;
+        return session.paint_face_texture(
+            Actor::User,
+            &target.0,
+            match window.get_operation_index() {
+                1 => PaintMode::Material,
+                2 => PaintMode::Projection,
+                _ => PaintMode::Wrap,
+            },
+            preview,
+        );
     }
     session.edit_faces(
         Actor::User,
@@ -1221,6 +1248,7 @@ fn refresh_surface_dialog(
     session: &mut Session,
     target: &(Vec<map_core::surface::FaceId>, u64, u64),
 ) {
+    refresh_surface_sample(window, session);
     let stale = session.document_generation() != target.1
         || session.document().revision() != target.2
         || session.selected_faces() != target.0;
@@ -1276,6 +1304,33 @@ fn refresh_surface_dialog(
             .unwrap_or_default(),
     );
     window.set_message("Shared preview shown in the viewport. Apply to keep it.".into());
+}
+
+fn refresh_surface_sample(window: &SurfaceWindow, session: &mut Session) {
+    let sample = session.surface_sample().cloned();
+    window.set_sample_present(sample.is_some());
+    window.set_sample_label(
+        sample
+            .as_ref()
+            .map(|sample| {
+                format!(
+                    "{} · brush {}, face {}",
+                    sample.material.to_ascii_lowercase(),
+                    sample.face.solid,
+                    sample.face.side
+                )
+            })
+            .unwrap_or_else(|| {
+                "Select one source face and choose Sample face texture first.".into()
+            })
+            .into(),
+    );
+    window.set_sample_preview(
+        sample
+            .and_then(|sample| session.material_preview(&sample.material).ok())
+            .map(|preview| preview_image(&preview))
+            .unwrap_or_default(),
+    );
 }
 
 fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
@@ -1389,6 +1444,11 @@ fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
         side.rotation
     }));
     window.set_fit(false);
+    window.set_operation_index(0);
+    window.set_alignment_index(0);
+    window.set_justify_u_index(0);
+    window.set_justify_v_index(0);
+    refresh_surface_sample(&window, &mut session);
     window.set_stale(false);
     window.set_message("Preview changes before applying, or Cancel to discard.".into());
     ui.borrow_mut().surface_target = Some((
@@ -1848,6 +1908,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_has_selection(!session.selection().is_empty());
     app.set_face_mode(session.face_mode());
     app.set_has_faces(!session.selected_faces().is_empty());
+    app.set_can_sample_face(session.selected_faces().len() == 1);
     app.set_selection_pivot(
         session
             .selection_pivot(&session.selected_ids())
@@ -2511,6 +2572,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
     });
+    app.on_sample_face_texture({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            let shared = session_of(&ui);
+            let mut session = lock(&shared);
+            let result = match session.selected_faces().as_slice() {
+                [face] => session.sample_face_texture(*face),
+                _ => Err("Select exactly one source face.".into()),
+            };
+            app.set_message(match result {
+                Ok(()) => {
+                    "Texture sampled. Select target faces and open Edit face textures to paint."
+                        .into()
+                }
+                Err(error) => error.into(),
+            });
+        }
+    });
     app.on_apply_material({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -2999,6 +3079,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
+                    if let Some(window) = &ui.surface_window
+                        && window.window().is_visible()
+                    {
+                        refresh_surface_sample(window, &mut session);
+                    }
                     if let Some(window) = &ui.material_window
                         && window.window().is_visible()
                     {
@@ -3940,7 +4025,89 @@ mod tests {
         for label in ["Cancel", "Preview textures", "Apply textures"] {
             assert_dialog_button_visible(&surface, label);
         }
+        surface.set_operation_index(3);
+        surface.set_sample_present(true);
+        surface.set_sample_label("dev/dev_measuregeneric01 · brush 2, face 6".into());
+        surface.set_sample_preview(surface.get_preview());
+        save_ui_snapshot(surface.window(), "face-wrap");
+        for label in ["Cancel", "Preview textures", "Apply textures"] {
+            assert_dialog_button_visible(&surface, label);
+        }
         surface.hide().unwrap();
+    }
+
+    #[test]
+    fn texture_dialog_paints_sampled_material_and_preview_matches_apply() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = SurfaceWindow::new().unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/source",
+                false,
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let faces: Vec<_> = session
+            .document()
+            .solid(id)
+            .unwrap()
+            .sides
+            .iter()
+            .map(|side| map_core::surface::FaceId {
+                solid: id,
+                side: side.id,
+            })
+            .collect();
+        session
+            .edit_faces(
+                Actor::Agent,
+                &[faces[0]],
+                map_core::surface::SurfaceEdit {
+                    material: Some("metal/sample".into()),
+                    ..Default::default()
+                },
+                false,
+                false,
+            )
+            .unwrap();
+        session.sample_face_texture(faces[0]).unwrap();
+        session
+            .select_faces(&[faces[1]], SelectMode::Replace)
+            .unwrap();
+        let target = (
+            vec![faces[1]],
+            session.document_generation(),
+            session.document().revision(),
+        );
+        refresh_surface_sample(&window, &mut session);
+        assert!(window.get_sample_present());
+        assert!(window.get_sample_label().contains("metal/sample"));
+        window.set_operation_index(1);
+        let original = session.document().vmf().clone();
+        apply_surface_dialog(&window, &mut session, &target, true).unwrap();
+        assert_eq!(session.document().vmf(), &original);
+        let preview = session.face_preview_document().unwrap().vmf().clone();
+        apply_surface_dialog(&window, &mut session, &target, false).unwrap();
+        assert_eq!(session.document().vmf(), &preview);
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.document().vmf(), &original);
+        assert!(apply_surface_dialog(&window, &mut session, &target, false).is_err());
+        window.set_alignment_index(2);
+        window.set_justify_u_index(1);
+        window.set_justify_v_index(3);
+        let patch = surface_patch(&window).unwrap();
+        assert_eq!(patch.alignment, Some(map_core::surface::Alignment::Face));
+        assert_eq!(
+            patch.justify_u,
+            Some((map_core::surface::Justify::Start, 0))
+        );
+        assert_eq!(patch.justify_v, Some((map_core::surface::Justify::End, 0)));
     }
 
     #[test]

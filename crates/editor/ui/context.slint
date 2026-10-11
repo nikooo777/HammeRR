@@ -1,0 +1,195 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider, TextEdit } from "std-widgets.slint";
+
+export struct ContextRow { scope: string, summary: string, detail: string }
+
+export component ContextWindow inherits Window {
+    title: "Design context - HammeRR";
+    preferred-width: 1120px; preferred-height: 850px;
+    in property <[ContextRow]> rows;
+    in property <string> budget;
+    in-out property <int> filter-mode;
+    in-out property <string> query;
+    in-out property <int> page;
+    in property <bool> has-next;
+    in property <string> page-summary;
+    in-out property <string> query-min-x: "0";
+    in-out property <string> query-min-y: "0";
+    in-out property <string> query-min-z: "0";
+    in-out property <string> query-max-x: "128";
+    in-out property <string> query-max-y: "128";
+    in-out property <string> query-max-z: "128";
+    in-out property <bool> include-map: true;
+    in property <bool> can-attach;
+    in property <string> token;
+    in property <string> scope;
+    in property <string> scope-label;
+    in property <string> source-status;
+    in property <bool> region;
+    in property <bool> can-apply;
+    in property <bool> can-delete;
+    in property <bool> can-focus;
+    in property <string> feedback;
+    in property <string> note-budget;
+    in property <string> message;
+    in property <float> aspect: 1.6;
+    in-out property <string> summary;
+    in-out property <string> body;
+    in-out property <string> min-x;
+    in-out property <string> min-y;
+    in-out property <string> min-z;
+    in-out property <string> max-x;
+    in-out property <string> max-y;
+    in-out property <string> max-z;
+    in-out property <float> red;
+    in-out property <float> green;
+    in-out property <float> blue;
+    in-out property <bool> show-regions;
+    in-out property <bool> confirm-delete;
+    callback filter();
+    callback begin(string);
+    callback edit();
+    callback apply();
+    callback cancel-edit();
+    callback delete-note();
+    callback focus-note();
+    callback toggle-regions();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 12px;
+            HorizontalLayout {
+                VerticalLayout {
+                    spacing: 4px;
+                    Text { text: "Design context"; font-size: 24px; font-weight: 600; }
+                    Text { text: "Intent, constraints and observations, attached to the map."; color: #b5c0ce; }
+                }
+                CheckBox { text: "Show region guides"; checked <=> root.show-regions; toggled => { root.toggle-regions(); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Map brief"; clicked => { root.begin("map"); } }
+                Button { text: "Note on selection"; enabled: root.can-attach; clicked => { root.begin("selection"); } }
+                Button { text: "New region"; clicked => { root.begin("new_region"); } }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: root.budget; color: #9da7b5; }
+            }
+            HorizontalLayout {
+                spacing: 20px;
+                VerticalLayout {
+                    min-width: 370px; max-width: 400px; spacing: 10px;
+                    ComboBox {
+                        model: ["All notes", "Map brief", "Object notes", "Region notes", "Relevant to selection", "Near a point", "Overlapping bounds"];
+                        current-index <=> root.filter-mode;
+                        selected => { root.page = 0; root.filter(); }
+                    }
+                    LineEdit { text <=> root.query; placeholder-text: "Search summaries and note text…"; edited => { root.page = 0; root.filter(); } }
+                    if root.filter-mode >= 5: VerticalLayout {
+                        spacing: 6px;
+                        Text { text: root.filter-mode == 5 ? "Point · X, Y, Z" : "Minimum corner · X, Y, Z"; color: #b5c0ce; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            LineEdit { text <=> root.query-min-x; }
+                            LineEdit { text <=> root.query-min-y; }
+                            LineEdit { text <=> root.query-min-z; }
+                        }
+                        if root.filter-mode == 6: VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "Maximum corner · X, Y, Z"; color: #b5c0ce; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                LineEdit { text <=> root.query-max-x; }
+                                LineEdit { text <=> root.query-max-y; }
+                                LineEdit { text <=> root.query-max-z; }
+                            }
+                        }
+                        Button { text: "Find relevant notes"; clicked => { root.page = 0; root.filter(); } }
+                    }
+                    if root.filter-mode >= 4: CheckBox { text: "Include map brief"; checked <=> root.include-map; toggled => { root.page = 0; root.filter(); } }
+                    ScrollView {
+                        VerticalLayout {
+                            spacing: 6px;
+                            for row in root.rows: Button {
+                                text: row.summary + "\n" + row.detail;
+                                height: 66px;
+                                checked: root.scope == row.scope;
+                                clicked => { root.begin(row.scope); }
+                            }
+                        }
+                    }
+                    Text { text: root.page-summary; color: #9da7b5; font-size: 12px; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.filter(); } }
+                        Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.filter(); } }
+                    }
+                }
+                Rectangle { width: 1px; background: #343940; }
+                VerticalLayout {
+                    spacing: 10px;
+                    Text { text: root.scope-label; font-size: 20px; font-weight: 600; wrap: word-wrap; }
+                    if root.source-status != "": Text { text: root.source-status; color: #b5c0ce; wrap: word-wrap; }
+                    if root.token == "": Text { text: "Choose a note, add a map brief, or attach context to a selected object. Regions describe an area without adding game geometry."; wrap: word-wrap; color: #b5c0ce; }
+                    if root.token != "": VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "Summary"; font-weight: 600; }
+                        LineEdit { text <=> root.summary; placeholder-text: "What should someone know about this?"; edited => { root.edit(); } }
+                        Text { text: "Intent, constraints and observations"; font-weight: 600; }
+                        TextEdit { text <=> root.body; wrap: word-wrap; min-height: 145px; edited => { root.edit(); } }
+                        Text { text: root.note-budget; color: #9da7b5; font-size: 12px; }
+                        if root.region: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "Region bounds · world units"; font-weight: 600; }
+                            GridLayout {
+                                spacing: 6px;
+                                Row { Text { text: ""; } Text { text: "X"; } Text { text: "Y"; } Text { text: "Z"; } }
+                                Row {
+                                    Text { text: "Minimum"; }
+                                    LineEdit { text <=> root.min-x; edited => { root.edit(); } }
+                                    LineEdit { text <=> root.min-y; edited => { root.edit(); } }
+                                    LineEdit { text <=> root.min-z; edited => { root.edit(); } }
+                                }
+                                Row {
+                                    Text { text: "Maximum"; }
+                                    LineEdit { text <=> root.max-x; edited => { root.edit(); } }
+                                    LineEdit { text <=> root.max-y; edited => { root.edit(); } }
+                                    LineEdit { text <=> root.max-z; edited => { root.edit(); } }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text { text: "Guide color"; }
+                                Rectangle { width: 36px; height: 28px; border-radius: 4px; background: rgb(root.red, root.green, root.blue); }
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    HorizontalLayout { Text { text: "R"; color: #ff9898; } Slider { minimum: 0; maximum: 255; value <=> root.red; changed => { root.edit(); } } }
+                                    HorizontalLayout { Text { text: "G"; color: #91dba8; } Slider { minimum: 0; maximum: 255; value <=> root.green; changed => { root.edit(); } } }
+                                    HorizontalLayout { Text { text: "B"; color: #9ebefa; } Slider { minimum: 0; maximum: 255; value <=> root.blue; changed => { root.edit(); } } }
+                                }
+                            }
+                        }
+                        if root.feedback != "": Text { text: root.feedback; color: #efa47c; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button { text: "Focus in map"; enabled: root.can-focus; clicked => { root.focus-note(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            Button { text: "Cancel edit"; clicked => { root.cancel-edit(); } }
+                            Button { text: "Save note"; enabled: root.can-apply; clicked => { root.apply(); } }
+                        }
+                        if root.can-delete: HorizontalLayout {
+                            spacing: 8px;
+                            CheckBox { text: "Remove this note"; checked <=> root.confirm-delete; }
+                            Button { text: root.region ? "Delete region" : "Delete note"; enabled: root.confirm-delete; clicked => { root.delete-note(); } }
+                        }
+                    }
+                    if root.token == "": Rectangle { vertical-stretch: 1; }
+                }
+            }
+            if root.message != "": Text { text: root.message; color: #efa47c; wrap: word-wrap; }
+            Text { text: "Editor-only notes. Keep durable context here; consolidate existing notes instead of adding activity logs. Current instructions take precedence."; color: #9da7b5; wrap: word-wrap; font-size: 12px; }
+            Button { text: "Cancel / close"; clicked => { root.cancel(); } }
+        }
+    }
+}

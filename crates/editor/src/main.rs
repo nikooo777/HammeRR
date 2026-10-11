@@ -1,5 +1,6 @@
 mod checks_ui;
 mod connection_ui;
+mod context_ui;
 mod game;
 mod inspector;
 mod interaction;
@@ -136,6 +137,8 @@ struct Ui {
     report_window: Option<ReportWindow>,
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
+    context_window: Option<ContextWindow>,
+    seen_context: (u64, u64),
     seen_checks: (u64, u64, u64),
     seen_recovery: (u64, u64),
     seen_management: (u64, u64, u64),
@@ -2455,6 +2458,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         report_window: None,
         recovery_window: None,
         checks_window: None,
+        context_window: None,
+        seen_context: (0, 0),
         seen_checks: (0, 0, 0),
         seen_recovery: (0, 0),
         seen_management: (0, 0, 0),
@@ -2627,6 +2632,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             window.set_message("".into());
             checks_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_design_context({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            if ui.borrow().context_window.is_none() {
+                match ContextWindow::new() {
+                    Ok(window) => {
+                        context_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().context_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui.borrow().context_window.as_ref().unwrap().clone_strong();
+            window.set_aspect(
+                (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
+            );
+            window.set_message("".into());
+            context_ui::refresh(&window, &lock(&session_of(&ui)));
             if let Err(error) = window.show() {
                 app.set_message(error.to_string().into());
             }
@@ -3226,6 +3258,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && window.window().is_visible()
                     {
                         checks_ui::refresh(window, &session);
+                    }
+                }
+                let context = (session.context_serial(), session.scene_serial());
+                if context != ui.seen_context {
+                    ui.seen_context = context;
+                    if let Some(window) = &ui.context_window
+                        && window.window().is_visible()
+                    {
+                        context_ui::refresh(window, &session);
                     }
                 }
                 let recovery = (session.recovery_serial(), session.scene_serial());
@@ -4032,6 +4073,124 @@ mod tests {
                 .write_image_data(image.as_bytes())
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn design_context_controls_share_drafts_queries_regions_and_cancel() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        session
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                true,
+            )
+            .unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let window = ContextWindow::new().unwrap();
+        context_ui::bind(&window, &shared);
+        context_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        let before = lock(&shared).document().vmf().clone();
+        window.invoke_begin("map".into());
+        window.set_summary("Courtyard lighting".into());
+        window.set_body("A quiet service courtyard at dusk. Keep warm light near the entrance and cooler light along the escape route.".into());
+        window.invoke_edit();
+        assert!(window.get_can_apply());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.invoke_apply();
+        assert_eq!(window.get_rows().row_count(), 1);
+        assert_eq!(
+            lock(&shared)
+                .get_context_note(map_core::context::Scope::Map)
+                .unwrap()["note"]["author"],
+            "human"
+        );
+        window.invoke_begin("new_region".into());
+        window.set_summary("Keep the entrance readable".into());
+        window.set_body("Leave the doorway clear and give it a warm pool of light.\n\nAvoid props above waist height along the approach. The player should see the exit from the center of the courtyard.".into());
+        window.set_min_x("-128".into());
+        window.set_min_y("-96".into());
+        window.set_min_z("0".into());
+        window.set_max_x("128".into());
+        window.set_max_y("96".into());
+        window.set_max_z("160".into());
+        window.invoke_edit();
+        assert!(window.get_can_apply());
+        window.invoke_apply();
+        window.invoke_begin("region:1".into());
+        save_ui_snapshot(window.window(), "design-context");
+        for label in [
+            "Map brief",
+            "Note on selection",
+            "New region",
+            "Focus in map",
+            "Cancel edit",
+            "Save note",
+            "Delete region",
+            "Cancel / close",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_focus_note();
+        assert_eq!(lock(&shared).context_state()["focused_region"], 1);
+        window.set_filter_mode(4);
+        window.invoke_filter();
+        assert_eq!(window.get_rows().row_count(), 2);
+        window.set_filter_mode(5);
+        window.set_query_min_x("10000".into());
+        window.set_include_map(false);
+        window.invoke_filter();
+        assert_eq!(window.get_rows().row_count(), 0);
+        window.set_query_min_x("0".into());
+        window.invoke_filter();
+        assert_eq!(window.get_rows().row_count(), 1);
+        window.set_filter_mode(6);
+        window.set_query("props".into());
+        window.invoke_filter();
+        assert_eq!(window.get_rows().row_count(), 1);
+        window.set_query("".into());
+        window.set_filter_mode(0);
+        window.invoke_filter();
+        let saved = lock(&shared).document().vmf().clone();
+        window.set_min_x("unfinished".into());
+        window.invoke_edit();
+        assert!(!window.get_can_apply());
+        window.invoke_cancel_edit();
+        assert_eq!(lock(&shared).document().vmf(), &saved);
+        window.invoke_begin("region:1".into());
+        let old_token = window.get_token();
+        lock(&shared)
+            .begin_context_edit(Some(map_core::context::Scope::Map))
+            .unwrap();
+        window.set_token(old_token);
+        window.invoke_apply();
+        assert!(window.get_message().contains("replaced"));
+        assert_eq!(lock(&shared).document().vmf(), &saved);
+        window.invoke_cancel_edit();
+        window.invoke_begin("region:1".into());
+        window.invoke_delete_note();
+        assert!(window.get_message().contains("Confirm"));
+        window.set_confirm_delete(true);
+        window.invoke_delete_note();
+        assert_eq!(lock(&shared).context_state()["notes"], 1);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &saved);
+        window.invoke_begin("map".into());
+        window.set_body("Unapplied change".into());
+        window.invoke_edit();
+        window.invoke_cancel();
+        assert!(lock(&shared).context_draft().is_none());
+        assert_eq!(lock(&shared).document().vmf(), &saved);
     }
 
     #[test]

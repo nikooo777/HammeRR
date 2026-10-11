@@ -4,6 +4,7 @@ pub mod brush;
 pub mod checks;
 pub mod clip;
 pub mod connections;
+pub mod context;
 pub mod displacement;
 pub mod document;
 pub mod edit;

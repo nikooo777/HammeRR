@@ -305,6 +305,7 @@ impl Session {
             .read(id)?;
         let vmf = Vmf::parse(&text).map_err(|e| format!("Recovery map could not be read: {e}"))?;
         let mut document = Document::new(vmf);
+        document.context().map_err(|error| error.to_string())?;
         document.mark_unsaved();
         self.replace_document(document, None);
         self.recovery.title = format!("Recovered {}", entry.title);

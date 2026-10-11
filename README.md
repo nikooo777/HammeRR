@@ -28,6 +28,7 @@ and the shared entity inspector and activity panel.*
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
+| Design context | Map briefs, object notes and editor-only regions; shared drafts, search, relevant-context retrieval, bounded storage and undo. |
 | Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, fitting and placement, with cancellable previews and grouped material thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
@@ -146,6 +147,28 @@ Checks include hidden content and inspect applied edits. Custom properties are
 preserved. Material/model checks verify paths; full asset dependencies, spawn
 clearance and engine-specific resource limits need further checks. Compile and
 test in CS:S to validate leaks and playability.
+
+### Design context
+
+Open **Design context…** to add a **Map brief**, a **Note on selection**, or a
+**New region**. Keep intent, constraints and useful observations close to the
+geometry they describe. Region bounds and guide colors are editable; guides can
+be hidden or focused. Search all notes or find relevant context for the selected
+object, a point or an area.
+
+**Save note** records one undo step. **Cancel edit** and **Cancel / close** discard
+the shared draft. Notes show their author and whether the source changed since
+they were saved. Copied objects retain notes with observations marked for review;
+deleting objects removes their notes, and undo restores both.
+
+![Design notes, region bounds and shared editing controls](docs/images/design-context.png)
+
+Notes are editor metadata, excluded from compiled BSPs. Limits are 200 summary
+characters, 4 KiB of text per note and 1 MiB shared across the map. MCP retrieves
+relevant context in bounded pages and exposes summaries during object inspection.
+Notes are advisory; current instructions take precedence. Region change tracking
+currently covers the whole map. Other editors' handling of this metadata has not
+yet been verified.
 
 ### Autosave and recovery
 
@@ -365,6 +388,7 @@ For example, place a warm light:
 | World settings and property batches | `get_property_inspector`, `begin_property_edit`, `update_property_edit`, `get_property_edit`, `commit_property_edit`, `cancel_property_edit` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
 | Map checks | `run_map_checks`, `get_map_checks`, `select_map_issue`, `preview_map_fixes`, `apply_map_fixes`, `cancel_map_fixes` |
+| Design context | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `commit_face_preview`, `cancel_face_preview` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |

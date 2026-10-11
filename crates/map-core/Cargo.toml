@@ -6,5 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = "0.23.1"
 glam.workspace = true
 source-formats.workspace = true

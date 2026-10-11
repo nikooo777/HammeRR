@@ -261,8 +261,14 @@ pub fn translate(
     Ok(())
 }
 
-fn renumber_solid(tx: &mut Transaction, solid: &mut Solid) -> Result<(), EditError> {
+fn renumber_solid(
+    tx: &mut Transaction,
+    solid: &mut Solid,
+    mapping: &mut Vec<(ObjectId, ObjectId)>,
+) -> Result<(), EditError> {
+    let old = solid.id;
     solid.id = tx.new_object_id()?;
+    mapping.push((ObjectId::Solid(old), ObjectId::Solid(solid.id)));
     for side in &mut solid.sides {
         side.id = tx.new_side_id()?;
     }
@@ -277,6 +283,7 @@ pub fn duplicate(
     offset: DVec3,
 ) -> Result<Vec<ObjectId>, EditError> {
     let mut copies = Vec::with_capacity(ids.len());
+    let mut mapping = Vec::new();
     for &id in ids {
         let copy = match id {
             ObjectId::Solid(id) => {
@@ -285,7 +292,7 @@ pub fn duplicate(
                     .solid(id)
                     .ok_or(EditError::NotFound(ObjectId::Solid(id)))?
                     .clone();
-                renumber_solid(tx, &mut solid)?;
+                renumber_solid(tx, &mut solid, &mut mapping)?;
                 translate_solid(&mut solid, offset, true);
                 tx.add_solid(solid)?
             }
@@ -296,8 +303,9 @@ pub fn duplicate(
                     .ok_or(EditError::NotFound(ObjectId::Entity(id)))?
                     .clone();
                 entity.id = tx.new_object_id()?;
+                mapping.push((ObjectId::Entity(id), ObjectId::Entity(entity.id)));
                 for solid in &mut entity.solids {
-                    renumber_solid(tx, solid)?;
+                    renumber_solid(tx, solid, &mut mapping)?;
                 }
                 translate_entity(&mut entity, offset, true);
                 tx.add_entity(entity)?
@@ -305,6 +313,7 @@ pub fn duplicate(
         };
         copies.push(copy);
     }
+    crate::context::copy_notes(tx, &mapping)?;
     Ok(copies)
 }
 

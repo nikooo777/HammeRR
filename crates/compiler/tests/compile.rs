@@ -1,6 +1,56 @@
 mod common;
 
 #[test]
+fn design_context_never_changes_compiled_bsp_bytes() {
+    use glam::DVec3;
+    use map_core::context::{Region, Scope, set_note};
+    let mut document = map_core::Document::new(common::room());
+    let game = common::empty_game();
+    let before = compiler::compile(document.vmf(), &game)
+        .bsp
+        .unwrap()
+        .to_bytes();
+    let object = document.objects().next().unwrap();
+    document
+        .edit("design context", |tx| {
+            set_note(
+                tx,
+                Scope::Map,
+                "Map intent".into(),
+                "Private editor context".into(),
+                "agent",
+                None,
+            )?;
+            set_note(
+                tx,
+                Scope::Object(object),
+                "Object intent".into(),
+                "Keep this wall".into(),
+                "human",
+                None,
+            )?;
+            set_note(
+                tx,
+                Scope::Region(1),
+                "Region intent".into(),
+                "Keep this route clear".into(),
+                "agent",
+                Some(Region {
+                    mins: DVec3::splat(-128.0),
+                    maxs: DVec3::splat(128.0),
+                    color: [90, 180, 240],
+                }),
+            )
+        })
+        .unwrap();
+    let saved = document.vmf().write(&Default::default());
+    let reopened = source_formats::vmf::Vmf::parse(&saved).unwrap();
+    assert!(saved.contains("hammerr_context"));
+    let after = compiler::compile(&reopened, &game).bsp.unwrap().to_bytes();
+    assert_eq!(before, after);
+}
+
+#[test]
 fn authored_io_survives_vmf_reload_and_bsp_emission() {
     let mut document = map_core::Document::new(common::room());
     document

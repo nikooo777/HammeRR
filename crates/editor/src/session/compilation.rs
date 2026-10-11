@@ -153,6 +153,7 @@ impl Session {
                 revision: result.revision,
             };
             if self.current_snapshot(&snapshot) {
+                self.reset_pointfile();
                 self.leak = result
                     .output
                     .leak

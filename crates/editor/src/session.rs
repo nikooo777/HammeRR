@@ -27,6 +27,7 @@ pub mod context;
 mod management;
 pub mod material_search;
 pub mod paint;
+pub mod pointfiles;
 pub mod primitives;
 mod recovery;
 pub mod saved_views;
@@ -130,6 +131,7 @@ pub struct Session {
     transform_drag: Option<TransformDrag>,
     area_preview: Option<AreaPreview>,
     paint: paint::State,
+    pointfile: pointfiles::State,
     volume: volume::State,
     connection_draft: Option<ConnectionDraft>,
     connection_serial: u64,
@@ -220,6 +222,7 @@ impl Session {
             transform_drag: None,
             area_preview: None,
             paint: paint::State::default(),
+            pointfile: pointfiles::State::default(),
             volume: volume::State::default(),
             connection_draft: None,
             connection_serial: 0,
@@ -1010,6 +1013,7 @@ impl Session {
         self.document_generation += 1;
         self.compiled = None;
         self.leak = None;
+        self.reset_pointfile();
         self.path = path;
         self.reset_recovery_document();
         self.selection.clear();
@@ -1760,8 +1764,8 @@ impl Session {
             &selected,
             &selected_faces,
         );
-        if let Some(leak) = self.leak() {
-            mesh.set_leak_path(&leak.points);
+        if let Some(points) = self.pointfile_points() {
+            mesh.set_leak_path(points);
         }
         self.append_context_guides(&mut mesh);
         self.append_volume_guide(&mut mesh);

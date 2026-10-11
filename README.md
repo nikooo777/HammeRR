@@ -29,6 +29,7 @@ and the shared entity inspector and activity panel.*
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
+| Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
 | Design context | Map briefs, object notes and editor-only regions; shared drafts, search, relevant-context retrieval, bounded storage and undo. |
 | Face materials | Individual face selection, sampled material/projection strokes and batch painting, edge wrapping, world/face alignment, UV controls, per-face/grouped fitting, view projection and placement, with cancellable previews and grouped material thumbnails. |
@@ -206,6 +207,23 @@ convex brushes; all shapes remain ordinary editable VMF geometry.
 | Shape controls | Shapes created through MCP |
 | --- | --- |
 | ![Brush shape dimensions, material preview and cancellation controls](docs/images/brush-shapes.png) | ![Wedge, cylinder, cone, sphere and segmented arch](docs/images/brush-primitives.png) |
+
+### Map statistics
+
+Open **Map statistics…** to see authored brush sides, world/entity brushes,
+point/brush entities, connections, materials, model references and terrain.
+The report includes hidden objects and refreshes when the map changes. Choose a
+usage breakdown and page through materials, entity classes, model paths,
+lightmap scales or displacement powers, ordered by frequency.
+
+Counts describe the current map structure, excluding pending previews. Brush
+sides are plane records, not compiled faces; model paths are references, not
+verified assets. Hidden brush totals include brushes inside hidden entities.
+Use **Object report…** to search IDs and frame individual or matching objects.
+MCP `get_map_statistics` exposes the same totals and pages with generation and
+revision markers; `get_object_report` provides ID lookup and navigation targets.
+
+![Authored map totals and paginated material usage](docs/images/map-statistics.png)
 
 ### Check a map
 
@@ -534,7 +552,7 @@ For example, place a warm light:
 
 | Task | Tools |
 | --- | --- |
-| Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `find_objects`, `get_objects` |
+| Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
 | Spatial authoring | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
@@ -595,6 +613,7 @@ python -B scripts/validate_volume_selection.py --output /tmp/hammerr-volume-chec
 python -B scripts/validate_paint_selection.py --output /tmp/hammerr-paint-check
 python -B scripts/validate_texture_strokes.py --output /tmp/hammerr-texture-check
 python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
+python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check

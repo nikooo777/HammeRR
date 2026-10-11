@@ -30,6 +30,7 @@ pub mod paint;
 pub mod primitives;
 mod recovery;
 pub mod saved_views;
+pub mod statistics;
 mod surfaces;
 pub mod volume;
 pub use clipping::ClipPreview;

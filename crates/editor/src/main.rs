@@ -17,6 +17,7 @@ mod rename_ui;
 mod saved_views_ui;
 mod session;
 mod spatial;
+mod statistics_ui;
 mod steam;
 mod surface_group_ui;
 #[cfg(test)]
@@ -144,6 +145,7 @@ struct Ui {
     seen_connections: (u64, u64, u64),
     properties_window: Option<PropertiesWindow>,
     report_window: Option<ReportWindow>,
+    statistics_window: Option<StatisticsWindow>,
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
@@ -2660,6 +2662,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_connections: (0, 0, 0),
         properties_window: None,
         report_window: None,
+        statistics_window: None,
         recovery_window: None,
         checks_window: None,
         context_window: None,
@@ -2876,6 +2879,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_object_report({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_report_window(&app.unwrap(), &ui)
+    });
+    app.on_map_statistics({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if ui.borrow().statistics_window.is_none() {
+                match StatisticsWindow::new() {
+                    Ok(window) => {
+                        statistics_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().statistics_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui
+                .borrow()
+                .statistics_window
+                .as_ref()
+                .unwrap()
+                .clone_strong();
+            statistics_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
     });
     app.on_map_checks({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3797,6 +3827,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                 ui.last_log_refresh = now;
+                if let Some(window) = &ui.statistics_window
+                    && window.window().is_visible()
+                {
+                    statistics_ui::refresh_changed(window, &lock(&ui.session));
+                }
                 if let Some(controller) = &ui.saved_views
                     && controller.window.window().is_visible()
                 {
@@ -4717,6 +4752,62 @@ mod tests {
         report.invoke_select_result(id, false);
         assert!(report.get_message().contains("Map changed"));
         assert!(lock(&shared).selected_ids().is_empty());
+    }
+
+    #[test]
+    fn statistics_controls_refresh_page_and_close_without_editing() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        for index in 0..54 {
+            let min = DVec3::X * index as f64 * 96.0;
+            state
+                .create_block(
+                    Actor::Agent,
+                    min,
+                    min + DVec3::splat(64.0),
+                    &format!("brick/example_{index:02}"),
+                    false,
+                )
+                .unwrap();
+        }
+        let before = state.document().vmf().clone();
+        let history = state.document().undo_labels().count();
+        let shared = Arc::new(Mutex::new(state));
+        let window = StatisticsWindow::new().unwrap();
+        statistics_ui::bind(&window, &shared);
+        window.invoke_refresh();
+        assert_eq!(window.get_brushes(), "54");
+        assert_eq!(window.get_faces(), "324");
+        assert_eq!(window.get_rows().row_count(), 50);
+        assert!(window.get_has_next());
+        window.set_page(1);
+        window.invoke_refresh();
+        assert_eq!(window.get_rows().row_count(), 4);
+        assert!(!window.get_has_next());
+        window.set_page(0);
+        window.invoke_refresh();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "map-statistics");
+        for label in ["Refresh", "Close", "Next"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_cancel();
+        assert!(!window.window().is_visible());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        window.set_section(1);
+        window.invoke_refresh();
+        assert_eq!(window.get_rows().row_count(), 0);
+        lock(&shared).new_map(Actor::Agent, true).unwrap();
+        statistics_ui::refresh_changed(&window, &lock(&shared));
+        assert_eq!(window.get_brushes(), "0");
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {

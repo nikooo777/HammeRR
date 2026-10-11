@@ -2871,7 +2871,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             let shared = session_of(&ui);
             if ui.borrow().volume.is_none() {
-                match volume_ui::Controller::new(&shared) {
+                let viewport = app.clone();
+                match volume_ui::Controller::new(&shared, move || {
+                    let app = viewport.unwrap();
+                    (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
+                }) {
                     Ok(controller) => ui.borrow_mut().volume = Some(controller),
                     Err(error) => {
                         app.unwrap().set_message(error.to_string().into());
@@ -4612,7 +4616,7 @@ mod tests {
         let before = session.document().vmf().clone();
         let history = session.document().undo_labels().count();
         let shared = Arc::new(Mutex::new(session));
-        let controller = volume_ui::Controller::new(&shared).unwrap();
+        let controller = volume_ui::Controller::new(&shared, || 0.4).unwrap();
         controller.initialize(&mut lock(&shared));
         let window = &controller.window;
         window.show().unwrap();
@@ -4621,6 +4625,19 @@ mod tests {
         assert_eq!(lock(&shared).selected_ids(), [b]);
         window.invoke_frame();
         assert!(lock(&shared).volume_preview().is_some());
+        {
+            let session = lock(&shared);
+            let spec = session.volume_preview().unwrap().spec;
+            let matrix = session.camera().view_projection(0.4);
+            for x in [spec.mins.x, spec.maxs.x] {
+                for y in [spec.mins.y, spec.maxs.y] {
+                    for z in [spec.mins.z, spec.maxs.z] {
+                        let point = matrix.project_point3(Vec3::new(x as f32, y as f32, z as f32));
+                        assert!(point.x.abs() <= 1.0001 && point.y.abs() <= 1.0001);
+                    }
+                }
+            }
+        }
         save_ui_snapshot(window.window(), "volume-selection");
         for label in [
             "Cancel",

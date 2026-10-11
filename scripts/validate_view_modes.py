@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 from pathlib import Path
 
 from validate_face_lighting import ROOT, Client, detail, face_ref
@@ -43,7 +44,7 @@ def validate(client, output):
                 "mins": [20, 100, 0],
                 "maxs": [84, 164, 100],
                 "segments": 12,
-                "material": "tile/tilefloor001a",
+                "material": "de_dust/tilefloor01",
             },
         )
         client.call(
@@ -129,6 +130,65 @@ def validate(client, output):
         check(
             client.call("get_map_info")["view"] == current,
             "Invalid mode preserves the current view",
+        )
+        client.call(
+            "set_camera",
+            {"position": [48, -300, 32], "look_at": [48, 32, 32], "fov": 60},
+        )
+        history = client.call("get_map_info")["undo"]
+        framed = client.call("frame_selection", {"aspect": 0.4})
+        half = math.tan(math.radians(framed["fov"]) / 2)
+        check(
+            all(
+                abs(
+                    (x - framed["position"][0])
+                    / ((y - framed["position"][1]) * half * 0.4)
+                )
+                <= 1.001
+                and abs(
+                    (z - framed["position"][2]) / ((y - framed["position"][1]) * half)
+                )
+                <= 1.001
+                for x in [0, 96]
+                for y in [0, 64]
+                for z in [0, 64]
+            ),
+            "Portrait perspective frame contains all selected brush corners",
+        )
+        portrait = client.render(
+            output / "portrait-framed.png", width=360, height=900, surface="flat"
+        )
+        check(
+            client.render(
+                output / "portrait-focus.png",
+                width=360,
+                height=900,
+                surface="flat",
+                camera={"focus": [brush_id]},
+            )
+            == portrait,
+            "MCP focus render and shared framing agree for a portrait viewport",
+        )
+        check(
+            client.call("get_camera") == framed,
+            "Focus render preserves the shared camera",
+        )
+        preview = client.call(
+            "select_volume", {"mins": [0, 0, 0], "maxs": [96, 64, 64], "preview": True}
+        )
+        token = preview["preview"]["token"]
+        client.call("frame_volume_selection", {"token": token, "aspect": 0.4})
+        client.call("cancel_volume_selection", {"token": token})
+        check(
+            client.render(
+                output / "portrait-volume.png", width=360, height=900, surface="flat"
+            )
+            == portrait,
+            "Volume framing shares the corrected perspective fit",
+        )
+        check(
+            client.call("get_map_info")["undo"] == history,
+            "Framing adds no map history",
         )
         client.call("save_map", {"path": str(output / "view-modes.vmf")})
         (output / "renders.json").write_text(json.dumps(modes, indent=2) + "\n")

@@ -169,7 +169,7 @@ update_paint_selection extends its pixel path, and get_paint_selection exposes c
 Use its token with commit_paint_selection or cancel_paint_selection; render_view shows the shared preview. \
 For sampled material/projection strokes, sample_face_texture then begin_texture_stroke, update_texture_stroke, \
 get_texture_stroke and commit_texture_stroke or cancel_texture_stroke share one undoable preview with the UI. \
-get_brush_components exposes precise faces/vertices/edges with stable incident-face IDs. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures remain world-anchored. \
+get_brush_components exposes precise faces/vertices/edges with stable incident-face IDs. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures default to world anchoring, with optional texture_lock to preserve corresponding corner UVs. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -487,6 +487,9 @@ struct ComponentMoveArgs {
     /// Snap the offset using the editor's current grid and snap setting.
     #[serde(default)]
     snap: bool,
+    /// Preserve texture coordinates at corresponding corners; rejects incompatible face deformations.
+    #[serde(default)]
+    texture_lock: bool,
     snapshot: String,
 }
 
@@ -2766,7 +2769,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the current component preview when present. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections remain anchored in world space.",
+        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the current component preview when present. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections default to world anchoring; texture_mode describes the current component preview.",
         annotations(read_only_hint = true)
     )]
     fn get_brush_components(&self, Parameters(args): Parameters<ComponentQueryArgs>) -> ToolResult {
@@ -2806,7 +2809,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview moving selected brush faces/vertices/edges by a total world-space delta from committed geometry. Requires the latest component snapshot; optional snap honors the shared grid. Preserves face/solid IDs, ownership, material, world-anchored UV projection and metadata. Rejects nonplanar faces, collapsed edges, concavity, changed topology, displacements or coordinates outside ±65536. Invalid updates preserve the last valid draft. render_view and get_brush_components show the draft; Apply is one undo step. Source edits or other geometry tools invalidate the draft."
+        description = "Preview moving selected brush faces/vertices/edges by a total world-space delta from committed geometry. Requires the latest component snapshot; optional snap honors the shared grid. Preserves face/solid IDs, ownership, material and metadata. Textures stay world-anchored by default. texture_lock=true attaches UVs to every corresponding corner; affine stretches and rotations work, incompatible face deformations reject and preserve the previous draft. Rejects nonplanar faces, collapsed edges, concavity, changed topology, displacements or coordinates outside ±65536. Invalid updates preserve the last valid draft. render_view and get_brush_components show the draft; Apply is one undo step. Source edits or other geometry tools invalidate the draft."
     )]
     fn preview_component_move(
         &self,
@@ -2814,7 +2817,12 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_component_move(vec3(args.delta), args.snap, &args.snapshot)?;
+            session.preview_component_move(
+                vec3(args.delta),
+                args.snap,
+                args.texture_lock,
+                &args.snapshot,
+            )?;
             session.component_report(
                 &session
                     .component_selection()

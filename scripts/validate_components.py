@@ -4,6 +4,7 @@ from pathlib import Path
 
 from validate_face_lighting import ROOT, Client, detail
 from validate_material_replacement import preserved_map
+from validate_texture_chain import uv
 
 
 def validate(client, output):
@@ -22,10 +23,15 @@ def validate(client, output):
             {"components": components, "mode": mode, "snapshot": inspect()["snapshot"]},
         )
 
-    def preview(delta, snap=False):
+    def preview(delta, snap=False, texture_lock=False):
         return client.call(
             "preview_component_move",
-            {"delta": delta, "snap": snap, "snapshot": inspect()["snapshot"]},
+            {
+                "delta": delta,
+                "snap": snap,
+                "texture_lock": texture_lock,
+                "snapshot": inspect()["snapshot"],
+            },
         )
 
     def top_edge(shape):
@@ -213,6 +219,85 @@ def validate(client, output):
         client.call("commit_component_move", {"token": face_draft["preview"]["token"]})
         client.call("undo")
         check(detail(client, ids) == original, "Face movement is one reversible edit")
+        select([whole_face])
+        attached = preview([0, 0, 32], texture_lock=True)
+        check(
+            attached["texture_mode"] == "attached"
+            and attached["preview"]["texture_lock"],
+            "Attached texture mode is inspectable",
+        )
+        attached_pixels = client.render(output / "texture-attached-preview.png")
+        client.call("commit_component_move", {"token": attached["preview"]["token"]})
+        check(
+            client.render(output / "texture-attached-applied.png") == attached_pixels,
+            "Attached texture preview and apply have identical pixels",
+        )
+        attached_faces = detail(client, ids)
+        moved_shape = inspect(solid_ids)["brushes"][0]
+        for old in original[0]["faces"]:
+            new = next(
+                face
+                for face in attached_faces[0]["faces"]
+                if face["side"] == old["side"]
+            )
+            for vertex in shape["vertices"]:
+                if old["side"] not in vertex["sides"]:
+                    continue
+                moved = next(
+                    item
+                    for item in moved_shape["vertices"]
+                    if item["sides"] == vertex["sides"]
+                )
+                assert all(
+                    abs(a - b) < 1e-4
+                    for a, b in zip(
+                        uv(old, vertex["position"]),
+                        uv(new, moved["position"]),
+                        strict=True,
+                    )
+                )
+        checks.append("Every face corner keeps its original texture coordinates")
+        check(
+            any(
+                old["uaxis"] != new["uaxis"] or old["vaxis"] != new["vaxis"]
+                for old, new in zip(
+                    original[0]["faces"], attached_faces[0]["faces"], strict=True
+                )
+            ),
+            "Stretching changes texture projection when attachment is enabled",
+        )
+        client.call("undo")
+        check(
+            detail(client, ids) == original,
+            "Undo restores attached texture projections",
+        )
+        client.call("redo")
+        check(
+            detail(client, ids) == attached_faces,
+            "Redo restores attached texture projections",
+        )
+        client.call("undo")
+        select([edge])
+        world = preview([0, 0, 16])
+        rejected = client.call(
+            "preview_component_move",
+            {
+                "delta": [0, 0, 16],
+                "texture_lock": True,
+                "snapshot": inspect()["snapshot"],
+            },
+            error=True,
+        )
+        check(
+            "every corner" in json.dumps(rejected),
+            "Unsupported corner attachment gives an actionable explanation",
+        )
+        check(
+            inspect()["preview"]["token"] == world["preview"]["token"]
+            and inspect()["texture_mode"] == "world",
+            "Rejected texture attachment preserves valid world-anchored preview",
+        )
+        client.call("cancel_component_move", {"token": world["preview"]["token"]})
         vertex = {"solid": shape["solid"], "sides": shape["vertices"][0]["sides"]}
         select([vertex])
         result = client.call(
@@ -293,7 +378,7 @@ def validate(client, output):
         tetra = inspect()["brushes"][0]
         apex = max(tetra["vertices"], key=lambda vertex: vertex["position"][2])
         select([{"solid": tetra["solid"], "sides": apex["sides"]}])
-        draft = preview([8, 4, 8])
+        draft = preview([8, 4, 8], texture_lock=True)
         check(
             len(draft["brushes"][0]["vertices"]) == 4,
             "A single tetrahedron vertex can move while retaining topology",
@@ -312,6 +397,14 @@ def validate(client, output):
                 )
             ),
             "Single-vertex offset is precise",
+        )
+        tetra_after = detail(client, [f"solid:{tetra['solid']}"])
+        attached_path = output / "texture-attachment.vmf"
+        client.call("save_map", {"path": str(attached_path)})
+        client.call("open_map", {"path": str(attached_path)})
+        check(
+            detail(client, [f"solid:{tetra['solid']}"]) == tetra_after,
+            "Attached triangle textures survive VMF save/reopen",
         )
         for mins, maxs in [
             ([-256, -256, -16], [256, 256, 0]),

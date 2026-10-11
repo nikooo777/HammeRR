@@ -5065,6 +5065,31 @@ mod tests {
         save_ui_snapshot(window.window(), "brush-faces");
         window.invoke_cancel();
         assert_eq!(lock(&shared).document().vmf(), &valid);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        window.invoke_refresh();
+        let top = window
+            .get_rows()
+            .iter()
+            .find(|row| row.label.starts_with("Top"))
+            .unwrap();
+        window.invoke_choose(top.key);
+        window.set_move_z("16".into());
+        window.set_texture_lock(true);
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(
+            lock(&shared).component_report(&[]).unwrap()["texture_mode"],
+            "attached"
+        );
+        window.show().unwrap();
+        window.window().take_snapshot().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
+        save_ui_snapshot(window.window(), "brush-texture-attachment");
+        window.invoke_apply();
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_cancel();
     }
 
     #[test]

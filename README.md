@@ -194,8 +194,11 @@ Invalid offsets leave the last valid preview visible. Faces must remain flat
 and the brush convex: moving one corner of a box usually requires moving its
 connected edge or the whole face together. Splitting, welding and displacement
 movement are not supported yet. Existing face IDs, materials, lighting fields
-and unknown metadata are retained; texture projections stay anchored in world
-space during reshaping.
+and unknown metadata are retained. Textures stay anchored in world space by
+default. Enable **Keep textures at corners** to stretch or rotate the texture
+with each reshaped face. Every corner must keep its original texture coordinates;
+moves that cannot do that with Source's projection are rejected. Disable the
+option or move the whole face when that happens.
 
 The first version supports 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
@@ -204,6 +207,12 @@ collapse edges or alter topology are rejected before the map is changed.
 | Component controls | Shared shape preview |
 | --- | --- |
 | ![Face, vertex and edge selection, precise offsets and Apply/Cancel controls](docs/images/brush-components.png) | ![Flat-shaded convex brush with its selected edge moved upward](docs/images/component-preview.png) |
+
+The same height change with world anchoring and with texture attachment:
+
+| World-anchored texture | Texture kept at the original corners |
+| --- | --- |
+| ![Texture repeats as the brush grows taller](docs/images/texture-world.png) | ![Texture stretches with the taller brush](docs/images/texture-attached.png) |
 
 ### Hollow brushes
 
@@ -711,6 +720,10 @@ and three or more identify a vertex. Vertex-array indices describe that response
 human viewport show the same draft. Map edits and competing geometry tools
 invalidate it. Camera and map coordinates in MCP responses retain their full
 precision, so reusing a reported camera preserves its orientation precisely.
+Set `texture_lock: true` in `preview_component_move` to keep texture coordinates
+at corresponding face corners. The default is world anchoring. The response
+reports `texture_mode` and the preview's `texture_lock` setting; incompatible
+deformations leave the previous valid draft intact.
 
 For hollowing, get the current `stamp` from `get_hollow_preview`, then pass it
 to `preview_hollow` with thickness, direction and optional object IDs. The result

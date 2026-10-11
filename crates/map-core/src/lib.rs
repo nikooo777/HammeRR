@@ -20,6 +20,7 @@ pub mod subobject;
 pub mod surface;
 pub mod surface_group;
 pub mod texture_chain;
+pub mod texture_deform;
 pub mod transform;
 
 pub use brush::{BrushError, BrushGeometry, Face, texel_uv};

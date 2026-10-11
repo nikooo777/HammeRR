@@ -5,6 +5,7 @@ use render::Projection;
 
 use super::{Actor, SelectMode, Session};
 
+#[derive(Clone)]
 pub struct ClipPreview {
     pub document: Document,
     pub ids: Vec<ObjectId>,
@@ -70,6 +71,7 @@ impl Session {
     }
 
     pub fn cancel_clip_preview(&mut self) {
+        self.clip_drag = None;
         self.clip_epoch += 1;
         if self.clip_points.take().is_some() {
             self.scene_serial += 1;
@@ -79,7 +81,9 @@ impl Session {
     }
 
     pub fn clear_clip_preview(&mut self) {
+        self.clip_drag = None;
         if self.clip_preview.take().is_some() {
+            self.clip_epoch += 1;
             self.scene_serial += 1;
             self.view_serial += 1;
         }
@@ -139,6 +143,7 @@ impl Session {
             let (mins, maxs) = map_core::query::bounds_of(&self.document, ids)
                 .ok_or("Selected brushes have no bounds")?;
             self.select(ids, SelectMode::Replace)?;
+            self.clip_drag = None;
             self.cancel_transform_preview();
             self.clear_hollow_preview();
             self.clear_component_edit();
@@ -161,6 +166,7 @@ impl Session {
                 generation: self.document_generation,
                 revision: self.document.revision(),
             });
+            self.clip_epoch += 1;
             self.scene_serial += 1;
             self.view_serial += 1;
             Ok(result)
@@ -178,6 +184,11 @@ impl Session {
     }
 
     pub fn commit_clip_preview(&mut self, actor: Actor) -> Result<ClipResult, String> {
+        if self.clip_drag.is_some() {
+            return Err(
+                "Finish or cancel positioning the cut plane before applying the cut".into(),
+            );
+        }
         let preview = self.clip_preview.take().ok_or("No clip preview to apply")?;
         self.scene_serial += 1;
         self.view_serial += 1;

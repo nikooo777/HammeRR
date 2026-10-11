@@ -94,6 +94,10 @@ cargo test --workspace -j 8
 are independent. In planar views, arrows move within the displayed plane;
 PgUp/PgDn move along its depth axis.
 
+Framing fits the viewport's width and height while preserving the camera's
+direction and field of view. This also applies to portrait MCP renders and
+**Frame box** in volume selection.
+
 ### Viewport modes
 
 Choose **Textured**, **Flat shading**, **Wireframe**, **Lightmap density** or

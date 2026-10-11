@@ -171,10 +171,18 @@ impl Camera {
 
     /// Frames a bounding box from `direction` (pointing from the camera
     /// toward the box) so all of it fits in view.
-    pub fn framing(mins: Vec3, maxs: Vec3, direction: Vec3, fov_y_degrees: f32) -> Self {
+    pub fn framing(
+        mins: Vec3,
+        maxs: Vec3,
+        direction: Vec3,
+        fov_y_degrees: f32,
+        aspect: f32,
+    ) -> Self {
         let center = (mins + maxs) * 0.5;
         let radius = ((maxs - mins).length() * 0.5).max(16.0);
-        let distance = radius / (fov_y_degrees.to_radians() * 0.5).sin();
+        let vertical = fov_y_degrees.to_radians() * 0.5;
+        let horizontal = (vertical.tan() * aspect).atan();
+        let distance = (radius / vertical.min(horizontal).sin()).max(radius + Self::NEAR);
         let mut camera =
             Self::looking_at(center - direction.normalize_or(Vec3::X) * distance, center);
         camera.fov_y_degrees = fov_y_degrees;
@@ -183,7 +191,11 @@ impl Camera {
 
     pub fn frame_bounds(self, mins: Vec3, maxs: Vec3, aspect: f32) -> Self {
         if self.projection == Projection::Perspective {
-            return Self::framing(mins, maxs, self.forward(), self.fov_y_degrees);
+            return Self {
+                position: Self::framing(mins, maxs, self.forward(), self.fov_y_degrees, aspect)
+                    .position,
+                ..self
+            };
         }
         let size = maxs - mins;
         let height = size
@@ -377,6 +389,41 @@ mod tests {
             assert_eq!(camera.up()[vertical], 1.0);
             let plane = camera.plane_point((0.3, -0.4), aspect, -64.0).unwrap();
             assert_eq!(plane[normal], -64.0);
+        }
+    }
+
+    #[test]
+    fn perspective_framing_contains_bounds_for_portrait_landscape_and_wide_fov() {
+        for (mins, maxs) in [
+            (Vec3::splat(-256.0), Vec3::new(1024.0, 512.0, 128.0)),
+            (Vec3::new(-8.0, -8.0, -512.0), Vec3::new(8.0, 8.0, 512.0)),
+            (Vec3::splat(-1.0), Vec3::splat(1.0)),
+        ] {
+            for aspect in [0.25, 0.5, 1.0, 2.0, 4.0] {
+                for fov in [20.0, 60.0, 120.0, 178.0] {
+                    for position in [Vec3::new(-5.0, -7.0, 3.0), Vec3::X, Vec3::Z] {
+                        let mut original = Camera::looking_at(position, Vec3::ZERO);
+                        original.fov_y_degrees = fov;
+                        let framed = original.frame_bounds(mins, maxs, aspect);
+                        assert_eq!(framed.fov_y_degrees, fov);
+                        assert!((framed.forward() - original.forward()).length() < 1e-5);
+                        let matrix = framed.view_projection(aspect);
+                        for x in [mins.x, maxs.x] {
+                            for y in [mins.y, maxs.y] {
+                                for z in [mins.z, maxs.z] {
+                                    let point = matrix.project_point3(Vec3::new(x, y, z));
+                                    assert!(point.is_finite());
+                                    assert!(
+                                        point.x.abs() <= 1.0001 && point.y.abs() <= 1.0001,
+                                        "{aspect} {fov} {position:?}: {point:?}"
+                                    );
+                                    assert!(point.z > 0.0 && point.z <= 1.0001);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

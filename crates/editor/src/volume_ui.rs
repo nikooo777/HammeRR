@@ -112,7 +112,10 @@ fn refresh(window: &VolumeWindow, session: &Session, token: Option<u64>) {
 }
 
 impl Controller {
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
+    pub fn new(
+        shared: &SharedSession,
+        aspect: impl Fn() -> f32 + 'static,
+    ) -> Result<Self, slint::PlatformError> {
         let window = VolumeWindow::new()?;
         let token = Rc::new(Cell::new(None));
         window.on_edited({
@@ -157,7 +160,7 @@ impl Controller {
             let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
             move || {
                 if let Some(token) = token.get()
-                    && let Err(error) = lock(&shared).frame_volume_selection(token, 1.6)
+                    && let Err(error) = lock(&shared).frame_volume_selection(token, aspect())
                 {
                     window.unwrap().set_message(error.into());
                 }

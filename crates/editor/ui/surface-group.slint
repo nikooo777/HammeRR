@@ -1,0 +1,79 @@
+import { Button, ComboBox, LineEdit } from "std-widgets.slint";
+
+export component SurfaceGroupWindow inherits Window {
+    title: "Map textures together - HammeRR";
+    preferred-width: 640px;
+    preferred-height: 570px;
+    in property <string> selection-label;
+    in property <string> message;
+    in property <bool> stale;
+    in property <bool> can-apply: true;
+    in property <[string]> references;
+    in-out property <int> reference-index;
+    in-out property <int> projection;
+    in-out property <string> material;
+    in property <image> material-preview;
+    in property <string> preview-material;
+    in-out property <string> repeats-u: "1";
+    in-out property <string> repeats-v: "1";
+    callback edited();
+    callback load-material();
+    callback browse();
+    callback preview-edit();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px;
+            spacing: 14px;
+            Text { text: "Map textures together"; font-size: 24px; font-weight: 600; }
+            Text { text: root.selection-label; color: #aeb9c8; }
+            ComboBox {
+                model: ["Fit faces together", "Project along current view"];
+                current-index <=> root.projection;
+                selected => { root.edited(); }
+            }
+            Text {
+                text: root.projection == 0 ? "Fit a continuous texture across faces on the same plane. Choose which face supplies the texture direction." : "Fit a shared texture along the viewport's viewing direction. Edge-on faces cannot receive this projection.";
+                color: #aeb9c8; wrap: word-wrap;
+            }
+            if root.projection == 0: HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Texture direction"; vertical-alignment: center; }
+                ComboBox { model: root.references; current-index <=> root.reference-index; selected => { root.edited(); } }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Image { width: 80px; height: 80px; source: root.material-preview; image-fit: contain; visible: root.material == root.preview-material; }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "Shared material"; font-weight: 600; }
+                    LineEdit { text <=> root.material; placeholder-text: "Choose one material for these faces"; edited => { root.edited(); } accepted => { root.load-material(); } }
+                    Button { text: "Choose material…"; clicked => { root.browse(); } }
+                }
+            }
+            Text { text: "Tiles across the whole surface"; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Horizontal"; vertical-alignment: center; }
+                LineEdit { text <=> root.repeats-u; input-type: decimal; edited => { root.edited(); } }
+                Text { text: "Vertical"; vertical-alignment: center; }
+                LineEdit { text <=> root.repeats-v; input-type: decimal; edited => { root.edited(); } }
+            }
+            Text { text: "1 × 1 fits one tile across the combined bounds. More tiles make the texture smaller; fractions make it larger."; color: #aeb9c8; wrap: word-wrap; }
+            if root.projection == 1: Text { text: "Projection follows the view direction without perspective distortion. Preview again after moving the camera."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: root.message; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 12px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Preview mapping"; enabled: !root.stale; clicked => { root.preview-edit(); } }
+                Button { text: "Apply mapping"; enabled: !root.stale && root.can-apply; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

@@ -88,6 +88,7 @@ get_face_selection inspects selected faces and pending texture changes. browse_m
 provides grouped catalog metadata; set_material_favorite shares browser favorites. \
 find_material_faces creates an exact map/selection material report with explicit hidden handling. \
 Use its token with select_material_faces or replace_materials; get_material_search paginates results. \
+project_face_group fits a continuous tiled texture across coplanar faces or projects along the current view. \
 clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
 Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview \
 or cancel_clip_preview. Keep front (arrow side), back, or both; displacements cannot be clipped. \
@@ -860,6 +861,22 @@ pub struct FacePreviewArgs {
 
 fn parse_token(value: &str) -> Result<u64, String> {
     value.parse().map_err(|_| "Invalid preview token".into())
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ProjectFaceGroupArgs {
+    /// Omit to use the current selected faces.
+    pub faces: Option<Vec<FaceRef>>,
+    /// face (default): coplanar fitting; view: parallel projection along the current camera direction.
+    pub projection: Option<String>,
+    /// Face supplying UV directions and mirroring; defaults to the first sorted solid/side pair. Only for face projection.
+    pub reference: Option<FaceRef>,
+    /// Omit to keep the common material. Mixed materials require an explicit shared material.
+    pub material: Option<String>,
+    /// Horizontal/vertical tile counts across combined bounds, each greater than 0 and at most 1024. Default [1,1].
+    pub repeats: Option<[f64; 2]>,
+    #[serde(default)]
+    pub preview: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3235,6 +3252,36 @@ impl EditorServer {
     )]
     fn get_face_selection(&self) -> ToolResult {
         ok(face_state(&self.session()))
+    }
+
+    #[tool(
+        description = "Map one continuous texture across a face group. face fits combined coplanar bounds using a reference face's directions/mirroring. view fits a parallel projection using the current camera right/up axes (no perspective distortion). repeats controls tiles across the whole group. Uses actual material dimensions; mixed materials need an explicit replacement. Rejects edge-on targets atomically. UVs/material change; lighting and geometry remain intact. Preview shares token-guarded commit_face_preview/cancel_face_preview."
+    )]
+    fn project_face_group(&self, Parameters(args): Parameters<ProjectFaceGroupArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let projection = match args.projection.as_deref().unwrap_or("face") {
+                "face" => {
+                    crate::session::GroupProjection::Face(args.reference.as_ref().map(face_id))
+                }
+                "view" if args.reference.is_none() => crate::session::GroupProjection::View,
+                "view" => return Err("reference is only used for face projection".into()),
+                _ => return Err("projection must be face or view".into()),
+            };
+            let changed = session.project_face_group(
+                Actor::Agent,
+                &faces,
+                projection,
+                args.material.as_deref(),
+                glam::DVec2::from_array(args.repeats.unwrap_or([1.0, 1.0])),
+                args.preview,
+            )?;
+            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+        })
     }
 
     #[tool(

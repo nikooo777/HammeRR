@@ -14,6 +14,7 @@ pub mod query;
 pub mod references;
 pub mod region;
 pub mod surface;
+pub mod surface_group;
 pub mod transform;
 
 pub use brush::{BrushError, BrushGeometry, Face, texel_uv};

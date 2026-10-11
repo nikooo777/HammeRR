@@ -31,6 +31,7 @@ mod surfaces;
 pub use clipping::ClipPreview;
 pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
 pub use recovery::RecoveryRequest;
+pub use surfaces::GroupProjection;
 mod connections;
 pub use connections::{ConnectionDraft, ConnectionFields, ConnectionRecord};
 mod references;

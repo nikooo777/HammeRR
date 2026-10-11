@@ -1,0 +1,36 @@
+import { Button, TextEdit } from "std-widgets.slint";
+
+export component CompileWindow inherits Window {
+    title: "Build status - HammeRR";
+    width: 720px;
+    height: 560px;
+    in property <string> summary;
+    in property <string> details;
+    in property <string> diagnostics;
+    in property <string> message;
+    in property <bool> cancellable;
+    callback cancel-build();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+    }
+    VerticalLayout {
+        padding: 24px;
+        spacing: 14px;
+        Text { text: "Build status"; font-size: 24px; font-weight: 600; }
+        Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
+        Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
+        Text { text: "Diagnostics"; font-weight: 600; }
+        TextEdit { text: root.diagnostics; read-only: true; vertical-stretch: 1; }
+        Text { text: root.message; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            Button { text: "Cancel build"; enabled: root.cancellable; clicked => { root.cancel-build(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Close"; clicked => { root.close-dialog(); } }
+        }
+    }
+}

@@ -40,3 +40,37 @@ pub fn game() -> (tempfile::TempDir, GameFs) {
     };
     (directory, game)
 }
+
+pub fn room() -> source_formats::vmf::Vmf {
+    use glam::DVec3;
+    use map_core::{Document, edit};
+    let mut document = Document::empty();
+    document
+        .edit("room", |tx| {
+            for (mins, maxs) in [
+                ([-272., -272., -16.], [272., 272., 0.]),
+                ([-272., -272., 256.], [272., 272., 272.]),
+                ([-272., -272., 0.], [-256., 272., 256.]),
+                ([256., -272., 0.], [272., 272., 256.]),
+                ([-256., -272., 0.], [256., -256., 256.]),
+                ([-256., 256., 0.], [256., 272., 256.]),
+            ] {
+                edit::create_block(
+                    tx,
+                    DVec3::from_array(mins),
+                    DVec3::from_array(maxs),
+                    "dev/dev_measuregeneric01",
+                )?;
+            }
+            edit::create_entity(
+                tx,
+                "info_player_terrorist",
+                Some(DVec3::new(0., 0., 8.)),
+                &[],
+                Vec::new(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    document.vmf().clone()
+}

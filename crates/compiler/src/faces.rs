@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use glam::DVec3;
 use source_formats::bsp::TexInfo;
 
+use crate::Control;
 use crate::map::Map;
 use crate::tree::Tree;
 use crate::winding::{ON_EPSILON, Winding};
@@ -39,17 +40,23 @@ pub fn lightmap_bounds(winding: &Winding, info: &TexInfo) -> ([i32; 2], [i32; 2]
     (mins, size)
 }
 
-fn subdivide(face: Face, map: &Map, output: &mut Vec<Face>) {
+fn subdivide(
+    face: Face,
+    map: &Map,
+    output: &mut Vec<Face>,
+    control: &Control,
+) -> Result<(), String> {
     let material = map
         .materials
         .get(map.texdata[map.texinfos.infos[face.texinfo].texdata as usize]);
     if !material.lit() {
         output.push(face);
-        return;
+        return Ok(());
     }
     let info = &map.texinfos.infos[face.texinfo];
     let mut pending = vec![face];
     while let Some(face) = pending.pop() {
+        control.checkpoint()?;
         let (mins, size) = lightmap_bounds(&face.winding, info);
         let Some(axis) = (0..2).find(|&axis| size[axis] > MAX_LIGHTMAP_EXTENT) else {
             output.push(face);
@@ -78,11 +85,23 @@ fn subdivide(face: Face, map: &Map, output: &mut Vec<Face>) {
             ..face
         });
     }
+    Ok(())
 }
 
 pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
+    build_controlled(map, tree, entity, &Control::default()).expect("uncancelled faces")
+}
+
+pub fn build_controlled(
+    map: &Map,
+    tree: &Tree,
+    entity: usize,
+    control: &Control,
+) -> Result<Vec<Face>, String> {
+    control.checkpoint()?;
     let mut groups: BTreeMap<(Option<usize>, usize, usize, u32), Vec<Face>> = BTreeMap::new();
     for &brush_index in &map.entities[entity].brushes {
+        control.checkpoint()?;
         let brush = &map.brushes[brush_index];
         for side in brush.sides.iter().filter(|s| s.visible && !s.bevel) {
             let Some(winding) = &side.winding else {
@@ -90,6 +109,7 @@ pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
             };
             let mut pending = vec![(0, winding.clone(), None)];
             while let Some((index, winding, on_node)) = pending.pop() {
+                control.checkpoint()?;
                 let node = &tree.nodes[index];
                 match node.split {
                     Some((plane, children)) if side.plane & !1 == plane => {
@@ -135,6 +155,7 @@ pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
             let normal = map.planes.get(faces[i].plane).normal;
             let mut j = i + 1;
             while j < faces.len() {
+                control.checkpoint()?;
                 if let Some(winding) = faces[i].winding.merge(&faces[j].winding, normal) {
                     let other = faces.remove(j);
                     faces[i].winding = winding;
@@ -149,8 +170,8 @@ pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
             i += 1;
         }
         for face in faces {
-            subdivide(face, map, &mut output);
+            subdivide(face, map, &mut output, control)?;
         }
     }
-    output
+    Ok(output)
 }

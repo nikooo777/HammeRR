@@ -22,6 +22,7 @@ use crate::spatial;
 
 pub mod checks;
 mod clipping;
+pub mod compilation;
 pub mod context;
 mod management;
 pub mod material_search;
@@ -30,6 +31,8 @@ mod recovery;
 mod surfaces;
 pub mod volume;
 pub use clipping::ClipPreview;
+#[cfg(test)]
+use compilation::CompileResult;
 pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
 pub use recovery::RecoveryRequest;
 pub use surfaces::GroupProjection;
@@ -153,6 +156,7 @@ pub struct Session {
     log_serial: u64,
     document_generation: u64,
     compiling: bool,
+    compilation: compilation::State,
     launching: bool,
     compiled: Option<CompiledMap>,
     leak: Option<(Snapshot, compiler::Leak)>,
@@ -164,21 +168,6 @@ pub struct Session {
     definitions_serial: u64,
 }
 
-pub struct CompileRequest {
-    vmf: Vmf,
-    game: Arc<GameFs>,
-    path: PathBuf,
-    generation: u64,
-    revision: u64,
-}
-
-pub struct CompileResult {
-    pub output: compiler::Output,
-    pub path: PathBuf,
-    generation: u64,
-    revision: u64,
-}
-
 pub struct LaunchRequest {
     install: game::Install,
     bsp: PathBuf,
@@ -187,21 +176,6 @@ pub struct LaunchRequest {
 impl LaunchRequest {
     pub fn run(self) -> Result<game::Run, String> {
         game::Run::launch(&self.install, &self.bsp)
-    }
-}
-
-impl CompileRequest {
-    pub fn run(self) -> Result<CompileResult, String> {
-        let output = compiler::compile(&self.vmf, &self.game);
-        output
-            .write(&self.path)
-            .map_err(|e| format!("{}: {e}", self.path.display()))?;
-        Ok(CompileResult {
-            output,
-            path: self.path,
-            generation: self.generation,
-            revision: self.revision,
-        })
     }
 }
 
@@ -272,6 +246,7 @@ impl Session {
             log_serial: 0,
             document_generation: 0,
             compiling: false,
+            compilation: compilation::State::default(),
             launching: false,
             compiled: None,
             leak: None,
@@ -1584,113 +1559,8 @@ impl Session {
 
     pub fn shutdown(&mut self) {
         self.closing = true;
+        self.cancel_compile_on_shutdown();
         self.game_run = None;
-    }
-
-    pub fn begin_compile(
-        &mut self,
-        actor: Actor,
-        path: Option<&Path>,
-    ) -> Result<CompileRequest, String> {
-        if self.closing {
-            return Err("the editor is closing".into());
-        }
-        if self.compiling {
-            return Err("a map compilation is already running".into());
-        }
-        if self.launching {
-            return Err("wait for CS:S to finish launching".into());
-        }
-        let path = path
-            .map(Path::to_owned)
-            .or_else(|| self.path.as_ref().map(|p| p.with_extension("bsp")))
-            .ok_or("save the map first or give a .bsp output path")?;
-        if !path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("bsp"))
-        {
-            return Err("compile output must be a .bsp file".into());
-        }
-        if self.path.as_deref() == Some(path.as_path()) {
-            return Err("compile output must be distinct from the source map".into());
-        }
-        if let Some(error) = &self.game_error {
-            return Err(error.clone());
-        }
-        let request = CompileRequest {
-            vmf: self.document.vmf().clone(),
-            game: self.game.clone(),
-            path,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-        };
-        self.compiling = true;
-        self.log(actor, "compiling map");
-        Ok(request)
-    }
-
-    pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {
-        self.compiling = false;
-        if let Ok(result) = result {
-            let snapshot = Snapshot {
-                generation: result.generation,
-                revision: result.revision,
-            };
-            if self.current_snapshot(&snapshot) {
-                self.leak = result
-                    .output
-                    .leak
-                    .clone()
-                    .map(|leak| (snapshot.clone(), leak));
-                self.changed();
-            }
-            if result.output.bsp.is_some() {
-                self.compiled = Some(CompiledMap {
-                    path: result.path.clone(),
-                    snapshot,
-                });
-            }
-        }
-        let message = match result {
-            Err(message) => format!("compile failed: {message}"),
-            Ok(result) if result.output.bsp.is_none() => {
-                let message = result
-                    .output
-                    .report
-                    .diagnostics
-                    .iter()
-                    .find(|d| d.level == compiler::Level::Error)
-                    .map(|d| d.message.as_str())
-                    .unwrap_or("no BSP produced");
-                let pointfile = if result.output.leak.is_some() {
-                    format!(
-                        "; pointfile {}",
-                        result.path.with_extension("lin").display()
-                    )
-                } else {
-                    String::new()
-                };
-                format!("compile failed: {message}{pointfile}")
-            }
-            Ok(result) => {
-                let stale = if result.generation != self.document_generation
-                    || result.revision != self.document.revision()
-                {
-                    " (an earlier snapshot)"
-                } else {
-                    ""
-                };
-                let stats = &result.output.stats;
-                format!(
-                    "compiled {}: {} brushes, {} faces in {:.1?}{stale}",
-                    result.path.display(),
-                    stats.brushes,
-                    stats.faces,
-                    stats.elapsed
-                )
-            }
-        };
-        self.log(actor, message);
     }
 
     /// The nearest visible object along a ray. Brushes made only of tool
@@ -1855,6 +1725,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_assets::room;
     #[test]
     fn face_selection_previews_cancellation_and_undo_are_shared_and_atomic() {
         let mut session = Session::new(Err("no assets needed".into()));
@@ -2493,38 +2364,6 @@ mod tests {
         }
     }
 
-    fn room() -> Vmf {
-        let mut document = Document::empty();
-        document
-            .edit("room", |tx| {
-                for (mins, maxs) in [
-                    ([-272., -272., -16.], [272., 272., 0.]),
-                    ([-272., -272., 256.], [272., 272., 272.]),
-                    ([-272., -272., 0.], [-256., 272., 256.]),
-                    ([256., -272., 0.], [272., 272., 256.]),
-                    ([-256., -272., 0.], [256., -256., 256.]),
-                    ([-256., 256., 0.], [256., 272., 256.]),
-                ] {
-                    edit::create_block(
-                        tx,
-                        DVec3::from_array(mins),
-                        DVec3::from_array(maxs),
-                        "dev/dev_measuregeneric01",
-                    )?;
-                }
-                edit::create_entity(
-                    tx,
-                    "info_player_terrorist",
-                    Some(DVec3::new(0., 0., 8.)),
-                    &[],
-                    Vec::new(),
-                )?;
-                Ok(())
-            })
-            .unwrap();
-        document.vmf().clone()
-    }
-
     fn compile(session: &mut Session) -> CompileResult {
         let result = session.begin_compile(Actor::Agent, None).unwrap().run();
         session.finish_compile(Actor::Agent, &result);
@@ -2683,5 +2522,86 @@ mod tests {
                 .join(format!("{}.bsp", log.map))
                 .exists()
         );
+    }
+    #[test]
+    fn compile_jobs_cancel_guard_tokens_and_preserve_previous_output() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (directory, game, _) = game::tests::fixture(true);
+            let mut session = Session::new(Ok(game));
+            session.replace_document(
+                Document::new(room()),
+                Some(directory.path().join("room.vmf")),
+            );
+            let path = directory.path().join("room.bsp");
+            std::fs::write(&path, b"previous BSP").unwrap();
+            std::fs::write(path.with_extension("lin"), b"previous leak").unwrap();
+            let request = session.begin_compile(actor, None).unwrap();
+            let token = session.compile_token().unwrap();
+            assert_eq!(session.compile_status()["job"]["stage"], "queued");
+            assert!(session.compile_cancellable());
+            assert!(session.cancel_compile(actor, token + 1).is_err());
+            session.cancel_compile(actor, token).unwrap();
+            assert_eq!(session.compile_status()["job"]["status"], "cancelling");
+            assert!(session.begin_compile(actor, None).is_err());
+            let result = request.run();
+            assert!(result.is_err());
+            session.finish_compile(actor, &result);
+            assert_eq!(session.compile_status()["job"]["status"], "cancelled");
+            assert!(!session.compiling());
+            assert!(!session.compile_cancellable());
+            assert!(session.begin_launch(actor).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+            assert_eq!(
+                std::fs::read(path.with_extension("lin")).unwrap(),
+                b"previous leak"
+            );
+            let request = session.begin_compile(actor, None).unwrap();
+            assert_ne!(session.compile_token(), Some(token));
+            assert!(session.cancel_compile(actor, token).is_err());
+            let result = request.run();
+            assert!(
+                session
+                    .cancel_compile(actor, session.compile_token().unwrap())
+                    .is_err()
+            );
+            session.finish_compile(actor, &result);
+            let status = session.compile_status();
+            assert_eq!(status["job"]["status"], "completed");
+            assert_eq!(status["job"]["result"]["success"], true);
+            assert_eq!(status["job"]["stale"], false);
+            assert!(std::fs::read(&path).unwrap().starts_with(b"VBSP"));
+            session.new_map(actor, true).unwrap();
+            assert_eq!(session.compile_status()["job"]["stale"], true);
+            assert!(session.compile_label().contains("earlier map snapshot"));
+        }
+    }
+
+    #[test]
+    fn compile_jobs_report_failures_and_shutdown_cancels_work() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let mut session = Session::new(Ok(game));
+        let path = directory.path().join("empty.bsp");
+        let request = session.begin_compile(Actor::Agent, Some(&path)).unwrap();
+        let result = request.run();
+        session.finish_compile(Actor::Agent, &result);
+        assert_eq!(session.compile_status()["job"]["status"], "failed");
+        assert_eq!(session.compile_status()["job"]["result"]["success"], false);
+        assert!(!path.exists());
+        assert!(!session.compile_cancellable());
+        session.replace_document(Document::new(room()), None);
+        let missing = directory.path().join("missing/room.bsp");
+        let request = session.begin_compile(Actor::Agent, Some(&missing)).unwrap();
+        let result = request.run();
+        assert!(result.is_err());
+        session.finish_compile(Actor::Agent, &result);
+        assert_eq!(session.compile_status()["job"]["status"], "failed");
+        assert!(session.compile_status()["job"]["result"]["error"].is_string());
+        let request = session.begin_compile(Actor::Agent, Some(&path)).unwrap();
+        session.shutdown();
+        let result = request.run();
+        assert!(result.is_err());
+        session.finish_compile(Actor::Agent, &result);
+        assert_eq!(session.compile_status()["job"]["status"], "cancelled");
+        assert!(!path.exists());
     }
 }

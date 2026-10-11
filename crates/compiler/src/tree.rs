@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use glam::DVec3;
 use source_formats::bsp::contents;
 
+use crate::Control;
 use crate::map::MapBrush;
 use crate::planes::PlaneSet;
 use crate::winding::{ON_EPSILON, Side, Winding};
@@ -169,7 +170,11 @@ struct Fragment {
     shape: Polyhedron,
 }
 
-fn choose_plane(fragments: &[Fragment], planes: &PlaneSet) -> Option<usize> {
+fn choose_plane(
+    fragments: &[Fragment],
+    planes: &PlaneSet,
+    control: &Control,
+) -> Result<Option<usize>, String> {
     let candidates: BTreeSet<usize> = fragments
         .iter()
         .flat_map(|f| &f.shape.sides)
@@ -179,6 +184,7 @@ fn choose_plane(fragments: &[Fragment], planes: &PlaneSet) -> Option<usize> {
     let mut best = None;
     let mut best_score = i64::MIN;
     for candidate in candidates {
+        control.checkpoint()?;
         let (mut front, mut back, mut splits, mut coplanar) = (0i64, 0i64, 0i64, 0i64);
         for fragment in fragments {
             coplanar += fragment
@@ -201,7 +207,7 @@ fn choose_plane(fragments: &[Fragment], planes: &PlaneSet) -> Option<usize> {
             best_score = score;
         }
     }
-    best
+    Ok(best)
 }
 
 impl Tree {
@@ -210,6 +216,16 @@ impl Tree {
         indices: &[usize],
         planes: &mut PlaneSet,
     ) -> Result<Self, String> {
+        Self::build_controlled(brushes, indices, planes, &Control::default())
+    }
+
+    pub fn build_controlled(
+        brushes: &[MapBrush],
+        indices: &[usize],
+        planes: &mut PlaneSet,
+        control: &Control,
+    ) -> Result<Self, String> {
+        control.checkpoint()?;
         if indices.is_empty() {
             return Err("no brushes to build a BSP tree".into());
         }
@@ -241,7 +257,8 @@ impl Tree {
         };
         let mut pending = vec![(0, fragments)];
         while let Some((index, fragments)) = pending.pop() {
-            let Some(plane) = choose_plane(&fragments, planes) else {
+            control.checkpoint()?;
+            let Some(plane) = choose_plane(&fragments, planes, control)? else {
                 let node = &mut tree.nodes[index];
                 node.contents = fragments.iter().fold(0, |c, f| c | f.contents);
                 node.brushes = fragments.iter().map(|f| f.brush).collect();

@@ -1,5 +1,6 @@
 //! Compiles VMF brush maps into fullbright Source engine BSP files.
 
+pub mod control;
 mod emit;
 pub mod faces;
 pub mod map;
@@ -18,6 +19,7 @@ use source_formats::bsp::{self, Bsp};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
+pub use control::{Control, Stage};
 pub use portals::Leak;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,35 +107,50 @@ pub struct Output {
 
 impl Output {
     pub fn write(&self, path: &Path) -> io::Result<bool> {
-        if let Some(leak) = &self.leak {
+        self.write_controlled(path, &Control::default())
+    }
+
+    pub fn write_controlled(&self, path: &Path, control: &Control) -> io::Result<bool> {
+        control.checkpoint().map_err(io::Error::other)?;
+        if self.bsp.is_none() && self.leak.is_none() {
+            return Ok(false);
+        }
+        control.advance(Stage::Writing).map_err(io::Error::other)?;
+        let (destination, bytes, success) = if let Some(bsp) = &self.bsp {
+            (path.to_owned(), bsp.to_bytes(), true)
+        } else if let Some(leak) = &self.leak {
             let text: String = leak
                 .points
                 .iter()
-                .map(|&p| format!("{}\n", source_formats::vmf::format_vec3(p)))
+                .map(|&point| format!("{}\n", source_formats::vmf::format_vec3(point)))
                 .collect();
-            std::fs::write(path.with_extension("lin"), text)?;
-        }
-        let Some(bsp) = self.bsp.as_ref() else {
+            (path.with_extension("lin"), text.into_bytes(), false)
+        } else {
             return Ok(false);
         };
-        let temporary = path.with_extension(format!("bsp.{}.tmp", std::process::id()));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        let result = file
-            .write_all(&bsp.to_bytes())
-            .and_then(|()| std::fs::rename(&temporary, path));
-        if result.is_err() {
-            let _ = std::fs::remove_file(&temporary);
+        let parent = destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        for chunk in bytes.chunks(64 * 1024) {
+            control.checkpoint().map_err(io::Error::other)?;
+            temporary.write_all(chunk)?;
         }
-        result?;
-        Ok(true)
+        temporary.as_file().sync_all()?;
+        control.publish(|| {
+            temporary
+                .persist(&destination)
+                .map(|_| ())
+                .map_err(|error| error.error)
+        })?;
+        Ok(success)
     }
 }
 
-fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output) -> Result<(), String> {
-    let mut map = map::Map::load(vmf, fs, &mut output.report);
+fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Result<(), String> {
+    control.advance(Stage::Loading)?;
+    let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
     for info in map.materials.iter().filter(|m| !m.found) {
         output.report.diagnostics.push(Diagnostic::warning(
@@ -151,31 +168,39 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output) -> Result<(), String> {
         .copied()
         .filter(|&i| map.brushes[i].structural())
         .collect();
-    let mut tree = tree::Tree::build(&map.brushes, &structural, &mut map.planes)?;
-    let portals = portals::build(&tree, &map.planes);
-    output.leak = portals::flood(
+    control.advance(Stage::WorldTree)?;
+    let mut tree =
+        tree::Tree::build_controlled(&map.brushes, &structural, &mut map.planes, control)?;
+    control.advance(Stage::Portals)?;
+    let portals = portals::build_controlled(&tree, &map.planes, control)?;
+    control.advance(Stage::Flood)?;
+    output.leak = portals::flood_controlled(
         &mut tree,
         &map.planes,
         &portals,
         &map.entities,
         &mut output.report,
-    );
+        control,
+    )?;
     if output.report.has_errors() {
         return Ok(());
     }
-    let faces = faces::build(&map, &tree, 0);
+    control.advance(Stage::Faces)?;
+    let faces = faces::build_controlled(&map, &tree, 0, control)?;
     let mut models = vec![emit::Model {
         entity: 0,
         tree,
         faces,
     }];
+    control.advance(Stage::Models)?;
     for entity in 1..map.entities.len() {
+        control.checkpoint()?;
         let indices = &map.entities[entity].brushes;
         if indices.is_empty() {
             continue;
         }
-        let tree = tree::Tree::build(&map.brushes, indices, &mut map.planes)?;
-        let faces = faces::build(&map, &tree, entity);
+        let tree = tree::Tree::build_controlled(&map.brushes, indices, &mut map.planes, control)?;
+        let faces = faces::build_controlled(&map, &tree, entity, control)?;
         models.push(emit::Model {
             entity,
             tree,
@@ -188,7 +213,9 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output) -> Result<(), String> {
         .and_then(|p| p.get("mapversion"))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let bsp = emit::build(&map, &models, revision)?;
+    control.advance(Stage::Emitting)?;
+    let bsp = emit::build(&map, &models, revision, control)?;
+    control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
     output.stats.faces = bsp.records::<bsp::Face>().map_err(|e| e.to_string())?.len();
@@ -198,6 +225,10 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output) -> Result<(), String> {
 }
 
 pub fn compile(vmf: &Vmf, fs: &GameFs) -> Output {
+    compile_controlled(vmf, fs, &Control::default())
+}
+
+pub fn compile_controlled(vmf: &Vmf, fs: &GameFs, control: &Control) -> Output {
     let start = Instant::now();
     let mut output = Output {
         bsp: None,
@@ -205,11 +236,15 @@ pub fn compile(vmf: &Vmf, fs: &GameFs) -> Output {
         leak: None,
         stats: Stats::default(),
     };
-    if let Err(message) = build(vmf, fs, &mut output) {
+    if let Err(message) = build(vmf, fs, &mut output, control) {
         output
             .report
             .diagnostics
             .push(Diagnostic::error(message, None, None));
+    }
+    if control.cancelled() {
+        output.bsp = None;
+        output.leak = None;
     }
     output.stats.elapsed = start.elapsed();
     output

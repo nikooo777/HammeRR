@@ -11,7 +11,7 @@ use source_formats::vmf::{Side, Solid, Vmf};
 use crate::materials::Materials;
 use crate::planes::PlaneSet;
 use crate::winding::Winding;
-use crate::{Diagnostic, Report};
+use crate::{Control, Diagnostic, Report};
 
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 
@@ -133,6 +133,16 @@ pub struct Map<'a> {
 
 impl<'a> Map<'a> {
     pub fn load(vmf: &Vmf, fs: &'a GameFs, report: &mut Report) -> Self {
+        Self::load_controlled(vmf, fs, report, &Control::default()).expect("uncancelled map load")
+    }
+
+    pub fn load_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<Self, String> {
+        control.checkpoint()?;
         let mut map = Self {
             planes: PlaneSet::default(),
             materials: Materials::new(fs),
@@ -160,6 +170,7 @@ impl<'a> Map<'a> {
 
         let mut hidden = 0;
         for solid in &vmf.world.solids {
+            control.checkpoint()?;
             if solid.hidden {
                 hidden += 1;
                 continue;
@@ -168,6 +179,7 @@ impl<'a> Map<'a> {
         }
 
         for entity in &vmf.entities {
+            control.checkpoint()?;
             if entity.hidden {
                 hidden += 1;
                 continue;
@@ -176,6 +188,7 @@ impl<'a> Map<'a> {
             let object = format!("entity:{}", entity.id);
             if CONSUMED.contains(&classname.as_str()) {
                 for solid in entity.solids.iter().filter(|s| !s.hidden) {
+                    control.checkpoint()?;
                     map.add_brush(solid, 0, contents::DETAIL, report);
                 }
                 continue;
@@ -206,6 +219,7 @@ impl<'a> Map<'a> {
                 origin: entity.origin(),
             });
             for solid in entity.solids.iter().filter(|s| !s.hidden) {
+                control.checkpoint()?;
                 map.add_brush(solid, index, 0, report);
             }
             map.resolve_brush_entity(index, report);
@@ -217,7 +231,7 @@ impl<'a> Map<'a> {
                 None,
             ));
         }
-        map
+        Ok(map)
     }
 
     fn add_brush(

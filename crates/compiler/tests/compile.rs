@@ -593,3 +593,87 @@ fn world_settings_survive_reload_and_hidden_entities_are_reported_as_omitted() {
             .contains("hidden objects were not compiled")
     }));
 }
+
+#[test]
+fn cancelled_compiles_and_writes_preserve_existing_artifacts() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("room.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    std::fs::write(path.with_extension("lin"), b"previous leak").unwrap();
+    let control = compiler::Control::default();
+    control.cancel().unwrap();
+    let output = compiler::compile_controlled(&common::room(), &common::empty_game(), &control);
+    assert!(output.bsp.is_none());
+    assert!(output.leak.is_none());
+    let output = compiler::compile(&common::room(), &common::empty_game());
+    assert!(output.write_controlled(&path, &control).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    assert_eq!(
+        std::fs::read(path.with_extension("lin")).unwrap(),
+        b"previous leak"
+    );
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    let control = compiler::Control::default();
+    assert!(output.write_controlled(&path, &control).unwrap());
+    assert!(control.cancel().is_err());
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        output.bsp.unwrap().to_bytes()
+    );
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    let blocked = directory.path().join("blocked.bsp");
+    std::fs::create_dir(&blocked).unwrap();
+    let output = compiler::compile(&common::room(), &common::empty_game());
+    assert!(output.write(&blocked).is_err());
+    assert!(blocked.is_dir());
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 3);
+}
+
+#[test]
+fn cancellation_interrupts_world_tree_partitioning() {
+    use glam::DVec3;
+    let mut document = map_core::Document::new(common::room());
+    document
+        .edit("dense geometry", |tx| {
+            for i in 0..400 {
+                let min = DVec3::new(
+                    (i % 20) as f64 * 20.0 - 200.0,
+                    (i / 20) as f64 * 20.0 - 200.0,
+                    16.0,
+                );
+                map_core::edit::create_block(
+                    tx,
+                    min,
+                    min + DVec3::splat(8.0),
+                    "dev/dev_measuregeneric01",
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let control = compiler::Control::default();
+    let worker_control = control.clone();
+    let worker = std::thread::spawn(move || {
+        compiler::compile_controlled(document.vmf(), &common::empty_game(), &worker_control)
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while control.progress().stage != compiler::Stage::WorldTree
+        && std::time::Instant::now() < deadline
+        && !worker.is_finished()
+    {
+        std::thread::yield_now();
+    }
+    let stage = control.progress().stage;
+    control.cancel().unwrap();
+    let output = worker.join().unwrap();
+    assert_eq!(stage, compiler::Stage::WorldTree);
+    assert!(output.bsp.is_none());
+    assert!(output.leak.is_none());
+    assert!(
+        output
+            .report
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "Compilation cancelled")
+    );
+}

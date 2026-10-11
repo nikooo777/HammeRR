@@ -54,6 +54,9 @@ fn position(point: DVec3) -> String {
 
 pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_stamp(session.component_stamp().into());
+    window.set_move_handles(session.component_move_options().enabled);
+    window.set_snap(session.component_move_options().snap);
+    window.set_texture_lock(session.component_move_options().texture_lock);
     window.set_picking(session.component_picking().is_some());
     if let Some(picking) = session.component_picking() {
         window.set_kind(match picking.kind {
@@ -190,6 +193,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_token(token.into());
     window.set_ready(
         !preview.is_null()
+            && session
+                .component_drag()
+                .is_none_or(|drag| drag.error.is_none())
             && window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
             && [
                 window.get_move_x(),
@@ -309,6 +315,23 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             let window = window.unwrap();
             window.set_ready(false);
             window.set_message("Settings changed. Preview the new move before applying.".into());
+        }
+    });
+    window.on_move_options({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let result = session.set_component_move_options(
+                crate::session::component_drag::Options {
+                    enabled: window.get_move_handles(),
+                    snap: window.get_snap(),
+                    texture_lock: window.get_texture_lock(),
+                },
+                window.get_stamp().as_str(),
+            );
+            refresh(&window, &session);
+            window.set_message(result.err().unwrap_or_default().into());
         }
     });
     window.on_preview_edit({

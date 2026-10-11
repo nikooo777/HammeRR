@@ -27,6 +27,7 @@ export component ComponentsWindow inherits Window {
     in-out property <string> move-z: "16";
     in-out property <bool> snap: true;
     in-out property <bool> texture-lock;
+    in-out property <bool> move-handles: true;
     callback refresh();
     callback change-kind();
     callback toggle-picking();
@@ -34,6 +35,7 @@ export component ComponentsWindow inherits Window {
     callback select-all();
     callback clear();
     callback edited();
+    callback move-options();
     callback preview-edit();
     callback apply();
     callback cancel();
@@ -44,7 +46,7 @@ export component ComponentsWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Select faces, edges or corners, then preview a precise move."; color: #aeb9c8; }
+            Text { text: "Select faces, edges or corners. Drag the move handles or enter an exact offset."; color: #aeb9c8; }
             HorizontalLayout {
                 spacing: 20px;
                 VerticalLayout {
@@ -74,6 +76,8 @@ export component ComponentsWindow inherits Window {
                 VerticalLayout {
                     width: 290px; spacing: 12px;
                     Text { text: "Move selection"; font-size: 18px; font-weight: 600; }
+                    CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
+                    Text { text: "Drag an arrow or plane square. Release applies; Esc cancels."; wrap: word-wrap; color: #aeb9c8; }
                     Text { text: "Offset from the current map · world units"; wrap: word-wrap; color: #aeb9c8; }
                     HorizontalLayout {
                         spacing: 10px;
@@ -90,8 +94,8 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Z · up"; width: 65px; vertical-alignment: center; }
                         LineEdit { text <=> root.move-z; input-type: decimal; accessible-label: "Z offset"; edited => { root.edited(); } }
                     }
-                    CheckBox { text: "Use editor grid snapping"; checked <=> root.snap; toggled => { root.edited(); } }
-                    CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
+                    CheckBox { text: "Use editor grid snapping"; checked <=> root.snap; toggled => { root.move-options(); } }
+                    CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.move-options(); } }
                     Button { text: "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     Rectangle { vertical-stretch: 1; }

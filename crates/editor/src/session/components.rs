@@ -10,8 +10,8 @@ use super::{Actor, SelectMode, Session};
 pub struct Preview {
     pub document: Document,
     pub token: u64,
-    delta: DVec3,
-    texture_lock: bool,
+    pub(super) delta: DVec3,
+    pub(super) texture_lock: bool,
     replacements: Vec<Replacement>,
     generation: u64,
     revision: u64,
@@ -23,6 +23,9 @@ pub struct State {
     pub preview: Option<Preview>,
     pub(super) serial: u64,
     pub picking: Option<super::component_picking::Picking>,
+    pub drag: Option<super::component_drag::Drag>,
+    pub options: super::component_drag::Options,
+    pub(super) origin: Option<DVec3>,
 }
 
 pub fn component_json(component: &Component) -> Value {
@@ -55,7 +58,10 @@ impl Session {
         if !self.components.selection.is_empty()
             || self.components.preview.is_some()
             || self.components.picking.is_some()
+            || self.components.drag.is_some()
         {
+            self.components.drag = None;
+            self.components.origin = None;
             self.components.picking = None;
             self.components.selection.clear();
             self.components.preview = None;
@@ -111,6 +117,7 @@ impl Session {
             })
         }).collect::<Vec<_>>();
         Ok(json!({
+            "move_options":self.components.options, "drag":self.component_drag_report(),
             "picking":self.components.picking, "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
             "brushes":brushes, "selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
             "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len()})),
@@ -202,6 +209,8 @@ impl Session {
         self.components.picking = picking;
         self.components.selection = next;
         self.components.preview = None;
+        self.components.drag = None;
+        self.refresh_component_origin();
         self.components.serial += 1;
         self.scene_serial += 1;
         self.view_serial += 1;
@@ -242,6 +251,9 @@ impl Session {
             .map_err(|error| error.to_string())?;
         self.components.serial += 1;
         let token = self.components.serial;
+        self.components.drag = None;
+        self.components.options.snap = snap;
+        self.components.options.texture_lock = texture_lock;
         self.components.preview = Some(Preview {
             document,
             token,
@@ -272,18 +284,32 @@ impl Session {
     }
 
     pub fn commit_component_move(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
+        if self
+            .components
+            .drag
+            .as_ref()
+            .is_some_and(|drag| drag.error.is_some())
+        {
+            return Err(
+                "The last handle update was invalid; move to a valid position or cancel".into(),
+            );
+        }
         let replacements = self.checked_component_preview(token)?.replacements.clone();
         let selection = self.components.selection.clone();
+        let picking = self.components.picking.clone();
         let result = self.edit(actor, "move brush components", |tx| {
             subobject::apply(tx, &replacements)
         })?;
         self.components.selection = selection;
+        self.components.picking = picking;
+        self.refresh_component_origin();
         Ok(result)
     }
 
     pub fn cancel_component_move(&mut self, token: u64) -> Result<(), String> {
         self.checked_component_preview(token)?;
         self.components.preview = None;
+        self.components.drag = None;
         self.components.serial += 1;
         self.scene_serial += 1;
         self.view_serial += 1;

@@ -21,8 +21,10 @@ use crate::inspector;
 use crate::spatial;
 
 pub mod checks;
+pub mod clip_points;
 mod clipping;
 pub mod compilation;
+pub mod component_drag;
 pub mod component_picking;
 pub mod components;
 pub mod context;
@@ -129,6 +131,7 @@ pub struct Session {
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
+    clip_points: Option<clip_points::Draft>,
     transform_tool: TransformTool,
     transform_preview: Option<TransformPreview>,
     transform_drag: Option<TransformDrag>,
@@ -222,6 +225,7 @@ impl Session {
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
+            clip_points: None,
             transform_tool: TransformTool::default(),
             transform_preview: None,
             transform_drag: None,
@@ -1216,7 +1220,7 @@ impl Session {
                 distance: preview.plane.dist as f32,
                 bounds: preview.bounds.map(|point| point.as_vec3()),
             }),
-            transform_handles: self.transform_guide(),
+            transform_handles: self.component_guide().or_else(|| self.transform_guide()),
             area_preview: self.area_preview.as_ref().map(|preview| render::AreaGuide {
                 corners: [
                     preview.start.ndc().as_vec2(),
@@ -1242,6 +1246,7 @@ impl Session {
     }
 
     pub fn set_view(&mut self, view: ViewOptions) {
+        self.clear_component_drag();
         if self.view.tool_textures != view.tool_textures {
             if self.component_picking().is_some() || !self.component_selection().is_empty() {
                 self.scene_serial += 1;
@@ -1250,6 +1255,7 @@ impl Session {
             self.clear_volume_selection();
         }
         self.view = view;
+        self.refresh_component_origin();
         self.view_serial += 1;
     }
 
@@ -1835,6 +1841,7 @@ impl Session {
         self.append_context_guides(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
+        self.append_clip_points(&mut mesh);
         mesh
     }
 

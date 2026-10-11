@@ -22,6 +22,7 @@ use crate::spatial;
 
 pub mod checks;
 mod clipping;
+pub mod context;
 mod management;
 mod recovery;
 mod surfaces;
@@ -106,6 +107,7 @@ pub struct Session {
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
     checks: checks::State,
+    context: context::State,
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
@@ -219,6 +221,7 @@ impl Session {
             surface_sample: None,
             recovery: recovery::State::default(),
             checks: checks::State::default(),
+            context: context::State::default(),
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
@@ -970,6 +973,9 @@ impl Session {
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
         self.surface_sample = None;
+        self.context.draft = None;
+        self.context.focused = None;
+        self.context.serial += 1;
         self.property_draft = None;
         self.management_serial += 1;
         self.visibility_restore = None;
@@ -1009,6 +1015,9 @@ impl Session {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let vmf = Vmf::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let document = Document::new(vmf);
+        document
+            .context()
+            .map_err(|error| format!("{}: {error}", path.display()))?;
         let message = format!(
             "opened {} ({} brushes, {} entities) in {:.0?}",
             path.display(),
@@ -1734,6 +1743,7 @@ impl Session {
         if let Some(leak) = self.leak() {
             mesh.set_leak_path(&leak.points);
         }
+        self.append_context_guides(&mut mesh);
         mesh
     }
 

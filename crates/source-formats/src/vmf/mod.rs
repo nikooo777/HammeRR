@@ -583,7 +583,7 @@ impl Entity {
         slots
     }
 
-    fn to_node(&self) -> Node {
+    pub fn to_node(&self) -> Node {
         let mut out = Vec::with_capacity(self.properties.0.len() + self.solids.len() + 3);
         out.push(Node::string("id", self.id.to_string()));
         let mut properties = self.properties.0.iter();
@@ -664,7 +664,7 @@ impl Solid {
         })
     }
 
-    fn to_node(&self) -> Node {
+    pub fn to_node(&self) -> Node {
         let mut out = Vec::with_capacity(self.sides.len() + 2);
         out.push(Node::string("id", self.id.to_string()));
         self.extra_properties.push_nodes(&mut out);

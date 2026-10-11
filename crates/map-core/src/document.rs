@@ -7,6 +7,10 @@
 //! in the file.
 
 use std::fmt;
+use std::sync::OnceLock;
+
+use crate::context::{self, Metadata, Scope};
+use source_formats::keyvalues::Node;
 
 use source_formats::vmf::{Entity, Properties, Solid, Vmf, World};
 
@@ -66,6 +70,7 @@ pub struct Step {
     pub label: String,
     changes: Vec<Change>,
     world: Option<(Properties, Properties)>,
+    extra: Option<(Vec<Node>, Vec<Node>)>,
 }
 
 impl Step {
@@ -83,6 +88,8 @@ pub struct Document {
     saved_revision: u64,
     next_object_id: u64,
     next_side_id: u64,
+    context_cache: OnceLock<Result<Metadata, String>>,
+    context_fingerprint: OnceLock<String>,
 }
 
 impl Document {
@@ -100,7 +107,10 @@ impl Document {
             entity.solids.iter().for_each(&mut visit_solid);
         }
         let group_max = vmf.world.groups.iter().map(|g| g.id).max().unwrap_or(0);
+        let context = Metadata::parse(&vmf);
         Self {
+            context_cache: OnceLock::from(context),
+            context_fingerprint: OnceLock::new(),
             next_object_id: u64::from(object_max.max(entity_max).max(group_max)) + 1,
             next_side_id: u64::from(side_max) + 1,
             vmf,
@@ -156,6 +166,18 @@ impl Document {
 
     pub fn vmf(&self) -> &Vmf {
         &self.vmf
+    }
+
+    pub fn context(&self) -> Result<&Metadata, EditError> {
+        self.context_cache
+            .get_or_init(|| Metadata::parse(&self.vmf))
+            .as_ref()
+            .map_err(|message| EditError::Invalid(message.clone()))
+    }
+
+    pub fn context_map_fingerprint(&self) -> &str {
+        self.context_fingerprint
+            .get_or_init(|| context::map_fingerprint(&self.vmf))
     }
 
     /// Increases with every change, including undo and redo.
@@ -250,8 +272,10 @@ impl Document {
             doc: self,
             touched: Vec::new(),
             world: None,
+            extra: None,
         };
-        match f(&mut tx) {
+        let result = f(&mut tx).and_then(|value| tx.remove_deleted_context().map(|()| value));
+        match result {
             Ok(result) => {
                 tx.commit(label.into());
                 Ok(result)
@@ -266,6 +290,11 @@ impl Document {
     /// Returns the undone step.
     pub fn undo(&mut self) -> Option<&Step> {
         let step = self.undo.pop()?;
+        if let Some((before, _)) = &step.extra {
+            self.vmf.extra = before.clone();
+            self.context_cache.take();
+        }
+        self.context_fingerprint.take();
         if let Some((before, after)) = &step.world {
             self.restore_world_properties(before, after);
         }
@@ -280,6 +309,11 @@ impl Document {
     /// Returns the redone step.
     pub fn redo(&mut self) -> Option<&Step> {
         let step = self.redo.pop()?;
+        if let Some((_, after)) = &step.extra {
+            self.vmf.extra = after.clone();
+            self.context_cache.take();
+        }
+        self.context_fingerprint.take();
         if let Some((before, after)) = &step.world {
             self.restore_world_properties(after, before);
         }
@@ -347,10 +381,12 @@ pub struct Transaction<'a> {
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
     world: Option<Properties>,
+    extra: Option<Vec<Node>>,
 }
 
 impl Transaction<'_> {
     pub fn world_properties_mut(&mut self) -> &mut Properties {
+        self.doc.context_fingerprint.take();
         self.world
             .get_or_insert_with(|| self.doc.vmf.world.properties.clone());
         &mut self.doc.vmf.world.properties
@@ -365,10 +401,17 @@ impl Transaction<'_> {
     }
 
     pub fn new_object_id(&mut self) -> Result<u32, EditError> {
-        let id = u32::try_from(self.doc.next_object_id)
-            .map_err(|_| EditError::Invalid("Map object IDs are exhausted".into()))?;
-        self.doc.next_object_id += 1;
-        Ok(id)
+        loop {
+            let id = u32::try_from(self.doc.next_object_id)
+                .map_err(|_| EditError::Invalid("Map object IDs are exhausted".into()))?;
+            self.doc.next_object_id += 1;
+            let notes = &self.doc.context()?.notes;
+            let reserved = notes.contains_key(&Scope::Object(ObjectId::Solid(id)))
+                || notes.contains_key(&Scope::Object(ObjectId::Entity(id)));
+            if !reserved {
+                return Ok(id);
+            }
+        }
     }
 
     pub fn new_side_id(&mut self) -> Result<u32, EditError> {
@@ -379,6 +422,7 @@ impl Transaction<'_> {
     }
 
     fn touch(&mut self, id: ObjectId) {
+        self.doc.context_fingerprint.take();
         if !self.touched.iter().any(|(t, _)| *t == id) {
             let state = self.doc.state(id);
             self.touched.push((id, state));
@@ -433,6 +477,47 @@ impl Transaction<'_> {
         self.doc.take(id).ok_or(EditError::NotFound(id))
     }
 
+    pub fn set_context(&mut self, metadata: Metadata) -> Result<(), EditError> {
+        metadata.validate().map_err(EditError::Invalid)?;
+        self.extra.get_or_insert_with(|| self.doc.vmf.extra.clone());
+        let existing = self
+            .doc
+            .vmf
+            .extra
+            .iter()
+            .position(|node| node.key == context::METADATA_KEY);
+        self.doc
+            .vmf
+            .extra
+            .retain(|node| node.key != context::METADATA_KEY);
+        if !metadata.notes.is_empty() || !metadata.extra.is_empty() {
+            let index = existing
+                .unwrap_or(self.doc.vmf.extra.len())
+                .min(self.doc.vmf.extra.len());
+            self.doc.vmf.extra.insert(index, metadata.to_node());
+        }
+        self.doc.context_cache = OnceLock::from(Ok(metadata));
+        Ok(())
+    }
+
+    fn remove_deleted_context(&mut self) -> Result<(), EditError> {
+        let mut removed = std::collections::BTreeSet::new();
+        for (_, before) in &self.touched {
+            match before {
+                Some((_, Object::Solid(solid))) => {
+                    removed.insert(ObjectId::Solid(solid.id));
+                }
+                Some((_, Object::Entity(entity))) => {
+                    removed.insert(ObjectId::Entity(entity.id));
+                    removed.extend(entity.solids.iter().map(|solid| ObjectId::Solid(solid.id)));
+                }
+                None => {}
+            }
+        }
+        removed.retain(|id| !context::object_exists(self.doc, *id));
+        context::remove_notes_for(self, &removed)
+    }
+
     fn commit(self, label: String) {
         let doc = self.doc;
         let changes: Vec<Change> = self
@@ -449,13 +534,18 @@ impl Transaction<'_> {
             .world
             .filter(|before| before != &doc.vmf.world.properties)
             .map(|before| (before, doc.vmf.world.properties.clone()));
-        if changes.is_empty() && world.is_none() {
+        let extra = self
+            .extra
+            .filter(|before| before != &doc.vmf.extra)
+            .map(|before| (before, doc.vmf.extra.clone()));
+        if changes.is_empty() && world.is_none() && extra.is_none() {
             return;
         }
         doc.undo.push(Step {
             label,
             changes,
             world,
+            extra,
         });
         doc.redo.clear();
         doc.revision += 1;
@@ -463,6 +553,11 @@ impl Transaction<'_> {
 
     fn rollback(self) {
         (self.doc.next_object_id, self.doc.next_side_id) = self.start_ids;
+        self.doc.context_fingerprint.take();
+        if let Some(extra) = self.extra {
+            self.doc.vmf.extra = extra;
+            self.doc.context_cache.take();
+        }
         if let Some(before) = self.world {
             self.doc.vmf.world.properties = before;
         }

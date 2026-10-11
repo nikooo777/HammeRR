@@ -1,3 +1,4 @@
+export { ContextWindow, ContextRow } from "context.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
@@ -1419,6 +1420,7 @@ export component AppWindow inherits Window {
     callback object-report();
     callback recovery();
     callback map-checks();
+    callback design-context();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -1889,6 +1891,7 @@ export component AppWindow inherits Window {
                         Button { text: "Check map…"; clicked => { root.map-checks(); } }
                         Button { text: "Recovery…"; clicked => { root.recovery(); } }
                     }
+                    Button { text: "Design context…"; clicked => { root.design-context(); } }
                     Button { text: "Edit selected entity properties…"; clicked => { root.batch-properties(); } }
                     if root.entity-selected: Button {
                         text: "Connections…";

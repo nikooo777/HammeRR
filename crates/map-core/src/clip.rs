@@ -238,11 +238,11 @@ pub fn clip(
     for mut cut in planned {
         for (index, part) in cut.parts.iter_mut().enumerate() {
             if index == 0 {
-                part.sides.last_mut().unwrap().id = tx.new_side_id();
+                part.sides.last_mut().unwrap().id = tx.new_side_id()?;
             } else {
-                part.id = tx.new_object_id();
+                part.id = tx.new_object_id()?;
                 for side in &mut part.sides {
-                    side.id = tx.new_side_id();
+                    side.id = tx.new_side_id()?;
                 }
             }
         }
@@ -544,8 +544,8 @@ mod tests {
             assert_eq!(candidate.revision(), 0);
             assert_eq!(candidate.undo_labels().count(), 0);
             let mut control = baseline;
-            let next = candidate.edit("id", |tx| Ok(tx.new_side_id())).unwrap();
-            let expected = control.edit("id", |tx| Ok(tx.new_side_id())).unwrap();
+            let next = candidate.edit("id", |tx| tx.new_side_id()).unwrap();
+            let expected = control.edit("id", |tx| tx.new_side_id()).unwrap();
             assert_eq!(next, expected);
         }
     }

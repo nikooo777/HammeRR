@@ -27,6 +27,7 @@ and the shared entity inspector and activity panel.*
 | Selection | Object and face marquee selection, intersecting or fully contained matches, and replace/add/remove/toggle rules. |
 | Brush clipping | Planar cut gestures or exact plane inputs, keep either side or both, cap materials, cancellable previews and one-step undo. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
+| Map checks | Geometry, IDs, textures, entity logic, asset paths and spawn checks; issue navigation and reviewed, undoable repairs. |
 | Face materials | Individual face selection, sampled material/projection painting, edge wrapping, world/face alignment, UV controls, fitting and placement, with cancellable previews and grouped material thumbnails. |
 | Entities | FGD class search, typed properties, choices, spawn flags, lights and player spawns, plus brush entity conversion. |
 | Entity logic | Connection editing, target/input suggestions and firing rules; reference inspection and safe renaming with previews, Cancel and atomic undo. |
@@ -126,6 +127,25 @@ undo step; **Cancel cut** or Escape discards it.
 
 Existing faces keep their texture projections. Brushes the plane does not
 cross stay unchanged. Intersected displacements cannot be clipped yet.
+
+### Check a map
+
+Open **Check map…** and choose **Run checks**. Filter errors and warnings,
+select an issue to read its explanation, then use **Select issue** or
+**Focus issue** to locate it. Reports show when edits or changed entity
+definitions make them stale.
+
+**Review repair…** shows the exact before/after values for a supported repair.
+**Apply repair** records one undo step; **Cancel repair** changes nothing.
+Initial repairs reset invalid texture projections and zero lightmap scales.
+Other issues link you to the affected content for manual editing.
+
+![Map issues, face navigation and an explicit repair preview](docs/images/map-checks.png)
+
+Checks include hidden content and inspect applied edits. Custom properties are
+preserved. Material/model checks verify paths; full asset dependencies, spawn
+clearance and engine-specific resource limits need further checks. Compile and
+test in CS:S to validate leaks and playability.
 
 ### Autosave and recovery
 
@@ -344,6 +364,7 @@ For example, place a warm light:
 | Map reports and visibility | `get_object_report`, `select_object_report`, `set_object_visibility` |
 | World settings and property batches | `get_property_inspector`, `begin_property_edit`, `update_property_edit`, `get_property_edit`, `commit_property_edit`, `cancel_property_edit` |
 | Entity definitions and controls | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
+| Map checks | `run_map_checks`, `get_map_checks`, `select_map_issue`, `preview_map_fixes`, `apply_map_fixes`, `cancel_map_fixes` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `commit_face_preview`, `cancel_face_preview` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |

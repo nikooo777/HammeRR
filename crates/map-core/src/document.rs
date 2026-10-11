@@ -81,8 +81,8 @@ pub struct Document {
     redo: Vec<Step>,
     revision: u64,
     saved_revision: u64,
-    next_object_id: u32,
-    next_side_id: u32,
+    next_object_id: u64,
+    next_side_id: u64,
 }
 
 impl Document {
@@ -101,8 +101,8 @@ impl Document {
         }
         let group_max = vmf.world.groups.iter().map(|g| g.id).max().unwrap_or(0);
         Self {
-            next_object_id: object_max.max(entity_max).max(group_max) + 1,
-            next_side_id: side_max + 1,
+            next_object_id: u64::from(object_max.max(entity_max).max(group_max)) + 1,
+            next_side_id: u64::from(side_max) + 1,
             vmf,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -246,6 +246,7 @@ impl Document {
         f: impl FnOnce(&mut Transaction) -> Result<R, EditError>,
     ) -> Result<R, EditError> {
         let mut tx = Transaction {
+            start_ids: (self.next_object_id, self.next_side_id),
             doc: self,
             touched: Vec::new(),
             world: None,
@@ -342,6 +343,7 @@ impl Document {
 
 /// Mutable access to a document during [`Document::edit`].
 pub struct Transaction<'a> {
+    start_ids: (u64, u64),
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
     world: Option<Properties>,
@@ -362,16 +364,18 @@ impl Transaction<'_> {
         self.doc
     }
 
-    pub fn new_object_id(&mut self) -> u32 {
-        let id = self.doc.next_object_id;
+    pub fn new_object_id(&mut self) -> Result<u32, EditError> {
+        let id = u32::try_from(self.doc.next_object_id)
+            .map_err(|_| EditError::Invalid("Map object IDs are exhausted".into()))?;
         self.doc.next_object_id += 1;
-        id
+        Ok(id)
     }
 
-    pub fn new_side_id(&mut self) -> u32 {
-        let id = self.doc.next_side_id;
+    pub fn new_side_id(&mut self) -> Result<u32, EditError> {
+        let id = u32::try_from(self.doc.next_side_id)
+            .map_err(|_| EditError::Invalid("Map face IDs are exhausted".into()))?;
         self.doc.next_side_id += 1;
-        id
+        Ok(id)
     }
 
     fn touch(&mut self, id: ObjectId) {
@@ -458,6 +462,7 @@ impl Transaction<'_> {
     }
 
     fn rollback(self) {
+        (self.doc.next_object_id, self.doc.next_side_id) = self.start_ids;
         if let Some(before) = self.world {
             self.doc.vmf.world.properties = before;
         }
@@ -529,7 +534,7 @@ mod tests {
         let mut doc = Document::empty();
         doc.edit("add", |tx| {
             for _ in 0..n {
-                let id = tx.new_object_id();
+                let id = tx.new_object_id()?;
                 tx.add_entity(Entity::new(id, "info_target"))?;
             }
             Ok(())
@@ -598,7 +603,56 @@ mod tests {
     fn new_ids_never_collide_with_existing_ones() {
         let mut doc = doc_with_entities(2);
         let max = doc.vmf().entities.iter().map(|e| e.id).max().unwrap();
-        let id = doc.edit("id", |tx| Ok(tx.new_object_id())).unwrap();
+        let id = doc.edit("id", |tx| tx.new_object_id()).unwrap();
         assert!(id > max);
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+    use crate::edit;
+    use glam::DVec3;
+
+    #[test]
+    fn maximum_imported_ids_remain_readable_and_fail_creation_cleanly() {
+        let mut vmf = Document::empty().vmf().clone();
+        vmf.world.id = u32::MAX;
+        let mut document = Document::new(vmf.clone());
+        let error = document
+            .edit("create", |tx| {
+                edit::create_entity(tx, "info_target", None, &[], vec![])
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("IDs are exhausted"));
+        assert_eq!(document.vmf(), &vmf);
+        assert_eq!(document.revision(), 0);
+    }
+
+    #[test]
+    fn partial_allocation_failure_restores_map_and_counters() {
+        let mut document = Document::empty();
+        document.next_side_id = u64::from(u32::MAX) - 2;
+        let before = document.vmf().clone();
+        let ids = (document.next_object_id, document.next_side_id);
+        let error = document
+            .edit("box", |tx| {
+                edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "test")
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("face IDs are exhausted"));
+        assert_eq!((document.next_object_id, document.next_side_id), ids);
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.revision(), 0);
+        assert_eq!(document.undo_labels().count(), 0);
+        let last = document
+            .edit("allocate", |tx| {
+                tx.new_side_id()?;
+                tx.new_side_id()?;
+                tx.new_side_id()
+            })
+            .unwrap();
+        assert_eq!(last, u32::MAX);
+        assert!(document.edit("exhausted", |tx| tx.new_side_id()).is_err());
     }
 }

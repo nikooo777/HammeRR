@@ -321,11 +321,21 @@ impl Session {
     }
 
     fn connection_warnings(&self, source: u32, spec: &Spec) -> Vec<String> {
+        self.connection_feedback(source, spec, true)
+    }
+
+    pub(super) fn connection_problems(&self, source: u32, spec: &Spec) -> Vec<String> {
+        self.connection_feedback(source, spec, false)
+    }
+
+    fn connection_feedback(&self, source: u32, spec: &Spec, include_context: bool) -> Vec<String> {
+        let check_definitions = include_context || self.definitions.classes().next().is_some();
         let mut warnings = Vec::new();
-        if !self
-            .connection_outputs(source)
-            .iter()
-            .any(|output| output.name.eq_ignore_ascii_case(&spec.output))
+        if check_definitions
+            && !self
+                .connection_outputs(source)
+                .iter()
+                .any(|output| output.name.eq_ignore_ascii_case(&spec.output))
         {
             warnings.push(format!(
                 "{} is not declared in the source FGD; custom outputs are allowed",
@@ -334,23 +344,28 @@ impl Session {
         }
         let targets = connections::targets(&self.document, source, &spec.target);
         if spec.target.starts_with('!') && spec.target != "!self" {
-            warnings.push(
-                "Target is resolved in game; its inputs cannot be checked against map entities"
-                    .into(),
-            );
+            if include_context {
+                warnings.push(
+                    "Target is resolved in game; its inputs cannot be checked against map entities"
+                        .into(),
+                );
+            }
         } else if targets.is_empty() {
             warnings.push(format!(
                 "No visible map entity matches {}; it may be created in game",
                 spec.target
             ));
         }
-        if targets.len() > 1 {
+        if include_context && targets.len() > 1 {
             warnings.push(format!(
                 "This output addresses {} map entities",
                 targets.len()
             ));
         }
         for id in targets {
+            if !check_definitions {
+                continue;
+            }
             let class = self
                 .document
                 .entity(id)
@@ -388,10 +403,11 @@ impl Session {
                 }
             }
         }
-        if self
-            .document
-            .entity(source)
-            .is_some_and(|entity| entity.hidden)
+        if include_context
+            && self
+                .document
+                .entity(source)
+                .is_some_and(|entity| entity.hidden)
         {
             warnings.push("Source entity is hidden and will not be compiled".into());
         }

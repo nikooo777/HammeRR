@@ -152,3 +152,32 @@ fn shared_border_vertices(meshes: &[DisplacementMesh]) -> (usize, usize) {
     }
     (matched, total)
 }
+
+#[test]
+fn corpus_map_checks_find_no_invalid_closed_geometry() {
+    let mut failures = Vec::new();
+    let mut counts = std::collections::BTreeMap::new();
+    for (path, vmf) in corpus() {
+        let report = map_core::checks::check(&vmf);
+        for issue in report.issues {
+            *counts.entry(issue.code).or_insert(0) += 1;
+            if matches!(
+                issue.code,
+                "open_brush" | "invalid_brush" | "invalid_displacement"
+            ) {
+                failures.push(format!(
+                    "{} {}: {}",
+                    path.display(),
+                    issue.location.path,
+                    issue.message
+                ));
+            }
+        }
+    }
+    eprintln!("map-check issue counts: {counts:?}");
+    assert!(
+        failures.is_empty(),
+        "{}",
+        failures.into_iter().take(30).collect::<Vec<_>>().join("\n")
+    );
+}

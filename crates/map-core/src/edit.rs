@@ -52,7 +52,7 @@ pub fn new_side(
         scale: DEFAULT_TEXTURE_SCALE,
     };
     Ok(Side {
-        id: tx.new_side_id(),
+        id: tx.new_side_id()?,
         plane: Plane(points),
         material: material.to_ascii_uppercase(),
         u_axis: axis(u),
@@ -81,7 +81,7 @@ pub fn block_solid(
     if material.trim().is_empty() {
         return Err(invalid("material must not be empty"));
     }
-    let id = tx.new_object_id();
+    let id = tx.new_object_id()?;
     let mut sides = Vec::with_capacity(6);
     for normal in [
         DVec3::Z,
@@ -174,7 +174,7 @@ pub fn create_entity(
     if classname.trim().is_empty() {
         return Err(invalid("classname must not be empty"));
     }
-    let mut entity = Entity::new(tx.new_object_id(), classname);
+    let mut entity = Entity::new(tx.new_object_id()?, classname);
     for (key, value) in properties {
         if key.eq_ignore_ascii_case("classname") {
             continue;
@@ -261,11 +261,12 @@ pub fn translate(
     Ok(())
 }
 
-fn renumber_solid(tx: &mut Transaction, solid: &mut Solid) {
-    solid.id = tx.new_object_id();
+fn renumber_solid(tx: &mut Transaction, solid: &mut Solid) -> Result<(), EditError> {
+    solid.id = tx.new_object_id()?;
     for side in &mut solid.sides {
-        side.id = tx.new_side_id();
+        side.id = tx.new_side_id()?;
     }
+    Ok(())
 }
 
 /// Copies objects with fresh ids, offset by `offset`. Returns the copies in
@@ -284,7 +285,7 @@ pub fn duplicate(
                     .solid(id)
                     .ok_or(EditError::NotFound(ObjectId::Solid(id)))?
                     .clone();
-                renumber_solid(tx, &mut solid);
+                renumber_solid(tx, &mut solid)?;
                 translate_solid(&mut solid, offset, true);
                 tx.add_solid(solid)?
             }
@@ -294,9 +295,9 @@ pub fn duplicate(
                     .entity(id)
                     .ok_or(EditError::NotFound(ObjectId::Entity(id)))?
                     .clone();
-                entity.id = tx.new_object_id();
+                entity.id = tx.new_object_id()?;
                 for solid in &mut entity.solids {
-                    renumber_solid(tx, solid);
+                    renumber_solid(tx, solid)?;
                 }
                 translate_entity(&mut entity, offset, true);
                 tx.add_entity(entity)?

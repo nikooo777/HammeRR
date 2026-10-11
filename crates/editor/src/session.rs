@@ -20,6 +20,7 @@ use crate::game;
 use crate::inspector;
 use crate::spatial;
 
+pub mod checks;
 mod clipping;
 mod management;
 mod recovery;
@@ -104,6 +105,7 @@ pub struct Session {
     face_preview: Option<FacePreview>,
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
+    checks: checks::State,
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
@@ -216,6 +218,7 @@ impl Session {
             face_preview: None,
             surface_sample: None,
             recovery: recovery::State::default(),
+            checks: checks::State::default(),
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,

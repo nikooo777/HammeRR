@@ -1829,18 +1829,19 @@ export component AppWindow inherits Window {
                     spacing: 8px;
 
                     SectionTitle {
-                        text: "SELECTION";
+                        text: "VIEWPORT";
                     }
                     ComboBox {
-                        model: ["Textured surfaces", "Lightmap density", "Smoothing group membership"];
+                        model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
                         current-index <=> root.surface-view;
                         selected => { root.surface-view-changed(); }
                     }
-                    if root.surface-view == 2: HorizontalLayout {
+                    if root.surface-view == 4: HorizontalLayout {
                         Text { text: "Highlight group"; color: #c8ccd4; vertical-alignment: center; }
                         SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }
                     }
-                    if root.surface-view != 0: Text { text: root.projection-index == 0 ? "Authored settings · baked lighting is pending" : "Switch to Perspective to see surface diagnostics"; color: #aeb9c8; wrap: word-wrap; }
+                    if root.surface-view >= 3: Text { text: "Authored settings · baked lighting is pending"; color: #aeb9c8; wrap: word-wrap; }
+                    SectionTitle { text: "SELECTION"; }
                     ComboBox {
                         model: ["Objects", "Faces · materials & textures"];
                         current-index: root.face-mode ? 1 : 0;

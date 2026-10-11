@@ -5,7 +5,7 @@ use std::mem::size_of;
 use source_formats::vtf::{ImageFormat, Vtf};
 use wgpu::util::DeviceExt;
 
-use crate::camera::{Camera, Projection};
+use crate::camera::Camera;
 use crate::materials::{MaterialId, MaterialInfo, MaterialLibrary};
 use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 
@@ -129,14 +129,36 @@ struct Globals {
 pub enum SurfaceView {
     #[default]
     Textured,
+    Flat,
+    Wireframe,
     LightmapDensity,
     SmoothingGroups,
 }
 
 impl SurfaceView {
+    pub const ALL: [Self; 5] = [
+        Self::Textured,
+        Self::Flat,
+        Self::Wireframe,
+        Self::LightmapDensity,
+        Self::SmoothingGroups,
+    ];
+
+    pub fn index(self) -> i32 {
+        Self::ALL.iter().position(|mode| *mode == self).unwrap() as i32
+    }
+
+    pub fn from_index(index: i32) -> Option<Self> {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| Self::ALL.get(index).copied())
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Textured => "textured",
+            Self::Flat => "flat",
+            Self::Wireframe => "wireframe",
             Self::LightmapDensity => "lightmap_density",
             Self::SmoothingGroups => "smoothing_groups",
         }
@@ -145,9 +167,11 @@ impl SurfaceView {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "textured" => Ok(Self::Textured),
+            "flat" => Ok(Self::Flat),
+            "wireframe" => Ok(Self::Wireframe),
             "lightmap_density" => Ok(Self::LightmapDensity),
             "smoothing_groups" => Ok(Self::SmoothingGroups),
-            _ => Err("Surface view must be textured, lightmap_density or smoothing_groups".into()),
+            _ => Err("Surface view must be textured, flat, wireframe, lightmap_density or smoothing_groups".into()),
         }
     }
 }
@@ -649,6 +673,8 @@ impl Renderer {
             surface_view: [
                 match options.surface {
                     SurfaceView::Textured => 0,
+                    SurfaceView::Flat => 3,
+                    SurfaceView::Wireframe => 4,
                     SurfaceView::LightmapDensity => 1,
                     SurfaceView::SmoothingGroups => 2,
                 },
@@ -705,7 +731,7 @@ impl Renderer {
                 (&self.translucent_pipeline, &scene.translucent),
             ] {
                 for draw in batches {
-                    if camera.projection != Projection::Perspective && !draw.helper {
+                    if options.surface == SurfaceView::Wireframe && !draw.helper {
                         continue;
                     }
                     if !options.tool_textures && draw.tool {
@@ -728,7 +754,7 @@ impl Renderer {
                     );
                 }
             }
-            if camera.projection != Projection::Perspective {
+            if options.surface == SurfaceView::Wireframe {
                 for lines in [&scene.wire_lines, &scene.tool_wire_lines]
                     .into_iter()
                     .take(if options.tool_textures { 2 } else { 1 })

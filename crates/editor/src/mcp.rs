@@ -1407,7 +1407,7 @@ pub struct SetViewArgs {
     pub tool_textures: Option<bool>,
     /// Show the current compilation's leak path through geometry.
     pub leak_path: Option<bool>,
-    /// textured, lightmap_density (authored grid), or smoothing_groups (membership).
+    /// textured, flat, wireframe, lightmap_density, or smoothing_groups; works in every projection.
     pub surface: Option<String>,
     /// Highlight membership in this smoothing/hard-edge group, 1–32.
     pub smoothing_group: Option<u32>,
@@ -1423,7 +1423,7 @@ pub struct RenderArgs {
     /// Draw tool brushes (nodraw, clip, trigger, skybox). Defaults to the editor setting.
     pub tool_textures: Option<bool>,
     pub leak_path: Option<bool>,
-    /// Optional surface diagnostic override; does not change the user's view.
+    /// Optional viewport mode override; does not change the user's view.
     pub surface: Option<String>,
     pub smoothing_group: Option<u32>,
 }
@@ -4169,7 +4169,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set shared viewport visibility and surface diagnostics: textured, authored lightmap_density grid or smoothing_groups membership. Choose a group 1–32; groups 25–32 are hard-edge memberships. Diagnostics appear in perspective; planar views retain wireframes. These inspect authored metadata, not baked lighting or final engine smoothing."
+        description = "Set shared viewport visibility and mode in any projection: textured, flat, wireframe, lightmap_density or smoothing_groups. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. Helpers, selection and tool filters remain active. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
     )]
     fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
@@ -4238,7 +4238,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Render the map to a PNG with the editor's renderer: textured perspective or planar brush wireframes, entity helpers, grid and shared brush preview. Selection is highlighted in red. Defaults to the user's view; pass camera.focus to frame objects.",
+        description = "Render the map to a PNG with the editor's renderer. Textured, flat, wireframe and diagnostic modes work in perspective or planar views, with entity helpers, grid and shared previews. Selection is highlighted in red. Optional surface and camera overrides leave shared settings unchanged; pass camera.focus to frame objects.",
         annotations(read_only_hint = true)
     )]
     fn render_view(&self, Parameters(args): Parameters<RenderArgs>) -> ToolResult {

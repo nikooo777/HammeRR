@@ -42,6 +42,10 @@ pub fn partition_pairs(source: &Solid, side: u32) -> Result<Vec<CreasePair>, Edi
     topology(source)?.partition_pairs(side)
 }
 
+pub fn polygon_partition_pairs(source: &Solid, side: u32) -> Result<Vec<CreasePair>, EditError> {
+    topology(source)?.polygon_partition_pairs(side)
+}
+
 fn area(points: &[DVec3], normal: DVec3) -> f64 {
     let origin = points[0];
     -(1..points.len() - 1)

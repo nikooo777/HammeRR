@@ -19,13 +19,14 @@ pub use split::{
 };
 mod crease;
 pub use crease::{
-    Crease, CreaseChange, CreasePair, CreasePlan, crease, crease_pairs, crease_with_roof_textures,
+    Crease, CreaseChange, CreasePair, CreasePlan, MAX_BOUNDARY_SOURCE_CORNERS, crease,
+    crease_pairs, crease_with_roof_textures,
 };
 mod partition;
 pub(crate) use partition::checked_partition;
 pub use partition::{
     Partition, PartitionCut, PartitionLoop, PartitionVertex, VertexSource, partition_pairs,
-    plan_partitions, plan_partitions_at,
+    plan_partitions, plan_partitions_at, polygon_partition_pairs,
 };
 mod extrusion;
 pub use extrusion::{

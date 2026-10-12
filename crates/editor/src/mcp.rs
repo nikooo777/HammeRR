@@ -531,6 +531,12 @@ struct ComponentWeldArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentSplitArgs {
+    rise: f64,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentMoveOptionsArgs {
     enabled: Option<bool>,
     snap: Option<bool>,
@@ -3033,7 +3039,21 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the exact shared component preview token, whether movement or corner welding, as one undo step. Stored geometry matches the draft. Retains the resulting component selection and picking scope; welding selects each merged corner using its new incident side IDs. Stale tokens and invalid handle updates reject without editing."
+        description = "Preview splitting one selected face or edge per brush by inserting and raising its center/midpoint outward. rise is 0.125–4096 world units, normal to the face or along the normalized sum of the two edge face normals. Requires the latest component snapshot. Replaces affected faces with convex triangle fans; keeps each source side ID on its first triangle and allocates IDs for additional faces. New faces inherit their source material, world UV projection, lighting and unknown metadata. Existing corner positions, solid IDs and entity ownership remain. preview.split reports rise, inserted positions, source/new side IDs and face inheritance. Rejects corners, multiple components per brush, neighboring-face crossings, invalid/nonconvex geometry, displacements, 64-face overflow or coordinates outside ±65536 atomically. Drafts show the new corner selection; source_selection retains inputs. Apply/cancel with commit_component_edit/cancel_component_edit. Apply verifies allocated IDs and is one undo step; selecting or dragging draft topology is blocked."
+    )]
+    fn preview_component_split(
+        &self,
+        Parameters(args): Parameters<ComponentSplitArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_component_split(args.rise, &args.snapshot)?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact shared movement, welding or splitting preview token as one undo step. Stored geometry matches the draft; splitting verifies generated face IDs before accepting. Retains resulting component selection and picking scope; welding/splitting select each resulting corner using its new incidence. Splitting changes active viewport picking to corners. Stale tokens, changed allocations and invalid handle updates reject without editing."
     )]
     fn commit_component_edit(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {
@@ -3044,7 +3064,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Discard the exact movement or corner-weld preview without changing map or history. Restores the original component selection and retains viewport picking scope. Stale tokens cannot discard a newer draft. Equivalent to Discard preview; stopping component picking clears the whole tool."
+        description = "Discard the exact movement, weld or split preview without changing map, face allocation or history. Restores original component selection and retains viewport picking scope/kind. Stale tokens cannot discard a newer draft. Equivalent to Discard preview; stopping component picking clears the whole tool."
     )]
     fn cancel_component_edit(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {

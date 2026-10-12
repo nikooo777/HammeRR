@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, LineEdit, ListView } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, Slider } from "std-widgets.slint";
 
 export struct ComponentRow {
     key: string,
@@ -24,6 +24,8 @@ export component ComponentsWindow inherits Window {
     in property <string> picking-summary;
     in-out property <int> kind;
     in-out property <int> operation;
+    in-out property <string> split-rise: "16";
+    in property <float> split-rise-value: 16;
     in-out property <string> move-x: "0";
     in-out property <string> move-y: "0";
     in-out property <string> move-z: "16";
@@ -37,6 +39,7 @@ export component ComponentsWindow inherits Window {
     callback select-all();
     callback clear();
     callback edited();
+    callback choose-rise(float);
     callback move-options();
     callback preview-edit();
     callback discard-preview();
@@ -49,7 +52,7 @@ export component ComponentsWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Move faces, edges or corners, or weld selected corners into one."; color: #aeb9c8; }
+            Text { text: "Move components, weld corners, or split a face or edge to add a raised corner."; color: #aeb9c8; }
             HorizontalLayout {
                 spacing: 20px;
                 VerticalLayout {
@@ -78,7 +81,7 @@ export component ComponentsWindow inherits Window {
                 }
                 VerticalLayout {
                     width: 290px; spacing: 12px;
-                    ComboBox { model: ["Move selection", "Weld corners"]; current-index <=> root.operation; selected => { root.edited(); } }
+                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise"]; current-index <=> root.operation; selected => { root.edited(); } }
                     if root.operation == 0: VerticalLayout {
                     spacing: 12px;
                     CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
@@ -108,7 +111,16 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Selected corners merge at their average position. Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: #aeb9c8; }
                         Text { text: "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
-                    Button { text: root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
+                    if root.operation == 2: VerticalLayout {
+                        spacing: 12px;
+                        Text { text: "Select one face or edge per brush. Its center or midpoint becomes a new corner."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Raise outward · world units"; color: #aeb9c8; }
+                        LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Split rise"; edited => { root.edited(); } }
+                        Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
+                        Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    }
+                    Button { text: root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                     Rectangle { vertical-stretch: 1; }
@@ -121,7 +133,7 @@ export component ComponentsWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

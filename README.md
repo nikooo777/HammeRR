@@ -28,7 +28,7 @@ and the shared entity inspector and activity panel.*
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush hollowing | Inward/outward wall shells with inherited materials and lighting, cavity inspection, cancellable previews and one-step undo. |
 | Brush clipping | Planar cuts, three-point surface picking, exact planes and 3D move/rotation handles; keep either side or both, cap materials and one-step undo. |
-| Brush components | Viewport/list selection of faces, edges and corners; move handles, exact offsets and corner welding, with guarded previews and atomic undo. |
+| Brush components | Viewport/list selection, move handles, exact offsets, corner welding and edge/face splitting, with guarded previews and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
@@ -218,8 +218,8 @@ measured from the committed map, so revising a preview does not accumulate moves
 Invalid offsets leave the last valid preview visible and block drag commit until
 the next valid update. Zero total displacement adds no history. Faces must remain flat
 and the brush convex: moving one corner of a box usually requires moving its
-connected edge or the whole face together. Splitting and displacement
-movement are not supported yet. Existing face IDs, materials, lighting fields
+connected edge or the whole face together. Displacement
+movement is not supported yet. Existing face IDs, materials, lighting fields
 and unknown metadata are retained. Textures stay anchored in world space by
 default. Enable **Keep textures at corners** to stretch or rotate the texture
 with each reshaped face. Every corner must keep its original texture coordinates;
@@ -239,10 +239,33 @@ one undo step; **Discard preview** restores the original corner selection.
 | --- | --- |
 | ![Merged selection and Apply/Cancel controls](docs/images/brush-welding.png) | ![Four box corners welded into a pyramid apex](docs/images/component-weld-preview.png) |
 
-The first version supports 512 selected components across 16 brushes, with up
+Choose **Split and raise**, then select one face or edge per brush. A face gains
+a corner at its center, raised along the face normal. An edge gains a corner at
+its midpoint, raised outward between its two face normals. Enter **Raise outward**
+in world units or use the slider, then **Preview split**. Existing corners stay
+in place, and the affected faces become triangles. Each source face keeps its ID
+on the first triangle; added faces get new IDs and inherit its material, world
+texture projection, lighting and metadata.
+
+The preview highlights the inserted corner and reports added faces.
+**Apply split** verifies the planned IDs and records one undo step, keeping
+the new corner selected for further editing. **Discard preview** restores the
+original selection. Rises from 0.125 to 4096 units are supported when the result
+stays convex and within the editing bounds. Crossing neighboring faces,
+exceeding 64 faces or selecting multiple components in one brush is rejected.
+
+| Face split controls | Shared face split preview |
+| --- | --- |
+| ![Raised corner controls with rise slider and Apply/Discard/Cancel](docs/images/brush-face-split.png) | ![A face split into four triangles around a raised corner](docs/images/component-face-split.png) |
+
+| Edge split controls | Shared edge split preview |
+| --- | --- |
+| ![Edge split controls and inserted-corner selection](docs/images/brush-edge-split.png) | ![A raised edge midpoint shared by six new triangles](docs/images/component-edge-split.png) |
+
+Movement and welding support 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
 collapse edges are rejected before the map is changed. Movement preserves
-topology; welding accepts only a closed, convex result with the planned corners.
+topology; welding and splitting require a closed, convex result with the planned corners.
 
 | Component controls | Shared shape preview |
 | --- | --- |
@@ -717,7 +740,7 @@ For example, place a warm light:
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
-| Corner welding | `preview_component_weld`, `commit_component_edit`, `cancel_component_edit` |
+| Component topology | `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -812,6 +835,14 @@ in `preview.weld`. `selection` identifies the resulting corners;
 `source_selection` retains the original inputs while the draft is open.
 Use `commit_component_edit` or `cancel_component_edit` with its exact token.
 Selection changes and handles remain unavailable until Apply or Cancel.
+
+`preview_component_split` accepts `rise` and the latest component `snapshot`.
+Select one face or edge per brush first. `preview.split` reports inserted
+positions, source/new side IDs and each generated face's source. New faces
+inherit world texture projections. Apply verifies allocation and switches
+active picking to vertices in the same captured brush scope. Discard preserves
+the original picking kind and selection. Both use the generic component
+commit/cancel calls.
 
 For component picking, `set_component_picking` captures the brush IDs and kind;
 `get_brush_components` reports that shared mode. `pick_brush_components` accepts
@@ -1021,7 +1052,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes component splitting, broader welding targets, displacement clipping,
+Editor work ahead includes broader component split/weld controls, displacement clipping,
 carving, displacement tools, model rendering and broader map checks.
 
 ## Project layout

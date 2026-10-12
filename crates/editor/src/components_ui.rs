@@ -53,21 +53,32 @@ fn position(point: DVec3) -> String {
 }
 
 pub fn refresh(window: &ComponentsWindow, session: &Session) {
+    let was_topology_preview = window.get_topology_preview();
+    let topology_preview = session.component_topology_preview();
     window.set_stamp(session.component_stamp().into());
     window.set_move_handles(session.component_move_options().enabled);
     window.set_snap(session.component_move_options().snap);
     window.set_texture_lock(session.component_move_options().texture_lock);
     window.set_picking(session.component_picking().is_some());
-    if let Some(picking) = session.component_picking() {
+    if topology_preview {
+        window.set_kind(1);
+        window.set_picking_summary("Previewed shape · Apply or discard before selecting".into());
+    } else if let Some(picking) = session.component_picking() {
         window.set_kind(match picking.kind {
             Kind::Edge => 0,
             Kind::Vertex => 1,
             Kind::Face => 2,
         });
         window.set_picking_summary(picking.hint().into());
+    } else if was_topology_preview && let Some(component) = session.component_selection().first() {
+        window.set_kind(match component.sides.len() {
+            1 => 2,
+            2 => 0,
+            _ => 1,
+        });
     }
     window.set_has_selection(!session.component_selection().is_empty());
-    window.set_topology_preview(session.component_topology_preview());
+    window.set_topology_preview(topology_preview);
     let ids = session.component_solids();
     let shapes = match session.component_topology(&ids) {
         Ok(shapes) => shapes,
@@ -186,8 +197,15 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let preview = &report["preview"];
     let token = preview["token"].as_str().unwrap_or_default();
     let weld = preview["operation"] == "weld";
+    let split = preview["operation"] == "split";
+    let operation = if split { 2 } else { i32::from(weld) };
     if !preview.is_null() && window.get_token() != token {
-        window.set_operation(i32::from(weld));
+        window.set_operation(operation);
+        if split {
+            let rise = preview["split"]["rise"].as_f64().unwrap();
+            window.set_split_rise(rise.to_string().into());
+            window.set_split_rise_value(rise as f32);
+        }
         window.set_texture_lock(preview["texture_lock"].as_bool().unwrap_or(false));
         window.set_move_x(preview["delta"][0].as_f64().unwrap().to_string().into());
         window.set_move_y(preview["delta"][1].as_f64().unwrap().to_string().into());
@@ -199,9 +217,11 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             && session
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
-            && window.get_operation() == i32::from(weld)
-            && (weld
-                || (window.get_texture_lock()
+            && window.get_operation() == operation
+            && (if split {
+                window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
+            } else {
+                weld || (window.get_texture_lock()
                     == preview["texture_lock"].as_bool().unwrap_or(false)
                     && [
                         window.get_move_x(),
@@ -212,10 +232,17 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     .enumerate()
                     .all(|(index, value)| {
                         value.parse::<f64>().ok() == preview["delta"][index].as_f64()
-                    }))),
+                    }))
+            }),
     );
     window.set_preview_summary(if preview.is_null() {
         "Preview the change before applying.".into()
+    } else if split {
+        let changes = preview["split"]["changes"].as_array().unwrap();
+        let added: usize = changes.iter().map(|change| change["new_sides"].as_array().unwrap().len()).sum();
+        let corners = if changes.len() == 1 { "a corner".into() } else { format!("{} corners", changes.len()) };
+        let rise = number(preview["split"]["rise"].as_f64().unwrap());
+        format!("Add {corners} and {added} faces. Raise by {rise} units.\nThe map is unchanged until Apply.").into()
     } else if weld {
         let changes = preview["weld"].as_array().unwrap();
         let merged: u64 = changes.iter().map(|change|change["merged_vertices"].as_u64().unwrap()).sum();
@@ -326,8 +353,22 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
         let window = window.as_weak();
         move || {
             let window = window.unwrap();
+            if let Ok(rise) = window.get_split_rise().parse::<f64>()
+                && (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
+                    .contains(&rise)
+            {
+                window.set_split_rise_value(rise as f32);
+            }
             window.set_ready(false);
             window.set_message("Settings changed. Preview the change before applying.".into());
+        }
+    });
+    window.on_choose_rise({
+        let window = window.as_weak();
+        move |value| {
+            let window = window.unwrap();
+            window.set_split_rise(value.to_string().into());
+            window.invoke_edited();
         }
     });
     window.on_move_options({
@@ -365,7 +406,16 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             })
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
-            let result = if window.get_operation() == 1 {
+            let result = if window.get_operation() == 2 {
+                window
+                    .get_split_rise()
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a numeric split rise".to_string())
+                    .and_then(|rise| {
+                        session.preview_component_split(rise, window.get_stamp().as_str())
+                    })
+            } else if window.get_operation() == 1 {
                 session.preview_component_weld(window.get_stamp().as_str())
             } else {
                 delta.and_then(|delta| {

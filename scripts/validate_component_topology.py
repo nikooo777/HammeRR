@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 from pathlib import Path
 
 from validate_face_lighting import ROOT, Client, detail
@@ -33,6 +34,7 @@ def validate(client, output, render=False):
     check(
         {
             "preview_component_weld",
+            "preview_component_split",
             "commit_component_edit",
             "cancel_component_edit",
         }
@@ -247,7 +249,274 @@ def validate(client, output, render=False):
     client.call("commit_component_edit", {"token": token})
     compiled = client.call("compile_map", {"path": str(output / "weld-room.bsp")})
     check(compiled["success"], "Native compiler accepts the welded sealed-room fixture")
+    validate_splitting(client, output, check, render)
     return checks
+
+
+def validate_splitting(client, output, check, render):
+    def inspect(solids=None):
+        return client.call("get_brush_components", {"solids": solids} if solids else {})
+
+    def select(components):
+        return client.call(
+            "select_brush_components",
+            {"components": components, "snapshot": inspect()["snapshot"]},
+        )
+
+    def preview(rise=16):
+        return client.call(
+            "preview_component_split", {"rise": rise, "snapshot": inspect()["snapshot"]}
+        )
+
+    for kind in ["face", "edge"]:
+        client.call("new_map", {"discard_changes": True})
+        ids = [
+            client.call(
+                "create_block",
+                {
+                    "mins": [x, 0, 0],
+                    "maxs": [x + 64, 64, 64],
+                    "material": "dev/dev_measuregeneric01",
+                },
+            )["id"]
+            for x in [0, 128]
+        ]
+        solid = int(ids[0].split(":")[1])
+        shape = inspect([solid])["brushes"][0]
+        original = detail(client, ids)
+        if kind == "face":
+            face = next(
+                face
+                for face in shape["faces"]
+                if all(
+                    shape["vertices"][index]["position"][2] == 64
+                    for index in face["vertices"]
+                )
+            )
+            component = {"solid": solid, "sides": [face["side"]]}
+            expected_position = [32, 32, 80]
+        else:
+            edge = next(
+                edge
+                for edge in shape["edges"]
+                if all(point[2] == 64 for point in edge["positions"])
+            )
+            component = {"solid": solid, "sides": edge["sides"]}
+            normals = [
+                face["normal"]
+                for face in original[0]["faces"]
+                if face["side"] in edge["sides"]
+            ]
+            normal = [sum(values) for values in zip(*normals, strict=True)]
+            length = math.dist(normal, [0, 0, 0])
+            expected_position = [
+                sum(values) * 0.5 + normal[axis] * 16 / length
+                for axis, values in enumerate(zip(*edge["positions"], strict=True))
+            ]
+        picking = client.call(
+            "set_component_picking",
+            {
+                "enabled": True,
+                "kind": kind,
+                "solids": [solid],
+                "snapshot": inspect()["snapshot"],
+            },
+        )
+        selected = select([component])
+        if render:
+            client.call(
+                "set_component_move_options",
+                {"enabled": False, "snapshot": selected["snapshot"]},
+            )
+            client.call(
+                "set_camera", {"position": [170, -220, 170], "look_at": [70, 32, 32]}
+            )
+            baseline_pixels = client.render(
+                output / f"before-split-{kind}.png", surface="flat"
+            )
+        history = client.call("get_map_info")["undo"]
+        snapshot = inspect()["snapshot"]
+        draft = preview()
+        token = draft["preview"]["token"]
+        change = draft["preview"]["split"]["changes"][0]
+        check(
+            math.dist(change["position"], expected_position) < 1e-8,
+            f"{kind}: split uses the outward face normal or edge bisector",
+        )
+        check(
+            len(draft["brushes"][0]["vertices"]) == 9
+            and len(draft["brushes"][0]["faces"]) == (9 if kind == "face" else 10),
+            f"{kind}: split creates the expected closed topology",
+        )
+        check(
+            all(
+                any(
+                    math.dist(vertex["position"], old["position"]) < 1e-8
+                    for vertex in draft["brushes"][0]["vertices"]
+                )
+                for old in shape["vertices"]
+            ),
+            f"{kind}: every original corner stays in place",
+        )
+        check(
+            draft["source_selection"] == [component]
+            and len(draft["selection"]) == 1
+            and len(change["new_sides"]) == (3 if kind == "face" else 4),
+            f"{kind}: draft reports source selection, new IDs and inserted corner",
+        )
+        check(
+            detail(client, ids) == original
+            and client.call("get_map_info")["undo"] == history,
+            f"{kind}: preview preserves source geometry and history",
+        )
+        if render:
+            preview_pixels = client.render(
+                output / f"preview-split-{kind}.png", surface="flat"
+            )
+            check(
+                preview_pixels != baseline_pixels,
+                f"{kind}: renderer shows the proposed split",
+            )
+        for rise in [0, -16, 0.01, 4097]:
+            client.call(
+                "preview_component_split",
+                {"rise": rise, "snapshot": inspect()["snapshot"]},
+                error=True,
+            )
+        client.call(
+            "preview_component_split", {"rise": 32, "snapshot": snapshot}, error=True
+        )
+        check(
+            inspect()["preview"]["token"] == token,
+            f"{kind}: invalid rises and stale snapshots preserve the valid draft",
+        )
+        replacement = preview(32)
+        new_token = replacement["preview"]["token"]
+        client.call("commit_component_edit", {"token": token}, error=True)
+        client.call("cancel_component_edit", {"token": token}, error=True)
+        check(
+            inspect()["preview"]["token"] == new_token,
+            f"{kind}: stale tokens cannot apply or discard a newer split",
+        )
+        discarded = client.call("cancel_component_edit", {"token": new_token})
+        check(
+            discarded["selection"] == [component]
+            and discarded["picking"]["kind"] == kind
+            and detail(client, ids) == original,
+            f"{kind}: discard restores source selection and picking kind",
+        )
+        if render:
+            check(
+                client.render(output / f"cancelled-split-{kind}.png", surface="flat")
+                == baseline_pixels,
+                f"{kind}: discard restores identical pixels",
+            )
+        draft = preview()
+        check(
+            draft["preview"]["split"]["changes"][0]["new_sides"] == change["new_sides"],
+            f"{kind}: cancelled drafts do not consume face IDs",
+        )
+        applied = client.call(
+            "commit_component_edit", {"token": draft["preview"]["token"]}
+        )
+        result = detail(client, ids)
+        check(
+            applied["selection"] == draft["selection"]
+            and applied["picking"]["kind"] == "vertex"
+            and applied["picking"]["solids"] == picking["picking"]["solids"],
+            f"{kind}: apply selects the inserted corner and retains brush scope",
+        )
+        check(
+            result[1] == original[1]
+            and len(client.call("get_map_info")["undo"]) == len(history) + 1,
+            f"{kind}: apply changes only the target in one undo step",
+        )
+        if render:
+            check(
+                client.render(output / f"applied-split-{kind}.png", surface="flat")
+                == preview_pixels,
+                f"{kind}: applied geometry and guides match draft pixels",
+            )
+        parents = {entry["side"]: entry["source"] for entry in change["faces"]}
+        source_faces = {face["side"]: face for face in original[0]["faces"]}
+        fields = ["material", "uaxis", "vaxis", "lightmap_scale", "smoothing_groups"]
+        check(
+            all(
+                all(
+                    face[field]
+                    == source_faces[parents.get(face["side"], face["side"])][field]
+                    for field in fields
+                )
+                for face in result[0]["faces"]
+            ),
+            f"{kind}: source and new faces preserve inherited materials, UVs and lighting",
+        )
+        client.call("undo")
+        check(
+            detail(client, ids) == original,
+            f"{kind}: undo restores exact source planes",
+        )
+        client.call("redo")
+        check(
+            detail(client, ids) == result,
+            f"{kind}: redo restores exact generated planes and IDs",
+        )
+        saved = output / f"split-{kind}.vmf"
+        client.call("save_map", {"path": str(saved)})
+        client.call("open_map", {"path": str(saved)})
+        check(
+            len(inspect([solid])["brushes"][0]["vertices"]) == 9,
+            f"{kind}: new topology survives VMF save/reopen",
+        )
+        other = int(ids[1].split(":")[1])
+        other_shape = inspect([other])["brushes"][0]
+        select([{"solid": other, "sides": [other_shape["faces"][0]["side"]]}])
+        stale = preview()["preview"]["token"]
+        client.call(
+            "create_entity", {"classname": "info_target", "origin": [0, 0, 128]}
+        )
+        client.call("commit_component_edit", {"token": stale}, error=True)
+        check(
+            inspect()["preview"] is None,
+            f"{kind}: source edits invalidate split tokens",
+        )
+
+        client.call("new_map", {"discard_changes": True})
+        for mins, maxs in [
+            ([-272, -272, -16], [272, 272, 0]),
+            ([-272, -272, 256], [272, 272, 272]),
+            ([-272, -272, 0], [-256, 272, 256]),
+            ([256, -272, 0], [272, 272, 256]),
+            ([-256, -272, 0], [256, -256, 256]),
+            ([-256, 256, 0], [256, 272, 256]),
+            ([0, 0, 0], [64, 64, 64]),
+        ]:
+            block = client.call(
+                "create_block",
+                {"mins": mins, "maxs": maxs, "material": "dev/dev_measuregeneric01"},
+            )["id"]
+        client.call(
+            "create_entity",
+            {"classname": "info_player_terrorist", "origin": [-64, 0, 8]},
+        )
+        solid = int(block.split(":")[1])
+        shape = inspect([solid])["brushes"][0]
+        component = {
+            "solid": solid,
+            "sides": [shape["faces"][0]["side"]]
+            if kind == "face"
+            else shape["edges"][0]["sides"],
+        }
+        select([component])
+        draft = preview()
+        client.call("commit_component_edit", {"token": draft["preview"]["token"]})
+        compiled = client.call(
+            "compile_map", {"path": str(output / f"split-{kind}-room.bsp")}
+        )
+        check(
+            compiled["success"],
+            f"{kind}: native compiler accepts the split sealed-room fixture",
+        )
 
 
 def main():

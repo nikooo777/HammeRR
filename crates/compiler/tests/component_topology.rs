@@ -5,6 +5,61 @@ use map_core::{Document, ObjectId, edit, subobject};
 use source_formats::bsp::{Brush, Face, Plane};
 
 #[test]
+fn sheared_oblique_brushes_compile_after_vmf_round_trip() {
+    for factor in [-1.25, 0.75] {
+        let mut document = Document::new(common::room());
+        let id = document
+            .edit("brush", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(0.0, 0.0, 16.0),
+                    DVec3::new(64.0, 32.0, 80.0),
+                    "dev/dev_measuregeneric01",
+                )
+            })
+            .unwrap();
+        document
+            .edit("rotate", |tx| {
+                map_core::transform::transform(
+                    tx,
+                    &[id],
+                    map_core::transform::Transform {
+                        rotation: DVec3::new(17.0, -23.0, 31.0),
+                        pivot: DVec3::new(32.0, 16.0, 48.0),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        document
+            .edit("shear", |tx| {
+                map_core::transform::transform(
+                    tx,
+                    &[id],
+                    map_core::transform::Transform {
+                        shear: Some(map_core::transform::Shear {
+                            axis: 0,
+                            reference: 1,
+                            factor,
+                        }),
+                        basis: glam::DMat3::from_rotation_z(0.37),
+                        pivot: DVec3::new(32.125, 16.25, 48.5),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let vmf =
+            source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.leak.is_none());
+        assert_eq!(output.stats.brushes, 7);
+        assert!(!output.bsp.unwrap().records::<Face>().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn reflected_oblique_brushes_compile_after_vmf_round_trip() {
     for reflection in [
         [true, false, false],

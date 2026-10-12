@@ -7,12 +7,22 @@ use source_formats::vmf::{
 
 use crate::{BrushGeometry, EditError, ObjectId, Plane, Transaction};
 
+pub const MAX_SHEAR_FACTOR: f64 = 64.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shear {
+    pub axis: usize,
+    pub reference: usize,
+    pub factor: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
     pub translation: DVec3,
     pub rotation: DVec3,
     pub scale: DVec3,
     pub reflection: [bool; 3],
+    pub shear: Option<Shear>,
     pub pivot: DVec3,
     pub basis: DMat3,
     pub texture_lock: bool,
@@ -26,6 +36,7 @@ impl Default for Transform {
             rotation: DVec3::ZERO,
             scale: DVec3::ONE,
             reflection: [false; 3],
+            shear: None,
             pivot: DVec3::ZERO,
             basis: DMat3::IDENTITY,
             texture_lock: true,
@@ -44,7 +55,7 @@ struct Mapping {
     texture_inverse_transpose: DMat3,
     texture_offset: DVec3,
     translation_only: bool,
-    reflected: bool,
+    brush_only: bool,
     reverses_winding: bool,
 }
 
@@ -73,9 +84,26 @@ impl Mapping {
             ));
         }
         let reflected = transform.reflection.into_iter().any(|axis| axis);
-        if reflected && transform.pivot.abs().max_element() > crate::primitive::MAX_COORDINATE {
+        let mut shear_matrix = DMat3::IDENTITY;
+        if let Some(shear) = transform.shear {
+            if shear.axis >= 3
+                || shear.reference >= 3
+                || shear.axis == shear.reference
+                || !shear.factor.is_finite()
+                || shear.factor.abs() > MAX_SHEAR_FACTOR
+            {
+                return Err(invalid(
+                    "Shear needs distinct X/Y/Z axes and a finite factor between -64 and 64",
+                ));
+            }
+            let mut columns = [DVec3::X, DVec3::Y, DVec3::Z];
+            columns[shear.reference][shear.axis] = shear.factor;
+            shear_matrix = DMat3::from_cols(columns[0], columns[1], columns[2]);
+        }
+        let brush_only = reflected || shear_matrix != DMat3::IDENTITY;
+        if brush_only && transform.pivot.abs().max_element() > crate::primitive::MAX_COORDINATE {
             return Err(invalid(
-                "Reflection pivot exceeds the editor's coordinate bounds",
+                "Brush deformation pivot exceeds the editor's coordinate bounds",
             ));
         }
         let signed_scale = transform.scale
@@ -84,6 +112,7 @@ impl Mapping {
                     .reflection
                     .map(|axis| if axis { -1.0 } else { 1.0 }),
             );
+        let deformation = shear_matrix * DMat3::from_diagonal(signed_scale);
         let angles = transform
             .rotation
             .map(|angle| angle.rem_euclid(360.0).to_radians());
@@ -99,13 +128,10 @@ impl Mapping {
             transform.basis * local_rotation * transform.basis.transpose()
         };
         let rotation = DQuat::from_mat3(&rotation_matrix);
-        let linear = if signed_scale == DVec3::ONE {
+        let linear = if deformation == DMat3::IDENTITY {
             rotation_matrix
         } else {
-            rotation_matrix
-                * transform.basis
-                * DMat3::from_diagonal(signed_scale)
-                * transform.basis.transpose()
+            rotation_matrix * transform.basis * deformation * transform.basis.transpose()
         };
         let inverse_transpose = linear.inverse().transpose();
         let offset = transform.pivot - linear * transform.pivot + transform.translation;
@@ -118,8 +144,8 @@ impl Mapping {
         let texture_linear = match (transform.texture_lock, scale_lock) {
             (true, true) => linear,
             (true, false) => rotation_matrix,
-            (false, true) if signed_scale != DVec3::ONE => {
-                transform.basis * DMat3::from_diagonal(signed_scale) * transform.basis.transpose()
+            (false, true) if deformation != DMat3::IDENTITY => {
+                transform.basis * deformation * transform.basis.transpose()
             }
             (false, _) => DMat3::IDENTITY,
         };
@@ -142,8 +168,8 @@ impl Mapping {
             translation_texture_lock: transform.texture_lock,
             texture_inverse_transpose,
             texture_offset,
-            translation_only: angles == DVec3::ZERO && signed_scale == DVec3::ONE,
-            reflected,
+            translation_only: angles == DVec3::ZERO && deformation == DMat3::IDENTITY,
+            brush_only,
             reverses_winding: transform
                 .reflection
                 .into_iter()
@@ -248,9 +274,9 @@ impl Mapping {
     }
 
     fn solid(&self, solid: &mut Solid) -> Result<(), EditError> {
-        if self.reflected && solid.sides.iter().any(|side| side.displacement.is_some()) {
+        if self.brush_only && solid.sides.iter().any(|side| side.displacement.is_some()) {
             return Err(invalid(
-                "Reflection does not yet support displacement brushes",
+                "Brush deformation does not yet support displacement brushes",
             ));
         }
         if self.translation_only {
@@ -303,12 +329,12 @@ impl Mapping {
                 solid.id
             )));
         }
-        if self.reflected
+        if self.brush_only
             && geometry.mins.abs().max(geometry.maxs.abs()).max_element()
                 > crate::primitive::MAX_COORDINATE
         {
             return Err(invalid(format!(
-                "Reflected brush {} exceeds the editor's coordinate bounds",
+                "Deformed brush {} exceeds the editor's coordinate bounds",
                 solid.id
             )));
         }
@@ -316,9 +342,9 @@ impl Mapping {
     }
 
     fn entity(&self, entity: &mut Entity, rotate: bool) -> Result<(), EditError> {
-        if self.reflected && entity.solids.is_empty() {
+        if self.brush_only && entity.solids.is_empty() {
             return Err(invalid(
-                "Reflection currently supports brushes and brush entities only",
+                "Brush deformation currently supports brushes and brush entities only",
             ));
         }
         if let Some(value) = entity.properties.get("origin") {
@@ -405,7 +431,7 @@ pub fn transform(
             continue;
         }
         if !rotate
-            && !mapping.reflected
+            && !mapping.brush_only
             && transform.scale == DVec3::ONE
             && transform.translation == DVec3::ZERO
         {
@@ -457,6 +483,214 @@ mod tests {
             angles.x.to_radians(),
             angles.z.to_radians(),
         )
+    }
+
+    #[test]
+    fn every_shear_pair_preserves_geometry_uvs_metadata_and_saved_history() {
+        for axis in 0..3 {
+            for reference in 0..3 {
+                if axis == reference {
+                    continue;
+                }
+                for factor in [-1.25, 0.75] {
+                    for basis in [DMat3::IDENTITY, DMat3::from_rotation_z(0.37)] {
+                        for lock in [false, true] {
+                            let mut document = Document::empty();
+                            let id = block(&mut document);
+                            document
+                                .edit("oblique source", |tx| {
+                                    transform(
+                                        tx,
+                                        &[id],
+                                        Transform {
+                                            rotation: DVec3::new(17.0, -23.0, 31.0),
+                                            ..Default::default()
+                                        },
+                                    )
+                                })
+                                .unwrap();
+                            let before = document.vmf().clone();
+                            let old = before.world.solids[0].clone();
+                            let spec = Transform {
+                                shear: Some(Shear {
+                                    axis,
+                                    reference,
+                                    factor,
+                                }),
+                                basis,
+                                pivot: DVec3::new(12.125, -7.25, 3.5),
+                                texture_scale_lock: Some(lock),
+                                ..Default::default()
+                            };
+                            document
+                                .edit("shear", |tx| transform(tx, &[id], spec))
+                                .unwrap();
+                            let after = document.vmf().clone();
+                            let new = solid(&document, id);
+                            assert_eq!(crate::subobject::topology(new).unwrap().vertices.len(), 8);
+                            for (old, new) in old.sides.iter().zip(&new.sides) {
+                                let mut metadata = old.clone();
+                                metadata.plane = new.plane;
+                                metadata.u_axis = new.u_axis;
+                                metadata.v_axis = new.v_axis;
+                                assert_eq!(&metadata, new);
+                                for (point, actual) in old.plane.0.into_iter().zip(new.plane.0) {
+                                    let mut delta = basis.transpose() * (point - spec.pivot);
+                                    delta[axis] += factor * delta[reference];
+                                    let moved = basis * delta + spec.pivot;
+                                    assert!(actual.abs_diff_eq(moved, 1e-8));
+                                    if lock {
+                                        assert!(
+                                            (texel_uv(old, point) - texel_uv(new, moved)).length()
+                                                < 1e-8
+                                        );
+                                    } else {
+                                        assert_eq!(
+                                            (old.u_axis, old.v_axis),
+                                            (new.u_axis, new.v_axis)
+                                        );
+                                    }
+                                }
+                            }
+                            let reopened = Vmf::parse(&after.write(&Default::default())).unwrap();
+                            reopened.validate_ids().unwrap();
+                            assert_eq!(
+                                crate::subobject::topology(&reopened.world.solids[0])
+                                    .unwrap()
+                                    .vertices
+                                    .len(),
+                                8
+                            );
+                            for (old, new) in new.sides.iter().zip(&reopened.world.solids[0].sides)
+                            {
+                                assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+                            }
+                            document.undo().unwrap();
+                            assert_eq!(document.vmf(), &before);
+                            document.redo().unwrap();
+                            assert_eq!(document.vmf(), &after);
+                            document
+                                .edit("inverse shear", |tx| {
+                                    transform(
+                                        tx,
+                                        &[id],
+                                        Transform {
+                                            shear: Some(Shear {
+                                                axis,
+                                                reference,
+                                                factor: -factor,
+                                            }),
+                                            ..spec
+                                        },
+                                    )
+                                })
+                                .unwrap();
+                            for (old, new) in old.sides.iter().zip(&solid(&document, id).sides) {
+                                for (a, b) in old.plane.0.into_iter().zip(new.plane.0) {
+                                    assert!(a.abs_diff_eq(b, 1e-8));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shear_guards_are_atomic_and_zero_factor_is_an_identity() {
+        let mut document = Document::empty();
+        let brush = block(&mut document);
+        let point = document
+            .edit("point", |tx| {
+                edit::create_entity(tx, "info_target", Some(DVec3::ONE), &[], vec![])
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let history = document.undo_labels().count();
+        for shear in [
+            Shear {
+                axis: 0,
+                reference: 0,
+                factor: 0.5,
+            },
+            Shear {
+                axis: 3,
+                reference: 0,
+                factor: 0.5,
+            },
+            Shear {
+                axis: 0,
+                reference: 1,
+                factor: f64::NAN,
+            },
+            Shear {
+                axis: 0,
+                reference: 1,
+                factor: 65.0,
+            },
+            Shear {
+                axis: 0,
+                reference: 1,
+                factor: -65.0,
+            },
+            Shear {
+                axis: 0,
+                reference: 1,
+                factor: 0.5,
+            },
+        ] {
+            assert!(
+                document
+                    .edit("invalid shear", |tx| transform(
+                        tx,
+                        &[brush, point],
+                        Transform {
+                            shear: Some(shear),
+                            ..Default::default()
+                        }
+                    ))
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &before);
+            assert_eq!(document.undo_labels().count(), history);
+        }
+        document
+            .edit("zero shear", |tx| {
+                transform(
+                    tx,
+                    &[brush, point],
+                    Transform {
+                        shear: Some(Shear {
+                            axis: 0,
+                            reference: 1,
+                            factor: 0.0,
+                        }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.undo_labels().count(), history);
+        assert!(
+            document
+                .edit("out of bounds", |tx| transform(
+                    tx,
+                    &[brush],
+                    Transform {
+                        shear: Some(Shear {
+                            axis: 0,
+                            reference: 1,
+                            factor: 1.0
+                        }),
+                        translation: DVec3::splat(100_000.0),
+                        ..Default::default()
+                    }
+                ))
+                .is_err()
+        );
+        assert_eq!(document.vmf(), &before);
     }
 
     #[test]
@@ -731,6 +965,7 @@ mod tests {
                 let basis = DMat3::from_rotation_z(0.37);
                 let spec = Transform {
                     reflection: [true, false, true],
+                    shear: None,
                     translation: DVec3::new(12.125, -24.25, 8.5),
                     rotation: DVec3::new(17.0, -23.0, 31.0),
                     scale: DVec3::new(2.0, 0.5, 1.25),
@@ -794,6 +1029,7 @@ mod tests {
                 texture_lock: lock,
                 texture_scale_lock: None,
                 reflection: [false; 3],
+                shear: None,
             };
             document
                 .edit("transform", |tx| transform(tx, &[id], spec))
@@ -856,6 +1092,7 @@ mod tests {
                         texture_lock: movement,
                         texture_scale_lock: Some(stretch),
                         reflection: [false; 3],
+                        shear: None,
                     };
                     let local_rotation = DMat3::from_rotation_z(spec.rotation.z.to_radians())
                         * DMat3::from_rotation_y(spec.rotation.y.to_radians())

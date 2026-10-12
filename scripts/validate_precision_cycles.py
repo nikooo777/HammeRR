@@ -155,12 +155,41 @@ def validate(client, output, cycles, operation="translation"):
                         ],
                         pivot=pivot,
                     )
-                else:
+                elif operation == "rotate":
                     tool = "preview_component_rotate"
                     degrees = [[17, 0, 0], [0, -23, 0], [0, 0, 31]][cycle % 3]
                     arguments.update(
                         degrees=[sign * value for value in degrees], pivot=pivot
                     )
+                else:
+                    tool = "transform_objects"
+                    arguments = {
+                        "ids": [owner],
+                        "pivot": pivot,
+                        "space": "world",
+                        "texture_lock": True,
+                        "texture_scale_lock": True,
+                        "preview": True,
+                    }
+                    if operation == "reflection":
+                        mask = cycle % 7 + 1
+                        arguments["reflection"] = [
+                            bool(mask & (1 << axis)) for axis in range(3)
+                        ]
+                    else:
+                        axis, reference = [
+                            (0, 1),
+                            (0, 2),
+                            (1, 0),
+                            (1, 2),
+                            (2, 0),
+                            (2, 1),
+                        ][cycle % 6]
+                        arguments["shear"] = {
+                            "axis": "xyz"[axis],
+                            "reference": "xyz"[reference],
+                            "factor": sign * 0.75,
+                        }
                 try:
                     draft = client.call(tool, arguments)
                 except AssertionError as error:
@@ -168,9 +197,12 @@ def validate(client, output, cycles, operation="translation"):
                         f"{label}, {operation}, cycle {cycle + 1}, direction {sign}: {error}"
                     ) from error
                 assert detail(client, [owner]) == source
-                client.call(
-                    "commit_component_edit", {"token": draft["preview"]["token"]}
-                )
+                if operation in {"reflection", "shear"}:
+                    client.call("commit_transform_preview")
+                else:
+                    client.call(
+                        "commit_component_edit", {"token": draft["preview"]["token"]}
+                    )
                 changed = detail(client, [owner])
                 assert len(client.call("get_map_info")["undo"]) == history + 1
                 client.call("undo")
@@ -248,7 +280,9 @@ def main():
     )
     parser.add_argument("--cycles", type=int, default=16)
     parser.add_argument(
-        "--operation", choices=["translation", "scale", "rotate"], default="translation"
+        "--operation",
+        choices=["translation", "scale", "rotate", "reflection", "shear"],
+        default="translation",
     )
     args = parser.parse_args()
     if not 1 <= args.cycles <= 128:

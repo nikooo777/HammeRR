@@ -84,7 +84,17 @@ impl Draft {
                     })
                     .cloned()
             });
-            map_core::partition_metadata::store_partition_materials(tx, part, &materials)?;
+            let textures = std::array::from_fn(|partition| {
+                self.textures
+                    .get(&PartitionRef {
+                        solid: part.source.solid,
+                        partition: partition as u32,
+                    })
+                    .copied()
+            });
+            map_core::partition_metadata::store_partition_surfaces(
+                tx, part, &materials, &textures,
+            )?;
         }
         Ok(())
     }
@@ -122,6 +132,11 @@ impl Session {
             .collect::<Vec<_>>();
         Some(Draft {
             materials: saved_materials(&metadata, &partitions),
+            textures: super::textures::saved_textures(
+                self.render_document(),
+                &metadata,
+                &partitions,
+            ),
             partitions,
             rise: 0.0,
             roof_texture_lock: false,
@@ -144,6 +159,10 @@ impl Session {
                     .materials
                     .keys()
                     .any(|piece| piece.solid == part.source.solid)
+                    || draft
+                        .textures
+                        .keys()
+                        .any(|piece| piece.solid == part.source.solid)
             })
             .flat_map(|part| {
                 part.loops.iter().filter_map(|piece| {
@@ -160,6 +179,22 @@ impl Session {
                         material: draft
                             .effective_material(&self.document, part, piece.id)?
                             .to_string(),
+                        projection: draft
+                            .textures
+                            .get(&PartitionRef {
+                                solid: part.source.solid,
+                                partition: piece.id,
+                            })
+                            .and_then(|texture| {
+                                map_core::surface::side(
+                                    &self.document,
+                                    map_core::surface::FaceId {
+                                        solid: part.source.solid,
+                                        side: part.source.side,
+                                    },
+                                )
+                                .and_then(|source| texture.project(source).ok())
+                            }),
                     })
                 })
             })

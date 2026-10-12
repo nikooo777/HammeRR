@@ -34,6 +34,18 @@ export component ComponentsWindow inherits Window {
     callback browse-partition-material();
     callback preview-partition-material();
     callback inherit-partition-material();
+    in-out property <bool> show-top-texture;
+    in-out property <string> texture-shift-u;
+    in-out property <string> texture-shift-v;
+    in-out property <string> texture-scale-u;
+    in-out property <string> texture-scale-v;
+    in-out property <string> texture-rotation;
+    in property <float> texture-rotation-value;
+    in property <string> top-texture-baseline;
+    in property <string> top-texture-summary;
+    callback preview-partition-texture();
+    callback inherit-partition-texture();
+    callback choose-texture-rotation(float);
     in property <bool> cut-is-midpoint;
     in-out property <bool> show-cut-settings;
     in-out property <string> cut-first: "50";
@@ -297,6 +309,46 @@ export component ComponentsWindow inherits Window {
                                     Button { text: "Restore inheritance"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.inherit-partition-material(); } }
                                 }
                                 Text { text: "Changes highlighted roofs or prism tops. Bases and walls keep their own materials. Return to flat to change the plan."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                            }
+                            CheckBox { text: "Top texture placement"; checked <=> root.show-top-texture; }
+                            if root.show-top-texture: VerticalLayout {
+                                spacing: 6px;
+                                Text { text: root.top-texture-summary; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        Text { text: "Horizontal shift · texels"; wrap: word-wrap; color: #aeb9c8; }
+                                        LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-shift-u; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture horizontal shift"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
+                                    }
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        Text { text: "Vertical shift · texels"; wrap: word-wrap; color: #aeb9c8; }
+                                        LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-shift-v; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture vertical shift"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        Text { text: "Horizontal scale · units/texel"; wrap: word-wrap; color: #aeb9c8; }
+                                        LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-scale-u; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture horizontal scale"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
+                                    }
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        Text { text: "Vertical scale · units/texel"; wrap: word-wrap; color: #aeb9c8; }
+                                        LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-scale-v; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture vertical scale"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
+                                    }
+                                }
+                                Text { text: "Rotation · degrees"; color: #aeb9c8; }
+                                LineEdit { text <=> root.texture-rotation; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture rotation"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
+                                Slider { minimum: -180; maximum: 180; value: root.texture-rotation-value; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; released(value) => { root.choose-texture-rotation(value); } }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Button { text: "Preview placement"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.preview-partition-texture(); } }
+                                    Button { text: "Use source placement"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.inherit-partition-texture(); } }
+                                }
+                                Text { text: "Changes highlighted tops. Negative scales mirror the texture. Keep at corners attaches placement when raising or extruding."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                             }
                             CheckBox { text: "Adjust dividing edge"; checked <=> root.show-cut-settings; }
                             if root.show-cut-settings: VerticalLayout {

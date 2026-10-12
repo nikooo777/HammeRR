@@ -4,6 +4,7 @@ use super::*;
 
 mod materials;
 mod picking;
+mod textures;
 
 #[cfg(test)]
 mod polygon_tests;
@@ -715,6 +716,7 @@ pub(super) struct Draft {
     pub roof_texture_lock: bool,
     pub selection: BTreeSet<PartitionRef>,
     pub materials: BTreeMap<PartitionRef, String>,
+    pub textures: BTreeMap<PartitionRef, subobject::PartitionTexture>,
 }
 
 impl Draft {
@@ -747,7 +749,7 @@ impl Draft {
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
                 json!({"solid":part.source.solid,"source_side":part.source.side,"source_corner_count":part.source_corner_count(),"edges":part.source.edges,"owner":owner,"plane":part.plane.map(|point|point.to_array()),
                     "vertices":part.vertices.iter().map(|vertex|json!({"id":vertex.id,"position":vertex.position.to_array(),"preview_position":positions[vertex.id as usize].to_array(),"source":match &vertex.source {VertexSource::Corner(sides)=>json!({"kind":"corner","sides":sides}),VertexSource::Edge{corners,parameter}=>json!({"kind":"edge","corners":corners,"parameter":parameter})}})).collect::<Vec<_>>(),
-                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"shape":match piece.vertices.len(){3=>"triangle",4=>"quad",5=>"pentagon",6=>"hexagon",7=>"heptagon",8=>"octagon",9=>"nonagon",_=>unreachable!()},"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
+                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"shape":match piece.vertices.len(){3=>"triangle",4=>"quad",5=>"pentagon",6=>"hexagon",7=>"heptagon",8=>"octagon",9=>"nonagon",_=>unreachable!()},"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"texture_plan":self.textures.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).copied().map(textures::texture_json),"effective_texture":self.effective_texture(document,part,piece.id).map(textures::texture_json),"texture_inherited":!self.textures.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
             }).collect::<Vec<_>>()})
     }
 }
@@ -761,6 +763,7 @@ impl Session {
                     "piece_membership":metadata.entries.get(&(entry.source.solid, entry.source.side)).and_then(|intent|intent.piece_membership.as_ref()),
                     "source_corner_count":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.corners.len()),
                     "top_materials":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.top_materials.each_ref().map(|value|value.as_ref().map(|name|name.to_ascii_lowercase()))),
+                    "top_textures":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.top_textures.map(|value|value.map(textures::texture_json))),
                     "effective_materials":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent| std::array::from_fn::<_, 2, _>(|index| intent.top_materials[index].as_deref().or_else(||subobject::solid(&self.document, entry.source.solid).ok()?.1.sides.iter().find(|side|side.id==entry.source.side).map(|side|side.material.as_str())).map(str::to_ascii_lowercase))),
                     "valid":entry.result.is_ok(),"edge_parameters":entry.result.as_ref().ok().map(|part|part.cut().unwrap().edge_parameters),"error":entry.result.err()})
             }).collect::<Vec<_>>(), None),
@@ -837,6 +840,7 @@ impl Session {
             );
         }
         let materials = materials::saved_materials(&metadata, &partitions);
+        let textures = textures::saved_textures(&self.document, &metadata, &partitions);
         let ids = solids.into_iter().collect::<Vec<_>>();
         self.set_component_picking(
             Some(super::super::component_picking::Kind::Face),
@@ -867,6 +871,7 @@ impl Session {
                 roof_texture_lock: false,
                 selection,
                 materials,
+                textures,
             },
             self.document.preview_snapshot(),
             None,
@@ -996,6 +1001,9 @@ impl Session {
         } else {
             BTreeMap::new()
         };
+        let textures = map_core::partition_metadata::Metadata::parse(self.document.vmf())
+            .map(|metadata| textures::saved_textures(&self.document, &metadata, &partitions))
+            .unwrap_or_default();
         let selection = partitions
             .iter()
             .flat_map(|part| {
@@ -1011,6 +1019,7 @@ impl Session {
             roof_texture_lock: false,
             selection,
             materials,
+            textures,
         };
         Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
     }
@@ -1088,12 +1097,13 @@ impl Session {
             Some(
                 document
                     .edit("preview raised partition", |tx| {
-                        let plan = subobject::crease_partitions_with_materials(
+                        let plan = subobject::crease_partitions_with_surfaces(
                             tx,
                             &draft.partitions,
                             rise,
                             draft.roof_texture_lock,
                             &draft.material_plan(),
+                            &draft.texture_plan(),
                         )?;
                         consume_saved(tx, &requests)?;
                         Ok(plan)

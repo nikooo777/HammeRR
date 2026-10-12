@@ -62,52 +62,20 @@ pub fn crease_partitions_with_materials(
     texture_lock: bool,
     materials: &[PartitionMaterial],
 ) -> Result<CreasePlan, EditError> {
-    let materials = checked_materials(tx.document(), partitions, materials)?;
-    let mut plan = super::crease::crease_partition_roofs(tx, partitions, rise, texture_lock)?;
-    for part in partitions {
-        let change = plan
-            .changes
-            .iter()
-            .find(|change| change.source == part.source)
-            .unwrap();
-        let replacement = plan
-            .replacements
-            .iter_mut()
-            .find(|replacement| replacement.solid.id == part.source.solid)
-            .unwrap();
-        let positions = part.positions(rise);
-        for piece in &part.loops {
-            let Some(material) = materials.get(&(part.source.solid, piece.id)) else {
-                continue;
-            };
-            let points = piece
-                .vertices
-                .iter()
-                .map(|vertex| positions[*vertex as usize])
-                .collect::<Vec<_>>();
-            let sides = replacement
-                .solid
-                .sides
-                .iter_mut()
-                .filter(|side| side.id == part.source.side || side.id == change.new_side)
-                .filter(|side| {
-                    let plane = Plane::from_points(side.plane.0).unwrap();
-                    points
-                        .iter()
-                        .all(|point| plane.distance_to(*point).abs() < EPSILON)
-                })
-                .collect::<Vec<_>>();
-            let [side]: [&mut source_formats::vmf::Side; 1] = sides
-                .try_into()
-                .map_err(|_: Vec<_>| invalid("Planned piece must match exactly one roof face"))?;
-            side.material.clone_from(material);
-        }
-    }
-    apply(tx, &plan.replacements)?;
-    Ok(plan)
+    super::partition_textures::crease_partitions_with_surfaces(
+        tx,
+        partitions,
+        rise,
+        texture_lock,
+        materials,
+        &[],
+    )
 }
 
 #[cfg(test)]
 mod ridges;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod textures_tests;

@@ -82,6 +82,7 @@ pub struct FaceOverlay {
     pub source: FaceId,
     pub points: Vec<DVec3>,
     pub material: String,
+    pub projection: Option<map_core::surface::Projection>,
 }
 
 struct Builder<'a> {
@@ -187,8 +188,14 @@ impl Builder<'_> {
                         );
                     } else {
                         for overlay in overlays {
+                            let mut projected = side.clone();
+                            if let Some(projection) = &overlay.projection {
+                                projected.u_axis = projection.u;
+                                projected.v_axis = projection.v;
+                                projected.rotation = projection.rotation;
+                            }
                             self.add_polygon(
-                                side,
+                                &projected,
                                 &overlay.points,
                                 face.plane.normal,
                                 &overlay.material,

@@ -479,6 +479,51 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         };
         window.set_top_material(material.into());
         window.set_top_material_baseline(material.into());
+        let values: [String; 5] = std::array::from_fn(|index| {
+            let read = |piece: &&serde_json::Value| {
+                if index < 2 {
+                    piece["effective_texture"]["shift"][index].as_f64()
+                } else if index < 4 {
+                    piece["effective_texture"]["scale"][index - 2].as_f64()
+                } else {
+                    piece["effective_texture"]["rotation"].as_f64()
+                }
+            };
+            highlighted
+                .first()
+                .and_then(read)
+                .filter(|first| highlighted.iter().all(|piece| read(piece) == Some(*first)))
+                .map(|value| value.to_string())
+                .unwrap_or_default()
+        });
+        window.set_texture_shift_u(values[0].as_str().into());
+        window.set_texture_shift_v(values[1].as_str().into());
+        window.set_texture_scale_u(values[2].as_str().into());
+        window.set_texture_scale_v(values[3].as_str().into());
+        window.set_texture_rotation(values[4].as_str().into());
+        window.set_texture_rotation_value(
+            values[4].parse::<f32>().unwrap_or(0.0).clamp(-180.0, 180.0),
+        );
+        window.set_top_texture_baseline(texture_input_key(window).into());
+        window.set_top_texture_summary(if highlighted.is_empty() {
+            "Highlight pieces to change their texture placement".into()
+        } else {
+            format!(
+                "{} highlighted · {}",
+                highlighted.len(),
+                if values.iter().any(String::is_empty) {
+                    "mixed placement"
+                } else if highlighted
+                    .iter()
+                    .all(|piece| piece["texture_inherited"] == true)
+                {
+                    "inherited from source"
+                } else {
+                    "planned placement"
+                }
+            )
+            .into()
+        });
         window.set_top_material_scope(scope.into());
         window.set_top_material_preview(
             session
@@ -857,6 +902,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 .is_none_or(|drag| drag.error.is_none())
             && window.get_operation() == operation
             && (!partition || window.get_top_material()==window.get_top_material_baseline())
+            && (!partition || texture_inputs_match(window))
             && (!partition || cut_inputs_match(window,&preview["partition"]["edge_parameters"]))
             && (if transform {
                 window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
@@ -997,6 +1043,74 @@ fn extrusion_inputs(
     })
 }
 
+fn texture_input_key(window: &ComponentsWindow) -> String {
+    serde_json::json!([
+        window.get_texture_shift_u().as_str(),
+        window.get_texture_shift_v().as_str(),
+        window.get_texture_scale_u().as_str(),
+        window.get_texture_scale_v().as_str(),
+        window.get_texture_rotation().as_str()
+    ])
+    .to_string()
+}
+
+fn texture_inputs_match(window: &ComponentsWindow) -> bool {
+    window.get_top_texture_baseline() == texture_input_key(window)
+}
+
+fn texture_inputs(
+    window: &ComponentsWindow,
+) -> Result<map_core::subobject::PartitionTexture, String> {
+    let values = [
+        window.get_texture_shift_u(),
+        window.get_texture_shift_v(),
+        window.get_texture_scale_u(),
+        window.get_texture_scale_v(),
+        window.get_texture_rotation(),
+    ];
+    let values = values
+        .iter()
+        .map(|value| {
+            value
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| "Enter both shifts, both scales and a rotation".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(map_core::subobject::PartitionTexture {
+        shift: [values[0], values[1]],
+        scale: [values[2], values[3]],
+        rotation: values[4],
+    })
+}
+
+pub fn choose_partition_texture(
+    window: &ComponentsWindow,
+    session: &mut Session,
+    target: &PartitionMaterialTarget,
+    texture: Option<map_core::subobject::PartitionTexture>,
+) -> Result<(), String> {
+    if target != &partition_material_target(session)
+        || window.get_token().parse::<u64>().ok() != target.0
+    {
+        return Err(
+            "Map, preview or highlighted pieces changed; choose texture placement again".into(),
+        );
+    }
+    if window.get_top_material() != window.get_top_material_baseline() {
+        return Err("Preview the planned top material before changing placement".into());
+    }
+    session.update_component_partition_texture(
+        target.0.ok_or("Stage a partition first")?,
+        &target.2,
+        texture,
+    )?;
+    refresh(window, session);
+    window
+        .set_message("Top texture placement updated. Keep the pieces or preview geometry.".into());
+    Ok(())
+}
+
 pub type PartitionMaterialTarget = (
     Option<u64>,
     u64,
@@ -1033,6 +1147,9 @@ pub fn choose_partition_material(
         return Err(
             "Map, preview or highlighted pieces changed; choose the top material again".into(),
         );
+    }
+    if !texture_inputs_match(window) {
+        return Err("Preview the texture placement before changing material".into());
     }
     session.update_component_partition_material(
         target.0.ok_or("Stage a partition first")?,
@@ -1134,6 +1251,40 @@ fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
 }
 
 pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    window.on_choose_texture_rotation({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move |value| {
+            let window = window.unwrap();
+            window.set_texture_rotation(number(f64::from(value)).into());
+            window.set_texture_rotation_value(value);
+            refresh(&window, &lock(&shared));
+        }
+    });
+    window.on_preview_partition_texture({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let target = partition_material_target(&session);
+            let result = texture_inputs(&window).and_then(|texture| {
+                choose_partition_texture(&window, &mut session, &target, Some(texture))
+            });
+            if let Err(error) = result {
+                window.set_message(error.into());
+            }
+        }
+    });
+    window.on_inherit_partition_texture({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let target = partition_material_target(&session);
+            if let Err(error) = choose_partition_texture(&window, &mut session, &target, None) {
+                window.set_message(error.into());
+            }
+        }
+    });
     window.on_preview_partition_material({
         let (window, shared) = (window.as_weak(), shared.clone());
         move || {
@@ -1526,6 +1677,8 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             let result = if window.get_operation() == 6 {
                 if window.get_has_partition_preview() && window.get_top_material()!=window.get_top_material_baseline() {
                     Err("Preview the planned top material before raising or extruding".into())
+                } else if window.get_has_partition_preview() && !texture_inputs_match(&window) {
+                    Err("Preview the texture placement before raising or extruding".into())
                 } else if window.get_has_partition_preview() && !cut_inputs_match(&window,&session.component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"]) {
                     Err("Preview the cut positions before raising or extruding".into())
                 } else if window.get_has_partition_preview() && window.get_partition_mode() == 1 {

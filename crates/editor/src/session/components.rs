@@ -858,12 +858,13 @@ impl Session {
         let result = self.edit(actor, label, |tx| {
             if let Some((requests, rise, roof_texture_lock)) = &crease {
                 let actual = if let Some(draft) = &preview_partition {
-                    subobject::crease_partitions_with_materials(
+                    subobject::crease_partitions_with_surfaces(
                         tx,
                         &draft.partitions,
                         *rise,
                         *roof_texture_lock,
                         &draft.material_plan(),
+                        &draft.texture_plan(),
                     )?
                 } else {
                     subobject::crease_with_roof_textures(tx, requests, *rise, *roof_texture_lock)?

@@ -6,7 +6,7 @@ from validate_component_picking import screen
 from validate_face_lighting import ROOT, Client, detail
 
 
-def validate(client, output, render=False):
+def validate(client, output, render=False, adjusted=False):
     checks = []
 
     def check(condition, label):
@@ -80,8 +80,61 @@ def validate(client, output, render=False):
                         "snapshot": inspect()["snapshot"],
                     },
                 )["preview"]
+                if adjusted:
+                    original_token = draft["token"]
+                    draft = client.call(
+                        "update_component_partition_cut",
+                        {"token": original_token, "edge_parameters": [0.2, 0.8]},
+                    )["preview"]
+                    check(
+                        draft["partition"]["edge_parameters"] == [0.2, 0.8],
+                        f"{label}: adjusted cut reports shared positions",
+                    )
+                    client.call(
+                        "update_component_partition_cut",
+                        {"token": original_token, "edge_parameters": [0.3, 0.7]},
+                        error=True,
+                    )
+                    for parameters in [[0, 0.8], [0.2, 1], [0.2, -0.1]]:
+                        client.call(
+                            "update_component_partition_cut",
+                            {"token": draft["token"], "edge_parameters": parameters},
+                            error=True,
+                        )
+                        check(
+                            inspect()["preview"] == draft,
+                            f"{label}: invalid cut retains exact draft",
+                        )
+                    client.call(
+                        "raise_component_partition",
+                        {"token": draft["token"], "rise": 16},
+                        error=True,
+                    )
+                    check(
+                        inspect()["preview"] == draft,
+                        f"{label}: midpoint-only ridge rejects without snapping",
+                    )
                 client.call("store_component_partition", {"token": draft["token"]})
+                if adjusted:
+                    check(
+                        client.call("get_saved_component_partitions")["entries"][0][
+                            "edge_parameters"
+                        ]
+                        == [0.2, 0.8],
+                        f"{label}: saved inspection exposes edge positions",
+                    )
+                    client.call(
+                        "transform_objects",
+                        {"ids": [object_id], "reflection": [True, False, False]},
+                    )
+                    source = detail(client, [object_id])[0]
+                    brush = source["brushes"][0] if owned else source
                 draft = resume(solid, side)
+                if adjusted:
+                    check(
+                        draft["partition"]["edge_parameters"] == [0.2, 0.8],
+                        f"{label}: reflected saved cut retains parameters",
+                    )
                 history = client.call("get_map_info")["undo"]
                 render_args = {
                     "surface": "flat",
@@ -192,6 +245,16 @@ def validate(client, output, render=False):
                     check(
                         inspect()["preview"] == draft,
                         f"{label}: invalid update retains exact draft",
+                    )
+                if adjusted:
+                    client.call(
+                        "update_component_partition_cut",
+                        {"token": token, "edge_parameters": [0.3, 0.7]},
+                        error=True,
+                    )
+                    check(
+                        inspect()["preview"] == draft,
+                        f"{label}: extrusion must return to flat before adjusting",
                     )
                 client.call("store_component_partition", {"token": token}, error=True)
                 client.call(
@@ -360,7 +423,7 @@ def validate(client, output, render=False):
     return checks
 
 
-def render_independent_heights(client, output):
+def render_independent_heights(client, output, adjusted=False):
     client.call("new_map", {"discard_changes": True})
     object_id = client.call(
         "create_block",
@@ -389,6 +452,11 @@ def render_independent_heights(client, output):
             "snapshot": selected["snapshot"],
         },
     )["preview"]
+    if adjusted:
+        draft = client.call(
+            "update_component_partition_cut",
+            {"token": draft["token"], "edge_parameters": [0.2, 0.8]},
+        )["preview"]
     client.call("store_component_partition", {"token": draft["token"]})
     for piece, height in [(0, 32), (1, 64)]:
         saved = client.call("get_saved_component_partitions")
@@ -437,13 +505,14 @@ def main():
         "--output", type=Path, default=Path("/tmp/hammerr-extrusion-validation")
     )
     parser.add_argument("--render", action="store_true")
+    parser.add_argument("--adjusted", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)
     try:
-        checks = validate(client, args.output, args.render)
+        checks = validate(client, args.output, args.render, args.adjusted)
         if args.render:
-            render_independent_heights(client, args.output)
+            render_independent_heights(client, args.output, args.adjusted)
         (args.output / "results.json").write_text(
             json.dumps({"checks": len(checks), "passed": checks}, indent=2) + "\n"
         )

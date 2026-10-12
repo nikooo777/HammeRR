@@ -392,6 +392,17 @@ saved pieces remain reusable. New volumes retain world or brush-entity ownership
 and Apply selects their faces in one undo step. **Return to flat** and **Cancel**
 discard the added draft geometry.
 
+Enable **Adjust dividing edge** to move the two cut endpoints with percentage
+inputs or sliders. **Preview cut** creates unequal or diagonal pieces while
+retaining the original face. Keep these positions for later or extrude the
+pieces. Saved positions and piece identity survive reflection and reopening.
+Shared ridges currently require midpoint cuts; **Reset cut to midpoint** restores
+that path explicitly.
+
+| Cut controls | Adjusted pieces extruded to different heights |
+| --- | --- |
+| ![Percentage inputs and sliders for opposing edge positions](docs/images/partition-cut-controls.png) | ![A diagonal cut used to create two separately extruded volumes](docs/images/partition-cut-preview.png) |
+
 | Extrusion controls | New volumes above the original brush |
 | --- | --- |
 | ![Height, wall material and top texture controls for highlighted pieces](docs/images/partition-extrusion-controls.png) | ![Two flat pieces extruded to different heights above an unchanged source brush](docs/images/partition-extrusion-preview.png) |
@@ -919,7 +930,7 @@ For example, place a warm light:
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
-| Staged flat partitions | `preview_component_partition`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
+| Staged flat partitions | `preview_component_partition`, `update_component_partition_cut`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Partition extrusion | `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
@@ -1053,6 +1064,7 @@ python -B scripts/validate_weld_texture_attachment.py --output /tmp/hammerr-weld
 python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-picking-check
 python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-partitions-check
 python -B scripts/validate_partition_extrusion.py --output /tmp/hammerr-extrusion-check
+python -B scripts/validate_partition_extrusion.py --adjusted --output /tmp/hammerr-adjusted-cut-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1196,6 +1208,18 @@ affine edits and reflection. Saved intents leave native BSP output unchanged.
 The map-wide registry allows 64 faces and 64 KiB of key/value text. Unknown
 metadata is preserved; unsupported versions are reported and cannot be
 overwritten by these operations.
+
+`update_component_partition_cut` accepts the current flat draft `token` and
+`edge_parameters: [first, second]`, two finite values strictly between 0 and 1.
+It applies positions to every captured source brush and returns a replacement
+token, preserving highlights and saved piece identity. Edges follow sorted
+neighboring side IDs; each endpoint runs between the sorted corner incidence
+lists reported in vertex provenance. Invalid or collapsed cuts retain the draft.
+Return to flat before adjusting a raised/extruded preview. Save positions with
+Keep, or extrude the adjusted pieces. Positive ridge heights require `[0.5, 0.5]`.
+`preview.partition.edge_parameters` reports shared values or null for mixed
+sources; saved inspection lists each source's positions. Existing midpoint
+records remain compatible, and adjusted metadata retains the same global budgets.
 
 `preview_partition_extrusion` takes the current flat draft `token`, positive
 `height` (0.125–4096), optional `wall_material` and optional `texture_lock`

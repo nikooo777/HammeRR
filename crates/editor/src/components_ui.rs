@@ -293,6 +293,10 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_has_partition_preview(!partition.is_null());
     window.set_has_extrusion_preview(!report["preview"]["extrusion"].is_null());
     window.set_partition_flat(partition["rise"].as_f64() == Some(0.0));
+    window.set_cut_is_midpoint(
+        partition["edge_parameters"][0].as_f64() == Some(0.5)
+            && partition["edge_parameters"][1].as_f64() == Some(0.5),
+    );
     let saved = session.saved_partition_report();
     let saved_rows = saved["entries"]
         .as_array()
@@ -306,7 +310,19 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 label: format!("Brush {solid} · face {side}").into(),
                 detail: entry["error"]
                     .as_str()
-                    .unwrap_or("Two flat pieces · resume to inspect or raise")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        let parameters = &entry["edge_parameters"];
+                        if parameters == &serde_json::json!([0.5, 0.5]) {
+                            "Two flat pieces · resume to inspect, raise or extrude".into()
+                        } else {
+                            format!(
+                                "Two flat pieces · cut {}% / {}% · resume to inspect or extrude",
+                                number(parameters[0].as_f64().unwrap() * 100.0),
+                                number(parameters[1].as_f64().unwrap() * 100.0)
+                            )
+                        }
+                    })
                     .into(),
                 selected: entry["valid"].as_bool().unwrap(),
             }
@@ -532,7 +548,15 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 let label = if vertex["source"]["kind"] == "corner" {
                     format!("Source corner {}", id + 1)
                 } else {
-                    format!("Edge midpoint {}", id - 3)
+                    format!(
+                        "Edge {} {}",
+                        if vertex["source"]["parameter"].as_f64() == Some(0.5) {
+                            "midpoint"
+                        } else {
+                            "point"
+                        },
+                        id - 3
+                    )
                 };
                 rows.push(ComponentRow {
                     key: format!("{solid}:{id}").into(),
@@ -544,7 +568,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         }
         window.set_summary(
             format!(
-                "{} staged pieces · {} corners and edge midpoints · coordinates in X, Y, Z",
+                "{} staged pieces · {} source corners and edge points · coordinates in X, Y, Z",
                 partitions.len() * 2,
                 rows.len()
             )
@@ -582,6 +606,26 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         window.set_operation(operation);
         if partition {
             window.set_partition_mode(i32::from(extrusion));
+            let parameters = &preview["partition"]["edge_parameters"];
+            window.set_cut_first(
+                parameters[0]
+                    .as_f64()
+                    .map(|value| (value * 100.0).to_string())
+                    .unwrap_or_default()
+                    .into(),
+            );
+            window.set_cut_second(
+                parameters[1]
+                    .as_f64()
+                    .map(|value| (value * 100.0).to_string())
+                    .unwrap_or_default()
+                    .into(),
+            );
+            window.set_cut_first_value((parameters[0].as_f64().unwrap_or(0.5) * 100.0) as f32);
+            window.set_cut_second_value((parameters[1].as_f64().unwrap_or(0.5) * 100.0) as f32);
+            if parameters[0].as_f64() != Some(0.5) || parameters[1].as_f64() != Some(0.5) {
+                window.set_show_cut_settings(true);
+            }
         }
         if extrusion {
             let spec = &preview["extrusion"];
@@ -667,6 +711,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
             && window.get_operation() == operation
+            && (!partition || cut_inputs_match(window,&preview["partition"]["edge_parameters"]))
             && (if transform {
                 window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
                     && transform_inputs(window).is_ok_and(|(spec, pivot)| {
@@ -721,7 +766,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     } else if partition {
         let count = preview["partition"]["partitions"].as_array().unwrap().len();
         let rise = preview["partition"]["rise"].as_f64().unwrap();
-        if rise == 0.0 {
+        if rise==0.0 && !window.get_cut_is_midpoint() {
+            format!("{} adjusted flat pieces staged. The source face is unchanged.\nKeep, extrude highlighted pieces, or Cancel.",count*2).into()
+        } else if rise == 0.0 {
             format!("{} flat pieces staged. The source face is unchanged.\nKeep the pieces for later, raise their shared ridge, or Cancel.",count*2).into()
         } else {
             format!("{} pieces · shared ridge raised {} units.\nThe map is unchanged until Apply.",count*2,number(rise)).into()
@@ -755,6 +802,35 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         )
         .into()
     });
+}
+
+fn cut_inputs(window: &ComponentsWindow) -> Result<[f64; 2], String> {
+    let values = [window.get_cut_first(), window.get_cut_second()];
+    let mut parameters = [0.0; 2];
+    for (index, value) in values.iter().enumerate() {
+        parameters[index] = value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter both cut positions as percentages".to_string())?
+            / 100.0;
+    }
+    Ok(parameters)
+}
+
+fn cut_inputs_match(window: &ComponentsWindow, parameters: &serde_json::Value) -> bool {
+    [window.get_cut_first(), window.get_cut_second()]
+        .iter()
+        .enumerate()
+        .all(|(index, input)| {
+            parameters[index].as_f64().map_or_else(
+                || input.is_empty(),
+                |value| {
+                    input
+                        .parse::<f64>()
+                        .is_ok_and(|input| (input / 100.0 - value).abs() <= 1e-12)
+                },
+            )
+        })
 }
 
 fn extrusion_inputs(
@@ -1121,8 +1197,58 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                         .unwrap_or_default(),
                 );
             }
+            for (index, value) in [window.get_cut_first(), window.get_cut_second()]
+                .iter()
+                .enumerate()
+            {
+                if let Ok(value) = value.parse::<f32>()
+                    && value > 0.0
+                    && value < 100.0
+                {
+                    if index == 0 {
+                        window.set_cut_first_value(value);
+                    } else {
+                        window.set_cut_second_value(value);
+                    }
+                }
+            }
             window.set_ready(false);
             window.set_message("Settings changed. Preview the change before applying.".into());
+        }
+    });
+    window.on_choose_cut_position({
+        let window = window.as_weak();
+        move |index, value| {
+            let window = window.unwrap();
+            if index == 0 {
+                window.set_cut_first(value.to_string().into());
+                window.set_cut_first_value(value);
+            } else {
+                window.set_cut_second(value.to_string().into());
+                window.set_cut_second_value(value);
+            }
+            window.invoke_edited();
+        }
+    });
+    window.on_preview_cut({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let result = cut_inputs(&window).and_then(|parameters| {
+                session.update_component_partition_cut(
+                    window
+                        .get_token()
+                        .parse()
+                        .map_err(|_| "Stage flat pieces first".to_string())?,
+                    parameters,
+                )
+            });
+            refresh(&window, &session);
+            if result.is_err() {
+                window.set_ready(false);
+            }
+            window.set_message(result.err().unwrap_or_default().into());
         }
     });
     window.on_choose_extrusion_height({
@@ -1177,7 +1303,9 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
             let result = if window.get_operation() == 6 {
-                if window.get_has_partition_preview() && window.get_partition_mode() == 1 {
+                if window.get_has_partition_preview() && !cut_inputs_match(&window,&session.component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"]) {
+                    Err("Preview the cut positions before raising or extruding".into())
+                } else if window.get_has_partition_preview() && window.get_partition_mode() == 1 {
                     extrusion_inputs(&window).and_then(|spec| {
                         session.preview_partition_extrusion(
                             window

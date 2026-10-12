@@ -22,7 +22,11 @@ pub use crease::{
     Crease, CreaseChange, CreasePair, CreasePlan, crease, crease_pairs, crease_with_roof_textures,
 };
 mod partition;
-pub use partition::{Partition, PartitionLoop, PartitionVertex, VertexSource, plan_partitions};
+pub(crate) use partition::checked_partition;
+pub use partition::{
+    Partition, PartitionCut, PartitionLoop, PartitionVertex, VertexSource, plan_partitions,
+    plan_partitions_at,
+};
 mod extrusion;
 pub use extrusion::{
     ExtrusionFace, ExtrusionPiece, ExtrusionPlan, ExtrusionSpec, ExtrusionSurface,

@@ -134,7 +134,7 @@ impl Session {
             {
                 return Ok(previous.result.clone());
             }
-            let mut document = self.document.clone();
+            let mut document = self.document.preview_snapshot();
             let result = document
                 .edit("preview clip", |tx| {
                     clip::clip(tx, ids, plane, keep, material.as_deref())

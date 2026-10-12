@@ -14,6 +14,8 @@ pub enum Error {
     UnsupportedFormat(i32),
     #[error("VTF data is truncated")]
     Truncated,
+    #[error("invalid VTF header: {0}")]
+    InvalidHeader(&'static str),
     #[error("mip {mip}, frame {frame}, face {face} doesn't exist")]
     NoSuchImage { mip: u8, frame: u16, face: u8 },
 }
@@ -185,6 +187,21 @@ impl Vtf {
             1
         };
 
+        let minimum_header = if version.1 >= 3 {
+            80
+        } else if version.1 >= 2 {
+            65
+        } else {
+            63
+        };
+        if header_size < minimum_header || header_size > data.len() {
+            return Err(Error::InvalidHeader("header size lies outside the file"));
+        }
+        let max_mips = u32::BITS - width.max(height).max(depth).leading_zeros();
+        if width == 0 || height == 0 || mip_count == 0 || u32::from(mip_count) > max_mips {
+            return Err(Error::InvalidHeader("invalid dimensions or mip count"));
+        }
+
         // Before 7.5, environment maps carried a seventh (sphere map) face
         // unless the first-frame field was -1.
         let faces = if flags & FLAG_ENVMAP == 0 {
@@ -197,6 +214,9 @@ impl Vtf {
 
         let high_res_offset = if version.1 >= 3 {
             let count = u32_at(&data, 68)? as usize;
+            if count > (header_size - 80) / 8 {
+                return Err(Error::InvalidHeader("resource count exceeds the header"));
+            }
             (0..count)
                 .find_map(|i| {
                     let at = 80 + i * 8;
@@ -221,20 +241,40 @@ impl Vtf {
             flags,
             frames,
             faces,
-            mip_count: mip_count.max(1),
+            mip_count,
             format,
             reflectivity,
             data,
             high_res_offset,
         };
-        if vtf.data.len() < vtf.high_res_offset + vtf.high_res_size() {
+        let mut size = 0usize;
+        for mip in 0..vtf.mip_count {
+            let bytes = vtf
+                .image_size(mip)
+                .checked_mul(vtf.slices(mip))
+                .and_then(|n| n.checked_mul(usize::from(vtf.frames)))
+                .and_then(|n| n.checked_mul(usize::from(vtf.faces)))
+                .ok_or(Error::InvalidHeader("image size overflow"))?;
+            size = size
+                .checked_add(bytes)
+                .ok_or(Error::InvalidHeader("mip size overflow"))?;
+        }
+        if vtf.high_res_offset < header_size
+            || vtf
+                .high_res_offset
+                .checked_add(size)
+                .is_none_or(|end| end > vtf.data.len())
+        {
             return Err(Error::Truncated);
         }
         Ok(vtf)
     }
 
     pub fn mip_size(&self, mip: u8) -> (u32, u32) {
-        ((self.width >> mip).max(1), (self.height >> mip).max(1))
+        (
+            (self.width.checked_shr(u32::from(mip)).unwrap_or(0)).max(1),
+            (self.height.checked_shr(u32::from(mip)).unwrap_or(0)).max(1),
+        )
     }
 
     fn slices(&self, mip: u8) -> usize {
@@ -249,10 +289,6 @@ impl Vtf {
     /// Bytes taken by one mip level across all frames, faces and slices.
     fn mip_bytes(&self, mip: u8) -> usize {
         usize::from(self.frames) * usize::from(self.faces) * self.slices(mip) * self.image_size(mip)
-    }
-
-    fn high_res_size(&self) -> usize {
-        (0..self.mip_count).map(|m| self.mip_bytes(m)).sum()
     }
 
     /// Offset into the high-res data of an image. Mips are stored from the

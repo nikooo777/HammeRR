@@ -345,7 +345,7 @@ impl Session {
                     .surface_sample
                     .clone()
                     .ok_or("Select one source face and sample its texture first")?,
-                document: Document::new(self.document.vmf().clone()),
+                document: self.document.preview_snapshot(),
                 changed: 0,
                 edits: Vec::new(),
             })
@@ -570,7 +570,7 @@ fn update_stroke(
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;
-        let mut preview = Document::new(texture.document.vmf().clone());
+        let mut preview = texture.document.preview_snapshot();
         let changed = preview
             .edit("preview texture stroke", |tx| {
                 edits.iter().try_fold(0, |count, (face, patch)| {

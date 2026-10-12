@@ -331,7 +331,7 @@ impl Session {
             }
             return Ok(transform.pivot);
         }
-        let mut document = self.document.clone();
+        let mut document = self.document.preview_snapshot();
         document
             .edit("preview transform", |tx| {
                 map_core::edit::transform(tx, ids, transform)

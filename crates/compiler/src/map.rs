@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use glam::DVec3;
+use map_core::Plane;
 use map_core::brush::BrushGeometry;
 use source_formats::bsp::{self, contents};
 use source_formats::gamefs::GameFs;
@@ -14,6 +15,21 @@ use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
 
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
+pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
+
+fn within_compile_bounds(point: DVec3) -> bool {
+    point.is_finite() && point.abs().max_element() <= MAX_COMPILE_COORD
+}
+
+fn bounds_error(object: String) -> Diagnostic {
+    Diagnostic::error(
+        format!(
+            "Source compilation requires finite geometry and origins within ±{MAX_COMPILE_COORD} units; move this object inside the compile bounds"
+        ),
+        Some(object),
+        None,
+    )
+}
 
 /// Entities that the compiler consumes instead of passing to the game.
 const CONSUMED: &[&str] = &["func_detail"];
@@ -151,6 +167,12 @@ impl<'a> Map<'a> {
             brushes: Vec::new(),
             entities: Vec::new(),
         };
+        if let Err(error) = vmf.validate_ids() {
+            report
+                .diagnostics
+                .push(Diagnostic::error(error.to_string(), None, None));
+            return Ok(map);
+        }
         let mut world_properties: Vec<(String, String)> = vmf
             .world
             .properties
@@ -186,6 +208,12 @@ impl<'a> Map<'a> {
             }
             let classname = entity.classname().unwrap_or("").to_owned();
             let object = format!("entity:{}", entity.id);
+            if entity.properties.get("origin").is_some()
+                && !entity.origin().is_some_and(within_compile_bounds)
+            {
+                report.diagnostics.push(bounds_error(object));
+                continue;
+            }
             if CONSUMED.contains(&classname.as_str()) {
                 for solid in entity.solids.iter().filter(|s| !s.hidden) {
                     control.checkpoint()?;
@@ -242,6 +270,17 @@ impl<'a> Map<'a> {
         report: &mut Report,
     ) {
         let object = format!("solid:{}", solid.id);
+        if solid.sides.iter().any(|side| {
+            side.plane.0.iter().any(|point| !point.is_finite())
+                || Plane::from_points(side.plane.0).is_some_and(|plane| {
+                    !plane.normal.is_finite()
+                        || !plane.dist.is_finite()
+                        || plane.dist < -MAX_COMPILE_COORD * plane.normal.abs().element_sum()
+                })
+        }) {
+            report.diagnostics.push(bounds_error(object));
+            return;
+        }
         if solid.sides.iter().any(|s| s.displacement.is_some()) {
             report.diagnostics.push(Diagnostic::warning(
                 "displacements are not compiled yet; brush left out",
@@ -261,6 +300,10 @@ impl<'a> Map<'a> {
                 return;
             }
         };
+        if !within_compile_bounds(geometry.mins) || !within_compile_bounds(geometry.maxs) {
+            report.diagnostics.push(bounds_error(object));
+            return;
+        }
 
         let mut sides = Vec::with_capacity(geometry.faces.len() + 6);
         let mut brush_contents = 0;
@@ -272,7 +315,20 @@ impl<'a> Map<'a> {
             let info = self.materials.get(material);
             brush_contents |= info.contents;
             solid_sides |= info.contents == contents::SOLID;
-            hint |= info.hint || info.skip;
+            hint |= info.hint;
+            if !info.unsupported_flags.is_empty()
+                && !sides.iter().any(|side: &MapSide| side.material == material)
+            {
+                report.diagnostics.push(Diagnostic::warning(
+                    format!(
+                        "material {} uses unsupported compile flags {}; output may be incomplete",
+                        info.name,
+                        info.unsupported_flags.join(", ")
+                    ),
+                    Some(object.clone()),
+                    Some(geometry.center()),
+                ));
+            }
             let visible = info.draws;
             let plane = self.planes.find(face.plane.normal, face.plane.dist);
             let texinfo = self.texinfo(side, material);
@@ -287,9 +343,14 @@ impl<'a> Map<'a> {
             });
         }
         if hint {
+            report.diagnostics.push(Diagnostic::warning(
+                "hint visibility splitting is not supported yet; brush left out",
+                Some(object),
+                Some(geometry.center()),
+            ));
             return;
         }
-        if solid_sides && brush_contents != contents::SOLID {
+        if solid_sides && brush_contents & !(contents::SOLID | contents::DETAIL) != 0 {
             // A mix like nodraw + clip; the special contents win.
             brush_contents &= !contents::SOLID;
             if brush_contents & (contents::WINDOW | contents::TRANSLUCENT) != 0 {
@@ -305,6 +366,19 @@ impl<'a> Map<'a> {
             return;
         }
         if brush_contents == 0 {
+            report.diagnostics.push(Diagnostic::warning(
+                "brush has only skip/fog surfaces and no compiled contents; brush left out",
+                Some(object),
+                Some(geometry.center()),
+            ));
+            return;
+        }
+        if brush_contents & contents::AREAPORTAL != 0 {
+            report.diagnostics.push(Diagnostic::warning(
+                "areaportal brushes are not supported yet; brush left out",
+                Some(object),
+                Some(geometry.center()),
+            ));
             return;
         }
         brush_contents |= extra_contents;

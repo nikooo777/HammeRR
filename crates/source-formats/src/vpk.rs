@@ -97,6 +97,9 @@ impl Vpk {
         };
         let tree_len = word(2) as usize;
 
+        if header_len + tree_len as u64 > file.metadata()?.len() {
+            return Err(invalid("VPK directory tree lies outside the file"));
+        }
         file.seek(SeekFrom::Start(header_len))?;
         let mut tree = vec![0u8; tree_len];
         file.read_exact(&mut tree)?;
@@ -161,7 +164,8 @@ impl Vpk {
                         path.push_str(ext);
                     }
                     entries.insert(
-                        path.to_ascii_lowercase(),
+                        crate::gamefs::asset_relative(&path)
+                            .map_err(|error| invalid(error.to_string()))?,
                         Entry {
                             crc,
                             preload,
@@ -202,8 +206,12 @@ impl Vpk {
         let Some(entry) = self.entries.get(path) else {
             return Ok(None);
         };
-        let mut data = Vec::with_capacity(entry.preload.len() + entry.length as usize);
-        data.extend_from_slice(&entry.preload);
+        let total = entry
+            .preload
+            .len()
+            .checked_add(entry.length as usize)
+            .ok_or_else(|| invalid("VPK entry length overflow"))?;
+        let mut data = entry.preload.to_vec();
         if entry.length > 0 {
             let (archive_path, start) = if entry.archive == DIR_ARCHIVE {
                 (
@@ -216,10 +224,22 @@ impl Vpk {
                 (PathBuf::from(name), u64::from(entry.offset))
             };
             let mut file = File::open(&archive_path)?;
+            let file_length = file.metadata()?.len();
+            if start
+                .checked_add(u64::from(entry.length))
+                .is_none_or(|end| end > file_length)
+            {
+                return Err(invalid(format!(
+                    "VPK entry {path} lies outside {}",
+                    archive_path.display()
+                )));
+            }
+            data.try_reserve_exact(entry.length as usize)
+                .map_err(|error| invalid(format!("cannot allocate VPK entry {path}: {error}")))?;
             file.seek(SeekFrom::Start(start))?;
             let mut chunk = file.take(u64::from(entry.length));
             chunk.read_to_end(&mut data)?;
-            if data.len() != entry.preload.len() + entry.length as usize {
+            if data.len() != total {
                 return Err(invalid(format!(
                     "{} is truncated reading {path}",
                     archive_path.display()

@@ -76,7 +76,7 @@ impl Session {
             {
                 return Ok(current.ids.clone());
             }
-            let mut document = self.document.clone();
+            let mut document = self.document.preview_snapshot();
             let ids = document
                 .edit("preview primitive", |tx| primitive::create(tx, &spec))
                 .map_err(|error| error.to_string())?;

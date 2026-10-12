@@ -6,6 +6,7 @@
 //! states, so undo and redo restore whole objects at their original position
 //! in the file.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::OnceLock;
 
@@ -93,25 +94,20 @@ pub struct Document {
 }
 
 impl Document {
+    pub fn try_new(vmf: Vmf) -> Result<Self, EditError> {
+        vmf.validate_ids()
+            .map_err(|error| EditError::Invalid(error.to_string()))?;
+        Ok(Self::new(vmf))
+    }
+
     pub fn new(vmf: Vmf) -> Self {
-        let mut object_max = vmf.world.id;
-        let mut side_max = 0;
-        let mut visit_solid = |s: &Solid| {
-            object_max = object_max.max(s.id);
-            side_max = s.sides.iter().map(|side| side.id).fold(side_max, u32::max);
-        };
-        vmf.world.solids.iter().for_each(&mut visit_solid);
-        let mut entity_max = 0;
-        for entity in &vmf.entities {
-            entity_max = entity_max.max(entity.id);
-            entity.solids.iter().for_each(&mut visit_solid);
-        }
-        let group_max = vmf.world.groups.iter().map(|g| g.id).max().unwrap_or(0);
+        let object_max = vmf.object_ids().max().unwrap_or(0);
+        let side_max = vmf.side_ids().max().unwrap_or(0);
         let context = Metadata::parse(&vmf);
         Self {
             context_cache: OnceLock::from(context),
             context_fingerprint: OnceLock::new(),
-            next_object_id: u64::from(object_max.max(entity_max).max(group_max)) + 1,
+            next_object_id: u64::from(object_max) + 1,
             next_side_id: u64::from(side_max) + 1,
             vmf,
             undo: Vec::new(),
@@ -135,6 +131,7 @@ impl Document {
                 ("prefab", "0"),
             ])),
             visgroups: Some(Vec::new()),
+            visgroups_extra: Vec::new(),
             view_settings: Some(props(&[
                 ("bSnapToGrid", "1"),
                 ("bShowGrid", "1"),
@@ -166,6 +163,21 @@ impl Document {
 
     pub fn vmf(&self) -> &Vmf {
         &self.vmf
+    }
+
+    /// An independent draft with the same identity/revision state and no edit history.
+    pub fn preview_snapshot(&self) -> Self {
+        Self {
+            vmf: self.vmf.clone(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            revision: self.revision,
+            saved_revision: self.saved_revision,
+            next_object_id: self.next_object_id,
+            next_side_id: self.next_side_id,
+            context_cache: self.context_cache.clone(),
+            context_fingerprint: self.context_fingerprint.clone(),
+        }
     }
 
     pub fn context(&self) -> Result<&Metadata, EditError> {
@@ -453,9 +465,10 @@ impl Transaction<'_> {
     /// Appends a world brush. Its id must be unused.
     pub fn add_solid(&mut self, solid: Solid) -> Result<ObjectId, EditError> {
         let id = ObjectId::Solid(solid.id);
-        if self.doc.contains(id) {
-            return Err(EditError::Invalid(format!("{id} already exists")));
-        }
+        self.reserve_inserted_ids(
+            std::iter::once(solid.id),
+            solid.sides.iter().map(|side| side.id),
+        )?;
         self.touch(id);
         self.doc.vmf.world.solids.push(solid);
         Ok(id)
@@ -464,12 +477,41 @@ impl Transaction<'_> {
     /// Appends an entity. Its id must be unused.
     pub fn add_entity(&mut self, entity: Entity) -> Result<ObjectId, EditError> {
         let id = ObjectId::Entity(entity.id);
-        if self.doc.contains(id) {
-            return Err(EditError::Invalid(format!("{id} already exists")));
-        }
+        self.reserve_inserted_ids(
+            std::iter::once(entity.id).chain(entity.solids.iter().map(|solid| solid.id)),
+            entity
+                .solids
+                .iter()
+                .flat_map(|solid| solid.sides.iter().map(|side| side.id)),
+        )?;
         self.touch(id);
         self.doc.vmf.entities.push(entity);
         Ok(id)
+    }
+
+    fn reserve_inserted_ids(
+        &mut self,
+        objects: impl Iterator<Item = u32>,
+        sides: impl Iterator<Item = u32>,
+    ) -> Result<(), EditError> {
+        let mut object_ids: HashSet<_> = self.doc.vmf.object_ids().collect();
+        let mut side_ids: HashSet<_> = self.doc.vmf.side_ids().collect();
+        let (mut next_object, mut next_side) = (self.doc.next_object_id, self.doc.next_side_id);
+        for id in objects {
+            if !object_ids.insert(id) {
+                return Err(EditError::Invalid(format!("duplicate object ID {id}")));
+            }
+            next_object = next_object.max(u64::from(id) + 1);
+        }
+        for id in sides {
+            if !side_ids.insert(id) {
+                return Err(EditError::Invalid(format!("duplicate side ID {id}")));
+            }
+            next_side = next_side.max(u64::from(id) + 1);
+        }
+        self.doc.next_object_id = next_object;
+        self.doc.next_side_id = next_side;
+        Ok(())
     }
 
     pub fn remove(&mut self, id: ObjectId) -> Result<Object, EditError> {
@@ -582,6 +624,77 @@ impl Transaction<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_snapshots_preserve_state_and_reserved_ids_without_history() {
+        let mut document = Document::empty();
+        document
+            .edit("context", |tx| {
+                context::set_note(
+                    tx,
+                    Scope::Map,
+                    "Room".into(),
+                    "Keep the entrance clear".into(),
+                    "system",
+                    None,
+                )
+            })
+            .unwrap();
+        for value in ["sky_one", "sky_two"] {
+            document
+                .edit("sky", |tx| {
+                    tx.world_properties_mut().set("skyname", value);
+                    Ok(())
+                })
+                .unwrap();
+        }
+        document.undo().unwrap();
+        document
+            .edit("reserve IDs", |tx| {
+                for _ in 0..10 {
+                    tx.new_object_id()?;
+                    tx.new_side_id()?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert!(!document.undo.is_empty() && !document.redo.is_empty());
+        for saved in [false, true] {
+            if saved {
+                document.mark_saved();
+            }
+            let fingerprint = document.context_map_fingerprint().to_owned();
+            let mut draft = document.preview_snapshot();
+            assert_eq!(draft.vmf(), document.vmf());
+            assert_eq!(draft.revision(), document.revision());
+            assert_eq!(draft.is_dirty(), document.is_dirty());
+            assert_eq!(draft.context(), document.context());
+            assert_eq!(draft.context_map_fingerprint(), fingerprint);
+            assert!(draft.undo().is_none() && draft.redo().is_none());
+            let allocated = draft
+                .edit("draft IDs", |tx| {
+                    Ok((tx.new_object_id()?, tx.new_side_id()?))
+                })
+                .unwrap();
+            assert_eq!(
+                allocated,
+                (document.next_object_id as u32, document.next_side_id as u32)
+            );
+            draft
+                .edit("draft edit", |tx| {
+                    tx.world_properties_mut().set("skyname", "draft");
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(draft.undo_labels().count(), 1);
+            assert_eq!(
+                document.vmf().world.properties.get("skyname"),
+                Some("sky_one")
+            );
+            draft.undo().unwrap();
+            assert_eq!(draft.vmf(), document.vmf());
+        }
+    }
 
     #[test]
     fn world_undo_after_save_keeps_the_save_version() {
@@ -720,6 +833,163 @@ mod allocation_tests {
     use super::*;
     use crate::edit;
     use glam::DVec3;
+
+    fn solid(id: u32, first_side: u32) -> Solid {
+        let mut fixture = Document::empty();
+        fixture
+            .edit("fixture", |tx| {
+                edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "test")
+            })
+            .unwrap();
+        let mut solid = fixture.vmf().world.solids[0].clone();
+        solid.id = id;
+        for (index, side) in solid.sides.iter_mut().enumerate() {
+            side.id = first_side + index as u32;
+        }
+        solid
+    }
+
+    #[test]
+    fn explicit_insertion_reserves_object_and_side_ids_including_child_brushes() {
+        let mut document = Document::empty();
+        document
+            .edit("explicit brush", |tx| {
+                tx.add_solid(solid(3, 100))?;
+                assert_eq!(tx.new_object_id()?, 4);
+                assert_eq!(tx.new_side_id()?, 106);
+                Ok(())
+            })
+            .unwrap();
+        let mut entity = Entity::new(20, "func_detail");
+        entity.solids.push(solid(200, 1_000));
+        document
+            .edit("explicit child", |tx| {
+                tx.add_entity(entity)?;
+                assert_eq!(tx.new_object_id()?, 201);
+                assert_eq!(tx.new_side_id()?, 1_006);
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        document.undo().unwrap();
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &source);
+        document
+            .edit("next", |tx| {
+                assert_eq!(tx.new_object_id()?, 202);
+                assert_eq!(tx.new_side_id()?, 1_007);
+                Ok(())
+            })
+            .unwrap();
+        document.vmf().validate_ids().unwrap();
+    }
+
+    #[test]
+    fn insertion_checks_both_namespaces_globally_and_rolls_back_atomically() {
+        let mut vmf = Document::empty().vmf().clone();
+        vmf.world.groups.push(source_formats::vmf::Group {
+            id: 40,
+            editor: None,
+            extra_properties: Properties::default(),
+            extra: Vec::new(),
+        });
+        vmf.world.solids.push(solid(10, 100));
+        let mut entity = Entity::new(20, "func_detail");
+        entity.solids.push(solid(30, 200));
+        vmf.entities.push(entity);
+        let mut document = Document::try_new(vmf).unwrap();
+        document
+            .edit("history", |tx| {
+                tx.world_properties_mut().set("skyname", "test");
+                Ok(())
+            })
+            .unwrap();
+        document.undo().unwrap();
+        let original = document.vmf().clone();
+        let counters = (document.next_object_id, document.next_side_id);
+        let revision = document.revision();
+        for collision in [1, 10, 20, 30, 40] {
+            let error = document
+                .edit("invalid object", |tx| {
+                    tx.world_properties_mut().set("skyname", "discard me");
+                    tx.add_solid(solid(collision, 1_000))
+                })
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("duplicate object ID {collision}"))
+            );
+            assert_eq!(document.vmf(), &original);
+            assert_eq!((document.next_object_id, document.next_side_id), counters);
+            assert_eq!(document.revision(), revision);
+            assert_eq!(document.redo_labels().count(), 1);
+        }
+        for first_side in [100, 200] {
+            let error = document
+                .edit("invalid side", |tx| tx.add_solid(solid(500, first_side)))
+                .unwrap_err();
+            assert!(error.to_string().contains("duplicate side ID"));
+            assert_eq!((document.next_object_id, document.next_side_id), counters);
+        }
+        let mut duplicate_face = solid(500, 1_000);
+        duplicate_face.sides[1].id = duplicate_face.sides[0].id;
+        assert!(
+            document
+                .edit("duplicate face", |tx| tx.add_solid(duplicate_face))
+                .is_err()
+        );
+        for child_id in [20, 30, 500] {
+            let mut entity = Entity::new(500, "func_detail");
+            entity.solids.push(solid(child_id, 1_000));
+            assert!(
+                document
+                    .edit("invalid child", |tx| tx.add_entity(entity))
+                    .is_err()
+            );
+        }
+        assert_eq!(document.vmf(), &original);
+        assert_eq!(document.undo_labels().count(), 0);
+        assert_eq!(document.redo_labels().count(), 1);
+        assert_eq!((document.next_object_id, document.next_side_id), counters);
+        document
+            .edit("independent namespaces", |tx| tx.add_solid(solid(100, 500)))
+            .unwrap();
+        document.vmf().validate_ids().unwrap();
+    }
+
+    #[test]
+    fn duplicate_imports_are_rejected_without_renumbering() {
+        let valid = Document::empty().vmf().clone();
+        let mut duplicate_world = valid.clone();
+        duplicate_world.entities.push(Entity::new(1, "info_target"));
+        assert!(
+            Document::try_new(duplicate_world)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate object ID 1")
+        );
+        let mut duplicate_child = valid.clone();
+        duplicate_child.world.solids.push(solid(2, 100));
+        let mut entity = Entity::new(3, "func_detail");
+        entity.solids.push(solid(2, 200));
+        duplicate_child.entities.push(entity);
+        assert!(
+            Document::try_new(duplicate_child)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate object ID 2")
+        );
+        let mut duplicate_side = valid;
+        duplicate_side.world.solids.push(solid(2, 100));
+        duplicate_side.world.solids.push(solid(3, 100));
+        assert!(
+            Document::try_new(duplicate_side)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate side ID 100")
+        );
+    }
 
     #[test]
     fn maximum_imported_ids_remain_readable_and_fail_creation_cleanly() {

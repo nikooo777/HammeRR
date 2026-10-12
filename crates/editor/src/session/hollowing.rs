@@ -107,7 +107,7 @@ impl Session {
         if stamp != self.hollow_stamp() {
             return Err("Map, selection or preview changed; inspect the hollow state again".into());
         }
-        let mut document = self.document.clone();
+        let mut document = self.document.preview_snapshot();
         let result = document
             .edit("preview hollow", |tx| hollow::hollow(tx, ids, &spec))
             .map_err(|error| error.to_string())?;

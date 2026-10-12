@@ -243,7 +243,7 @@ impl Session {
             texture_lock,
         )
         .map_err(|error| error.to_string())?;
-        let mut document = self.document.clone();
+        let mut document = self.document.preview_snapshot();
         document
             .edit("preview component move", |tx| {
                 subobject::apply(tx, &replacements)

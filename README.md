@@ -75,7 +75,15 @@ cargo test --workspace -j 8
 
 </details>
 
+Asset paths stay inside each configured content mount. To use external content,
+add its directory to `gameinfo.txt` search paths; the mount root may be a symlink.
+Links inside a mount must resolve within that mount, and directory cycles are
+not followed repeatedly.
+
 ## Editing
+
+Geometry and material previews use current-map snapshots without copying undo
+history. Cancel discards the draft; Apply adds one normal undo step.
 
 ### Navigation and selection
 
@@ -353,6 +361,11 @@ actions. MCP point indices start at zero; the human controls start at one.
 | ![Pointfile loading, framing and point-by-point navigation](docs/images/pointfile.png) | ![Red pointfile path drawn through geometry](docs/images/pointfile-viewport.png) |
 
 ### Check a map
+
+Opening or recovering a VMF with duplicate object or face IDs reports the
+offending ID and preserves the current map, preview and undo history. Fix those
+IDs before reopening; HammeRR does not silently renumber imported objects.
+Root visgroup extension fields and blocks are retained on save and reopen.
 
 Open **Check map…** and choose **Run checks**. Filter errors and warnings,
 select an issue to read its explanation, then use **Select issue** or
@@ -911,6 +924,17 @@ Compilation reports stages as it runs in the background. **Cancel build** waits
 for the worker to stop; cancelled builds keep the previous BSP and pointfile.
 Output is published atomically, and a build cannot be cancelled after publication.
 Closing Build details leaves the build running.
+
+Compilation requires finite brush geometry and entity origins within
+**±16,384 units**. Out-of-range objects produce diagnostics before BSP
+construction and leave existing output intact. Editor tool bounds and camera
+zoom have separate limits; they do not extend the playable Source world.
+
+Material compile flags recognize `1` and case-insensitive `true`; `0` and
+`false` disable them in both the editor and compiler. A skip face hides that
+surface while preserving the brush's other contents. Non-solid materials retain
+visible geometry without sealing the map. Unsupported flags and omitted hint,
+origin, areaportal or empty-content brushes are reported in build diagnostics.
 
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing

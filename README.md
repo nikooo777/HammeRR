@@ -1626,6 +1626,23 @@ Native sloped, near-axis, distant, reflected and thin-brush fixtures verify
 surface preservation and swept hulls against an independent geometric reference.
 CS:S collision runtime validation and physics output remain unfinished.
 
+<details>
+<summary>Headless physics backend probe</summary>
+
+```sh
+python3 -B scripts/validate_vphysics_backend.py \
+  --game-dir "/path/to/Counter-Strike Source"
+```
+
+This developer check verifies the inspected CS:S Linux64
+**VPhysicsCollision007** library: convex construction, guarded serialization,
+compound geometry/tags and length-prefixed solid loading. It runs in a timed
+child with a 24 GiB address-space limit and rejects unrecognized library builds.
+It does not launch the game. The compiler still emits no physics collision lump;
+an isolated backend adapter and in-game validation remain unfinished.
+
+</details>
+
 Tighter VVIS portal flow, VRAD, physics collision, compiled displacements,
 static props, areaportals and overlays remain unfinished. Horizontal world water
 now has native leaf/surface metadata; fluid physics and rendering remain pending. Cubemap samples

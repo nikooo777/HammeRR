@@ -65,6 +65,27 @@ impl Session {
         if depth < f64::from(Camera::NEAR) || depth > far {
             return Ok(Vec::new());
         }
+        if let Some(piece) = self
+            .checked_component_preview(token)?
+            .extrusion
+            .as_ref()
+            .and_then(|draft| {
+                draft
+                    .plan
+                    .pieces
+                    .iter()
+                    .find(|piece| hit.solid == Some(piece.solid.id))
+            })
+        {
+            return Ok(vec![PartitionPick {
+                partition: PartitionRef {
+                    solid: piece.source.solid,
+                    partition: piece.partition,
+                },
+                position: hit.point,
+                depth,
+            }]);
+        }
         let half = if camera.projection == Projection::Perspective {
             (f64::from(camera.fov_y_degrees).to_radians() * 0.5).tan() * depth
         } else {

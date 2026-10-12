@@ -184,11 +184,12 @@ fn refresh_crease_choices(
                 .iter()
                 .find(|row| row.key == key)
                 .map_or(0, |row| row.choice);
-            let requests = if preview["operation"] == "partition" {
-                &preview["partition"]["partitions"]
-            } else {
-                &preview["crease"]["pairs"]
-            };
+            let requests =
+                if preview["operation"] == "partition" || preview["operation"] == "extrusion" {
+                    &preview["partition"]["partitions"]
+                } else {
+                    &preview["crease"]["pairs"]
+                };
             if changed
                 && let Some(requests) = requests.as_array()
                 && let Some(request) = requests
@@ -290,6 +291,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     refresh_crease_choices(window, &report, session);
     let partition = &report["preview"]["partition"];
     window.set_has_partition_preview(!partition.is_null());
+    window.set_has_extrusion_preview(!report["preview"]["extrusion"].is_null());
     window.set_partition_flat(partition["rise"].as_f64() == Some(0.0));
     let saved = session.saved_partition_report();
     let saved_rows = saved["entries"]
@@ -558,7 +560,8 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let weld = preview["operation"] == "weld";
     let split = preview["operation"] == "split";
     let crease = preview["operation"] == "crease";
-    let partition = preview["operation"] == "partition";
+    let extrusion = preview["operation"] == "extrusion";
+    let partition = preview["operation"] == "partition" || extrusion;
     let transform = preview["operation"] == "scale" || preview["operation"] == "rotate";
     let operation = if partition {
         6
@@ -577,6 +580,22 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     };
     if !preview.is_null() && window.get_token() != token {
         window.set_operation(operation);
+        if partition {
+            window.set_partition_mode(i32::from(extrusion));
+        }
+        if extrusion {
+            let spec = &preview["extrusion"];
+            window.set_extrusion_height(spec["height"].as_f64().unwrap().to_string().into());
+            window.set_extrusion_height_value(spec["height"].as_f64().unwrap() as f32);
+            window.set_extrusion_texture_lock(spec["texture_lock"].as_bool().unwrap());
+            window.set_wall_override(!spec["wall_material"].is_null());
+            if let Some(material) = spec["wall_material"].as_str() {
+                if window.get_wall_material() != material {
+                    window.set_wall_preview(slint::Image::default());
+                }
+                window.set_wall_material(material.into());
+            }
+        }
         if weld {
             let target = &preview["weld_target"];
             window.set_weld_target_mode(match target["mode"].as_str() {
@@ -643,7 +662,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_token(token.into());
     window.set_ready(
         !preview.is_null()
-            && (preview["can_apply"].as_bool().unwrap_or(true) || (partition && window.get_partition_flat()))
+            && (preview["can_apply"].as_bool().unwrap_or(true) || (partition && !extrusion && window.get_partition_flat()))
             && session
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
@@ -655,8 +674,13 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                         crate::session::components::transform_json(&spec, pivot, resolved)
                             == preview["transform"]
                     })
+            } else if extrusion {
+                window.get_partition_mode() == 1
+                    && extrusion_inputs(window).is_ok_and(|spec|spec.height == preview["extrusion"]["height"].as_f64().unwrap()
+                        && spec.wall_material.as_ref().map(|value|serde_json::json!(value)).unwrap_or(serde_json::Value::Null)==preview["extrusion"]["wall_material"]
+                        && spec.texture_lock==preview["extrusion"]["texture_lock"].as_bool().unwrap())
             } else if partition {
-                window.get_split_rise().parse::<f64>().ok() == preview["partition"]["rise"].as_f64()
+                window.get_partition_mode() == 0 && window.get_split_rise().parse::<f64>().ok() == preview["partition"]["rise"].as_f64()
                     && window.get_roof_texture_lock() == preview["partition"]["roof_texture_lock"].as_bool().unwrap_or(false)
             } else if crease {
                 window.get_split_rise().parse::<f64>().ok() == preview["crease"]["rise"].as_f64()
@@ -691,6 +715,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         let pivot = &preview["transform"]["resolved_pivot"];
         let point = DVec3::new(pivot[0].as_f64().unwrap(),pivot[1].as_f64().unwrap(),pivot[2].as_f64().unwrap());
         format!("{}: {}, {}, {}{}\nPivot: {}\nThe map is unchanged until Apply.",if operation == 3 {"Scale factors"} else {"Angles"},values[0],values[1],values[2],if operation == 3 {""} else {" degrees"},position(point)).into()
+    } else if extrusion {
+        let spec = &preview["extrusion"];
+        format!("Adds {} volumes, {} units high. Original brushes stay unchanged.\nApply selects the new faces. Undo removes the volumes.",spec["pieces"].as_array().unwrap().len(),number(spec["height"].as_f64().unwrap())).into()
     } else if partition {
         let count = preview["partition"]["partitions"].as_array().unwrap().len();
         let rise = preview["partition"]["rise"].as_f64().unwrap();
@@ -728,6 +755,50 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         )
         .into()
     });
+}
+
+fn extrusion_inputs(
+    window: &ComponentsWindow,
+) -> Result<map_core::subobject::ExtrusionSpec, String> {
+    Ok(map_core::subobject::ExtrusionSpec {
+        height: window
+            .get_extrusion_height()
+            .trim()
+            .parse()
+            .map_err(|_| "Enter a numeric extrusion height".to_string())?,
+        wall_material: window
+            .get_wall_override()
+            .then(|| window.get_wall_material().to_string()),
+        texture_lock: window.get_extrusion_texture_lock(),
+    })
+}
+
+pub fn choose_extrusion_material(
+    window: &ComponentsWindow,
+    session: &mut Session,
+    target: (Option<u64>, u64),
+    material: &str,
+) -> Result<(), String> {
+    if target
+        != (
+            session.partition_preview_token(),
+            session.document_generation(),
+        )
+    {
+        return Err("Map or partition preview changed; choose the wall material again".into());
+    }
+    window.set_wall_material(material.into());
+    window.set_wall_override(true);
+    window.set_wall_preview(
+        session
+            .material_preview(material)
+            .ok()
+            .map(|preview| crate::preview_image(&preview))
+            .unwrap_or_default(),
+    );
+    window.set_ready(false);
+    window.set_message("Wall material changed. Preview the extrusion before Apply.".into());
+    Ok(())
 }
 
 fn saved_partition_action(window: &ComponentsWindow, shared: &SharedSession, remove: bool) {
@@ -1022,7 +1093,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
         }
     });
     window.on_edited({
-        let window = window.as_weak();
+        let (window, shared) = (window.as_weak(), shared.clone());
         move || {
             let window = window.unwrap();
             if let Ok(rise) = window.get_split_rise().parse::<f64>()
@@ -1032,8 +1103,34 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             {
                 window.set_split_rise_value(rise as f32);
             }
+            if let Ok(height) = window.get_extrusion_height().parse::<f64>()
+                && (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
+                    .contains(&height)
+            {
+                window.set_extrusion_height_value(height as f32);
+            }
+            if window.get_operation() == 6
+                && window.get_partition_mode() == 1
+                && window.get_wall_override()
+            {
+                window.set_wall_preview(
+                    lock(&shared)
+                        .material_preview(window.get_wall_material().as_str())
+                        .ok()
+                        .map(|preview| crate::preview_image(&preview))
+                        .unwrap_or_default(),
+                );
+            }
             window.set_ready(false);
             window.set_message("Settings changed. Preview the change before applying.".into());
+        }
+    });
+    window.on_choose_extrusion_height({
+        let window = window.as_weak();
+        move |value| {
+            let window = window.unwrap();
+            window.set_extrusion_height(value.to_string().into());
+            window.invoke_edited();
         }
     });
     window.on_choose_rise({
@@ -1080,7 +1177,17 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
             let result = if window.get_operation() == 6 {
-                if window.get_has_partition_preview() {
+                if window.get_has_partition_preview() && window.get_partition_mode() == 1 {
+                    extrusion_inputs(&window).and_then(|spec| {
+                        session.preview_partition_extrusion(
+                            window
+                                .get_token()
+                                .parse()
+                                .map_err(|_| "Stage flat pieces first".to_string())?,
+                            spec,
+                        )
+                    })
+                } else if window.get_has_partition_preview() {
                     window
                         .get_split_rise()
                         .trim()
@@ -1174,7 +1281,8 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                 return;
             }
             let mut session = lock(&shared);
-            let flat = window.get_has_partition_preview() && window.get_partition_flat();
+            let extrusion = window.get_has_extrusion_preview();
+            let flat = window.get_has_partition_preview() && window.get_partition_flat() && !extrusion;
             let result = window
                 .get_token()
                 .parse()
@@ -1184,7 +1292,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             window.set_message(
                 result
                     .map(|count| {
-                        if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
+                        if extrusion { format!("Added {count} volumes. Their faces are selected; Undo removes the volumes.") } else if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
                     })
                     .unwrap_or_else(|error| error)
                     .into(),

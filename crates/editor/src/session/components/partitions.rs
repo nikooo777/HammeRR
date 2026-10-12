@@ -655,6 +655,9 @@ impl Session {
     }
 
     pub fn store_component_partition(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
+        if self.checked_component_preview(token)?.extrusion.is_some() {
+            return Err("Return to flat before keeping pieces, or Apply the extrusion".into());
+        }
         let draft = self.checked_partition(token)?;
         if draft.rise != 0.0 {
             return Err(
@@ -804,7 +807,7 @@ impl Session {
         Ok(())
     }
 
-    fn checked_partition(&self, token: u64) -> Result<&Draft, String> {
+    pub(super) fn checked_partition(&self, token: u64) -> Result<&Draft, String> {
         self.checked_component_preview(token)?
             .partition
             .as_ref()
@@ -1004,6 +1007,15 @@ impl Session {
                         bounds = Some(bounds.map_or((point, point), |(mins, maxs)| {
                             (mins.min(point), maxs.max(point))
                         }));
+                        if let Some(extrusion) = &self.checked_component_preview(token)?.extrusion
+                            && extrusion.selection.contains(&PartitionRef {
+                                solid: part.source.solid,
+                                partition: piece.id,
+                            })
+                        {
+                            let top = point + part.normal() * extrusion.spec.height;
+                            bounds = bounds.map(|(mins, maxs)| (mins.min(top), maxs.max(top)));
+                        }
                     }
                 }
             }
@@ -1089,6 +1101,26 @@ impl Session {
                                 .to_array(),
                             color,
                         });
+                    }
+                    if let Some(extrusion) = self
+                        .components
+                        .preview
+                        .as_ref()
+                        .and_then(|preview| preview.extrusion.as_ref())
+                        && extrusion.selection.contains(&PartitionRef {
+                            solid: part.source.solid,
+                            partition: piece.id,
+                        })
+                    {
+                        let base = positions[piece.vertices[index] as usize];
+                        let next = positions[piece.vertices[(index + 1) % 4] as usize];
+                        let delta = part.normal() * extrusion.spec.height;
+                        for point in [base + delta, next + delta, base, base + delta] {
+                            mesh.lines.push(render::scene::LineVertex {
+                                position: point.as_vec3().to_array(),
+                                color,
+                            });
+                        }
                     }
                 }
             }

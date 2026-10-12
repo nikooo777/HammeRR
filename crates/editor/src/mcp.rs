@@ -610,6 +610,14 @@ struct RaisePartitionArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ExtrudePartitionArgs {
+    token: String,
+    height: f64,
+    wall_material: Option<String>,
+    texture_lock: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SelectPartitionsArgs {
     token: String,
     partitions: Vec<crate::session::components::PartitionRef>,
@@ -3360,6 +3368,27 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Preview outward extrusion of the highlighted flat partition pieces into separate convex brushes. Requires a current flat-partition token; select 1–32 pieces using select_component_partitions across 1–16 source brushes. height is 0.125–4096 world units along each original face normal. Source brushes and saved partition intents remain unchanged. World sources add world children; brush-entity sources add children to the same entity. Each prism has fresh solid/side IDs, a top and base inheriting the source face, three boundary walls inheriting neighboring faces, and a divider inheriting the source face. Walls receive new world UV axes; optional wall_material overrides all four walls. texture_lock defaults false; true attaches only top UVs to corresponding corners. Inspect preview.extrusion for allocated IDs, provenance, owners, bounds and all face planes/materials/UVs. Updates rebuild from the original source and replace the token; invalid updates retain the last valid preview. Frame and pick the visible prisms through the existing partition tools. Changing highlights requires another preview before Apply. commit_component_edit verifies exact replay, adds all volumes in one undo step and selects their faces. Cancel discards geometry and allocations. raise_component_partition with zero returns to flat. Save/build/play remain guarded until Apply or Cancel."
+    )]
+    fn preview_partition_extrusion(
+        &self,
+        Parameters(args): Parameters<ExtrudePartitionArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_partition_extrusion(
+                parse_token(&args.token)?,
+                map_core::subobject::ExtrusionSpec {
+                    height: args.height,
+                    wall_material: args.wall_material,
+                    texture_lock: args.texture_lock.unwrap_or(false),
+                },
+            )?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
         description = "Inspect saved flat face partitions, current validity and bounded metadata limits. Missing or changed sources remain listed with errors. Read-only; snapshot guards resume and remove operations.",
         annotations(read_only_hint = true)
     )]
@@ -3425,7 +3454,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Select draft loops by {solid,partition} from preview.partition.partitions[].loops[].id using replace/add/remove/toggle. Highlight and framing selection only: ridge raising affects both pieces. Does not alter source component selection, VMF geometry or history. Requires the current component preview token."
+        description = "Select draft loops by {solid,partition} from preview.partition.partitions[].loops[].id using replace/add/remove/toggle. Ridge raising affects both pieces; extrusion uses highlighted pieces. Changing highlights during an extrusion requires another preview before Apply. Does not alter source component selection, VMF geometry or history. Requires the current component preview token."
     )]
     fn select_component_partitions(
         &self,
@@ -3443,7 +3472,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Frame highlighted flat or raised partition loops through the shared viewport camera operation. Requires the current component preview token and at least one highlighted loop. aspect defaults to 1.6. Leaves source geometry and history unchanged."
+        description = "Frame highlighted flat or raised partition loops, including extruded prism bounds, through the shared viewport camera operation. Requires the current component preview token and at least one highlighted loop. aspect defaults to 1.6. Leaves source geometry and history unchanged."
     )]
     fn frame_component_partitions(
         &self,
@@ -3463,7 +3492,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Read staged flat or raised partition pieces under a viewport pixel through the same Session query as a UI click. Requires the current draft token; x/y are continuous pixels from top-left, with the camera and size of render_view. Uses the nearest visible brush surface, hidden ownership and shared tool filters. Returns partition refs, world hit positions and camera depth; Hits within half a pixel of a shared boundary may contain both pieces ordered by depth then solid/piece ID. Read-only. Pass a chosen ref and the same token to select_component_partitions; ordinary UI clicks replace highlights, Ctrl toggles, empty ordinary clicks clear. Source geometry, source selection, draft token and undo history stay unchanged.",
+        description = "Read staged flat, raised or extruded partition pieces under a viewport pixel through the same Session query as a UI click. Requires the current draft token; x/y are continuous pixels from top-left, with the camera and size of render_view. Uses the nearest visible brush surface, hidden ownership and shared tool filters. Visible extruded bodies map to their original piece refs. Returns partition refs, world hit positions and camera depth; flat/raised hits within half a pixel of a shared boundary may contain both pieces ordered by depth then solid/piece ID. Read-only. Pass a chosen ref and the same token to select_component_partitions; ordinary UI clicks replace highlights, Ctrl toggles, empty ordinary clicks clear. Source geometry, source selection, draft token and undo history stay unchanged.",
         annotations(read_only_hint = true)
     )]
     fn pick_component_partitions(
@@ -3542,7 +3571,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Discard the exact movement, scale, rotate, weld or split preview without changing map, face allocation or history. Restores original component selection and retains viewport picking scope/kind. Stale tokens cannot discard a newer draft. Equivalent to Discard preview; stopping component picking clears the whole tool."
+        description = "Discard the exact movement, scale, rotate, weld, split, ridge or extrusion preview without changing map, face allocation or history. Restores original component selection and retains viewport picking scope/kind. Stale tokens cannot discard a newer draft. Equivalent to Discard preview; stopping component picking clears the whole tool."
     )]
     fn cancel_component_edit(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {

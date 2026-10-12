@@ -52,13 +52,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let stats = &output.stats;
     println!(
-        "{}: {} brushes, {} nodes, {} leaves, {} faces, {} models in {:.1?}",
+        "{}: {} brushes, {} nodes, {} leaves, {} faces, {} models, {} cubemap samples in {:.1?}",
         path.display(),
         stats.brushes,
         stats.nodes,
         stats.leaves,
         stats.faces,
         stats.models,
+        stats.cubemap_samples,
         stats.elapsed
     );
     Ok(())

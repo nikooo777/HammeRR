@@ -23,6 +23,9 @@ mod support;
 #[path = "origins.rs"]
 mod origins;
 
+#[path = "cubemaps.rs"]
+mod cubemaps;
+
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
@@ -47,7 +50,6 @@ const UNSUPPORTED: &[&str] = &[
     "prop_static",
     "info_overlay",
     "info_overlay_transition",
-    "env_cubemap",
     "func_viscluster",
     "func_occluder",
     "func_areaportal",
@@ -154,6 +156,7 @@ pub struct Map<'a> {
     pub brushes: Vec<MapBrush>,
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
+    pub cubemaps: Vec<bsp::Cubemap>,
     brush_side_count: usize,
 }
 
@@ -176,6 +179,7 @@ impl<'a> Map<'a> {
             texdata: Vec::new(),
             brushes: Vec::new(),
             entities: Vec::new(),
+            cubemaps: Vec::new(),
             brush_side_count: 0,
         };
         if let Err(error) = vmf.validate_ids() {
@@ -223,6 +227,10 @@ impl<'a> Map<'a> {
                 && !entity.origin().is_some_and(within_compile_bounds)
             {
                 report.diagnostics.push(bounds_error(object));
+                continue;
+            }
+            if classname.eq_ignore_ascii_case("env_cubemap") {
+                map.add_cubemap(entity, report);
                 continue;
             }
             if CONSUMED.contains(&classname.as_str()) {
@@ -278,6 +286,13 @@ impl<'a> Map<'a> {
                     Diagnostic::info("Consumed origin brush; remaining geometry uses the entity pivot", Some(format!("entity:{}", entity.id)), entity.origin)
                 });
             }
+        }
+        if !map.cubemaps.is_empty() {
+            report.diagnostics.push(Diagnostic::warning(
+                "Cubemap sample records compiled; reflection material binding and texture capture are not implemented yet",
+                None,
+                None,
+            ));
         }
         if hidden > 0 {
             report.diagnostics.push(Diagnostic::info(

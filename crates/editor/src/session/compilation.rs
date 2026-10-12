@@ -56,6 +56,18 @@ impl CompileRequest {
     }
 }
 
+pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
+    json!({
+        "brushes": stats.brushes,
+        "nodes": stats.nodes,
+        "leaves": stats.leaves,
+        "faces": stats.faces,
+        "models": stats.models,
+        "cubemap_samples": stats.cubemap_samples,
+        "elapsed_ms": stats.elapsed.as_millis(),
+    })
+}
+
 fn result_json(result: &CompileResult) -> Value {
     let output = &result.output;
     json!({
@@ -67,7 +79,7 @@ fn result_json(result: &CompileResult) -> Value {
             "message":diagnostic.message,"object":diagnostic.object,"position":diagnostic.position.map(|p|p.to_array())
         })).collect::<Vec<_>>(),
         "leak":output.leak.as_ref().map(|leak|json!({"entity":format!("entity:{}",leak.entity),"points":leak.points.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"pointfile":result.path.with_extension("lin").display().to_string()})),
-        "stats":{"brushes":output.stats.brushes,"nodes":output.stats.nodes,"leaves":output.stats.leaves,"faces":output.stats.faces,"models":output.stats.models,"elapsed_ms":output.stats.elapsed.as_millis()},
+        "stats":stats_json(&output.stats),
     })
 }
 

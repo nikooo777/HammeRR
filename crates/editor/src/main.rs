@@ -7420,7 +7420,19 @@ mod tests {
         assert!(controller.window.get_summary().contains("failed"));
         assert!(!controller.window.get_diagnostics().is_empty());
         let vmf_path = directory.path().join("room.vmf");
-        std::fs::write(&vmf_path, test_assets::room().write(&Default::default())).unwrap();
+        let mut room = map_core::Document::new(test_assets::room());
+        room.edit("cubemap sample", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "env_cubemap",
+                Some(DVec3::new(0.0, 0.0, 64.0)),
+                &[("cubemapsize".into(), "9".into())],
+                Vec::new(),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
         let request = lock(&shared)
             .begin_compile(Actor::Agent, Some(&path))
@@ -7429,6 +7441,16 @@ mod tests {
         lock(&shared).finish_compile(Actor::Agent, &result);
         controller.show(&lock(&shared)).unwrap();
         assert!(controller.window.get_summary().starts_with("Compiled in"));
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Cubemap samples: 1")
+        );
+        assert_eq!(
+            lock(&shared).compile_status()["job"]["result"]["stats"]["cubemap_samples"],
+            1
+        );
         assert!(controller.window.get_launch_ready());
         assert!(controller.window.get_launch_details().contains("room.bsp"));
         assert!(

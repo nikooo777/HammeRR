@@ -182,6 +182,8 @@ struct Ui {
     material_for_faces: bool,
     material_for_clip: bool,
     material_for_primitive: bool,
+    material_for_extrusion: bool,
+    extrusion_material_target: Option<(Option<u64>, u64)>,
     primitive_material_target: Option<(Option<u64>, u64)>,
     seen_definitions: u64,
 }
@@ -2156,6 +2158,21 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                             return;
                         }
                     }
+                } else if ui.borrow().material_for_extrusion {
+                    if let Some(components) = &ui.borrow().components_window {
+                        let Some(target) = ui.borrow().extrusion_material_target else {
+                            return;
+                        };
+                        if let Err(error) = components_ui::choose_extrusion_material(
+                            components,
+                            &mut session,
+                            target,
+                            &material,
+                        ) {
+                            window.set_detail(error.into());
+                            return;
+                        }
+                    }
                 } else if ui.borrow().material_for_group {
                     if let Some(controller) = &ui.borrow().surface_group {
                         controller.choose_material(&mut session, &material);
@@ -2192,6 +2209,13 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     ui.borrow_mut().material_for_faces = key == "@faces";
     ui.borrow_mut().material_for_clip = key == "@clip";
     ui.borrow_mut().material_for_primitive = key == "@primitive";
+    ui.borrow_mut().material_for_extrusion = key == "@extrusion";
+    ui.borrow_mut().extrusion_material_target = (key == "@extrusion").then(|| {
+        (
+            session.partition_preview_token(),
+            session.document_generation(),
+        )
+    });
     ui.borrow_mut().primitive_material_target = (key == "@primitive").then(|| {
         (
             session.primitive_preview().map(|preview| preview.token),
@@ -2202,6 +2226,7 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         || key == "@faces"
         || key == "@clip"
         || key == "@primitive"
+        || key == "@extrusion"
         || key.starts_with("@replace-")
         || key == "@group"
     {
@@ -2221,6 +2246,12 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     controller.window.get_source().to_string()
                 }
             })
+            .unwrap_or_default()
+    } else if key == "@extrusion" {
+        ui.borrow()
+            .components_window
+            .as_ref()
+            .map(|window| window.get_wall_material().to_string())
             .unwrap_or_default()
     } else if key == "@primitive" {
         ui.borrow()
@@ -2961,6 +2992,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         material_for_faces: false,
         material_for_clip: false,
         material_for_primitive: false,
+        material_for_extrusion: false,
+        extrusion_material_target: None,
         primitive_material_target: None,
         seen_definitions: 0,
     }));
@@ -3201,6 +3234,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match ComponentsWindow::new() {
                     Ok(window) => {
                         components_ui::bind(&window, &session_of(&ui));
+                        window.on_browse_extrusion_material({
+                            let (app, ui) = (app.clone(), ui.clone());
+                            move || show_material_window(&app.unwrap(), &ui, "@extrusion")
+                        });
                         ui.borrow_mut().components_window = Some(window);
                     }
                     Err(error) => {
@@ -5656,6 +5693,82 @@ mod tests {
         window.invoke_resume_saved_partition();
         assert!(window.get_has_partition_preview() && window.get_partition_flat());
         assert_eq!(lock(&shared).document().vmf(), &stored);
+        window.set_partition_mode(1);
+        window.invoke_edited();
+        window.set_extrusion_texture_lock(true);
+        window.invoke_choose_extrusion_height(32.125);
+        let target = {
+            let session = lock(&shared);
+            (
+                session.partition_preview_token(),
+                session.document_generation(),
+            )
+        };
+        components_ui::choose_extrusion_material(
+            &window,
+            &mut lock(&shared),
+            target,
+            "concrete/test",
+        )
+        .unwrap();
+        assert!(!window.get_ready());
+        window.invoke_preview_edit();
+        assert!(window.get_ready() && window.get_has_extrusion_preview());
+        save_ui_snapshot(window.window(), "partition-extrusion-controls");
+        for label in [
+            "Extrusion height",
+            "Keep top texture at corners",
+            "Choose wall material",
+            "Browse…",
+            "Preview extrusion",
+            "Apply extrusion",
+            "Cancel",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.window().set_size(slint::PhysicalSize::new(880, 720));
+        save_ui_snapshot(window.window(), "partition-extrusion-compact");
+        assert_dialog_button_visible(&window, "Apply extrusion");
+        assert_dialog_button_visible(&window, "Cancel");
+        window
+            .window()
+            .set_size(slint::PhysicalSize::new(1100, 900));
+        assert_eq!(lock(&shared).document().vmf(), &stored);
+        assert!(
+            components_ui::choose_extrusion_material(
+                &window,
+                &mut lock(&shared),
+                target,
+                "brick/test"
+            )
+            .is_err()
+        );
+        let token = lock(&shared).partition_preview_token().unwrap();
+        window.invoke_choose_partition(window.get_partition_rows().row_data(0).unwrap().key);
+        assert!(!window.get_ready());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_ne!(lock(&shared).partition_preview_token(), Some(token));
+        window.invoke_apply();
+        assert!(window.get_message().contains("Added 1 volumes"));
+        assert_eq!(lock(&shared).selected_faces().len(), 6);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &stored);
+        components_ui::refresh(&window, &lock(&shared));
+        window.invoke_resume_saved_partition();
+        window.set_partition_mode(1);
+        window.invoke_preview_edit();
+        assert_eq!(lock(&shared).render_document().vmf().world.solids.len(), 3);
+        {
+            let session = lock(&shared);
+            assert_eq!(
+                session.render_document().solid(id),
+                session.document().solid(id)
+            );
+        }
+        window.invoke_flatten_partitions();
+        assert!(!window.get_has_extrusion_preview());
+        assert_eq!(lock(&shared).render_document().vmf(), &stored);
         window.invoke_discard_preview();
         window.invoke_remove_saved_partition();
         assert_eq!(lock(&shared).document().vmf(), &source);

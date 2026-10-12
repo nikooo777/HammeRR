@@ -384,6 +384,18 @@ Resolve a pending draft by keeping, applying or cancelling before saving,
 compiling or playing. Highlighting controls inspection and framing; raising
 always affects the shared ridge of both pieces.
 
+Choose **Extrude highlighted pieces** to add separate volumes above one or both
+flat pieces. Set a positive height, optionally choose a wall material with the
+material browser, and keep the top texture attached if needed. Preview before
+Apply; changing highlights requires a new preview. The original brushes and
+saved pieces remain reusable. New volumes retain world or brush-entity ownership,
+and Apply selects their faces in one undo step. **Return to flat** and **Cancel**
+discard the added draft geometry.
+
+| Extrusion controls | New volumes above the original brush |
+| --- | --- |
+| ![Height, wall material and top texture controls for highlighted pieces](docs/images/partition-extrusion-controls.png) | ![Two flat pieces extruded to different heights above an unchanged source brush](docs/images/partition-extrusion-preview.png) |
+
 | Flat pieces staged | Shared ridge raised |
 | --- | --- |
 | ![An independent dividing edge on an unchanged brush face](docs/images/component-partition-flat.png) | ![The staged pieces raised into two checked roof planes](docs/images/component-partition-raised.png) |
@@ -908,6 +920,7 @@ For example, place a warm light:
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
 | Staged flat partitions | `preview_component_partition`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
+| Partition extrusion | `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
@@ -1039,6 +1052,7 @@ python -B scripts/validate_split_texture_attachment.py --output /tmp/hammerr-spl
 python -B scripts/validate_weld_texture_attachment.py --output /tmp/hammerr-weld-texture-check
 python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-picking-check
 python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-partitions-check
+python -B scripts/validate_partition_extrusion.py --output /tmp/hammerr-extrusion-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1181,7 +1195,25 @@ supports 1–64 saved records, including stale sources. Piece identities survive
 affine edits and reflection. Saved intents leave native BSP output unchanged.
 The map-wide registry allows 64 faces and 64 KiB of key/value text. Unknown
 metadata is preserved; unsupported versions are reported and cannot be
-overwritten by these operations. Independent extrusion and per-piece material
+overwritten by these operations.
+
+`preview_partition_extrusion` takes the current flat draft `token`, positive
+`height` (0.125–4096), optional `wall_material` and optional `texture_lock`
+(default false). It extrudes the 1–32 highlighted pieces across up to 16 source
+brushes. Updates replace the token and rebuild from the original source; invalid
+updates retain the previous draft. Top and base inherit the source face. Outer
+walls inherit neighboring faces, and the divider inherits the source face;
+all four walls receive fresh world UVs and the optional material override.
+Attached top UVs preserve corresponding corners, reported as `top_attached`.
+
+`preview.extrusion` lists every output solid, source piece, owner, bounds and
+face role, source side, plane, material and UV projection. Framing includes the
+prisms; visible body picking returns the original piece ref. After highlights
+change, preview again before Apply. `commit_component_edit` checks exact replay,
+adds the prisms in one undo step and selects only their faces. Original brushes
+and saved intents remain unchanged. Return to flat with
+`raise_component_partition` and zero rise, or use `cancel_component_edit`.
+Inward/subtractive extrusion, free-edge partitions and saved per-piece surface
 overrides remain unfinished.
 
 `get_carve_preview` exposes candidates, limits and the latest `stamp`.
@@ -1404,8 +1436,8 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes arbitrary flat partitions, independent piece
-extrusion, displacement clipping and authoring, model rendering and broader
+Editor work ahead includes arbitrary flat partitions, inward extrusion,
+saved per-piece surfaces, displacement clipping and authoring, model rendering and broader
 map checks.
 
 ## Project layout

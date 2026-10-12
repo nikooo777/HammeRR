@@ -10,6 +10,8 @@ use std::io;
 use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
+mod visibility;
+pub use visibility::{MAX_VISIBILITY_BYTES, MAX_VISIBILITY_CLUSTERS, Visibility, VisibilityKind};
 
 pub const IDENT: [u8; 4] = *b"VBSP";
 pub const LUMP_COUNT: usize = 64;

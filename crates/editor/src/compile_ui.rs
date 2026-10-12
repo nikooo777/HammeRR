@@ -82,9 +82,20 @@ impl Controller {
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))
             .unwrap_or_default();
+        let visibility = result["stats"]["clusters"]
+            .as_u64()
+            .map(|count| {
+                let portals = result["stats"]["visibility_portals"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let cluster_label = if count == 1 { "cluster" } else { "clusters" };
+                let portal_label = if portals == 1 { "portal" } else { "portals" };
+                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label}")
+            })
+            .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nStage: {} · {:.2}s elapsed{samples}\n{}",
+                "Output: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,

@@ -1151,6 +1151,7 @@ python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_origin_brushes.py --output /tmp/hammerr-origin-check
 python -B scripts/validate_cubemap_samples.py --output /tmp/hammerr-cubemap-check
+python -B scripts/validate_visibility.py --output /tmp/hammerr-visibility-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
 ```
@@ -1161,8 +1162,8 @@ Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
 The audit, component source/topology/transform, partition, precision, carving,
-favorites, spawn-clearance, origin-brush and cubemap-sample validators use private
-headless sessions and do not accept a GUI URL. Add `--render` to the topology, boundary or polygon
+favorites, spawn-clearance, origin-brush, cubemap-sample and visibility validators
+use private headless sessions and do not accept a GUI URL. Add `--render` to the topology, boundary or polygon
 validator for offscreen GPU pixel checks without opening a desktop window.
 
 Check extrusion guide visibility with a private offscreen GPU session:
@@ -1501,8 +1502,15 @@ hidden counts and the compiler's visibility policy.
 | **Stop Map** | Stop the game process started by this editor. |
 | **Leak path** | Toggle the red leak path drawn through geometry after a failed compile. |
 
-Compilation reports stages as it runs in the background. **Cancel build** waits
-for the worker to stop; cancelled builds keep the previous BSP and pointfile.
+Compilation reports stages as it runs in the background, including visible and
+audible space. Structural world leaves form separate visibility clusters;
+portal-facing floods produce conservative visible sets, and audible sets union
+the visible neighbors. **Build details…** and MCP compile statistics report
+`clusters`, `visibility_portals` and `visibility_bytes`. Detail brushes and
+brush-model leaves do not create world visibility clusters. Tight portal-flow
+clipping remains unfinished; the current bounds favor retaining visible geometry.
+Visibility work and native lump limits fail with diagnostics and retain previous
+output. **Cancel build** waits for the worker to stop; cancelled builds keep the previous BSP and pointfile.
 Output is published atomically, and a build cannot be cancelled after publication.
 Closing Build details leaves the build running.
 
@@ -1548,7 +1556,7 @@ A map edit marks the build snapshot stale and prevents launching it.
 `get_compile_status.launch` reports readiness, the BSP path or the reason play
 is unavailable; `launch_game` performs the same launch as **Play built map**.
 
-![Build status with stage, output path, cubemap count and diagnostics](docs/images/build-status.png)
+![Build status with stage, visibility and cubemap counts, output path and diagnostics](docs/images/build-status.png)
 
 Maps need sealed world geometry and
 at least one point entity in open space. A leak produces a `.lin` pointfile
@@ -1584,8 +1592,9 @@ player spawned inside and fullbright rendering enabled by the engine.
 ## Status
 
 **The compiler is experimental.** It produces fullbright BSP v20 maps with
-a single visibility cluster. Lights are saved in VMF and carried into BSP
-entities; baked lighting is still pending.
+conservative portal-based visible/audible sets. Lights are saved in VMF and
+carried into BSP entities; baked lighting and tight portal clipping remain
+pending. The expanded visibility pipeline needs CS:S runtime validation.
 
 Authored brush planes and axial/non-axial collision bevels use checked support.
 Snapping and approximate plane reuse must preserve whole authored faces and
@@ -1594,14 +1603,13 @@ Native sloped, near-axis, distant, reflected and thin-brush fixtures verify
 surface preservation and swept hulls against an independent geometric reference.
 CS:S collision runtime validation and physics output remain unfinished.
 
-VVIS, VRAD, physics collision, water volumes, compiled displacements,
+Tighter VVIS portal flow, VRAD, physics collision, water volumes, compiled
+displacements,
 static props, areaportals and overlays remain unfinished. Cubemap samples
 compile, while reflection binding/capture and lighting-origin references remain
-pending. Brush-entity
-origin volumes and explicit pivots compile; rotating, moving and trigger
+pending. Brush-entity origin volumes and explicit pivots compile; rotating, moving and trigger
 behavior still needs CS:S runtime validation. Unsupported geometry is reported
-in diagnostics. The BSP
-reader/writer is verified against stock CS:S maps.
+in diagnostics. The BSP reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,
 per-piece UV editing, displacement clipping and authoring, model rendering and broader

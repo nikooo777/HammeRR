@@ -7,11 +7,11 @@ from validate_compile_jobs import wait_job
 from validate_face_lighting import ROOT, Client, detail
 
 
-def records(data, lump, layout):
+def records(data, lump, layout, expected_version=0):
     offset, length, version, compression = struct.unpack_from(
         "<4i", data, 8 + lump * 16
     )
-    assert version == 0 and compression == 0
+    assert version == expected_version and compression == 0
     assert 0 <= offset <= offset + length <= len(data)
     assert length % struct.calcsize(layout) == 0
     return list(struct.iter_unpack(layout, data[offset : offset + length]))

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use source_formats::bsp::{
     self, Brush, BrushSide, Bsp, Cubemap, Edge, Face, Leaf, Model, Node, Plane, TexData, TexInfo,
+    VisibilityKind,
 };
 
 fn maps_dir() -> Option<PathBuf> {
@@ -32,6 +33,21 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let brushes = bsp.records::<Brush>().map_err(e)?;
     let sides = bsp.records::<BrushSide>().map_err(e)?;
     bsp.records::<Cubemap>().map_err(e)?;
+    if let Some(visibility) = bsp.visibility().map_err(e)? {
+        for cluster in 0..visibility.clusters() {
+            visibility
+                .row(cluster, VisibilityKind::Visible)
+                .map_err(e)?;
+            visibility
+                .row(cluster, VisibilityKind::Audible)
+                .map_err(e)?;
+        }
+        for leaf in &leafs {
+            if leaf.cluster != -1 && usize::from(leaf.cluster as u16) >= visibility.clusters() {
+                return Err("leaf visibility cluster".into());
+            }
+        }
+    }
     let vertices = bsp.vertices().map_err(e)?;
     let surfedges = bsp.surfedges().map_err(e)?;
     let leaf_faces = bsp.leaf_faces().map_err(e)?;

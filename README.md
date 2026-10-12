@@ -366,7 +366,10 @@ Choose **Flat partition** to stage two pieces before raising them. Select one
 quad face per brush and choose the direction, then **Stage flat partition**.
 The viewport shows the dividing edge while the original brush stays unchanged.
 Use **Highlight pieces** and **Frame highlighted pieces** to inspect either
-piece. Enter the **Shared ridge height** and **Preview ridge** to raise both
+piece. You can also click a visible piece in the viewport; Ctrl toggles its
+highlight and an empty ordinary click clears highlights. Hidden objects and
+foreground brushes follow the same visibility rules as face picking.
+Enter the **Shared ridge height** and **Preview ridge** to raise both
 pieces together; **Return to flat** restores the staged surface.
 
 **Apply raised partition** records one undo step. **Discard preview** restores
@@ -896,7 +899,7 @@ For example, place a warm light:
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
-| Staged flat partitions | `preview_component_partition`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
+| Staged flat partitions | `preview_component_partition`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -1025,6 +1028,7 @@ python -B scripts/validate_component_partitions.py --output /tmp/hammerr-partiti
 python -B scripts/validate_roof_texture_attachment.py --output /tmp/hammerr-roof-texture-check
 python -B scripts/validate_split_texture_attachment.py --output /tmp/hammerr-split-texture-check
 python -B scripts/validate_weld_texture_attachment.py --output /tmp/hammerr-weld-texture-check
+python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-picking-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1147,6 +1151,10 @@ IDs **0** and **1** within each brush and inherit `source_side`.
 `select_component_partitions` takes `partitions: [{solid, partition}]`, a token
 and optional replace/add/remove/toggle mode for highlighting and framing.
 `frame_component_partitions` accepts that token and optional `aspect`.
+`pick_component_partitions` takes the same token and viewport `x`, `y`, optional
+size and camera. It returns visible loop refs and world hit positions through
+the same query as a human click. Boundary hits may contain both pieces in stable
+order; pass a ref and the unchanged token to `select_component_partitions`.
 `raise_component_partition` takes the current token and `rise`; zero restores
 flat topology, otherwise use 0.125–4096 units. Successful height changes return
 a new token. Commit raised geometry with `commit_component_edit` or discard

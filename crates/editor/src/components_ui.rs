@@ -512,8 +512,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             )
             .into(),
         );
-        window
-            .set_picking_summary("Staged partition · highlight pieces to inspect and frame".into());
+        window.set_picking_summary(
+            "Click staged pieces · Ctrl toggles · highlight to inspect and frame".into(),
+        );
     }
     window.set_rows(Rc::new(VecModel::from(rows)).into());
     let preview = &report["preview"];

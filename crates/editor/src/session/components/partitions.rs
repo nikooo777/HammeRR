@@ -2,6 +2,8 @@ use map_core::subobject::{Partition, VertexSource};
 
 use super::*;
 
+mod picking;
+
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -13,6 +15,169 @@ pub struct PartitionRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn draft_loop_picking_shares_projection_boundaries_and_read_only_guards() {
+        use crate::session::Pointer;
+        use render::{Camera, Projection};
+        for actor in [Actor::User, Actor::Agent] {
+            for direction in 0..2 {
+                let (mut session, id, pairs) = fixture(actor, direction);
+                let source = session.document().vmf().clone();
+                let history = session.document().undo_labels().count();
+                let mut token = session
+                    .preview_component_partition(&pairs, &session.component_stamp())
+                    .unwrap();
+                for rise in [0.0, 16.125] {
+                    if rise != 0.0 {
+                        let previous = token;
+                        token = session.raise_component_partition(token, rise).unwrap();
+                        assert!(
+                            session
+                                .pick_component_partitions(
+                                    previous,
+                                    session.camera(),
+                                    Pointer {
+                                        position: glam::DVec2::splat(300.0),
+                                        size: (1100, 700)
+                                    }
+                                )
+                                .is_err()
+                        );
+                    }
+                    let part = session.checked_partition(token).unwrap().partitions[0].clone();
+                    let positions = part.positions(rise);
+                    let near = Camera::looking_at(
+                        glam::Vec3::new(32.0, 32.0, 64.0 + rise as f32 + 2.0),
+                        glam::Vec3::new(32.0, 32.0, 64.0 + rise as f32),
+                    );
+                    let center_pointer = Pointer {
+                        position: glam::DVec2::new(550.0, 350.0),
+                        size: (1100, 700),
+                    };
+                    assert!(
+                        session
+                            .pick_component_partitions(token, near, center_pointer)
+                            .unwrap()
+                            .is_empty()
+                    );
+                    let far = Camera {
+                        position: glam::Vec3::new(32.0, 32.0, 200000.0),
+                        ..Camera::planar(Projection::Top, glam::Vec3::splat(32.0), 256.0)
+                    };
+                    assert!(
+                        session
+                            .pick_component_partitions(token, far, center_pointer)
+                            .unwrap()
+                            .is_empty()
+                    );
+                    for projection in [Projection::Top, Projection::Perspective] {
+                        let camera = if projection == Projection::Top {
+                            Camera::planar(projection, glam::Vec3::splat(32.0), 256.0)
+                        } else {
+                            Camera::looking_at(
+                                glam::Vec3::new(35.0, 39.0, 350.0),
+                                glam::Vec3::new(32.0, 32.0, 64.0),
+                            )
+                        };
+                        let before = session.component_report(&[id]).unwrap();
+                        for piece in &part.loops {
+                            let point = piece
+                                .vertices
+                                .iter()
+                                .map(|index| positions[*index as usize])
+                                .sum::<DVec3>()
+                                / 4.0;
+                            let pointer = Pointer {
+                                position: render::handles::project(
+                                    &camera,
+                                    point.as_vec3(),
+                                    (1100, 700),
+                                )
+                                .unwrap()
+                                .as_dvec2(),
+                                size: (1100, 700),
+                            };
+                            let picks = session
+                                .pick_component_partitions(token, camera, pointer)
+                                .unwrap();
+                            assert_eq!(picks.len(), 1);
+                            assert_eq!(
+                                picks[0].partition,
+                                PartitionRef {
+                                    solid: id,
+                                    partition: piece.id
+                                }
+                            );
+                            assert!(picks[0].position.distance(point) < 0.001);
+                            assert_eq!(session.component_report(&[id]).unwrap(), before);
+                        }
+                        let point = (positions[4] + positions[5]) * 0.5;
+                        let pointer = Pointer {
+                            position: render::handles::project(
+                                &camera,
+                                point.as_vec3(),
+                                (1100, 700),
+                            )
+                            .unwrap()
+                            .as_dvec2(),
+                            size: (1100, 700),
+                        };
+                        let picks = session
+                            .pick_component_partitions(token, camera, pointer)
+                            .unwrap();
+                        assert_eq!(
+                            picks
+                                .iter()
+                                .map(|pick| pick.partition.partition)
+                                .collect::<Vec<_>>(),
+                            vec![0, 1],
+                            "direction={direction} rise={rise} projection={projection:?} picks={picks:?} pointer={pointer:?}"
+                        );
+                        assert!(
+                            session
+                                .pick_component_partitions(
+                                    token,
+                                    camera,
+                                    Pointer {
+                                        position: glam::DVec2::new(-1.0, 350.0),
+                                        ..pointer
+                                    }
+                                )
+                                .is_err()
+                        );
+                        assert!(
+                            session
+                                .pick_component_partitions(
+                                    token,
+                                    Camera {
+                                        fov_y_degrees: f32::NAN,
+                                        ..camera
+                                    },
+                                    pointer
+                                )
+                                .is_err()
+                        );
+                        assert_eq!(session.document().vmf(), &source);
+                        assert_eq!(session.document().undo_labels().count(), history);
+                    }
+                }
+                session.cancel_component_move(token).unwrap();
+                assert!(
+                    session
+                        .pick_component_partitions(
+                            token,
+                            session.camera(),
+                            Pointer {
+                                position: glam::DVec2::splat(300.0),
+                                size: (1100, 700)
+                            }
+                        )
+                        .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn roof_attachment_policy_survives_omitted_updates_flattening_and_exact_apply() {

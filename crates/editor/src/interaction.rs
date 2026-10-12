@@ -12,6 +12,14 @@ struct ComponentClick {
     control: bool,
 }
 
+struct PartitionClick {
+    start: Pointer,
+    camera: Camera,
+    token: u64,
+    view_serial: u64,
+    control: bool,
+}
+
 struct ClipPointClick {
     start: Pointer,
     camera: Camera,
@@ -33,6 +41,7 @@ pub struct Interaction {
     clip_drag: Option<u64>,
     clip_point: Option<ClipPointClick>,
     component: Option<ComponentClick>,
+    partition: Option<PartitionClick>,
     component_drag: Option<u64>,
     area: Option<AreaDrag>,
     handle_epoch: Option<u64>,
@@ -47,6 +56,17 @@ impl Interaction {
         control: bool,
     ) -> Result<bool, String> {
         pointer.validate()?;
+        if let Some(token) = session.partition_preview_token() {
+            *self = Self::default();
+            self.partition = Some(PartitionClick {
+                start: pointer,
+                camera: session.camera(),
+                token,
+                view_serial: session.view_serial(),
+                control,
+            });
+            return Ok(true);
+        }
         if let Some(handle) = session.pick_clip_handle(pointer) {
             *self = Self::default();
             self.clip_drag = Some(session.begin_clip_drag(
@@ -155,7 +175,7 @@ impl Interaction {
             }
             return Ok(true);
         }
-        if self.component.is_some() {
+        if self.component.is_some() || self.partition.is_some() {
             return Ok(true);
         }
         if let Some(token) = self.paint_token {
@@ -201,6 +221,33 @@ impl Interaction {
     }
 
     pub fn up(&mut self, session: &mut Session, pointer: Pointer) -> Result<bool, String> {
+        if let Some(click) = self.partition.take() {
+            if session.partition_preview_token() == Some(click.token)
+                && click.camera == session.camera()
+                && click.view_serial == session.view_serial()
+                && click.start.size == pointer.size
+                && pointer.validate().is_ok()
+                && pointer.position.distance(click.start.position) < DRAG_THRESHOLD
+            {
+                let picks =
+                    session.pick_component_partitions(click.token, click.camera, pointer)?;
+                let partitions = picks
+                    .into_iter()
+                    .take(1)
+                    .map(|pick| pick.partition)
+                    .collect::<Vec<_>>();
+                session.select_component_partitions(
+                    click.token,
+                    &partitions,
+                    if click.control {
+                        SelectMode::Toggle
+                    } else {
+                        SelectMode::Replace
+                    },
+                )?;
+            }
+            return Ok(true);
+        }
         if let Some(token) = self.clip_drag.take() {
             if session.clip_drag().is_some_and(|d| d.token == token) {
                 session.update_clip_drag(token, Some(pointer), None)?;
@@ -338,6 +385,7 @@ impl Interaction {
             let _ = session.cancel_component_drag(token);
         }
         self.component = None;
+        self.partition = None;
         self.area = None;
         self.handle_epoch = None;
         if let Some(token) = self.paint_token.take() {
@@ -351,6 +399,7 @@ impl Interaction {
     pub fn active(&self) -> bool {
         self.clip_drag.is_some()
             || self.component.is_some()
+            || self.partition.is_some()
             || self.clip_point.is_some()
             || self.component_drag.is_some()
             || self.area.is_some()
@@ -395,6 +444,131 @@ mod tests {
             )
             .unwrap();
         session
+    }
+
+    #[test]
+    fn partition_clicks_share_highlights_and_reject_stale_releases_without_edits() {
+        use crate::session::components::CreaseEdges;
+        use map_core::subobject;
+        let mut session = fixture(Projection::Top, None);
+        let id = session.component_solids()[0];
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let side = session.component_topology(&[id]).unwrap()[0]
+            .faces
+            .iter()
+            .find(|face| {
+                let brush = subobject::solid(session.document(), id).unwrap().1;
+                map_core::Plane::from_points(
+                    brush
+                        .sides
+                        .iter()
+                        .find(|side| side.id == face.side)
+                        .unwrap()
+                        .plane
+                        .0,
+                )
+                .unwrap()
+                .normal
+                .z > 0.99
+            })
+            .unwrap()
+            .side;
+        session
+            .select_components(
+                &[subobject::Component {
+                    solid: id,
+                    sides: vec![side],
+                }],
+                SelectMode::Replace,
+                &session.component_stamp(),
+            )
+            .unwrap();
+        let pair =
+            subobject::crease_pairs(subobject::solid(session.document(), id).unwrap().1, side)
+                .unwrap()[0]
+                .edges;
+        let mut token = session
+            .preview_component_partition(
+                &[CreaseEdges {
+                    solid: id,
+                    edges: pair,
+                }],
+                &session.component_stamp(),
+            )
+            .unwrap();
+        let mut interaction = Interaction::default();
+        let point = DVec3::new(-16.0, 0.0, 64.0);
+        let pointer = Pointer {
+            position: handles::project(&session.camera(), point.as_vec3(), (1100, 700))
+                .unwrap()
+                .as_dvec2(),
+            size: (1100, 700),
+        };
+        let chosen = session
+            .pick_component_partitions(token, session.camera(), pointer)
+            .unwrap()
+            .remove(0)
+            .partition;
+        for control in [false, true] {
+            assert!(interaction.down(&mut session, pointer, control).unwrap());
+            assert!(interaction.active());
+            assert!(interaction.moved(&mut session, pointer).unwrap());
+            assert!(interaction.up(&mut session, pointer).unwrap());
+            assert!(!interaction.active());
+            let selection =
+                session.component_report(&[id]).unwrap()["preview"]["partition"]["selection"]
+                    .clone();
+            assert_eq!(
+                selection,
+                if control {
+                    serde_json::json!([])
+                } else {
+                    serde_json::json!([{"solid":chosen.solid,"partition":chosen.partition}])
+                }
+            );
+        }
+        for change in 0..5 {
+            interaction.down(&mut session, pointer, false).unwrap();
+            let selection =
+                session.component_report(&[id]).unwrap()["preview"]["partition"]["selection"]
+                    .clone();
+            let mut release = pointer;
+            match change {
+                0 => token = session.raise_component_partition(token, 16.125).unwrap(),
+                1 => session.set_camera(Camera::planar(Projection::Top, Vec3::ZERO, 512.0)),
+                2 => release.size = (1200, 700),
+                3 => release.position.x += 10.0,
+                _ => interaction.cancel(&mut session),
+            }
+            interaction.up(&mut session, release).unwrap();
+            assert_eq!(
+                session.component_report(&[id]).unwrap()["preview"]["partition"]["selection"],
+                selection
+            );
+        }
+        interaction
+            .down(
+                &mut session,
+                Pointer {
+                    position: DVec2::ONE,
+                    size: (1100, 700),
+                },
+                false,
+            )
+            .unwrap();
+        interaction
+            .up(
+                &mut session,
+                Pointer {
+                    position: DVec2::ONE,
+                    size: (1100, 700),
+                },
+            )
+            .unwrap();
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        session.cancel_component_move(token).unwrap();
     }
 
     #[test]

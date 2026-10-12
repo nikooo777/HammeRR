@@ -5501,6 +5501,48 @@ mod tests {
         );
         lock(&shared).undo(Actor::User).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &original);
+        components_ui::refresh(&window, &lock(&shared));
+        window.set_source_index(1);
+        window.invoke_choose_source();
+        window.set_source_mode(1);
+        window.invoke_page_sources(-1);
+        window.set_source_index(1);
+        window.invoke_choose_source();
+        assert_eq!(lock(&shared).component_solids(), vec![ids[0], ids[100]]);
+        assert_eq!(window.get_rows().row_count(), 12);
+        assert!(
+            window
+                .get_rows()
+                .row_data(0)
+                .unwrap()
+                .label
+                .starts_with(&format!("Brush {} · ", ids[0]))
+        );
+        assert!(
+            window
+                .get_rows()
+                .row_data(6)
+                .unwrap()
+                .label
+                .starts_with(&format!("Brush {} · ", ids[100]))
+        );
+        save_ui_snapshot(window.window(), "component-brush-subset");
+        window.set_source_index(1);
+        let stamp = lock(&shared).component_stamp();
+        window.invoke_choose_source();
+        assert_eq!(lock(&shared).component_stamp(), stamp);
+        window.set_source_mode(2);
+        window.invoke_page_sources(1);
+        window.set_source_index(1);
+        window.invoke_choose_source();
+        assert_eq!(lock(&shared).component_solids(), vec![ids[0]]);
+        window.invoke_page_sources(-1);
+        window.set_source_index(1);
+        window.invoke_choose_source();
+        assert!(!window.get_picking());
+        assert_eq!(window.get_source_mode(), 0);
+        assert_eq!(lock(&shared).selected_ids(), vec![owner]);
+        assert_eq!(lock(&shared).document().vmf(), &original);
         window.invoke_cancel();
     }
 

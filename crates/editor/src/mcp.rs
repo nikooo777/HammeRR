@@ -532,6 +532,14 @@ struct ComponentSourcesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentScopeArgs {
+    solid: u32,
+    action: crate::session::components::ScopeAction,
+    kind: crate::session::component_picking::Kind,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentWeldArgs {
     snapshot: String,
     target: Option<[f64; 3]>,
@@ -2981,6 +2989,23 @@ impl EditorServer {
                 args.limit
                     .unwrap_or(crate::session::components::SOURCE_PAGE_SIZE),
             )
+        })
+    }
+
+    #[tool(
+        description = "Replace, add or remove one source brush in the shared component picking scope using the latest snapshot from get_component_sources or get_brush_components. solid must belong to the selected owners; action is replace, add or remove; kind is vertex, edge or face. Captured scopes contain 1–16 brushes and can span source pages. Adding an existing member with the same kind is a no-op that preserves drafts; invalid, stale, out-of-source and over-limit choices preserve state. Removing the final member stops picking and clears component markers/drafts without map/history edits. Returns component state and bounded captured geometry, or empty brushes after stopping. Mirrors the Brush scope action selector in Reshape brushes."
+    )]
+    fn update_component_scope(
+        &self,
+        Parameters(args): Parameters<ComponentScopeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.update_component_scope(args.kind, args.solid, args.action, &args.snapshot)?;
+            let ids = session
+                .component_picking()
+                .map_or_else(Vec::new, |picking| picking.solids.iter().copied().collect());
+            session.component_report(&ids)
         })
     }
 

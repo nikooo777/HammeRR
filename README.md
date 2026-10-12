@@ -193,15 +193,19 @@ supporting brush faces for selection queries.
 
 Select brushes, then open **Reshape brushes…**. **Brush scope** chooses one
 brush by ID, material and position, or **All selected** captures up to sixteen
-brushes. Large brush entities have paginated child choices; selecting one child
-keeps its owner and siblings intact. Choose **Edges**, **Vertices** or
+brushes. Choose **Add to scope** to build a subset across pages, or **Remove from
+scope** to drop a child. **Inspect this brush** replaces the captured scope.
+Removing its final member stops picking. Large brush entities have paginated
+child choices; changing scope keeps their owner and siblings intact. Choose **Edges**, **Vertices** or
 **Faces**, then **Pick in viewport**. Click to select, Ctrl-click to toggle, or
 use the component list to choose overlapping parts. The original brush scope
 stays available as you select components. An empty click clears the component
 selection. **Stop viewport picking**, **Cancel** or Esc returns to object picking
 and discards the component draft.
 
-![Inspecting one child from the final page of a large brush entity](docs/images/component-brush-scope.png)
+| One child from a large entity | Subset spanning pages |
+| --- | --- |
+| ![Inspecting one child from the final page of a large brush entity](docs/images/component-brush-scope.png) | ![Adding children from separate pages to a fixed brush scope](docs/images/component-brush-subset.png) |
 
 Corners and edges can be selected through surfaces, matching their blue guides.
 Face clicks select the nearest visible brush surface. Hidden brushes have no
@@ -807,7 +811,7 @@ For example, place a warm light:
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
-| Brush components | `get_component_sources`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
+| Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
@@ -896,6 +900,11 @@ expanding full topology. It returns ID, owner, material, bounds, total, active
 scope and `snapshot`; `offset` defaults to 0 and `limit` to 100 (1–256).
 Capture one to sixteen returned IDs with `set_component_picking`. Source pages
 stay unchanged during previews and do not alter map history.
+`update_component_scope` takes numeric `solid`, `kind`, `action` (`replace`, `add`
+or `remove`) and the current `snapshot`. It builds page-spanning subsets through
+the same Session operation as the dialog. Duplicate additions with the same kind
+preserve valid drafts; invalid/stale/over-limit requests preserve state. Removing
+the final member clears picking, markers and drafts without map edits.
 
 Component queries return full stored precision. Use each response's `snapshot`
 when selecting components or previewing a move, and the preview's `token` for

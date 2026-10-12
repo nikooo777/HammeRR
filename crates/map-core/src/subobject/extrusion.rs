@@ -63,6 +63,16 @@ pub fn plan_partition_extrusion(
     selection: &[(u32, u32)],
     spec: &ExtrusionSpec,
 ) -> Result<ExtrusionPlan, EditError> {
+    plan_partition_extrusion_with_materials(document, partitions, selection, spec, &[])
+}
+
+pub fn plan_partition_extrusion_with_materials(
+    document: &Document,
+    partitions: &[Partition],
+    selection: &[(u32, u32)],
+    spec: &ExtrusionSpec,
+    materials: &[PartitionMaterial],
+) -> Result<ExtrusionPlan, EditError> {
     if partitions.is_empty() || partitions.len() > MAX_SOLIDS {
         return Err(invalid("Extrude flat partitions in 1–16 source brushes"));
     }
@@ -83,9 +93,9 @@ pub fn plan_partition_extrusion(
     if selection.is_empty() || selection.len() > MAX_EXTRUSION_PIECES {
         return Err(invalid("Select 1–32 flat pieces to extrude"));
     }
+    let materials = super::partition_materials::checked_materials(document, partitions, materials)?;
     let mut sources = BTreeMap::new();
     for part in partitions {
-        checked_partition(document, part)?;
         if sources.insert(part.source.solid, part).is_some() {
             return Err(invalid("Select one partition per source brush"));
         }
@@ -125,6 +135,9 @@ pub fn plan_partition_extrusion(
         }
         let planes = crate::primitive::convex_planes(polygons)?;
         let mut top_side = side_on_plane(original, 1, planes[0]);
+        if let Some(material) = materials.get(&(solid_id, partition_id)) {
+            top_side.material.clone_from(material);
+        }
         if spec.texture_lock {
             let projection =
                 crate::texture_deform::attach(original, &bottom, &top).map_err(|error| {
@@ -225,7 +238,23 @@ pub fn extrude_partitions(
     selection: &[(u32, u32)],
     spec: &ExtrusionSpec,
 ) -> Result<ExtrusionPlan, EditError> {
-    let mut plan = plan_partition_extrusion(tx.document(), partitions, selection, spec)?;
+    extrude_partitions_with_materials(tx, partitions, selection, spec, &[])
+}
+
+pub fn extrude_partitions_with_materials(
+    tx: &mut Transaction,
+    partitions: &[Partition],
+    selection: &[(u32, u32)],
+    spec: &ExtrusionSpec,
+    materials: &[PartitionMaterial],
+) -> Result<ExtrusionPlan, EditError> {
+    let mut plan = plan_partition_extrusion_with_materials(
+        tx.document(),
+        partitions,
+        selection,
+        spec,
+        materials,
+    )?;
     for piece in &mut plan.pieces {
         piece.solid.id = tx.new_object_id()?;
         for (side, face) in piece.solid.sides.iter_mut().zip(&mut piece.faces) {

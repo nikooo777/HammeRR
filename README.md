@@ -1476,8 +1476,9 @@ saved per-piece surfaces, displacement clipping and authoring, model rendering a
 map checks.
 
 Saved partition metadata can retain optional top material plans for each piece.
-Their editor/MCP authoring, flat previews and application to output faces remain
-unfinished; current extrusion inherits the source top material.
+Checked geometry operations can apply those plans to roof or prism tops.
+Shared editor/MCP authoring and flat previews remain unfinished; current
+editor/MCP extrusion inherits the source top material.
 
 ## Project layout
 

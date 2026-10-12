@@ -571,6 +571,7 @@ export component MaterialWindow inherits Window {
     in property <[MaterialTileRow]> rows;
     in property <int> total;
     in property <string> catalog-label;
+    in property <string> favorites-status;
     in property <bool> favorite;
     in property <image> preview;
     in property <string> detail;
@@ -645,6 +646,7 @@ export component MaterialWindow inherits Window {
                     }
                     Text { text: root.detail; wrap: word-wrap; }
                     Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
+                    favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: 11px; }
                     Rectangle { vertical-stretch: 1; }
                 }
             }

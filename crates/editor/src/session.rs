@@ -30,6 +30,7 @@ pub mod component_drag;
 pub mod component_picking;
 pub mod components;
 pub mod context;
+mod favorites;
 pub mod hollowing;
 mod management;
 pub mod material_search;
@@ -160,6 +161,7 @@ pub struct Session {
     interaction_epoch: u64,
     material_index: Option<Vec<String>>,
     material_favorites: BTreeSet<String>,
+    favorite_preferences: favorites::State,
     material_recent: VecDeque<String>,
     camera: Camera,
     view: ViewOptions,
@@ -257,6 +259,7 @@ impl Session {
             interaction_epoch: 0,
             material_index: None,
             material_favorites: BTreeSet::new(),
+            favorite_preferences: favorites::State::default(),
             material_recent: VecDeque::new(),
             camera: Camera::looking_at(
                 DVec3::new(-512.0, -512.0, 384.0).as_vec3(),
@@ -366,7 +369,8 @@ impl Session {
 
     fn remember_material(&mut self, material: &str) {
         self.view_serial += 1;
-        let material = material.trim().to_ascii_lowercase();
+        let material = crate::material_favorites::canonical_name(material)
+            .unwrap_or_else(|_| material.trim().to_ascii_lowercase());
         self.material_recent.retain(|name| *name != material);
         self.material_recent.push_front(material);
         self.material_recent.truncate(32);
@@ -387,9 +391,12 @@ impl Session {
             .vmf()
             .solids()
             .flat_map(|solid| &solid.sides)
-            .map(|side| side.material.to_ascii_lowercase())
+            .map(|side| {
+                crate::material_favorites::canonical_name(&side.material)
+                    .unwrap_or_else(|_| side.material.to_ascii_lowercase())
+            })
             .collect();
-        crate::materials::browse(
+        let mut catalog = crate::materials::browse(
             self.material_index.as_ref().unwrap(),
             &used,
             &self.material_favorites,
@@ -397,26 +404,9 @@ impl Session {
             query,
             group,
             (offset, limit),
-        )
-    }
-
-    pub fn favorite_material(&mut self, material: &str, favorite: bool) -> Result<(), String> {
-        if material.trim().is_empty() {
-            return Err("material must not be empty".into());
-        }
-        let name = material.trim().to_ascii_lowercase();
-        if favorite {
-            self.material_favorites.insert(name);
-        } else {
-            self.material_favorites.remove(&name);
-        }
-        self.view_serial += 1;
-        Ok(())
-    }
-
-    pub fn is_material_favorite(&self, material: &str) -> bool {
-        self.material_favorites
-            .contains(&material.trim().to_ascii_lowercase())
+        )?;
+        catalog.favorites = self.material_favorite_status();
+        Ok(catalog)
     }
 
     pub fn face_mode(&self) -> bool {

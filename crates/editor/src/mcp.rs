@@ -5767,7 +5767,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Browse the same grouped material catalog as the GUI. Groups include all, used, recent, favorites, folder:<path> and category:<label>. Categories are inferred from path names. Returns group counts after search, paged entries and favorite/used flags. preview_material supplies the matching thumbnail.",
+        description = "Browse the same grouped material catalog as the GUI. Groups include all, used, recent, favorites, folder:<path> and category:<label>. Categories are inferred from path names. Returns group counts after search, paged entries, favorite/used flags and favorites persistence/error/limit status. preview_material supplies the matching thumbnail.",
         annotations(read_only_hint = true)
     )]
     fn browse_materials(&self, Parameters(args): Parameters<BrowseMaterialsArgs>) -> ToolResult {
@@ -5783,16 +5783,20 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Add or remove a material in the shared session's favorites, also visible in the GUI catalog. Favorites and recent applications are session-local."
+        description = "Add or remove a material favorite shared with the GUI catalog. Favorites persist in the configured recovery directory; sessions without a store keep local favorites. Paths are canonicalized and bounded to 256 bytes; at most 512 favorites. Storage failures preserve the previous favorites. Recent applications remain session-local."
     )]
     fn set_material_favorite(
         &self,
         Parameters(args): Parameters<FavoriteMaterialArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session()
-                .favorite_material(&args.material, args.favorite)?;
-            Ok(json!({"material": args.material, "favorite": args.favorite}))
+            let mut session = self.session();
+            session.favorite_material(&args.material, args.favorite)?;
+            Ok(
+                json!({"material": crate::material_favorites::canonical_name(&args.material)?,
+                "favorite": session.is_material_favorite(&args.material),
+                "favorites": session.material_favorite_status()}),
+            )
         })
     }
 

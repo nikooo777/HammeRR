@@ -14,6 +14,9 @@ use crate::planes::PlaneSet;
 use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
 
+#[path = "bevels.rs"]
+mod bevels;
+
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
@@ -145,6 +148,7 @@ pub struct Map<'a> {
     pub brushes: Vec<MapBrush>,
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
+    brush_side_count: usize,
 }
 
 impl<'a> Map<'a> {
@@ -166,6 +170,7 @@ impl<'a> Map<'a> {
             texdata: Vec::new(),
             brushes: Vec::new(),
             entities: Vec::new(),
+            brush_side_count: 0,
         };
         if let Err(error) = vmf.validate_ids() {
             report
@@ -197,7 +202,7 @@ impl<'a> Map<'a> {
                 hidden += 1;
                 continue;
             }
-            map.add_brush(solid, 0, 0, report);
+            map.add_brush(solid, 0, 0, report, control)?;
         }
 
         for entity in &vmf.entities {
@@ -217,7 +222,7 @@ impl<'a> Map<'a> {
             if CONSUMED.contains(&classname.as_str()) {
                 for solid in entity.solids.iter().filter(|s| !s.hidden) {
                     control.checkpoint()?;
-                    map.add_brush(solid, 0, contents::DETAIL, report);
+                    map.add_brush(solid, 0, contents::DETAIL, report, control)?;
                 }
                 continue;
             }
@@ -248,7 +253,7 @@ impl<'a> Map<'a> {
             });
             for solid in entity.solids.iter().filter(|s| !s.hidden) {
                 control.checkpoint()?;
-                map.add_brush(solid, index, 0, report);
+                map.add_brush(solid, index, 0, report, control)?;
             }
             map.resolve_brush_entity(index, report);
         }
@@ -268,7 +273,8 @@ impl<'a> Map<'a> {
         entity: usize,
         extra_contents: i32,
         report: &mut Report,
-    ) {
+        control: &Control,
+    ) -> Result<(), String> {
         let object = format!("solid:{}", solid.id);
         if solid.sides.iter().any(|side| {
             side.plane.0.iter().any(|point| !point.is_finite())
@@ -279,7 +285,7 @@ impl<'a> Map<'a> {
                 })
         }) {
             report.diagnostics.push(bounds_error(object));
-            return;
+            return Ok(());
         }
         if solid.sides.iter().any(|s| s.displacement.is_some()) {
             report.diagnostics.push(Diagnostic::warning(
@@ -287,7 +293,7 @@ impl<'a> Map<'a> {
                 Some(object),
                 None,
             ));
-            return;
+            return Ok(());
         }
         let geometry = match BrushGeometry::from_solid(solid) {
             Ok(geometry) => geometry,
@@ -297,19 +303,29 @@ impl<'a> Map<'a> {
                     Some(object),
                     None,
                 ));
-                return;
+                return Ok(());
             }
         };
         if !within_compile_bounds(geometry.mins) || !within_compile_bounds(geometry.maxs) {
             report.diagnostics.push(bounds_error(object));
-            return;
+            return Ok(());
         }
 
+        let side_budget = bevels::MAX_BRUSH_SIDES - self.brush_side_count;
+        if geometry.faces.len() > side_budget || self.planes.len() > bevels::MAX_PLANES {
+            report.diagnostics.push(Diagnostic::error(
+                "BSP collision plane or brush side limit exceeded; reduce map geometry",
+                Some(object),
+                Some(geometry.center()),
+            ));
+            return Ok(());
+        }
         let mut sides = Vec::with_capacity(geometry.faces.len() + 6);
         let mut brush_contents = 0;
         let mut solid_sides = false;
         let mut hint = false;
         for face in &geometry.faces {
+            control.checkpoint()?;
             let side = &solid.sides[face.side];
             let material = self.materials.load(&side.material);
             let info = self.materials.get(material);
@@ -331,6 +347,14 @@ impl<'a> Map<'a> {
             }
             let visible = info.draws;
             let plane = self.planes.find(face.plane.normal, face.plane.dist);
+            if self.planes.len() > bevels::MAX_PLANES {
+                report.diagnostics.push(Diagnostic::error(
+                    "BSP collision plane limit exceeded; reduce map geometry",
+                    Some(object),
+                    Some(geometry.center()),
+                ));
+                return Ok(());
+            }
             let texinfo = self.texinfo(side, material);
             sides.push(MapSide {
                 plane,
@@ -348,7 +372,7 @@ impl<'a> Map<'a> {
                 Some(object),
                 Some(geometry.center()),
             ));
-            return;
+            return Ok(());
         }
         if solid_sides && brush_contents & !(contents::SOLID | contents::DETAIL) != 0 {
             // A mix like nodraw + clip; the special contents win.
@@ -363,7 +387,7 @@ impl<'a> Map<'a> {
                 Some(object),
                 Some(geometry.center()),
             ));
-            return;
+            return Ok(());
         }
         if brush_contents == 0 {
             report.diagnostics.push(Diagnostic::warning(
@@ -371,7 +395,7 @@ impl<'a> Map<'a> {
                 Some(object),
                 Some(geometry.center()),
             ));
-            return;
+            return Ok(());
         }
         if brush_contents & contents::AREAPORTAL != 0 {
             report.diagnostics.push(Diagnostic::warning(
@@ -379,40 +403,32 @@ impl<'a> Map<'a> {
                 Some(object),
                 Some(geometry.center()),
             ));
-            return;
+            return Ok(());
         }
         brush_contents |= extra_contents;
 
-        for axis in 0..3 {
-            for sign in [1.0, -1.0] {
-                let mut normal = DVec3::ZERO;
-                normal[axis] = sign;
-                if sides
-                    .iter()
-                    .any(|s| self.planes.get(s.plane).normal == normal)
-                {
-                    continue;
+        if let Err(error) = bevels::add(
+            &mut sides,
+            &mut self.planes,
+            &geometry,
+            side_budget,
+            control,
+        ) {
+            match error {
+                bevels::Error::Cancelled(message) => return Err(message),
+                bevels::Error::Limit(message) => {
+                    report.diagnostics.push(Diagnostic::error(
+                        message,
+                        Some(object),
+                        Some(geometry.center()),
+                    ));
+                    return Ok(());
                 }
-                let dist = if sign > 0.0 {
-                    geometry.maxs[axis]
-                } else {
-                    -geometry.mins[axis]
-                };
-                let plane = self.planes.find(normal, dist);
-                let first = &sides[0];
-                sides.push(MapSide {
-                    plane,
-                    material: first.material,
-                    texinfo: first.texinfo,
-                    smoothing_groups: 0,
-                    winding: None,
-                    bevel: true,
-                    visible: false,
-                });
             }
         }
 
         let index = self.brushes.len();
+        self.brush_side_count += sides.len();
         self.brushes.push(MapBrush {
             id: solid.id,
             entity,
@@ -422,6 +438,7 @@ impl<'a> Map<'a> {
             maxs: geometry.maxs,
         });
         self.entities[entity].brushes.push(index);
+        Ok(())
     }
 
     fn texinfo(&mut self, side: &Side, material: usize) -> usize {

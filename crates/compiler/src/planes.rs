@@ -27,6 +27,7 @@ impl Plane {
 pub struct PlaneSet {
     planes: Vec<Plane>,
     by_dist: HashMap<i64, Vec<usize>>,
+    collision_by_dist: HashMap<i64, Vec<usize>>,
 }
 
 fn kind(normal: DVec3) -> i32 {
@@ -86,6 +87,49 @@ impl PlaneSet {
                 }
             }
         }
+        self.insert(normal, dist, false)
+    }
+
+    pub(crate) fn find_checked<E>(
+        &mut self,
+        normal: DVec3,
+        dist: f64,
+        accept: impl Fn(&Plane) -> Result<bool, E>,
+    ) -> Result<Option<usize>, E> {
+        let (snapped_normal, snapped_dist) = snap(normal, dist);
+        let mut candidate = Plane {
+            normal: snapped_normal,
+            dist: snapped_dist,
+            kind: kind(snapped_normal),
+        };
+        if !accept(&candidate)? {
+            candidate.normal = normal;
+            candidate.dist = dist;
+            candidate.kind = kind(normal);
+            if !accept(&candidate)? {
+                return Ok(None);
+            }
+        }
+        let normal = candidate.normal;
+        let dist = candidate.dist;
+        let key = dist.floor() as i64;
+        for k in [key - 1, key, key + 1] {
+            for hash in [&self.by_dist, &self.collision_by_dist] {
+                for &i in hash.get(&k).into_iter().flatten() {
+                    let p = &self.planes[i];
+                    if (p.normal - normal).abs().max_element() < NORMAL_EPSILON
+                        && (p.dist - dist).abs() < DIST_EPSILON
+                        && accept(p)?
+                    {
+                        return Ok(Some(i));
+                    }
+                }
+            }
+        }
+        Ok(Some(self.insert(normal, dist, true)))
+    }
+
+    fn insert(&mut self, normal: DVec3, dist: f64, collision: bool) -> usize {
         let kind = kind(normal);
         let positive = normal[(kind % 3) as usize] >= 0.0;
         let (even_normal, even_dist) = if positive {
@@ -94,8 +138,13 @@ impl PlaneSet {
             (-normal, -dist)
         };
         let index = self.planes.len();
+        let by_dist = if collision {
+            &mut self.collision_by_dist
+        } else {
+            &mut self.by_dist
+        };
         for (n, d) in [(even_normal, even_dist), (-even_normal, -even_dist)] {
-            self.by_dist
+            by_dist
                 .entry(d.floor() as i64)
                 .or_default()
                 .push(self.planes.len());
@@ -125,5 +174,103 @@ mod tests {
         assert_eq!(slope, 2);
         assert_eq!(set.get(3).normal, -set.get(2).normal);
         assert_eq!(set.get(slope).kind, 3);
+    }
+
+    #[test]
+    fn checked_lookup_keeps_distant_support_planes_that_normal_tolerance_would_merge() {
+        let mut set = PlaneSet::default();
+        let existing_normal = DVec3::new(1.0, 1.0, 0.0).normalize();
+        let tangent = DVec3::new(1.0, -1.0, 0.0).normalize();
+        let candidate_normal = (existing_normal + tangent * 8e-6).normalize();
+        let existing = set.find(existing_normal, 64.0);
+        let translation = DVec3::new(-16_000.0, 16_000.0, 0.0);
+        let point = translation
+            + existing_normal
+                * ((64.0 - candidate_normal.dot(translation))
+                    / candidate_normal.dot(existing_normal));
+        assert!(point.abs().max_element() < crate::map::MAX_COMPILE_COORD);
+        assert!(set.get(existing).distance(point) > 0.1);
+        assert_eq!(set.find(candidate_normal, 64.0), existing);
+        let checked = set
+            .find_checked(candidate_normal, 64.0, |plane| {
+                Ok::<_, ()>(plane.distance(point).abs() <= 0.01)
+            })
+            .unwrap()
+            .unwrap();
+        assert_ne!(checked, existing);
+        assert!(set.get(checked).distance(point).abs() < 1e-9);
+        assert_eq!(set.get(checked ^ 1).normal, -set.get(checked).normal);
+    }
+
+    #[test]
+    fn checked_lookup_does_not_allocate_rejected_snapped_axial_planes() {
+        let mut set = PlaneSet::default();
+        let axial = set.find(DVec3::X, 32.0);
+        let len = set.len();
+        let rejected = set
+            .find_checked(DVec3::X, 40.0, |plane| Ok::<_, ()>(plane.kind >= 3))
+            .unwrap();
+        assert_eq!(rejected, None);
+        assert_eq!(set.len(), len);
+        assert_eq!(set.find(DVec3::X, 32.0), axial);
+        let cancelled = set.find_checked(DVec3::ONE.normalize(), 32.0, |_| {
+            Err::<bool, _>("cancelled")
+        });
+        assert_eq!(cancelled, Err("cancelled"));
+        assert_eq!(set.len(), len);
+    }
+
+    #[test]
+    fn collision_planes_do_not_change_later_authored_plane_lookup() {
+        let collision_normal = DVec3::new(1.0, 1.0, 0.0).normalize();
+        let authored_normal = (collision_normal + DVec3::Z * 8e-6).normalize();
+        let mut baseline = PlaneSet::default();
+        let baseline_authored = baseline.find(authored_normal, 64.0);
+        let mut set = PlaneSet::default();
+        let collision = set
+            .find_checked(collision_normal, 64.0, |_| Ok::<_, ()>(true))
+            .unwrap()
+            .unwrap();
+        let authored = set.find(authored_normal, 64.0);
+        assert_ne!(authored, collision);
+        assert_eq!(set.get(authored), baseline.get(baseline_authored));
+        assert_eq!(set.find(authored_normal, 64.0), authored);
+    }
+
+    #[test]
+    fn checked_lookup_retains_and_reuses_unsnapped_support_distance() {
+        let mut set = PlaneSet::default();
+        let normal = DVec3::new(1.0, 1.0, 0.0).normalize();
+        let boundary = 64.989;
+        let accept = |plane: &Plane| Ok::<_, ()>((plane.dist - boundary).abs() <= 0.01);
+        let index = set.find_checked(normal, 64.9915, accept).unwrap().unwrap();
+        assert_eq!(set.get(index).dist, 64.9915);
+        assert_eq!(set.len(), 2);
+        assert_eq!(
+            set.find_checked(normal, 64.9915, accept).unwrap(),
+            Some(index)
+        );
+        assert_eq!(set.len(), 2);
+        let authored = set.find(normal, 64.9915);
+        assert_eq!(set.get(authored).dist, 65.0);
+        assert_ne!(index, authored);
+    }
+
+    #[test]
+    fn checked_lookup_preserves_near_axial_normal_when_snapping_removes_a_facet() {
+        let mut set = PlaneSet::default();
+        let normal = DVec3::new(1.0, 0.001, 0.0).normalize();
+        let dist = normal.x * 64.0;
+        let accept = |plane: &Plane| Ok::<_, ()>(plane.kind >= 3);
+        let index = set.find_checked(normal, dist, accept).unwrap().unwrap();
+        assert_eq!(set.get(index).normal, normal);
+        assert_eq!(set.get(index).dist, dist);
+        assert_eq!(set.get(index).kind, 3);
+        assert_eq!(set.find_checked(normal, dist, accept).unwrap(), Some(index));
+        assert_eq!(set.len(), 2);
+        let axial = set.find(normal, dist);
+        assert_eq!(set.get(axial).normal, DVec3::X);
+        assert_eq!(set.get(axial).dist, 64.0);
+        assert_ne!(index, axial);
     }
 }

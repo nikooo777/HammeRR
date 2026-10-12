@@ -1149,6 +1149,7 @@ python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-
 python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tools-check
 python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
+python -B scripts/validate_origin_brushes.py --output /tmp/hammerr-origin-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
 ```
@@ -1159,8 +1160,8 @@ Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
 The audit, component source/topology/transform, partition, precision, carving,
-favorites and spawn-clearance validators use private headless sessions and do
-not accept a GUI URL. Add `--render` to the topology, boundary or polygon
+favorites, spawn-clearance and origin-brush validators use private headless
+sessions and do not accept a GUI URL. Add `--render` to the topology, boundary or polygon
 validator for offscreen GPU pixel checks without opening a desktop window.
 
 Check extrusion guide visibility with a private offscreen GPU session:
@@ -1513,7 +1514,16 @@ Material compile flags recognize `1` and case-insensitive `true`; `0` and
 `false` disable them in both the editor and compiler. A skip face hides that
 surface while preserving the brush's other contents. Non-solid materials retain
 visible geometry without sealing the map. Unsupported flags and omitted hint,
-origin, areaportal or empty-content brushes are reported in build diagnostics.
+areaportal or empty-content brushes are reported in build diagnostics.
+
+Brush entities retain explicit **origin** coordinates. To define a pivot with
+geometry, put one visible **tools/toolsorigin** brush in the same entity as its
+body; the volume’s bounds center overrides the explicit origin. The compiler
+consumes that volume and writes the remaining model in local coordinates while
+preserving world-space texture and lightmap placement. The source VMF stays
+unchanged. Duplicate pivots, world/func_detail origin brushes, origin-only
+entities and local model bounds outside ±16,384 units fail with object
+diagnostics and preserve previous output. Hidden origin volumes are ignored.
 
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
@@ -1575,8 +1585,10 @@ surface preservation and swept hulls against an independent geometric reference.
 CS:S collision runtime validation and physics output remain unfinished.
 
 VVIS, VRAD, physics collision, water volumes, compiled displacements,
-static props, areaportals, overlays, cubemaps and origin brushes remain
-unfinished. Unsupported geometry is reported in diagnostics. The BSP
+static props, areaportals, overlays and cubemaps remain unfinished. Brush-entity
+origin volumes and explicit pivots compile; rotating, moving and trigger
+behavior still needs CS:S runtime validation. Unsupported geometry is reported
+in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,

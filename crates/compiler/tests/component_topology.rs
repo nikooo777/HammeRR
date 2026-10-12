@@ -104,3 +104,53 @@ fn split_face_and_edge_compile_inside_a_sealed_room_after_vmf_round_trip() {
         }));
     }
 }
+
+#[test]
+fn carved_room_compiles_after_removing_the_retained_cutter_and_vmf_round_trip() {
+    let mut document = Document::empty();
+    let (outer, cutter) = document
+        .edit("room volumes", |tx| {
+            let outer = edit::create_block(
+                tx,
+                DVec3::new(-144.0, -144.0, -16.0),
+                DVec3::splat(144.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            let cutter = edit::create_block(
+                tx,
+                DVec3::new(-128.0, -128.0, 0.0),
+                DVec3::splat(128.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            Ok((outer, cutter))
+        })
+        .unwrap();
+    let (ObjectId::Solid(outer), ObjectId::Solid(cutter)) = (outer, cutter) else {
+        unreachable!()
+    };
+    let result = document
+        .edit("carve room", |tx| {
+            map_core::carve::carve(tx, cutter, &[outer])
+        })
+        .unwrap();
+    assert_eq!(result.changes[0].fragments.len(), 6);
+    document
+        .edit("remove cutter and add spawn", |tx| {
+            edit::delete(tx, &[ObjectId::Solid(cutter)])?;
+            edit::create_entity(
+                tx,
+                "info_player_counterterrorist",
+                Some(DVec3::new(0.0, 0.0, 64.0)),
+                &[],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let vmf = source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+    vmf.validate_ids().unwrap();
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.leak.is_none());
+    assert_eq!(output.stats.brushes, 6);
+    assert!(!output.bsp.unwrap().records::<Face>().unwrap().is_empty());
+}

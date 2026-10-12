@@ -855,6 +855,7 @@ python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
+python -B scripts/validate_precision_cycles.py --output /tmp/hammerr-precision-check
 python -B scripts/validate_carving.py --output /tmp/hammerr-carving-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
 python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tools-check
@@ -885,6 +886,14 @@ Set `texture_lock: true` in `preview_component_move` to keep texture coordinates
 at corresponding face corners. The default is world anchoring. The response
 reports `texture_mode` and the preview's `texture_lock` setting; incompatible
 deformations leave the previous valid draft intact.
+
+Repeated fractional edit/save/reopen checks cover standalone thin and oblique
+brushes, world/entity ownership and corner UVs. The optional installed SDK test
+samples 845 brushes from 217 maps; measured drift stays below `1e-5` world units
+and `1e-4` texels. `validate_precision_cycles.py` exercises the same operation
+through a private headless MCP session, with exact undo and explicit round-trip
+tolerances. These checks cover translation, not repeated rotation/scale or
+round trips through other editors.
 
 `preview_component_scale` accepts positive XYZ `factors`;
 `preview_component_rotate` accepts XYZ `degrees`. Both require the latest

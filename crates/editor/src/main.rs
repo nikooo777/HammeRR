@@ -5589,6 +5589,100 @@ mod tests {
     }
 
     #[test]
+    fn partition_texture_controls_share_preview_inheritance_keep_cancel_and_undo() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = state
+            .document()
+            .solid(id)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        state
+            .select_components(
+                &[map_core::subobject::Component {
+                    solid: id,
+                    sides: vec![side],
+                }],
+                SelectMode::Replace,
+                &state.component_stamp(),
+            )
+            .unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        window.set_kind(2);
+        window.set_operation(6);
+        components_ui::refresh(&window, &lock(&shared));
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.set_show_top_texture(true);
+        window.set_texture_shift_u("13.125".into());
+        window.set_texture_shift_v("-27.5".into());
+        window.set_texture_scale_u("-0.375".into());
+        window.set_texture_scale_v("0.625".into());
+        window.set_texture_rotation("37".into());
+        window.invoke_edited();
+        assert!(!window.get_ready());
+        window.invoke_preview_edit();
+        assert!(window.get_message().contains("texture placement"));
+        window.invoke_preview_partition_texture();
+        assert!(window.get_ready());
+        assert_eq!(window.get_texture_shift_u(), "13.125");
+        window.set_texture_scale_u("0".into());
+        window.invoke_preview_partition_texture();
+        assert!(window.get_message().contains("nonzero scales"));
+        window.set_texture_scale_u("-0.375".into());
+        window.invoke_preview_partition_texture();
+        assert!(window.get_ready());
+        window.show().unwrap();
+        window
+            .window()
+            .set_size(slint::PhysicalSize::new(1100, 900));
+        save_ui_snapshot(window.window(), "partition-texture-placement");
+        assert_dialog_button_visible(&window, "Cancel");
+        window.invoke_inherit_partition_texture();
+        assert!(window.get_top_texture_summary().contains("inherited"));
+        window.invoke_choose_texture_rotation(90.0);
+        assert!(!window.get_ready());
+        window.invoke_preview_partition_texture();
+        window.invoke_apply();
+        let kept = lock(&shared).document().vmf().clone();
+        assert_ne!(kept, original);
+        window.invoke_resume_saved_partition();
+        assert_eq!(window.get_texture_rotation(), "90");
+        window.set_texture_rotation("-45".into());
+        window.invoke_preview_partition_texture();
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &kept);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+    }
+
+    #[test]
     fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_and_cancel() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

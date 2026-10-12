@@ -5,6 +5,140 @@ use map_core::{Document, ObjectId, edit, subobject};
 use source_formats::bsp::{Brush, Face, Plane};
 
 #[test]
+fn planned_piece_texture_vectors_reach_native_roofs_and_prism_tops() {
+    for prism in [false, true] {
+        for attached in [false, true] {
+            let mut document = Document::new(common::room());
+            let ObjectId::Solid(id) = document
+                .edit("block", |tx| {
+                    edit::create_block(
+                        tx,
+                        DVec3::new(0.0, 0.0, 16.0),
+                        DVec3::new(64.0, 64.0, 80.0),
+                        "dev/dev_measuregeneric01",
+                    )
+                })
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let brush = document.solid(id).unwrap();
+            let side = brush
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let part = subobject::plan_partitions(
+                &document,
+                &[subobject::Crease {
+                    solid: id,
+                    side,
+                    edges: subobject::crease_pairs(brush, side).unwrap()[0].edges,
+                }],
+            )
+            .unwrap()
+            .remove(0);
+            let materials = ["brick/planned_red", "wood/planned_blue"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, material)| subobject::PartitionMaterial {
+                    solid: id,
+                    partition: index as u32,
+                    material: material.into(),
+                })
+                .collect::<Vec<_>>();
+            let textures = (0..2)
+                .map(|index| subobject::PieceTexture {
+                    solid: id,
+                    partition: index,
+                    texture: subobject::PartitionTexture {
+                        shift: [13.125 + f64::from(index) * 23.0, -27.5],
+                        scale: [-0.375, 0.625],
+                        rotation: 37.0 + f64::from(index) * 41.0,
+                    },
+                })
+                .collect::<Vec<_>>();
+            document
+                .edit("piece geometry", |tx| {
+                    if prism {
+                        subobject::extrude_partitions_with_surfaces(
+                            tx,
+                            std::slice::from_ref(&part),
+                            &[(id, 0), (id, 1)],
+                            &subobject::ExtrusionSpec {
+                                height: 32.125,
+                                wall_material: None,
+                                texture_lock: attached,
+                            },
+                            &materials,
+                            &textures,
+                        )?;
+                    } else {
+                        subobject::crease_partitions_with_surfaces(
+                            tx,
+                            std::slice::from_ref(&part),
+                            16.125,
+                            attached,
+                            &materials,
+                            &textures,
+                        )?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let reopened =
+                source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
+                    .unwrap();
+            let expected = reopened
+                .world
+                .solids
+                .iter()
+                .flat_map(|solid| &solid.sides)
+                .filter(|side| {
+                    ["BRICK/PLANNED_RED", "WOOD/PLANNED_BLUE"].contains(&side.material.as_str())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(expected.len(), 2);
+            let output = compiler::compile(&reopened, &common::empty_game());
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            assert!(output.leak.is_none());
+            let bsp = output.bsp.unwrap();
+            let infos = bsp.records::<source_formats::bsp::TexInfo>().unwrap();
+            let faces = bsp.records::<Face>().unwrap();
+            for side in expected {
+                let coefficients = [side.u_axis, side.v_axis].map(|axis| {
+                    let vector = axis.axis / axis.scale;
+                    [
+                        vector.x as f32,
+                        vector.y as f32,
+                        vector.z as f32,
+                        axis.offset as f32,
+                    ]
+                });
+                let matches = infos
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, info)| {
+                        info.texture_vecs
+                            .iter()
+                            .flatten()
+                            .zip(coefficients.iter().flatten())
+                            .all(|(a, b)| (a - b).abs() < 1e-5)
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                assert!(
+                    faces
+                        .iter()
+                        .any(|face| matches.contains(&(face.texinfo as usize)))
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
     for edge_parameters in [[0.5; 2], [0.2, 0.8]] {
         for owned in [false, true] {
@@ -204,6 +338,26 @@ fn saved_flat_partition_intents_leave_native_bsp_bytes_unchanged() {
                         &request,
                         &[1],
                         styled.then_some("wood/planned_blue"),
+                    )
+                })
+                .unwrap();
+            document
+                .edit("planned piece textures", |tx| {
+                    map_core::partition_metadata::store_partition_surfaces(
+                        tx,
+                        &partition,
+                        &[
+                            styled.then(|| "brick/planned_red".into()),
+                            styled.then(|| "wood/planned_blue".into()),
+                        ],
+                        &[
+                            styled.then_some(subobject::PartitionTexture {
+                                shift: [13.125, -27.5],
+                                scale: [-0.375, 0.625],
+                                rotation: 37.0,
+                            }),
+                            None,
+                        ],
                     )
                 })
                 .unwrap();

@@ -41,12 +41,13 @@ impl Session {
         let mut document = self.document.preview_snapshot();
         let plan = document
             .edit("preview partition extrusion", |tx| {
-                subobject::extrude_partitions_with_materials(
+                subobject::extrude_partitions_with_surfaces(
                     tx,
                     &draft.partitions,
                     &selection,
                     &spec,
                     &draft.material_plan(),
+                    &draft.texture_plan(),
                 )
             })
             .map_err(|error| error.to_string())?;
@@ -76,6 +77,7 @@ impl Session {
         }
         let partitions = draft.partitions.clone();
         let materials = draft.material_plan();
+        let textures = draft.texture_plan();
         let selection = extrusion
             .selection
             .iter()
@@ -94,12 +96,13 @@ impl Session {
             })
             .collect::<Vec<_>>();
         let count = self.edit(actor, "extrude flat partition pieces", |tx| {
-            let actual = subobject::extrude_partitions_with_materials(
+            let actual = subobject::extrude_partitions_with_surfaces(
                 tx,
                 &partitions,
                 &selection,
                 &spec,
                 &materials,
+                &textures,
             )?;
             if actual != expected {
                 return Err(EditError::Invalid(

@@ -21,6 +21,13 @@ const POLYGON_KIND: &str = "polygon_boundary_edges";
 const POLYGON_MATERIAL_KIND: &str = "polygon_boundary_edges_materials";
 const MEMBERSHIP_FIELDS: [&str; 2] = ["piece_0_corner", "piece_1_corner"];
 const MATERIAL_FIELDS: [&str; 2] = ["top_material_0", "top_material_1"];
+const TEXTURE_FIELDS: [&str; 2] = ["top_texture_0", "top_texture_1"];
+const TEXTURE_KINDS: [&str; 4] = [
+    "opposing_midpoints_textures",
+    "opposing_edges_textures",
+    "boundary_edges_textures",
+    "polygon_boundary_edges_textures",
+];
 const PARAMETERS_FIELD: &str = "edge_parameters";
 const VERSION: &str = "1";
 const RECORD_FIELDS: [&str; 5] = ["kind", "solid", "side", "edges", "corner"];
@@ -31,6 +38,7 @@ pub struct Intent {
     pub adjacent: bool,
     pub edge_parameters: [f64; 2],
     pub top_materials: [Option<String>; 2],
+    pub top_textures: [Option<subobject::PartitionTexture>; 2],
     pub corners: Vec<Vec<u32>>,
     pub piece_membership: Option<[Vec<Vec<u32>>; 2]>,
     pub extra: Vec<Node>,
@@ -151,6 +159,7 @@ impl Intent {
                     .any(|piece| piece.vertices.len() != 4),
             edge_parameters: partition.cut().unwrap().edge_parameters,
             top_materials: [None, None],
+            top_textures: [None, None],
             corners: partition.vertices[..partition.source_corner_count()]
                 .iter()
                 .map(|vertex| match &vertex.source {
@@ -171,6 +180,9 @@ impl Intent {
     fn validate(&self) -> Result<(), String> {
         for material in self.top_materials.iter().flatten() {
             checked_top_material(material)?;
+        }
+        for texture in self.top_textures.iter().flatten() {
+            texture.validate().map_err(|error| error.to_string())?;
         }
         if self
             .edge_parameters
@@ -275,8 +287,11 @@ impl Intent {
             RECORD_FIELDS.contains(&node.key.as_str())
                 || ((polygon || self.adjacent || self.edge_parameters != [0.5; 2])
                     && node.key == PARAMETERS_FIELD)
-                || (self.top_materials.iter().any(Option::is_some)
+                || ((self.top_materials.iter().any(Option::is_some)
+                    || self.top_textures.iter().any(Option::is_some))
                     && MATERIAL_FIELDS.contains(&node.key.as_str()))
+                || (self.top_textures.iter().any(Option::is_some)
+                    && TEXTURE_FIELDS.contains(&node.key.as_str()))
                 || (polygon && MEMBERSHIP_FIELDS.contains(&node.key.as_str()))
         }) {
             return Err("Partition extra metadata repeats a reserved field".into());
@@ -288,7 +303,17 @@ impl Intent {
         let mut fields = vec![
             Node::string(
                 "kind",
-                if self.piece_membership.is_some() {
+                if self.top_textures.iter().any(Option::is_some) {
+                    TEXTURE_KINDS[if self.piece_membership.is_some() {
+                        3
+                    } else if self.adjacent {
+                        2
+                    } else if self.edge_parameters != [0.5; 2] {
+                        1
+                    } else {
+                        0
+                    }]
+                } else if self.piece_membership.is_some() {
                     if self.top_materials.iter().any(Option::is_some) {
                         POLYGON_MATERIAL_KIND
                     } else {
@@ -324,6 +349,21 @@ impl Intent {
                 fields.push(Node::string(*key, material));
             }
         }
+        for (key, texture) in TEXTURE_FIELDS.iter().zip(&self.top_textures) {
+            if let Some(texture) = texture {
+                fields.push(Node::string(
+                    *key,
+                    format!(
+                        "{} {} {} {} {}",
+                        texture.shift[0],
+                        texture.shift[1],
+                        texture.scale[0],
+                        texture.scale[1],
+                        texture.rotation
+                    ),
+                ));
+            }
+        }
         fields.extend(
             self.corners
                 .iter()
@@ -344,8 +384,21 @@ impl Intent {
         Node::block("partition", fields)
     }
 
-    fn resolve(&self, document: &Document) -> Result<Partition, String> {
+    pub fn resolve(&self, document: &Document) -> Result<Partition, String> {
         self.validate()?;
+        if self.top_textures.iter().any(Option::is_some) {
+            let source = crate::surface::side(
+                document,
+                crate::surface::FaceId {
+                    solid: self.source.solid,
+                    side: self.source.side,
+                },
+            )
+            .ok_or("Saved partition source face does not exist")?;
+            for texture in self.top_textures.iter().flatten() {
+                texture.project(source).map_err(|error| error.to_string())?;
+            }
+        }
         let mut partition = subobject::plan_partitions_at(
             document,
             &[subobject::PartitionCut {
@@ -451,18 +504,27 @@ impl Metadata {
                 POLYGON_MATERIAL_KIND,
             ]
             .contains(&kind)
+                && !TEXTURE_KINDS.contains(&kind)
             {
                 return Err(
                     "Unsupported partition intent kind; raw metadata has been preserved".into(),
                 );
             }
-            let adjacent = kind == BOUNDARY_KIND || kind == BOUNDARY_MATERIAL_KIND;
-            let polygon = kind == POLYGON_KIND || kind == POLYGON_MATERIAL_KIND;
-            let adjusted = polygon || adjacent || kind == EDGE_KIND || kind == EDGE_MATERIAL_KIND;
+            let textured = TEXTURE_KINDS.contains(&kind);
+            let adjacent =
+                kind == BOUNDARY_KIND || kind == BOUNDARY_MATERIAL_KIND || kind == TEXTURE_KINDS[2];
+            let polygon =
+                kind == POLYGON_KIND || kind == POLYGON_MATERIAL_KIND || kind == TEXTURE_KINDS[3];
+            let adjusted = polygon
+                || adjacent
+                || kind == EDGE_KIND
+                || kind == EDGE_MATERIAL_KIND
+                || kind == TEXTURE_KINDS[1];
             let styled = kind == MATERIAL_KIND
                 || kind == EDGE_MATERIAL_KIND
                 || kind == BOUNDARY_MATERIAL_KIND
-                || kind == POLYGON_MATERIAL_KIND;
+                || kind == POLYGON_MATERIAL_KIND
+                || textured;
             let edge_parameters = if adjusted {
                 let values = field(fields, PARAMETERS_FIELD)?
                     .split_whitespace()
@@ -483,9 +545,39 @@ impl Metadata {
                         top_materials[index] = Some(field(fields, key)?.to_owned());
                     }
                 }
-                if top_materials.iter().all(Option::is_none) {
+                if top_materials.iter().all(Option::is_none) && !textured {
                     return Err(
                         "Material partition intent needs at least one planned top material".into(),
+                    );
+                }
+            }
+            let mut top_textures = [None, None];
+            if textured {
+                for (index, key) in TEXTURE_FIELDS.iter().enumerate() {
+                    if fields.iter().any(|node| node.key == *key) {
+                        let values = field(fields, key)?
+                            .split_whitespace()
+                            .take(6)
+                            .map(str::parse::<f64>)
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(
+                                |_| "Planned textures need numeric shift, scale and rotation",
+                            )?;
+                        let [u, v, su, sv, rotation]: [f64; 5] = values
+                            .try_into()
+                            .map_err(|_: Vec<_>| "Planned textures need exactly five values")?;
+                        let texture = subobject::PartitionTexture {
+                            shift: [u, v],
+                            scale: [su, sv],
+                            rotation,
+                        };
+                        texture.validate().map_err(|error| error.to_string())?;
+                        top_textures[index] = Some(texture);
+                    }
+                }
+                if top_textures.iter().all(Option::is_none) {
+                    return Err(
+                        "Texture partition intent needs at least one planned texture".into(),
                     );
                 }
             }
@@ -545,6 +637,7 @@ impl Metadata {
                 adjacent,
                 edge_parameters,
                 top_materials,
+                top_textures,
                 corners,
                 piece_membership,
                 extra: fields
@@ -553,6 +646,7 @@ impl Metadata {
                         !RECORD_FIELDS.contains(&field.key.as_str())
                             && !(adjusted && field.key == PARAMETERS_FIELD)
                             && !(styled && MATERIAL_FIELDS.contains(&field.key.as_str()))
+                            && !(textured && TEXTURE_FIELDS.contains(&field.key.as_str()))
                             && !(polygon && MEMBERSHIP_FIELDS.contains(&field.key.as_str()))
                     })
                     .cloned()
@@ -638,7 +732,7 @@ pub fn store(tx: &mut Transaction, request: &Crease) -> Result<(), EditError> {
 }
 
 pub fn store_partition(tx: &mut Transaction, partition: &Partition) -> Result<(), EditError> {
-    store_partition_plan(tx, partition, None)
+    store_partition_plan(tx, partition, None, None)
 }
 
 pub fn store_partition_materials(
@@ -646,7 +740,16 @@ pub fn store_partition_materials(
     partition: &Partition,
     materials: &[Option<String>; 2],
 ) -> Result<(), EditError> {
-    store_partition_plan(tx, partition, Some(materials))
+    store_partition_plan(tx, partition, Some(materials), None)
+}
+
+pub fn store_partition_surfaces(
+    tx: &mut Transaction,
+    partition: &Partition,
+    materials: &[Option<String>; 2],
+    textures: &[Option<subobject::PartitionTexture>; 2],
+) -> Result<(), EditError> {
+    store_partition_plan(tx, partition, Some(materials), Some(textures))
 }
 
 fn piece_corners(partition: &Partition, piece: &subobject::PartitionLoop) -> BTreeSet<Vec<u32>> {
@@ -666,10 +769,16 @@ fn store_partition_plan(
     tx: &mut Transaction,
     partition: &Partition,
     materials: Option<&[Option<String>; 2]>,
+    textures: Option<&[Option<subobject::PartitionTexture>; 2]>,
 ) -> Result<(), EditError> {
     if let Some(materials) = materials {
         for material in materials.iter().flatten() {
             checked_top_material(material).map_err(EditError::Invalid)?;
+        }
+    }
+    if let Some(textures) = textures {
+        for texture in textures.iter().flatten() {
+            texture.validate()?;
         }
     }
     let mut metadata = Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
@@ -682,13 +791,17 @@ fn store_partition_plan(
             intent.corners = previous.corners.clone();
             intent.piece_membership = previous.piece_membership.clone();
             intent.top_materials = previous.top_materials.clone();
-        } else if previous.top_materials.iter().any(Option::is_some) {
+            intent.top_textures = previous.top_textures;
+        } else if previous.top_materials.iter().any(Option::is_some)
+            || previous.top_textures.iter().any(Option::is_some)
+        {
             return Err(EditError::Invalid(
-                "Saved piece materials require unchanged source incidence and cut direction".into(),
+                "Saved piece surface plans require unchanged source incidence and cut direction"
+                    .into(),
             ));
         }
     }
-    if let Some(materials) = materials {
+    if materials.is_some() || textures.is_some() {
         let resolved = intent.resolve(tx.document()).map_err(EditError::Invalid)?;
         for piece in &partition.loops {
             let corners = piece_corners(partition, piece);
@@ -699,9 +812,15 @@ fn store_partition_plan(
                 .ok_or_else(|| {
                     EditError::Invalid("Planned material piece incidence changed".into())
                 })?;
-            intent.top_materials[target.id as usize] = materials[piece.id as usize].clone();
+            if let Some(materials) = materials {
+                intent.top_materials[target.id as usize] = materials[piece.id as usize].clone();
+            }
+            if let Some(textures) = textures {
+                intent.top_textures[target.id as usize] = textures[piece.id as usize];
+            }
         }
     }
+    intent.resolve(tx.document()).map_err(EditError::Invalid)?;
     metadata.entries.insert(key, intent);
     metadata.write(tx)
 }

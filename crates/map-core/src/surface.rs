@@ -221,7 +221,11 @@ fn invalid(message: &str) -> EditError {
     EditError::Invalid(message.into())
 }
 
-fn update(side: &mut Side, edit: &SurfaceEdit, points: &[glam::DVec3]) -> Result<(), EditError> {
+pub(crate) fn update(
+    side: &mut Side,
+    edit: &SurfaceEdit,
+    points: &[glam::DVec3],
+) -> Result<(), EditError> {
     if let Some(scale) = edit.lightmap_scale {
         side.lightmap_scale = scale;
     }

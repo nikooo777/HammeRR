@@ -405,6 +405,16 @@ Keep saves these choices; Cancel stores nothing. Extrusion bases retain the
 original source material, and wall choices remain independent. Return to flat
 before changing a material plan.
 
+Enable **Top texture placement** to shift, scale or rotate highlighted pieces.
+The fields show texels, world units per texel and degrees; negative scales
+mirror the texture. **Preview placement** shows the result on the flat face.
+**Use source placement** restores inheritance. Keep preserves the plan for
+later, while raising or extruding applies it to the corresponding tops.
+
+| Texture placement controls | Independent piece projections |
+| --- | --- |
+| ![Top texture placement with units, rotation slider and inheritance](docs/images/partition-texture-controls.png) | ![Different shifts, mirrored scales and rotation on two flat pieces](docs/images/partition-texture-preview.png) |
+
 Enable **Adjust dividing edge** to move the two cut endpoints with percentage
 inputs or sliders. **Preview cut** creates unequal or diagonal pieces while
 retaining the original face. Keep these positions for later or extrude the
@@ -982,7 +992,7 @@ For example, place a warm light:
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
-| Staged flat partitions | `preview_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
+| Staged flat partitions | `preview_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Partition extrusion | `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
@@ -1117,6 +1127,7 @@ python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-
 python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-partitions-check
 python -B scripts/validate_partition_material_metadata.py --output /tmp/hammerr-partition-material-metadata
 python -B scripts/validate_partition_materials.py --output /tmp/hammerr-partition-materials
+python -B scripts/validate_partition_textures.py --render --output /tmp/hammerr-partition-textures
 python -B scripts/validate_adjusted_partition_ridges.py --output /tmp/hammerr-adjusted-ridges
 python -B scripts/validate_boundary_partitions.py --output /tmp/hammerr-boundary-partitions
 python -B scripts/validate_polygon_partitions.py --output /tmp/hammerr-polygon-partitions
@@ -1306,8 +1317,19 @@ updates replace the token; invalid or stale updates retain the draft. Each loop
 reports `top_material`, `effective_material` and `inherited`; saved inspection
 reports both `top_materials` and `effective_materials`. Keep persists the plan,
 Cancel discards it, and geometry Apply replays the corresponding roof/top choices.
-Tool filters and picking follow each piece's effective material. Per-piece UVs
-remain source projections or the selected geometry attachment policy.
+Tool filters and picking follow each piece's effective material.
+
+`update_component_partition_texture` takes the same token and piece refs, plus
+`texture: {shift: [u,v], scale: [u,v], rotation: degrees}`. Shifts are texels;
+scales are world units per texel and may be negative to mirror the texture.
+Rotation turns the inherited source axes by the difference from the source
+rotation. Null or omission restores source placement. Each loop reports
+`texture_plan`, `effective_texture` and `texture_inherited`; saved inspection
+includes `top_textures`. Keep, reopening, reflected piece identity, Cancel and
+geometry Apply follow the same material-plan lifecycle. All five values must
+be finite within ±65536, with scale magnitude at least 1e-8. Raised roofs and
+prism tops use the planned placement, optionally attached at corresponding
+corners. Bases, walls, lightmap scale and smoothing keep their own settings.
 
 `preview_partition_extrusion` takes the current flat draft `token`, positive
 `height` (0.125–4096), optional `wall_material` and optional `texture_lock`
@@ -1327,8 +1349,8 @@ change, preview again before Apply. `commit_component_edit` checks exact replay,
 adds the prisms in one undo step and selects only their faces. Original brushes
 and saved intents remain unchanged. Return to flat with
 `raise_component_partition` and zero rise, or use `cancel_component_edit`.
-Inward/subtractive extrusion, free-edge partitions and saved per-piece surface
-overrides remain unfinished.
+Inward/subtractive extrusion, free-edge partitions and per-piece explicit
+projection axes, fit and justification remain unfinished.
 
 `get_carve_preview` exposes candidates, limits and the latest `stamp`.
 `preview_carve` takes numeric `cutter` and `targets` brush IDs, including children

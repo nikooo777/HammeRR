@@ -581,6 +581,8 @@ struct ComponentRotateArgs {
 struct ComponentCreaseArgs {
     pairs: Vec<crate::session::components::CreaseEdges>,
     rise: f64,
+    /// Preserve the two roof faces' corresponding corner UVs; neighbors retain world projection. Default false.
+    roof_texture_lock: Option<bool>,
     snapshot: String,
 }
 
@@ -595,6 +597,8 @@ struct RaisePartitionArgs {
     token: String,
     /// Zero restores the flat draft; otherwise 0.125–4096 world units.
     rise: f64,
+    /// Attach the two roof faces only. Omit to retain the draft's current policy; defaults false when staged.
+    roof_texture_lock: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3283,7 +3287,16 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_component_crease(&args.pairs, args.rise, &args.snapshot)?;
+            if let Some(lock) = args.roof_texture_lock {
+                session.preview_component_crease_with_texture(
+                    &args.pairs,
+                    args.rise,
+                    lock,
+                    &args.snapshot,
+                )?;
+            } else {
+                session.preview_component_crease(&args.pairs, args.rise, &args.snapshot)?;
+            }
             selected_component_report(&session)
         })
     }
@@ -3311,7 +3324,11 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.raise_component_partition(parse_token(&args.token)?, args.rise)?;
+            session.raise_component_partition_with_texture(
+                parse_token(&args.token)?,
+                args.rise,
+                args.roof_texture_lock,
+            )?;
             selected_component_report(&session)
         })
     }

@@ -60,6 +60,7 @@ pub struct CreaseEdges {
 
 struct CreaseDraft {
     rise: f64,
+    roof_texture_lock: bool,
     requests: Vec<Crease>,
     changes: Vec<CreaseChange>,
 }
@@ -275,9 +276,9 @@ impl Session {
                 "weld_target":preview.weld_target.as_ref().map(weld_target_json),
                 "transform":preview.transform.as_ref().map(|transform|transform_json(&transform.spec,transform.pivot,transform.resolved_pivot)),
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
-                "crease":preview.crease.as_ref().map(|crease|json!({"rise":crease.rise,"pairs":crease.requests.iter().map(|request|json!({"solid":request.solid,"edges":request.edges})).collect::<Vec<_>>(),"changes":crease.changes.iter().map(|change|json!({"solid":change.source.solid,"source_side":change.source.side,"edges":change.source.edges,"positions":change.positions.map(|point|point.to_array()),"new_side":change.new_side,"selection":change.selection.iter().map(component_json).collect::<Vec<_>>()})).collect::<Vec<_>>()})),
+                "crease":preview.crease.as_ref().map(|crease|json!({"rise":crease.rise,"roof_texture_lock":crease.roof_texture_lock,"pairs":crease.requests.iter().map(|request|json!({"solid":request.solid,"edges":request.edges})).collect::<Vec<_>>(),"changes":crease.changes.iter().map(|change|json!({"solid":change.source.solid,"source_side":change.source.side,"edges":change.source.edges,"positions":change.positions.map(|point|point.to_array()),"new_side":change.new_side,"selection":change.selection.iter().map(component_json).collect::<Vec<_>>()})).collect::<Vec<_>>()})),
                 "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
-            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
+            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
         }))
     }
 
@@ -677,9 +678,19 @@ impl Session {
         rise: f64,
         stamp: &str,
     ) -> Result<u64, String> {
+        self.preview_component_crease_with_texture(pairs, rise, false, stamp)
+    }
+
+    pub fn preview_component_crease_with_texture(
+        &mut self,
+        pairs: &[CreaseEdges],
+        rise: f64,
+        roof_texture_lock: bool,
+        stamp: &str,
+    ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
         let requests = self.crease_requests(pairs)?;
-        self.install_crease_preview(requests, rise)
+        self.install_crease_preview(requests, rise, roof_texture_lock)
     }
 
     fn crease_requests(&self, pairs: &[CreaseEdges]) -> Result<Vec<Crease>, String> {
@@ -711,11 +722,16 @@ impl Session {
         Ok(requests)
     }
 
-    fn install_crease_preview(&mut self, requests: Vec<Crease>, rise: f64) -> Result<u64, String> {
+    fn install_crease_preview(
+        &mut self,
+        requests: Vec<Crease>,
+        rise: f64,
+        roof_texture_lock: bool,
+    ) -> Result<u64, String> {
         let mut document = self.document.preview_snapshot();
         let plan = document
             .edit("preview opposing-edge crease", |tx| {
-                subobject::crease(tx, &requests, rise)
+                subobject::crease_with_roof_textures(tx, &requests, rise, roof_texture_lock)
             })
             .map_err(|error| error.to_string())?;
         self.components.serial += 1;
@@ -741,6 +757,7 @@ impl Session {
                 .collect(),
             crease: Some(CreaseDraft {
                 rise,
+                roof_texture_lock,
                 requests,
                 changes: plan.changes,
             }),
@@ -815,10 +832,13 @@ impl Session {
         let replacements = preview.replacements.clone();
         let selection = preview.selection.clone();
         let rise = preview.split.as_ref().map(|split| split.rise);
-        let crease = preview
-            .crease
-            .as_ref()
-            .map(|crease| (crease.requests.clone(), crease.rise));
+        let crease = preview.crease.as_ref().map(|crease| {
+            (
+                crease.requests.clone(),
+                crease.rise,
+                crease.roof_texture_lock,
+            )
+        });
         let components = self
             .components
             .selection
@@ -832,8 +852,9 @@ impl Session {
             picking
         });
         let result = self.edit(actor, label, |tx| {
-            if let Some((requests, rise)) = &crease {
-                let actual = subobject::crease(tx, requests, *rise)?;
+            if let Some((requests, rise, roof_texture_lock)) = &crease {
+                let actual =
+                    subobject::crease_with_roof_textures(tx, requests, *rise, *roof_texture_lock)?;
                 if actual.replacements != replacements {
                     return Err(EditError::Invalid(
                         "Face allocation changed; preview the crease again".into(),

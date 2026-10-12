@@ -16,7 +16,9 @@ pub use split::{
     split,
 };
 mod crease;
-pub use crease::{Crease, CreaseChange, CreasePair, CreasePlan, crease, crease_pairs};
+pub use crease::{
+    Crease, CreaseChange, CreasePair, CreasePlan, crease, crease_pairs, crease_with_roof_textures,
+};
 mod partition;
 pub use partition::{Partition, PartitionLoop, PartitionVertex, VertexSource, plan_partitions};
 

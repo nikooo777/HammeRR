@@ -77,6 +77,7 @@ export component ComponentsWindow inherits Window {
     in-out property <string> move-z: "16";
     in-out property <bool> snap: true;
     in-out property <bool> texture-lock;
+    in-out property <bool> roof-texture-lock;
     in-out property <bool> move-handles: true;
     callback refresh();
     callback change-kind();
@@ -212,7 +213,8 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Ridge height above the face · world units"; wrap: word-wrap; color: #aeb9c8; }
                         LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Ridge rise"; edited => { root.edited(); } }
                         Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
-                        Text { text: "Old corners stay fixed. The two roof faces keep the source material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
+                        Text { text: root.roof-texture-lock ? "The two roof textures stretch with their pieces. Neighboring faces keep world projection." : "All faces keep their source material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
                     if root.operation == 6: VerticalLayout {
@@ -237,6 +239,8 @@ export component ComponentsWindow inherits Window {
                             Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: #aeb9c8; }
                             LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Partition ridge height"; edited => { root.edited(); } }
                             Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
+                            CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
+                            Text { text: "Attachment applies to the two roof faces. Neighboring faces keep world projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                             Button { text: "Return to flat"; enabled: !root.partition-flat; clicked => { root.flatten-partitions(); } }
                         }
                         Text { text: "Raising moves the shared ridge of both pieces. Highlighting changes inspection and framing."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
@@ -268,7 +272,7 @@ export component ComponentsWindow inherits Window {
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                     Rectangle { vertical-stretch: 1; }
-                    Text { text: root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    Text { text: root.has-partition-preview ? "Orange outlines highlight pieces. Choose them with the piece checkboxes above." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                 }
             }

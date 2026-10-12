@@ -14,6 +14,45 @@ pub struct PartitionRef {
 mod tests {
     use super::*;
 
+    #[test]
+    fn roof_attachment_policy_survives_omitted_updates_flattening_and_exact_apply() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, id, pairs) = fixture(actor, 0);
+            let source = session.document().vmf().clone();
+            let token = session
+                .preview_component_partition(&pairs, &session.component_stamp())
+                .unwrap();
+            assert!(!session.checked_partition(token).unwrap().roof_texture_lock);
+            let token = session
+                .raise_component_partition_with_texture(token, 16.125, Some(true))
+                .unwrap();
+            assert_eq!(
+                session.component_report(&[id]).unwrap()["texture_mode"],
+                "roof_attached"
+            );
+            assert!(session.checked_partition(token).unwrap().roof_texture_lock);
+            let token = session.raise_component_partition(token, 32.25).unwrap();
+            let token = session.raise_component_partition(token, 0.0).unwrap();
+            assert_eq!(session.render_document().vmf(), &source);
+            assert!(session.checked_partition(token).unwrap().roof_texture_lock);
+            let token = session.raise_component_partition(token, 16.125).unwrap();
+            let expected = session.render_document().vmf().clone();
+            assert!(
+                session
+                    .checked_component_preview(token)
+                    .unwrap()
+                    .crease
+                    .as_ref()
+                    .unwrap()
+                    .roof_texture_lock
+            );
+            session.commit_component_edit(actor, token).unwrap();
+            assert_eq!(session.document().vmf(), &expected);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &source);
+        }
+    }
+
     fn fixture(actor: Actor, direction: usize) -> (Session, u32, Vec<CreaseEdges>) {
         let mut session = Session::new(Err("no assets needed".into()));
         let ObjectId::Solid(id) = session
@@ -299,6 +338,7 @@ mod tests {
 pub(super) struct Draft {
     pub partitions: Vec<Partition>,
     pub rise: f64,
+    pub roof_texture_lock: bool,
     pub selection: BTreeSet<PartitionRef>,
 }
 
@@ -311,7 +351,7 @@ impl Draft {
     }
 
     pub fn report(&self) -> Value {
-        json!({"rise":self.rise,"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
+        json!({"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
             "partitions":self.partitions.iter().map(|part| {
                 let positions = part.positions(self.rise);
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
@@ -366,6 +406,7 @@ impl Session {
                 plan.replacements,
                 Some(CreaseDraft {
                     rise: draft.rise,
+                    roof_texture_lock: draft.roof_texture_lock,
                     requests,
                     changes: plan.changes,
                 }),
@@ -417,13 +458,24 @@ impl Session {
         let draft = Draft {
             partitions,
             rise: 0.0,
+            roof_texture_lock: false,
             selection,
         };
         Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
     }
 
     pub fn raise_component_partition(&mut self, token: u64, rise: f64) -> Result<u64, String> {
+        self.raise_component_partition_with_texture(token, rise, None)
+    }
+
+    pub fn raise_component_partition_with_texture(
+        &mut self,
+        token: u64,
+        rise: f64,
+        roof_texture_lock: Option<bool>,
+    ) -> Result<u64, String> {
         let mut draft = self.checked_partition(token)?.clone();
+        draft.roof_texture_lock = roof_texture_lock.unwrap_or(draft.roof_texture_lock);
         if !rise.is_finite()
             || (rise != 0.0
                 && !(subobject::MIN_SPLIT_RISE..=subobject::MAX_SPLIT_RISE).contains(&rise))
@@ -445,7 +497,12 @@ impl Session {
             Some(
                 document
                     .edit("preview raised partition", |tx| {
-                        subobject::crease(tx, &requests, rise)
+                        subobject::crease_with_roof_textures(
+                            tx,
+                            &requests,
+                            rise,
+                            draft.roof_texture_lock,
+                        )
                     })
                     .map_err(|error| error.to_string())?,
             )

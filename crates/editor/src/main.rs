@@ -5581,6 +5581,7 @@ mod tests {
         for label in [
             "Frame highlighted pieces",
             "Partition ridge height",
+            "Keep roof texture at corners",
             "Preview ridge",
             "Return to flat",
             "Apply raised partition",
@@ -5598,10 +5599,15 @@ mod tests {
         window.invoke_frame_partitions();
         assert!(window.get_message().is_empty());
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        window.set_roof_texture_lock(true);
         window.invoke_choose_rise(16.125);
         window.invoke_preview_edit();
         save_ui_snapshot(window.window(), "raised-face-partition");
         assert!(window.get_ready() && !window.get_partition_flat());
+        assert_eq!(
+            lock(&shared).component_report(&[id]).unwrap()["texture_mode"],
+            "roof_attached"
+        );
         let raised = lock(&shared).render_document().vmf().clone();
         window.invoke_flatten_partitions();
         assert!(window.get_partition_flat() && !window.get_ready());
@@ -5620,6 +5626,7 @@ mod tests {
         assert!(!window.get_has_partition_preview());
         assert_eq!(lock(&shared).document().vmf(), &source);
         window.invoke_preview_edit();
+        window.set_roof_texture_lock(true);
         window.invoke_choose_rise(16.125);
         window.invoke_preview_edit();
         window.invoke_apply();

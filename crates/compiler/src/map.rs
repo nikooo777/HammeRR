@@ -20,6 +20,9 @@ mod bevels;
 #[path = "support.rs"]
 mod support;
 
+#[path = "origins.rs"]
+mod origins;
+
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
@@ -237,12 +240,19 @@ impl<'a> Map<'a> {
                 ));
                 continue;
             }
+            let origins = map.prepare_origins(entity, report, control)?;
             let index = map.entities.len();
             let mut properties: Vec<(String, String)> = entity
                 .properties
                 .iter()
                 .map(|(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
+            if !origins.volumes.is_empty()
+                && let Some(origin) = origins.position
+            {
+                properties.retain(|(key, _)| key != "origin");
+                properties.push(("origin".into(), source_formats::vmf::format_vec3(origin)));
+            }
             properties.push(("hammerid".into(), entity.id.to_string()));
             for connection in entity.connections.iter().flatten() {
                 properties.push((connection.output.clone(), connection.value.clone()));
@@ -252,13 +262,22 @@ impl<'a> Map<'a> {
                 classname,
                 properties,
                 brushes: Vec::new(),
-                origin: entity.origin(),
+                origin: origins.position,
             });
             for solid in entity.solids.iter().filter(|s| !s.hidden) {
                 control.checkpoint()?;
-                map.add_brush(solid, index, 0, report, control)?;
+                if !origins.volumes.contains(&solid.id) {
+                    map.add_brush(solid, index, 0, report, control)?;
+                }
             }
-            map.resolve_brush_entity(index, report);
+            if !origins.volumes.is_empty() {
+                let entity = &map.entities[index];
+                report.diagnostics.push(if entity.brushes.is_empty() {
+                    Diagnostic::error("An origin brush requires compiled brush geometry in the same runtime entity", Some(format!("entity:{}", entity.id)), entity.origin)
+                } else {
+                    Diagnostic::info("Consumed origin brush; remaining geometry uses the entity pivot", Some(format!("entity:{}", entity.id)), entity.origin)
+                });
+            }
         }
         if hidden > 0 {
             report.diagnostics.push(Diagnostic::info(
@@ -279,18 +298,10 @@ impl<'a> Map<'a> {
         control: &Control,
     ) -> Result<(), String> {
         let object = format!("solid:{}", solid.id);
-        if solid.sides.iter().any(|side| {
-            side.plane.0.iter().any(|point| !point.is_finite())
-                || Plane::from_points(side.plane.0).is_some_and(|plane| {
-                    !plane.normal.is_finite()
-                        || !plane.dist.is_finite()
-                        || plane.dist < -MAX_COMPILE_COORD * plane.normal.abs().element_sum()
-                })
-        }) {
-            report.diagnostics.push(bounds_error(object));
+        let Some(mut geometry) = origins::checked_geometry(solid, report) else {
             return Ok(());
-        }
-        if solid.sides.iter().any(|s| s.displacement.is_some()) {
+        };
+        if solid.sides.iter().any(|side| side.displacement.is_some()) {
             report.diagnostics.push(Diagnostic::warning(
                 "displacements are not compiled yet; brush left out",
                 Some(object),
@@ -298,20 +309,26 @@ impl<'a> Map<'a> {
             ));
             return Ok(());
         }
-        let geometry = match BrushGeometry::from_solid(solid) {
-            Ok(geometry) => geometry,
-            Err(error) => {
-                report.diagnostics.push(Diagnostic::error(
-                    format!("invalid brush: {error}"),
-                    Some(object),
-                    None,
-                ));
+        if self.origin_material(solid, control)? {
+            report.diagnostics.push(Diagnostic::error("Origin brushes must belong to a runtime brush entity; world and func_detail origins are unsupported", Some(object), Some(geometry.center())));
+            return Ok(());
+        }
+        let world_center = geometry.center();
+        let origin = self.entities[entity].origin.unwrap_or(DVec3::ZERO);
+        if origin != DVec3::ZERO {
+            geometry.mins -= origin;
+            geometry.maxs -= origin;
+            if !within_compile_bounds(geometry.mins) || !within_compile_bounds(geometry.maxs) {
+                report.diagnostics.push(Diagnostic::error(format!("Brush model local coordinates exceed ±{MAX_COMPILE_COORD} units; move the entity pivot closer to its brushes"), Some(object), Some(world_center)));
                 return Ok(());
             }
-        };
-        if !within_compile_bounds(geometry.mins) || !within_compile_bounds(geometry.maxs) {
-            report.diagnostics.push(bounds_error(object));
-            return Ok(());
+            for face in &mut geometry.faces {
+                control.checkpoint()?;
+                face.plane.dist -= face.plane.normal.dot(origin);
+                for point in &mut face.vertices {
+                    *point -= origin;
+                }
+            }
         }
 
         let side_budget = bevels::MAX_BRUSH_SIDES - self.brush_side_count;
@@ -319,7 +336,7 @@ impl<'a> Map<'a> {
             report.diagnostics.push(Diagnostic::error(
                 "BSP collision plane or brush side limit exceeded; reduce map geometry",
                 Some(object),
-                Some(geometry.center()),
+                Some(world_center),
             ));
             return Ok(());
         }
@@ -345,7 +362,7 @@ impl<'a> Map<'a> {
                         info.unsupported_flags.join(", ")
                     ),
                     Some(object.clone()),
-                    Some(geometry.center()),
+                    Some(world_center),
                 ));
             }
             let visible = info.draws;
@@ -354,7 +371,7 @@ impl<'a> Map<'a> {
                 report.diagnostics.push(Diagnostic::error(
                     "cannot preserve authored BSP plane support; simplify this brush",
                     Some(object),
-                    Some(geometry.center()),
+                    Some(world_center),
                 ));
                 return Ok(());
             };
@@ -362,11 +379,11 @@ impl<'a> Map<'a> {
                 report.diagnostics.push(Diagnostic::error(
                     "BSP collision plane limit exceeded; reduce map geometry",
                     Some(object),
-                    Some(geometry.center()),
+                    Some(world_center),
                 ));
                 return Ok(());
             }
-            let texinfo = self.texinfo(side, material);
+            let texinfo = self.texinfo(side, material, origin);
             sides.push(MapSide {
                 plane,
                 material,
@@ -381,7 +398,7 @@ impl<'a> Map<'a> {
             report.diagnostics.push(Diagnostic::warning(
                 "hint visibility splitting is not supported yet; brush left out",
                 Some(object),
-                Some(geometry.center()),
+                Some(world_center),
             ));
             return Ok(());
         }
@@ -392,19 +409,11 @@ impl<'a> Map<'a> {
                 brush_contents |= contents::WINDOW;
             }
         }
-        if brush_contents & contents::ORIGIN != 0 {
-            report.diagnostics.push(Diagnostic::warning(
-                "origin brushes are not supported yet; brush left out",
-                Some(object),
-                Some(geometry.center()),
-            ));
-            return Ok(());
-        }
         if brush_contents == 0 {
             report.diagnostics.push(Diagnostic::warning(
                 "brush has only skip/fog surfaces and no compiled contents; brush left out",
                 Some(object),
-                Some(geometry.center()),
+                Some(world_center),
             ));
             return Ok(());
         }
@@ -412,7 +421,7 @@ impl<'a> Map<'a> {
             report.diagnostics.push(Diagnostic::warning(
                 "areaportal brushes are not supported yet; brush left out",
                 Some(object),
-                Some(geometry.center()),
+                Some(world_center),
             ));
             return Ok(());
         }
@@ -431,7 +440,7 @@ impl<'a> Map<'a> {
                     report.diagnostics.push(Diagnostic::error(
                         message,
                         Some(object),
-                        Some(geometry.center()),
+                        Some(world_center),
                     ));
                     return Ok(());
                 }
@@ -452,7 +461,7 @@ impl<'a> Map<'a> {
         Ok(())
     }
 
-    fn texinfo(&mut self, side: &Side, material: usize) -> usize {
+    fn texinfo(&mut self, side: &Side, material: usize, origin: DVec3) -> usize {
         let info = self.materials.get(material);
         let texdata = match self.texdata.iter().position(|&m| m == material) {
             Some(i) => i,
@@ -469,7 +478,12 @@ impl<'a> Map<'a> {
         let vec = |axis: &source_formats::vmf::UvAxis| {
             let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
             let a = axis.axis / scale;
-            [a.x as f32, a.y as f32, a.z as f32, axis.offset as f32]
+            [
+                a.x as f32,
+                a.y as f32,
+                a.z as f32,
+                (axis.offset + origin.dot(a)) as f32,
+            ]
         };
         let lightmap_vec = |axis: &source_formats::vmf::UvAxis| {
             let a = axis.axis / lightmap_scale;
@@ -477,7 +491,7 @@ impl<'a> Map<'a> {
                 a.x as f32,
                 a.y as f32,
                 a.z as f32,
-                (axis.offset * axis.scale / lightmap_scale) as f32,
+                (axis.offset * axis.scale / lightmap_scale + origin.dot(a)) as f32,
             ]
         };
         self.texinfos.add(bsp::TexInfo {
@@ -486,30 +500,5 @@ impl<'a> Map<'a> {
             flags: info.surface,
             texdata: texdata as i32,
         })
-    }
-
-    /// Brush entities keep their brushes in world coordinates, so a stray
-    /// `origin` key would offset the model in game.
-    fn resolve_brush_entity(&mut self, index: usize, report: &mut Report) {
-        let entity = &mut self.entities[index];
-        if entity.brushes.is_empty() {
-            return;
-        }
-        let had_origin = entity
-            .properties
-            .iter()
-            .any(|(k, v)| k == "origin" && !v.trim().is_empty());
-        entity.properties.retain(|(k, _)| k != "origin");
-        if had_origin && entity.origin.is_some_and(|o| o.length() > 0.01) {
-            report.diagnostics.push(Diagnostic::info(
-                format!(
-                    "{}: origin key ignored for a brush entity without an origin brush",
-                    entity.classname
-                ),
-                Some(format!("entity:{}", entity.id)),
-                entity.origin,
-            ));
-        }
-        entity.origin = None;
     }
 }

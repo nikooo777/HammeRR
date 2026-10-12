@@ -2864,7 +2864,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Compile the current map snapshot into a fullbright Source BSP. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks."
+        description = "Compile the current map snapshot into a fullbright Source BSP. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks. Runtime brush entities use explicit origins or one visible origin volume as their pivot, with checked local geometry and compensated texture/lightmap projections. World, func_detail, duplicate and origin-only volumes fail with object diagnostics while preserving previous output."
     )]
     async fn compile_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
         self.compile_snapshot(args, false).await

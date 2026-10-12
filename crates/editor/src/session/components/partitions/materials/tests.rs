@@ -7,6 +7,86 @@ fn piece(solid: u32, partition: u32) -> PartitionRef {
 }
 
 #[test]
+fn adjusted_planar_ridge_drafts_share_rejection_history_and_material_replay() {
+    for actor in [Actor::User, Actor::Agent] {
+        for direction in 0..2 {
+            let (mut session, solid, pairs) = fixture(actor, direction);
+            let original = session.document.vmf().clone();
+            let token = session
+                .preview_component_partition(&pairs, &session.component_stamp())
+                .unwrap();
+            let token = session
+                .update_component_partition_material(
+                    token,
+                    &[piece(solid, 0)],
+                    Some("brick/unequal"),
+                )
+                .unwrap();
+            let token = session
+                .update_component_partition_material(
+                    token,
+                    &[piece(solid, 1)],
+                    Some("wood/unequal"),
+                )
+                .unwrap();
+            let token = session
+                .update_component_partition_cut(token, [0.2; 2])
+                .unwrap();
+            let side = session.checked_partition(token).unwrap().partitions[0]
+                .source
+                .side;
+            session.store_component_partition(actor, token).unwrap();
+            let saved = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let token = session
+                .resume_component_partitions(&[(solid, side)], &session.component_stamp())
+                .unwrap();
+            session
+                .select_component_partitions(token, &[piece(solid, 0)], SelectMode::Replace)
+                .unwrap();
+            let token = session
+                .raise_component_partition_with_texture(token, 16.125, Some(true))
+                .unwrap();
+            let draft = session.checked_partition(token).unwrap();
+            assert_eq!(draft.partitions[0].cut().unwrap().edge_parameters, [0.2; 2]);
+            assert_eq!(draft.selection.len(), 1);
+            assert_eq!(session.document.vmf(), &saved);
+            assert_eq!(session.document.undo_labels().count(), history);
+            let raised = session.render_document().vmf().clone();
+            let token = session.raise_component_partition(token, 0.0).unwrap();
+            assert_eq!(session.render_document().vmf(), &saved);
+            let token = session
+                .update_component_partition_cut(token, [0.2, 0.8])
+                .unwrap();
+            let report = session.component_report(&[solid]).unwrap();
+            let error = session
+                .raise_component_partition(token, 16.125)
+                .unwrap_err();
+            assert!(error.contains("nonplanar"));
+            assert_eq!(session.partition_preview_token(), Some(token));
+            assert_eq!(session.component_report(&[solid]).unwrap(), report);
+            assert_eq!(session.document.vmf(), &saved);
+            let token = session
+                .update_component_partition_cut(token, [0.2; 2])
+                .unwrap();
+            let token = session.raise_component_partition(token, 16.125).unwrap();
+            assert_eq!(session.render_document().vmf(), &raised);
+            session.commit_component_edit(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &raised);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            assert_eq!(session.saved_partition_report()["entries"], json!([]));
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &saved);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &raised);
+            session.undo(actor).unwrap();
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &original);
+        }
+    }
+}
+
+#[test]
 fn staging_a_changed_incidence_does_not_reassign_saved_materials() {
     for actor in [Actor::User, Actor::Agent] {
         for direction in 0..2 {

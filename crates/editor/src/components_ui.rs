@@ -43,6 +43,13 @@ fn number(value: f64) -> String {
         .into()
 }
 
+fn percentage(value: f64) -> String {
+    format!("{:.12}", value * 100.0)
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .into()
+}
+
 fn position(point: DVec3) -> String {
     format!(
         "({}, {}, {})",
@@ -688,14 +695,14 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             window.set_cut_first(
                 parameters[0]
                     .as_f64()
-                    .map(|value| (value * 100.0).to_string())
+                    .map(percentage)
                     .unwrap_or_default()
                     .into(),
             );
             window.set_cut_second(
                 parameters[1]
                     .as_f64()
-                    .map(|value| (value * 100.0).to_string())
+                    .map(percentage)
                     .unwrap_or_default()
                     .into(),
             );

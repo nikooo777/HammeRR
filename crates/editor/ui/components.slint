@@ -272,6 +272,8 @@ export component ComponentsWindow inherits Window {
                             Text { text: "Highlight pieces"; font-weight: 600; }
                             ListView {
                                 preferred-height: 116px;
+                                min-height: 116px;
+                                vertical-stretch: 0;
                                 for row in root.partition-rows: VerticalLayout {
                                     spacing: 2px;
                                     CheckBox { text: row.label; checked: row.selected; toggled => { root.choose-partition(row.key); } }
@@ -318,20 +320,18 @@ export component ComponentsWindow inherits Window {
                                 if root.cut-first == "" || root.cut-second == "": Text { text: "Saved sources have different positions. Enter both values to adjust them together."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                                 Text { text: "Applies to every source brush. Unequal positions can make a diagonal cut. Return to flat before adjusting."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                                 Button { text: "Preview cut"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.preview-cut(); } }
+                                if !root.cut-is-midpoint: Button { text: "Reset cut to midpoint"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.choose-cut-position(0,50); root.choose-cut-position(1,50); root.preview-cut(); } }
                             }
                             ComboBox { model: ["Raise shared ridge", "Extrude highlighted pieces"]; current-index <=> root.partition-mode; selected => { root.edited(); } }
-                            if root.partition-mode == 0 && root.cut-is-midpoint: VerticalLayout {
+                            if root.partition-mode == 0: VerticalLayout {
                                 spacing: 6px;
+                                if !root.cut-is-midpoint: Text { text: root.cut-first == "" || root.cut-second == "" ? "Saved sources have different cut positions" : "Cut positions · A " + root.cut-first + "% · B " + root.cut-second + "%"; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                                 Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: #aeb9c8; }
                                 LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Partition ridge height"; edited => { root.edited(); } }
                                 Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                                 CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
                             }
-                            if root.partition-mode == 0 && !root.cut-is-midpoint: VerticalLayout {
-                                spacing: 6px;
-                                Text { text: "A shared ridge needs midpoint cuts. Reset both edges to 50%, or switch to extrusion."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                                Button { text: "Reset cut to midpoint"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.choose-cut-position(0,50); root.choose-cut-position(1,50); root.preview-cut(); } }
-                            }
+                            if root.partition-mode == 0 && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                             if root.partition-mode == 1: VerticalLayout {
                                 spacing: 6px;
                                 Text { text: "Extrusion height · world units"; color: #aeb9c8; }
@@ -349,7 +349,7 @@ export component ComponentsWindow inherits Window {
                             }
                             Button { text: "Return to flat"; enabled: !root.partition-flat || root.has-extrusion-preview; clicked => { root.flatten-partitions(); } }
                         }
-                        if root.partition-mode == 0 && root.cut-is-midpoint: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        if root.partition-mode == 0: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         Text { text: "Preview before Apply. Keep flat pieces to resume them later."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         if !root.has-partition-preview && root.saved-partitions.length > 0: VerticalLayout {
                             spacing: 6px;
@@ -388,7 +388,6 @@ export component ComponentsWindow inherits Window {
                     }
                     Button { text: root.operation == 6 ? (root.has-partition-preview ? (root.partition-mode == 1 ? "Preview extrusion" : "Preview ridge") : "Stage flat partition") : root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
-                    if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                     Rectangle { vertical-stretch: 1; }
                     if !root.has-partition-preview: Text { text: root.has-partition-preview ? "Click a visible piece to highlight it. Ctrl toggles; an empty click clears. Orange outlines show highlights." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
@@ -399,6 +398,7 @@ export component ComponentsWindow inherits Window {
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: root.operation == 6 ? (root.has-extrusion-preview ? "Apply extrusion" : (root.partition-flat ? "Keep flat pieces" : "Apply raised partition")) : root.operation == 5 ? "Apply ridge" : root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
             }

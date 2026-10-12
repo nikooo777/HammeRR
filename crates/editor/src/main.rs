@@ -5761,7 +5761,31 @@ mod tests {
         assert_dialog_button_visible(&window, "Reset cut to midpoint");
         window.invoke_choose_rise(16.0);
         window.invoke_preview_edit();
-        assert!(window.get_message().contains("midpoint"));
+        assert!(window.get_message().contains("nonplanar"));
+        window.invoke_choose_cut_position(1, 13.7);
+        window.invoke_preview_cut();
+        window.set_show_cut_settings(false);
+        window.set_roof_texture_lock(true);
+        window.invoke_choose_rise(16.125);
+        window.invoke_preview_edit();
+        assert!(window.get_ready() && !window.get_partition_flat());
+        let report = lock(&shared).component_report(&[id]).unwrap();
+        assert!(
+            (report["preview"]["partition"]["edge_parameters"][0]
+                .as_f64()
+                .unwrap()
+                - 0.137)
+                .abs()
+                < 1e-10
+        );
+        assert!(!window.get_cut_is_midpoint());
+        assert_eq!(window.get_cut_first(), "13.7");
+        assert_eq!(window.get_cut_second(), "13.7");
+        window.set_show_cut_settings(false);
+        save_ui_snapshot(window.window(), "adjusted-partition-ridge");
+        window.invoke_flatten_partitions();
+        assert!(window.get_ready() && window.get_partition_flat());
+
         window.invoke_choose_cut_position(0, 50.0);
         window.invoke_choose_cut_position(1, 50.0);
         window.invoke_preview_cut();

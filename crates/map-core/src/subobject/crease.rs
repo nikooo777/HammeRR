@@ -100,6 +100,39 @@ pub fn crease_with_roof_textures(
     rise: f64,
     roof_texture_lock: bool,
 ) -> Result<CreasePlan, EditError> {
+    crease_roofs(tx, requests, rise, roof_texture_lock, &BTreeMap::new())
+}
+
+pub(super) fn crease_partition_roofs(
+    tx: &mut Transaction,
+    partitions: &[Partition],
+    rise: f64,
+    roof_texture_lock: bool,
+) -> Result<CreasePlan, EditError> {
+    let requests = partitions
+        .iter()
+        .map(|part| part.source.clone())
+        .collect::<Vec<_>>();
+    let endpoints = partitions
+        .iter()
+        .filter(|part| part.cut().unwrap().edge_parameters != [0.5; 2])
+        .map(|part| {
+            (
+                part.source.solid,
+                [part.vertices[4].position, part.vertices[5].position],
+            )
+        })
+        .collect();
+    crease_roofs(tx, &requests, rise, roof_texture_lock, &endpoints)
+}
+
+fn crease_roofs(
+    tx: &mut Transaction,
+    requests: &[Crease],
+    rise: f64,
+    roof_texture_lock: bool,
+    endpoints: &BTreeMap<u32, [DVec3; 2]>,
+) -> Result<CreasePlan, EditError> {
     if requests.is_empty() || requests.len() > MAX_SOLIDS {
         return Err(invalid(
             "Select one quad face in each of 1–16 brushes to crease",
@@ -152,7 +185,8 @@ pub fn crease_with_roof_textures(
             .find(|side| side.id == request.side)
             .unwrap();
         let normal = Plane::from_points(original.plane.0).unwrap().normal;
-        let positions = pair.midpoints.map(|point| point + normal * rise);
+        let flat_positions = endpoints.get(&id).copied().unwrap_or(pair.midpoints);
+        let positions = flat_positions.map(|point| point + normal * rise);
         if positions
             .iter()
             .any(|point| !point.is_finite() || point.abs().max_element() > MAX_COORDINATE)
@@ -195,8 +229,8 @@ pub fn crease_with_roof_textures(
             [positions[0], ring[1], ring[2], positions[1]],
         ];
         let flat_roofs = [
-            [ring[0], pair.midpoints[0], pair.midpoints[1], ring[3]],
-            [pair.midpoints[0], ring[1], ring[2], pair.midpoints[1]],
+            [ring[0], flat_positions[0], flat_positions[1], ring[3]],
+            [flat_positions[0], ring[1], ring[2], flat_positions[1]],
         ];
         let points = shape
             .vertices
@@ -226,7 +260,7 @@ pub fn crease_with_roof_textures(
                 .any(|point| plane.distance_to(*point).abs() > EPSILON)
             {
                 return Err(invalid(format!(
-                    "Brush {id}: crease creates a nonplanar roof; choose a representable quad"
+                    "Brush {id}: ridge creates a nonplanar roof; align the cut endpoints, reset to midpoint or extrude"
                 )));
             }
             if points

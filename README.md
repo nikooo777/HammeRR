@@ -406,12 +406,19 @@ Enable **Adjust dividing edge** to move the two cut endpoints with percentage
 inputs or sliders. **Preview cut** creates unequal or diagonal pieces while
 retaining the original face. Keep these positions for later or extrude the
 pieces. Saved positions and piece identity survive reflection and reopening.
-Shared ridges currently require midpoint cuts; **Reset cut to midpoint** restores
-that path explicitly.
+Shared ridges can use adjusted endpoints when both raised roof pieces remain
+planar and convex. A diagonal cut that would bend a roof is rejected while
+retaining the flat preview. Adjust the positions, extrude the pieces, or use
+**Reset cut to midpoint**. The bottom footer keeps Apply, Discard and Cancel
+accessible when the settings scroll.
 
 | Planned top material controls | Flat planned surfaces |
 | --- | --- |
 | ![Highlighted-piece material choices with preview, browsing and inheritance](docs/images/partition-material-controls.png) | ![Two real materials on a flat checked face without adding brush sides](docs/images/partition-material-preview.png) |
+
+| Adjusted ridge controls | Unequal roof widths |
+| --- | --- |
+| ![Readable cut percentages and checked shared ridge controls](docs/images/partition-adjusted-ridge-controls.png) | ![An adjusted dividing edge raised with independent roof materials](docs/images/partition-adjusted-ridge-preview.png) |
 
 | Cut controls | Adjusted pieces extruded to different heights |
 | --- | --- |
@@ -1083,6 +1090,7 @@ python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-
 python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-partitions-check
 python -B scripts/validate_partition_material_metadata.py --output /tmp/hammerr-partition-material-metadata
 python -B scripts/validate_partition_materials.py --output /tmp/hammerr-partition-materials
+python -B scripts/validate_adjusted_partition_ridges.py --output /tmp/hammerr-adjusted-ridges
 python -B scripts/validate_partition_extrusion.py --output /tmp/hammerr-extrusion-check
 python -B scripts/validate_partition_extrusion.py --adjusted --output /tmp/hammerr-adjusted-cut-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
@@ -1242,7 +1250,9 @@ token, preserving highlights and saved piece identity. Edges follow sorted
 neighboring side IDs; each endpoint runs between the sorted corner incidence
 lists reported in vertex provenance. Invalid or collapsed cuts retain the draft.
 Return to flat before adjusting a raised/extruded preview. Save positions with
-Keep, or extrude the adjusted pieces. Positive ridge heights require `[0.5, 0.5]`.
+Keep, extrude, or raise the adjusted pieces. Positive ridge heights use the
+actual endpoints and require two planar, convex roofs. Nonplanar cuts are
+rejected atomically; `rise: 0` retains their flat topology.
 `preview.partition.edge_parameters` reports shared values or null for mixed
 sources; saved inspection lists each source's positions. Existing midpoint
 records remain compatible, and adjusted metadata retains the same global budgets.

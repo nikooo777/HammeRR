@@ -406,7 +406,7 @@ mod tests {
                     session
                         .raise_component_partition(token, 16.0)
                         .unwrap_err()
-                        .contains("midpoint")
+                        .contains("nonplanar")
                 );
                 assert_eq!(session.partition_preview_token(), Some(token));
                 for parameters in [[0.0, 0.8], [0.2, 1.0], [f64::NAN, 0.8]] {
@@ -1053,14 +1053,6 @@ impl Session {
                 && !(subobject::MIN_SPLIT_RISE..=subobject::MAX_SPLIT_RISE).contains(&rise))
         {
             return Err("Partition ridge height must be zero (flat) or 0.125–4096 units".into());
-        }
-        if rise != 0.0
-            && draft
-                .partitions
-                .iter()
-                .any(|part| part.cut().unwrap().edge_parameters != [0.5; 2])
-        {
-            return Err("Shared ridges require midpoint cuts. Restore both edge positions to 50%, or extrude the pieces.".into());
         }
         let requests = draft.requests();
         let cuts = draft

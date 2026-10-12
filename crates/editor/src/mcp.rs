@@ -154,7 +154,7 @@ set_camera selects perspective/top/front/side; planar cameras accept center and 
 frame_selection frames the selection or whole map. Named cameras persist through save_camera_view, get_camera_views, restore_camera_view, rename_camera_view and delete_camera_view; use generation/revision guards for stale-state protection. draw_block uses plane coordinates \
 (top XY, front XZ, side YZ), shared snapping and depth; preview=true leaves the map \
 and undo history untouched. Inspect get_map_info.block_preview and cancel with cancel_block_preview. \
-transform_objects applies exact move/rotation/positive scale and brush reflection, with an optional world-space pivot \
+transform_objects applies exact move/rotation/positive scale, brush reflection and single-axis shear, with an optional world-space pivot \
 (default: selection bounds center) and independent texture_lock (move/rotation) and texture_scale_lock (stretch); omitted scale lock inherits movement locking. Rotation is world X/Y/Z, in degrees. \
 space: local uses the first selected object's frame; preview: true creates a shared transform draft. \
 set_transform_tool configures move/rotate/scale handles, pivots and angle snap. Inspect \
@@ -972,6 +972,8 @@ pub struct TransformArgs {
     pub scale: Option<[f64; 3]>,
     /// Mirror chosen world/local axes about the pivot. Brushes and brush entities only; displacement brushes and point entities are rejected atomically.
     pub reflection: Option<[bool; 3]>,
+    /// Shift one coordinate by factor times another coordinate about the pivot, after scale/reflection and before rotation. Brushes and brush entities only. Factor range -64..64.
+    pub shear: Option<ShearArgs>,
     /// World pivot [x,y,z]; omitted uses the combined selection bounds center.
     pub pivot: Option<[f64; 3]>,
     /// Follow translation/rotation about the pivot; default true.
@@ -983,6 +985,33 @@ pub struct TransformArgs {
     /// Draft geometry without changing the document or history; commit or cancel separately.
     #[serde(default)]
     pub preview: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ShearArgs {
+    /// Coordinate to shift: x, y or z.
+    pub axis: String,
+    /// Distinct reference coordinate: x, y or z.
+    pub reference: String,
+    pub factor: f64,
+}
+
+impl ShearArgs {
+    fn into_core(self) -> Result<map_core::transform::Shear, String> {
+        fn axis(value: &str) -> Result<usize, String> {
+            match value.to_ascii_lowercase().as_str() {
+                "x" => Ok(0),
+                "y" => Ok(1),
+                "z" => Ok(2),
+                _ => Err("Choose x, y or z for each shear axis".into()),
+            }
+        }
+        Ok(map_core::transform::Shear {
+            axis: axis(&self.axis)?,
+            reference: axis(&self.reference)?,
+            factor: self.factor,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1175,7 +1204,7 @@ fn transform_state(session: &Session) -> Value {
     let tool = session.transform_tool();
     json!({"settings": {"mode": transform_mode_name(tool.mode), "space": if tool.local {"local"} else {"world"}, "pivot": tool.pivot.map(|pivot| pivot.to_array()), "texture_lock": tool.texture_lock, "texture_scale_lock": tool.texture_scale_lock.unwrap_or(tool.texture_lock), "angle_step": tool.angle_step},
         "drag": session.transform_drag().map(|drag| json!({"handle": drag.handle.name(), "mode": transform_mode_name(Some(drag.mode)), "amount": drag.amount.to_array(), "pivot": drag.pivot.to_array(), "basis": drag.basis.to_cols_array_2d(), "camera": camera_json(&drag.camera)})),
-        "preview": session.transform_preview().map(|preview| json!({"ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "reflection": preview.transform.reflection, "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "texture_scale_lock": preview.transform.texture_scale_lock.unwrap_or(preview.transform.texture_lock), "bounds": bounds_json(query::bounds_of(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()}))})
+        "preview": session.transform_preview().map(|preview| json!({"ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "reflection": preview.transform.reflection, "shear": preview.transform.shear.map(|shear| json!({"axis": (["x", "y", "z"][shear.axis]), "reference": (["x", "y", "z"][shear.reference]), "factor": shear.factor})), "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "texture_scale_lock": preview.transform.texture_scale_lock.unwrap_or(preview.transform.texture_lock), "bounds": bounds_json(query::bounds_of(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()}))})
 }
 
 fn area_matches(matches: &map_core::region::Selection) -> Value {
@@ -4211,7 +4240,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Move, rotate, scale and mirror objects in one atomic undoable edit, or create a shared draft with preview=true. Choose world (default) or local space. Scale about the pivot, rotate X/Y/Z in that frame, then translate in that frame. Defaults to selection and its bounds center. texture_lock follows movement/rotation; texture_scale_lock stretches about the pivot independently. Omitted scale lock inherits texture_lock, retaining the prior complete-lock/world-fixed behavior. Both false preserve original projections exactly. Point entities rotate their Source orientation and move with the group; model size stays unchanged. Positive scale only. reflection chooses axes in that same frame, preserving outward winding and source IDs. Reflection supports world brushes and brush entities within ±65536; point entities and displacement brushes are rejected atomically. texture_scale_lock also controls projection mirroring. Inspect get_transform_handles for the shared draft; commit_transform_preview or cancel_transform_preview completes it."
+        description = "Move, rotate, scale, mirror and shear objects in one atomic undoable edit, or create a shared draft with preview=true. Choose world (default) or local space. Scale about the pivot, rotate X/Y/Z in that frame, then translate in that frame. Defaults to selection and its bounds center. texture_lock follows movement/rotation; texture_scale_lock stretches about the pivot independently. Omitted scale lock inherits texture_lock, retaining the prior complete-lock/world-fixed behavior. Both false preserve original projections exactly. Point entities rotate their Source orientation and move with the group; model size stays unchanged. Positive scale only. reflection chooses axes in that same frame, preserving outward winding and source IDs. Reflection supports world brushes and brush entities within ±65536; point entities and displacement brushes are rejected atomically. shear shifts its axis by factor times its distinct reference coordinate about the pivot in the same frame, after scale/reflection and before rotation. Finite factors -64..64; nonzero shear shares the brush-only scope and bounds. texture_scale_lock also controls reflection/shear attachment. Inspect get_transform_handles for the shared draft; commit_transform_preview or cancel_transform_preview completes it."
     )]
     fn transform_objects(&self, Parameters(args): Parameters<TransformArgs>) -> ToolResult {
         run(|| {
@@ -4228,6 +4257,7 @@ impl EditorServer {
                 rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
                 scale: args.scale.map(vec3).unwrap_or(DVec3::ONE),
                 reflection: args.reflection.unwrap_or([false; 3]),
+                shear: args.shear.map(ShearArgs::into_core).transpose()?,
                 texture_lock: args.texture_lock.unwrap_or(true),
                 texture_scale_lock: args.texture_scale_lock,
                 basis,

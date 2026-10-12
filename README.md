@@ -179,6 +179,19 @@ terrain currently reject the whole operation without changing the map.
 Reflected geometry and pivots must stay within ±65536 editor units; compilation
 still uses Source's narrower coordinate limits.
 
+Choose **Shear** to shift one coordinate in proportion to another. For example,
+**Shift coordinate X**, **By coordinate Y**, factor **0.5** moves X by half the
+Y distance from the pivot. World/local frame and pivot choices apply as usual.
+Factors range from −64 to 64, and the two axes must differ. **Keep textures
+attached while shearing** preserves corresponding corner UVs; disabling it
+retains world projection. Brush entities keep their solid IDs and transform
+origins with the geometry. Nonzero shear rejects point entities and terrain
+atomically; zero is an identity operation.
+
+| Before shear | After shear with attached textures |
+| --- | --- |
+| ![An oblique brush before shearing](docs/images/brush-shear-before.png) | ![The same brush sheared along X by its Z coordinate](docs/images/brush-shear-after.png) |
+
 Area selection works in perspective, Top, Front and Side, for objects or
 faces. It includes geometry through the view's depth and skips hidden brushes
 and hidden tool materials. A brush entity is selected as a whole. **Fully
@@ -909,6 +922,25 @@ Mirror through the same transform tool, including shared preview/apply/cancel:
 `get_transform_handles.state.preview.reflection` reports the chosen axes.
 Positive numeric scale factors remain independent of reflection.
 
+Single-axis shear uses the same tool and shared draft:
+
+```json
+{
+  "tool": "transform_objects",
+  "arguments": {
+    "shear": {"axis": "x", "reference": "y", "factor": 0.5},
+    "space": "local",
+    "texture_scale_lock": true,
+    "preview": true
+  }
+}
+```
+
+`get_transform_handles.state.preview.shear` reports these inputs. In combined
+operations, scale/reflection precedes shear, rotation follows it, then
+translation. Texture scale locking controls shear attachment separately from
+movement/rotation locking.
+
 `edit_faces` supports material, UV offsets/scales, rotation, fitting, lightmap
 scale, smoothing groups and non-destructive previews. Commit or cancel the
 shared preview from either front end. Material browsing and inspector tools
@@ -950,9 +982,12 @@ python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
+python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
 python -B scripts/validate_precision_cycles.py --output /tmp/hammerr-precision-check
 python -B scripts/validate_precision_cycles.py --operation scale --output /tmp/hammerr-scale-cycles
 python -B scripts/validate_precision_cycles.py --operation rotate --output /tmp/hammerr-rotation-cycles
+python -B scripts/validate_precision_cycles.py --operation reflection --output /tmp/hammerr-reflection-cycles
+python -B scripts/validate_precision_cycles.py --operation shear --output /tmp/hammerr-shear-cycles
 python -B scripts/validate_carving.py --output /tmp/hammerr-carving-check
 python -B scripts/validate_carve_many.py --output /tmp/hammerr-carve-many-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check

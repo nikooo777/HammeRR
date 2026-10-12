@@ -1504,6 +1504,9 @@ export component AppWindow inherits Window {
     in-out property <bool> transform-reflect-x: true;
     in-out property <bool> transform-reflect-y: false;
     in-out property <bool> transform-reflect-z: false;
+    in-out property <int> transform-shear-axis: 0;
+    in-out property <int> transform-shear-reference: 1;
+    in-out property <string> transform-shear-factor: "0.5";
     in-out property <int> handles-mode-index;
     in-out property <int> transform-space-index;
     in-out property <string> rotation-step: "15";
@@ -2095,7 +2098,7 @@ export component AppWindow inherits Window {
                     if root.has-selection: CheckBox {
                         text: "Transform selection";
                         checked <=> root.show-transform;
-                        toggled => { if self.checked { root.handles-mode-index = root.transform-mode == 3 ? 0 : root.transform-mode + 1; root.transform-tool-changed(); } }
+                        toggled => { if self.checked { root.handles-mode-index = root.transform-mode >= 3 ? 0 : root.transform-mode + 1; root.transform-tool-changed(); } }
                     }
                     Button {
                         text: "Hollow brushes…";
@@ -2120,12 +2123,12 @@ export component AppWindow inherits Window {
                     if root.has-selection && root.show-transform: VerticalLayout {
                         spacing: 7px;
                         ComboBox {
-                            model: ["Move", "Rotate", "Scale", "Mirror"];
+                            model: ["Move", "Rotate", "Scale", "Mirror", "Shear"];
                             current-index <=> root.transform-mode;
-                            selected => { root.handles-mode-index = self.current-index == 3 ? 0 : self.current-index + 1; root.transform-tool-changed(); }
+                            selected => { root.handles-mode-index = self.current-index >= 3 ? 0 : self.current-index + 1; root.transform-tool-changed(); }
                         }
                         Text {
-                            text: root.transform-mode == 0 ? "Offset · units" : root.transform-mode == 1 ? (root.transform-space-index == 0 ? "World-axis rotation · degrees" : "Local-axis rotation · degrees") : root.transform-mode == 2 ? (root.transform-space-index == 0 ? "World-axis scale · factors" : "Local-axis scale · factors") : "Mirror about the chosen axes and pivot";
+                            text: root.transform-mode == 0 ? "Offset · units" : root.transform-mode == 1 ? (root.transform-space-index == 0 ? "World-axis rotation · degrees" : "Local-axis rotation · degrees") : root.transform-mode == 2 ? (root.transform-space-index == 0 ? "World-axis scale · factors" : "Local-axis scale · factors") : root.transform-mode == 3 ? "Reflect checked coordinates across the pivot" : "Shift one coordinate in proportion to another";
                             color: #aab2c2; font-size: 12px;
                         }
                         if root.transform-mode < 3: TransformVector {
@@ -2141,7 +2144,23 @@ export component AppWindow inherits Window {
                             CheckBox { text: "Mirror Y"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-y; }
                             CheckBox { text: "Mirror Z"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-z; }
                         }
-                        if root.transform-mode == 3: ComboBox {
+                        if root.transform-mode == 4: VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                Text { text: "Shift coordinate"; color: #c8ccd4; vertical-alignment: center; }
+                                ComboBox { enabled: !root.has-transform-preview; model: ["X", "Y", "Z"]; current-index <=> root.transform-shear-axis; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "By coordinate"; color: #c8ccd4; vertical-alignment: center; }
+                                ComboBox { enabled: !root.has-transform-preview; model: ["X", "Y", "Z"]; current-index <=> root.transform-shear-reference; }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Factor"; color: #c8ccd4; vertical-alignment: center; }
+                                LineEdit { enabled: !root.has-transform-preview; text <=> root.transform-shear-factor; input-type: decimal; accepted => { root.apply-transform(); } }
+                            }
+                            Text { text: "A factor of 0.5 shifts the chosen coordinate by half the reference distance from the pivot. Choose different axes."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
+                        }
+                        if root.transform-mode >= 3: ComboBox {
                             enabled: !root.has-transform-preview;
                             model: ["World axes", "Local axes"];
                             current-index <=> root.transform-space-index;
@@ -2171,11 +2190,11 @@ export component AppWindow inherits Window {
                         if root.can-apply-material && root.transform-mode < 3: CheckBox { text: "Follow move and rotation"; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
                         if root.can-apply-material && root.transform-mode == 2: CheckBox { text: "Stretch textures when scaling"; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
                         if root.can-apply-material && root.transform-mode == 2: Text { text: root.transform-texture-scale-lock ? "The texture stretches with the brush." : "The texture keeps its size and repeats across the resized brush."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
-                        if root.can-apply-material && root.transform-mode == 3: CheckBox { text: "Mirror textures with geometry"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
-                        if root.transform-mode == 3: Text { text: "Mirrors brushes and brush entities. Point entities and terrain require separate support."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
+                        if root.can-apply-material && root.transform-mode >= 3: CheckBox { text: root.transform-mode == 3 ? "Mirror textures with geometry" : "Keep textures attached while shearing"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
+                        if root.transform-mode >= 3: Text { text: "Edits brushes and brush entities. Point entities and terrain require separate support."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                         if root.transform-mode == 2: Text { text: "Resizes brushes and spaces entity origins."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                         Button {
-                            text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : root.transform-mode == 2 ? "Scale selection" : "Mirror selection";
+                            text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : root.transform-mode == 2 ? "Scale selection" : root.transform-mode == 3 ? "Mirror selection" : "Shear selection";
                             enabled: !root.has-transform-preview;
                             clicked => { root.apply-transform(); }
                         }

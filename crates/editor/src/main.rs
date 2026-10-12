@@ -320,6 +320,12 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
         if spec.reflection.into_iter().any(|axis| axis) {
             app.set_transform_mode(3);
         }
+        if let Some(shear) = spec.shear {
+            app.set_transform_mode(4);
+            app.set_transform_shear_axis(shear.axis as i32);
+            app.set_transform_shear_reference(shear.reference as i32);
+            app.set_transform_shear_factor(shear.factor.to_string().into());
+        }
         app.set_transform_reflect_x(spec.reflection[0]);
         app.set_transform_reflect_y(spec.reflection[1]);
         app.set_transform_reflect_z(spec.reflection[2]);
@@ -933,7 +939,7 @@ fn input_vector(values: [SharedString; 3]) -> Result<DVec3, String> {
 }
 
 fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(), String> {
-    let values = if app.get_transform_mode() == 3 {
+    let values = if app.get_transform_mode() >= 3 {
         DVec3::ZERO
     } else {
         input_vector([
@@ -961,7 +967,17 @@ fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(
                 return Err("Choose at least one mirror axis".into());
             }
         }
-        _ => return Err("Choose Move, Rotate, Scale or Mirror".into()),
+        4 => {
+            transform.shear = Some(map_core::transform::Shear {
+                axis: app.get_transform_shear_axis() as usize,
+                reference: app.get_transform_shear_reference() as usize,
+                factor: app
+                    .get_transform_shear_factor()
+                    .parse()
+                    .map_err(|_| "Enter a numeric shear factor")?,
+            });
+        }
+        _ => return Err("Choose Move, Rotate, Scale, Mirror or Shear".into()),
     }
     transform.basis = session.transform_basis(
         &session.selected_ids(),
@@ -7865,6 +7881,69 @@ mod tests {
 
     use slint::Model;
     use source_formats::vmf::Entity;
+
+    #[test]
+    fn shear_controls_share_numeric_apply_and_agent_draft_values() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let app = AppWindow::new().unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let id = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let before = state.document().vmf().clone();
+        app.set_has_selection(true);
+        app.set_can_apply_material(true);
+        app.set_show_transform(true);
+        app.set_transform_mode(4);
+        app.set_transform_shear_axis(0);
+        app.set_transform_shear_reference(1);
+        app.set_transform_shear_factor("0.5".into());
+        app.set_transform_pivot_mode(1);
+        apply_selection_transform(&app, &mut state).unwrap();
+        let bounds = map_core::query::bounds_of(state.document(), &[id]).unwrap();
+        assert!(bounds.1.abs_diff_eq(DVec3::new(96.0, 64.0, 64.0), 1e-8));
+        state.undo(Actor::User).unwrap();
+        assert_eq!(state.document().vmf(), &before);
+        state
+            .preview_transform(
+                Actor::Agent,
+                &[id],
+                edit::Transform {
+                    shear: Some(map_core::transform::Shear {
+                        axis: 2,
+                        reference: 0,
+                        factor: -0.75,
+                    }),
+                    texture_scale_lock: Some(false),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        refresh_interaction(&app, &state);
+        app.show().unwrap();
+        save_ui_snapshot(app.window(), "brush-shear");
+        assert_eq!(app.get_transform_mode(), 4);
+        assert_eq!(app.get_transform_shear_axis(), 2);
+        assert_eq!(app.get_transform_shear_reference(), 0);
+        assert_eq!(app.get_transform_shear_factor(), "-0.75");
+        assert_dialog_button_visible(&app, "Keep textures attached while shearing");
+        state.cancel_transform_preview();
+        assert_eq!(state.document().vmf(), &before);
+    }
 
     #[test]
     fn mirror_controls_share_brush_transform_and_agent_preview() {

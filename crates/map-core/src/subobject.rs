@@ -30,8 +30,11 @@ pub use partition::{
 mod extrusion;
 pub use extrusion::{
     ExtrusionFace, ExtrusionPiece, ExtrusionPlan, ExtrusionSpec, ExtrusionSurface,
-    MAX_EXTRUSION_PIECES, extrude_partitions, plan_partition_extrusion,
+    MAX_EXTRUSION_PIECES, extrude_partitions, extrude_partitions_with_materials,
+    plan_partition_extrusion, plan_partition_extrusion_with_materials,
 };
+mod partition_materials;
+pub use partition_materials::{PartitionMaterial, crease_partitions_with_materials};
 
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;

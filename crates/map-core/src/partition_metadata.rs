@@ -119,6 +119,20 @@ fn encoded(ids: &[u32]) -> String {
     ids.iter().map(u32::to_string).collect::<Vec<_>>().join(" ")
 }
 
+pub(crate) fn checked_top_material(material: &str) -> Result<&str, String> {
+    if material.len() > MAX_TEXT_BYTES {
+        return Err("Partition metadata exceeds the shared 64 KiB text budget".into());
+    }
+    if material.trim().is_empty() || material.chars().any(char::is_control) {
+        return Err("Planned top materials need nonempty names without control characters".into());
+    }
+    Ok(material.trim())
+}
+
+pub fn normalize_top_material(material: &str) -> Result<String, String> {
+    checked_top_material(material).map(str::to_ascii_uppercase)
+}
+
 impl Intent {
     fn from_partition(partition: &Partition) -> Self {
         Self {
@@ -135,11 +149,7 @@ impl Intent {
 
     fn validate(&self) -> Result<(), String> {
         for material in self.top_materials.iter().flatten() {
-            if material.trim().is_empty() || material.chars().any(char::is_control) {
-                return Err(
-                    "Planned top materials need nonempty names without control characters".into(),
-                );
-            }
+            checked_top_material(material)?;
         }
         if self
             .edge_parameters
@@ -453,6 +463,40 @@ pub fn store(tx: &mut Transaction, request: &Crease) -> Result<(), EditError> {
 }
 
 pub fn store_partition(tx: &mut Transaction, partition: &Partition) -> Result<(), EditError> {
+    store_partition_plan(tx, partition, None)
+}
+
+pub fn store_partition_materials(
+    tx: &mut Transaction,
+    partition: &Partition,
+    materials: &[Option<String>; 2],
+) -> Result<(), EditError> {
+    store_partition_plan(tx, partition, Some(materials))
+}
+
+fn piece_corners(partition: &Partition, piece: &subobject::PartitionLoop) -> BTreeSet<Vec<u32>> {
+    piece
+        .vertices
+        .iter()
+        .filter_map(
+            |vertex| match &partition.vertices[*vertex as usize].source {
+                VertexSource::Corner(sides) => Some(sides.clone()),
+                _ => None,
+            },
+        )
+        .collect()
+}
+
+fn store_partition_plan(
+    tx: &mut Transaction,
+    partition: &Partition,
+    materials: Option<&[Option<String>; 2]>,
+) -> Result<(), EditError> {
+    if let Some(materials) = materials {
+        for material in materials.iter().flatten() {
+            checked_top_material(material).map_err(EditError::Invalid)?;
+        }
+    }
     let mut metadata = Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
     subobject::checked_partition(tx.document(), partition)?;
     let mut intent = Intent::from_partition(partition);
@@ -466,6 +510,20 @@ pub fn store_partition(tx: &mut Transaction, partition: &Partition) -> Result<()
             return Err(EditError::Invalid(
                 "Saved piece materials require unchanged source incidence and cut direction".into(),
             ));
+        }
+    }
+    if let Some(materials) = materials {
+        let resolved = intent.resolve(tx.document()).map_err(EditError::Invalid)?;
+        for piece in &partition.loops {
+            let corners = piece_corners(partition, piece);
+            let target = resolved
+                .loops
+                .iter()
+                .find(|target| piece_corners(&resolved, target) == corners)
+                .ok_or_else(|| {
+                    EditError::Invalid("Planned material piece incidence changed".into())
+                })?;
+            intent.top_materials[target.id as usize] = materials[piece.id as usize].clone();
         }
     }
     metadata.entries.insert(key, intent);
@@ -487,11 +545,11 @@ pub fn set_piece_top_materials(
             "Choose distinct saved piece IDs 0 or 1".into(),
         ));
     }
-    if material.is_some_and(|material| material.len() > MAX_TEXT_BYTES) {
-        return Err(EditError::Invalid(
-            "Partition metadata exceeds the shared 64 KiB text budget".into(),
-        ));
-    }
+    let material = material
+        .map(checked_top_material)
+        .transpose()
+        .map_err(EditError::Invalid)?
+        .map(str::to_ascii_uppercase);
     let mut metadata = Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
     let intent = metadata
         .entries
@@ -503,7 +561,6 @@ pub fn set_piece_top_materials(
         ));
     }
     intent.resolve(tx.document()).map_err(EditError::Invalid)?;
-    let material = material.map(|material| material.trim().to_ascii_uppercase());
     for piece in pieces {
         intent.top_materials[*piece as usize] = material.clone();
     }
@@ -943,6 +1000,83 @@ mod tests {
                 .is_err()
         );
         assert_eq!(document.vmf(), &before);
+    }
+
+    #[test]
+    fn explicit_material_storage_maps_reflected_draft_loops_to_original_piece_identity() {
+        let (mut document, source) = fixture();
+        document.edit("keep", |tx| store(tx, &source)).unwrap();
+        let original = Metadata::parse(document.vmf()).unwrap();
+        document
+            .edit("reflect", |tx| {
+                edit::transform(
+                    tx,
+                    &[ObjectId::Solid(source.solid)],
+                    Transform {
+                        reflection: [true, false, false],
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let current = subobject::plan_partitions(&document, std::slice::from_ref(&source))
+            .unwrap()
+            .remove(0);
+        let materials = [Some("BRICK/RED".into()), Some("WOOD/BLUE".into())];
+        document
+            .edit("planned materials", |tx| {
+                store_partition_materials(tx, &current, &materials)
+            })
+            .unwrap();
+        let metadata = Metadata::parse(document.vmf()).unwrap();
+        assert_eq!(
+            metadata.entries[&(source.solid, source.side)].corners,
+            original.entries[&(source.solid, source.side)].corners
+        );
+        let resolved = metadata.resolve(&document).remove(0).result.unwrap();
+        for (piece, material) in materials.iter().enumerate() {
+            let target = (0..2)
+                .find(|target| membership(&resolved, *target) == membership(&current, piece))
+                .unwrap();
+            assert_eq!(
+                metadata.entries[&(source.solid, source.side)].top_materials[target],
+                *material
+            );
+        }
+        let before = document.vmf().clone();
+        let restored = metadata.entries[&(source.solid, source.side)]
+            .top_materials
+            .clone();
+        document
+            .edit("keep again", |tx| {
+                store_partition_materials(tx, &resolved, &restored)
+            })
+            .unwrap();
+        assert_eq!(document.vmf(), &before);
+        document
+            .edit("inherit", |tx| {
+                store_partition_materials(tx, &resolved, &[None, None])
+            })
+            .unwrap();
+        assert_eq!(
+            Metadata::parse(document.vmf()).unwrap().entries[&(source.solid, source.side)]
+                .top_materials,
+            [None, None]
+        );
+        document.undo().unwrap();
+        assert_eq!(document.vmf(), &before);
+        for invalid in [" ".into(), "a\nb".into(), "x".repeat(MAX_TEXT_BYTES + 1)] {
+            assert!(
+                document
+                    .edit("invalid plan", |tx| store_partition_materials(
+                        tx,
+                        &resolved,
+                        &[Some(invalid), None]
+                    ))
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &before);
+        }
     }
 
     #[test]

@@ -86,11 +86,23 @@ fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
                     };
                     document
                         .edit("extrude", |tx| {
-                            subobject::extrude_partitions(
+                            subobject::extrude_partitions_with_materials(
                                 tx,
                                 &partitions,
                                 &[(id, 0), (id, 1)],
                                 &spec,
+                                &[
+                                    subobject::PartitionMaterial {
+                                        solid: id,
+                                        partition: 0,
+                                        material: "brick/planned_red".into(),
+                                    },
+                                    subobject::PartitionMaterial {
+                                        solid: id,
+                                        partition: 1,
+                                        material: "wood/planned_blue".into(),
+                                    },
+                                ],
                             )
                         })
                         .unwrap();
@@ -98,6 +110,18 @@ fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
                         source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
                             .unwrap();
                     reopened.validate_ids().unwrap();
+                    let tops = reopened
+                        .world
+                        .solids
+                        .iter()
+                        .chain(reopened.entities.iter().flat_map(|entity| &entity.solids))
+                        .flat_map(|solid| &solid.sides)
+                        .filter(|side| {
+                            ["BRICK/PLANNED_RED", "WOOD/PLANNED_BLUE"]
+                                .contains(&side.material.as_str())
+                        })
+                        .count();
+                    assert_eq!(tops, 2);
                     let output = compiler::compile(&reopened, &common::empty_game());
                     assert!(!output.report.has_errors(), "{:?}", output.report);
                     assert!(output.leak.is_none());
@@ -197,6 +221,95 @@ fn saved_flat_partition_intents_leave_native_bsp_bytes_unchanged() {
             assert!(!after.report.has_errors());
             assert!(after.leak.is_none());
             assert_eq!(after.bsp.unwrap().to_bytes(), bytes);
+        }
+    }
+}
+
+#[test]
+fn planned_roof_materials_compile_after_vmf_reopening() {
+    for owned in [false, true] {
+        for direction in 0..2 {
+            let mut document = Document::new(common::room());
+            let ObjectId::Solid(id) = document
+                .edit("block", |tx| {
+                    edit::create_block(
+                        tx,
+                        DVec3::new(0.0, 0.0, 16.0),
+                        DVec3::new(64.0, 64.0, 80.0),
+                        "dev/dev_measuregeneric01",
+                    )
+                })
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            if owned {
+                document
+                    .edit("detail", |tx| {
+                        edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                    })
+                    .unwrap();
+            }
+            let brush = subobject::solid(&document, id).unwrap().1;
+            let side = brush
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let partition = subobject::plan_partitions(
+                &document,
+                &[subobject::Crease {
+                    solid: id,
+                    side,
+                    edges: subobject::crease_pairs(brush, side).unwrap()[direction].edges,
+                }],
+            )
+            .unwrap()
+            .remove(0);
+            document
+                .edit("roof", |tx| {
+                    subobject::crease_partitions_with_materials(
+                        tx,
+                        std::slice::from_ref(&partition),
+                        16.0,
+                        true,
+                        &[
+                            subobject::PartitionMaterial {
+                                solid: id,
+                                partition: 0,
+                                material: "brick/planned_red".into(),
+                            },
+                            subobject::PartitionMaterial {
+                                solid: id,
+                                partition: 1,
+                                material: "wood/planned_blue".into(),
+                            },
+                        ],
+                    )
+                })
+                .unwrap();
+            let reopened =
+                source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
+                    .unwrap();
+            reopened.validate_ids().unwrap();
+            let brush = subobject::solid(&Document::new(reopened.clone()), id)
+                .unwrap()
+                .1
+                .clone();
+            assert_eq!(
+                brush
+                    .sides
+                    .iter()
+                    .filter(|side| ["BRICK/PLANNED_RED", "WOOD/PLANNED_BLUE"]
+                        .contains(&side.material.as_str()))
+                    .count(),
+                2
+            );
+            let output = compiler::compile(&reopened, &common::empty_game());
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            assert!(output.leak.is_none());
+            assert_eq!(output.stats.brushes, 7);
         }
     }
 }

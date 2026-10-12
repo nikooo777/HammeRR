@@ -683,13 +683,18 @@ impl Session {
         self.set_entity_properties(actor, id, &[(key.into(), Some(components.join(" ")))])
     }
 
-    pub fn material_preview(&mut self, name: &str) -> Result<MaterialPreview, String> {
+    pub fn material_preview(&self, name: &str) -> Result<MaterialPreview, String> {
         let name = name.trim();
         if name.is_empty() {
             return Err("material name must not be empty".into());
         }
-        let id = self.materials.load(&self.game, name);
-        let material = self.materials.get(id);
+        let loaded;
+        let material = if let Some(material) = self.materials.find(name) {
+            material
+        } else {
+            loaded = render::materials::MaterialInfo::load(&self.game, name);
+            &loaded
+        };
         let image = material
             .base
             .as_ref()
@@ -1829,6 +1834,7 @@ impl Session {
         } else {
             selected_faces
         };
+        let overlays = self.partition_face_overlays();
         let document = self
             .primitives
             .preview
@@ -1873,12 +1879,13 @@ impl Session {
         } else {
             HashSet::new()
         };
-        let mut mesh = SceneMesh::build_with_faces(
+        let mut mesh = SceneMesh::build_with_face_overlays(
             document.vmf(),
             &self.game,
             &mut self.materials,
             &selected,
             &selected_faces,
+            &overlays,
         );
         if let Some(points) = self.pointfile_points() {
             mesh.set_leak_path(points);

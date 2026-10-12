@@ -296,7 +296,7 @@ impl Session {
             "weld_center":self.component_weld_center()?.map(|center|center.to_array()),
             "crease_choices":self.component_crease_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "weld_targets":self.component_weld_targets()?.iter().map(|(component,position)|json!({"component":component_json(component),"position":position.to_array()})).collect::<Vec<_>>(),
-            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.extrusion.is_some() {"extrusion"} else if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.partitions.len()),"can_apply":preview.extrusion.as_ref().map_or_else(||preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0),|extrusion|preview.partition.as_ref().is_some_and(|draft|draft.selection==extrusion.selection)),"extrusion":preview.extrusion.as_ref().map(extrusion::Draft::report),"partition":preview.partition.as_ref().map(partitions::Draft::report),
+            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.extrusion.is_some() {"extrusion"} else if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.partitions.len()),"can_apply":preview.extrusion.as_ref().map_or_else(||preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0),|extrusion|preview.partition.as_ref().is_some_and(|draft|draft.selection==extrusion.selection)),"extrusion":preview.extrusion.as_ref().map(extrusion::Draft::report),"partition":preview.partition.as_ref().map(|draft|draft.report(&self.document)),
                 "weld_target":preview.weld_target.as_ref().map(weld_target_json),
                 "transform":preview.transform.as_ref().map(|transform|transform_json(&transform.spec,transform.pivot,transform.resolved_pivot)),
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
@@ -811,7 +811,7 @@ impl Session {
             "move brush components"
         };
         let replacements = preview.replacements.clone();
-        let preview_partition = preview.partition.is_some();
+        let preview_partition = preview.partition.clone();
         let selection = preview.selection.clone();
         let rise = preview.split.as_ref().map(|split| split.rise);
         let texture_lock = preview.texture_lock;
@@ -836,14 +836,23 @@ impl Session {
         });
         let result = self.edit(actor, label, |tx| {
             if let Some((requests, rise, roof_texture_lock)) = &crease {
-                let actual =
-                    subobject::crease_with_roof_textures(tx, requests, *rise, *roof_texture_lock)?;
+                let actual = if let Some(draft) = &preview_partition {
+                    subobject::crease_partitions_with_materials(
+                        tx,
+                        &draft.partitions,
+                        *rise,
+                        *roof_texture_lock,
+                        &draft.material_plan(),
+                    )?
+                } else {
+                    subobject::crease_with_roof_textures(tx, requests, *rise, *roof_texture_lock)?
+                };
                 if actual.replacements != replacements {
                     return Err(EditError::Invalid(
                         "Face allocation changed; preview the crease again".into(),
                     ));
                 }
-                if preview_partition {
+                if preview_partition.is_some() {
                     partitions::consume_saved(tx, requests)?;
                 }
                 Ok(actual.replacements.len())

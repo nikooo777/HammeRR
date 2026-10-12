@@ -616,6 +616,13 @@ struct PartitionCutArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PartitionMaterialArgs {
+    token: String,
+    partitions: Vec<crate::session::components::PartitionRef>,
+    material: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ExtrudePartitionArgs {
     token: String,
     height: f64,
@@ -3389,7 +3396,25 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview outward extrusion of the highlighted flat partition pieces into separate convex brushes. Requires a current flat-partition token; select 1–32 pieces using select_component_partitions across 1–16 source brushes. height is 0.125–4096 world units along each original face normal. Source brushes and saved partition intents remain unchanged. World sources add world children; brush-entity sources add children to the same entity. Each prism has fresh solid/side IDs, a top and base inheriting the source face, three boundary walls inheriting neighboring faces, and a divider inheriting the source face. Walls receive new world UV axes; optional wall_material overrides all four walls. texture_lock defaults false; true attaches only top UVs to corresponding corners. Inspect preview.extrusion for allocated IDs, provenance, owners, bounds and all face planes/materials/UVs. Updates rebuild from the original source and replace the token; invalid updates retain the last valid preview. Frame and pick the visible prisms through the existing partition tools. Changing highlights requires another preview before Apply. commit_component_edit verifies exact replay, adds all volumes in one undo step and selects their faces. Cancel discards geometry and allocations. raise_component_partition with zero returns to flat. Save/build/play remain guarded until Apply or Cancel."
+        description = "Set the planned top material on 1–32 distinct pieces of the current flat partition draft. Supply current token and explicit partitions [{solid,partition}]; material is a Source material name, or null/omitted to restore inheritance from the source face. Return to flat before changing materials. Shares the human material controls. Returns a replacement token and explicit/effective material per loop. Invalid, stale or over-budget updates retain the previous draft. Keep persists bounded editor intent without changing source faces; Cancel stores nothing. Raising applies the plan to corresponding roof faces; extrusion applies it only to prism tops, retaining original bases and wall policy. UVs and other surface settings retain the source policy."
+    )]
+    fn update_component_partition_material(
+        &self,
+        Parameters(args): Parameters<PartitionMaterialArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.update_component_partition_material(
+                parse_token(&args.token)?,
+                &args.partitions,
+                args.material.as_deref(),
+            )?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Preview outward extrusion of the highlighted flat partition pieces into separate convex brushes. Requires a current flat-partition token; select 1–32 pieces using select_component_partitions across 1–16 source brushes. height is 0.125–4096 world units along each original face normal. Source brushes and saved partition intents remain unchanged. World sources add world children; brush-entity sources add children to the same entity. Each prism has fresh solid/side IDs, a top using its planned material or source inheritance, a base inheriting the original source face, three boundary walls inheriting neighboring faces, and a divider inheriting the source face. Walls receive new world UV axes; optional wall_material overrides all four walls. texture_lock defaults false; true attaches only top UVs to corresponding corners. Inspect preview.extrusion for allocated IDs, provenance, owners, bounds and all face planes/materials/UVs. Updates rebuild from the original source and replace the token; invalid updates retain the last valid preview. Frame and pick the visible prisms through the existing partition tools. Changing highlights requires another preview before Apply. commit_component_edit verifies exact replay, adds all volumes in one undo step and selects their faces. Cancel discards geometry and allocations. raise_component_partition with zero returns to flat. Save/build/play remain guarded until Apply or Cancel."
     )]
     fn preview_partition_extrusion(
         &self,

@@ -366,11 +366,77 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 parts.push(ComponentRow {
                     key: format!("{solid}:{id}").into(),
                     label: format!("Brush {solid} · piece {}", id + 1).into(),
-                    detail: "".into(),
+                    detail: format!(
+                        "{}{}",
+                        piece["effective_material"]
+                            .as_str()
+                            .unwrap_or("Unavailable"),
+                        if piece["inherited"] == true {
+                            " (inherited)"
+                        } else {
+                            " (planned)"
+                        }
+                    )
+                    .into(),
                     selected: piece["selected"].as_bool().unwrap(),
                 });
             }
         }
+    }
+    let highlighted = partition["partitions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|part| {
+            part["loops"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|piece| piece["selected"] == true)
+        })
+        .collect::<Vec<_>>();
+    let scope = format!(
+        "{}:{}",
+        session.component_stamp(),
+        serde_json::json!(partition["selection"])
+    );
+    window.set_has_material_targets(!highlighted.is_empty());
+    if window.get_top_material_scope() != scope {
+        let names = highlighted
+            .iter()
+            .filter_map(|piece| piece["effective_material"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let material = if names.len() == 1 {
+            names.first().copied().unwrap_or("")
+        } else {
+            ""
+        };
+        window.set_top_material(material.into());
+        window.set_top_material_baseline(material.into());
+        window.set_top_material_scope(scope.into());
+        window.set_top_material_preview(
+            session
+                .material_preview(material)
+                .ok()
+                .map(|preview| crate::preview_image(&preview))
+                .unwrap_or_default(),
+        );
+        window.set_top_material_summary(if highlighted.is_empty() {
+            "Highlight pieces to choose their top material".into()
+        } else {
+            format!(
+                "{} highlighted · {}",
+                highlighted.len(),
+                if names.len() > 1 {
+                    "mixed materials"
+                } else if highlighted.iter().all(|piece| piece["inherited"] == true) {
+                    "inherited from source"
+                } else {
+                    "planned material"
+                }
+            )
+            .into()
+        });
     }
     window.set_partition_rows(Rc::new(VecModel::from(parts)).into());
     let center = session.component_center().ok().flatten();
@@ -723,6 +789,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
             && window.get_operation() == operation
+            && (!partition || window.get_top_material()==window.get_top_material_baseline())
             && (!partition || cut_inputs_match(window,&preview["partition"]["edge_parameters"]))
             && (if transform {
                 window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
@@ -861,6 +928,53 @@ fn extrusion_inputs(
     })
 }
 
+pub type PartitionMaterialTarget = (
+    Option<u64>,
+    u64,
+    Vec<crate::session::components::PartitionRef>,
+);
+
+pub fn partition_material_target(session: &Session) -> PartitionMaterialTarget {
+    let report = session.component_report(&[]).unwrap();
+    let pieces = report["preview"]["partition"]["selection"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|piece| crate::session::components::PartitionRef {
+            solid: piece["solid"].as_u64().unwrap() as u32,
+            partition: piece["partition"].as_u64().unwrap() as u32,
+        })
+        .collect();
+    (
+        session.partition_preview_token(),
+        session.document_generation(),
+        pieces,
+    )
+}
+
+pub fn choose_partition_material(
+    window: &ComponentsWindow,
+    session: &mut Session,
+    target: &PartitionMaterialTarget,
+    material: Option<&str>,
+) -> Result<(), String> {
+    if target != &partition_material_target(session)
+        || window.get_token().parse::<u64>().ok() != target.0
+    {
+        return Err(
+            "Map, preview or highlighted pieces changed; choose the top material again".into(),
+        );
+    }
+    session.update_component_partition_material(
+        target.0.ok_or("Stage a partition first")?,
+        &target.2,
+        material,
+    )?;
+    refresh(window, session);
+    window.set_message("Top material plan updated. Keep the pieces or preview geometry.".into());
+    Ok(())
+}
+
 pub fn choose_extrusion_material(
     window: &ComponentsWindow,
     session: &mut Session,
@@ -951,6 +1065,32 @@ fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
 }
 
 pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    window.on_preview_partition_material({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let target = partition_material_target(&session);
+            let material = window.get_top_material();
+            let result =
+                choose_partition_material(&window, &mut session, &target, Some(material.as_str()));
+            if let Err(error) = result {
+                window.set_message(error.into());
+            }
+        }
+    });
+    window.on_inherit_partition_material({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let target = partition_material_target(&session);
+            let result = choose_partition_material(&window, &mut session, &target, None);
+            if let Err(error) = result {
+                window.set_message(error.into());
+            }
+        }
+    });
     window.on_resume_saved_partition({
         let (window, shared) = (window.as_weak(), shared.clone());
         move || saved_partition_action(&window.unwrap(), &shared, false)
@@ -1315,7 +1455,9 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
             let result = if window.get_operation() == 6 {
-                if window.get_has_partition_preview() && !cut_inputs_match(&window,&session.component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"]) {
+                if window.get_has_partition_preview() && window.get_top_material()!=window.get_top_material_baseline() {
+                    Err("Preview the planned top material before raising or extruding".into())
+                } else if window.get_has_partition_preview() && !cut_inputs_match(&window,&session.component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"]) {
                     Err("Preview the cut positions before raising or extruding".into())
                 } else if window.get_has_partition_preview() && window.get_partition_mode() == 1 {
                     extrusion_inputs(&window).and_then(|spec| {

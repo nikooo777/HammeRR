@@ -41,7 +41,13 @@ impl Session {
         let mut document = self.document.preview_snapshot();
         let plan = document
             .edit("preview partition extrusion", |tx| {
-                subobject::extrude_partitions(tx, &draft.partitions, &selection, &spec)
+                subobject::extrude_partitions_with_materials(
+                    tx,
+                    &draft.partitions,
+                    &selection,
+                    &spec,
+                    &draft.material_plan(),
+                )
             })
             .map_err(|error| error.to_string())?;
         Ok(self.install_component_preview(Preview {
@@ -69,6 +75,7 @@ impl Session {
             );
         }
         let partitions = draft.partitions.clone();
+        let materials = draft.material_plan();
         let selection = extrusion
             .selection
             .iter()
@@ -87,7 +94,13 @@ impl Session {
             })
             .collect::<Vec<_>>();
         let count = self.edit(actor, "extrude flat partition pieces", |tx| {
-            let actual = subobject::extrude_partitions(tx, &partitions, &selection, &spec)?;
+            let actual = subobject::extrude_partitions_with_materials(
+                tx,
+                &partitions,
+                &selection,
+                &spec,
+                &materials,
+            )?;
             if actual != expected {
                 return Err(EditError::Invalid(
                     "Extrusion allocation changed; preview the pieces again".into(),

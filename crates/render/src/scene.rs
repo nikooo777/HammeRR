@@ -77,7 +77,15 @@ pub struct SceneMesh {
     pub stats: SceneStats,
 }
 
+#[derive(Debug, Clone)]
+pub struct FaceOverlay {
+    pub source: FaceId,
+    pub points: [DVec3; 4],
+    pub material: String,
+}
+
 struct Builder<'a> {
+    overlays: &'a [FaceOverlay],
     selected_faces: &'a HashSet<FaceId>,
     fs: &'a GameFs,
     library: &'a mut MaterialLibrary,
@@ -157,28 +165,73 @@ impl Builder<'_> {
                 }
                 (None, true) => {}
                 (None, false) => {
-                    self.push_wire_loop(face.vertices.iter().map(|p| p.as_vec3()), tool);
-                    let normal = face.plane.normal.as_vec3().to_array();
-                    let first = self.vertices.len() as u32;
-                    for &p in &face.vertices {
-                        self.push_vertex(Vertex {
-                            position: p.as_vec3().to_array(),
-                            normal,
-                            uv: uv(p),
-                            color: [tint[0], tint[1], tint[2], 0],
-                            lightmap: lightmap_vertex(side, p),
-                            smoothing: side.smoothing_groups.unwrap_or(0),
-                        });
-                    }
-                    let indices = &mut self.indices[material];
-                    for i in 1..face.vertices.len() as u32 - 1 {
-                        indices.extend([first, first + i, first + i + 1]);
-                    }
-                    if selected {
-                        self.push_loop(face.vertices.iter().map(|p| p.as_vec3()));
+                    let overlays = self
+                        .overlays
+                        .iter()
+                        .filter(|overlay| {
+                            overlay.source
+                                == FaceId {
+                                    solid: solid.id,
+                                    side: side.id,
+                                }
+                        })
+                        .collect::<Vec<_>>();
+                    if overlays.is_empty() {
+                        self.add_polygon(
+                            side,
+                            &face.vertices,
+                            face.plane.normal,
+                            &side.material,
+                            tint,
+                            selected,
+                        );
+                    } else {
+                        for overlay in overlays {
+                            self.add_polygon(
+                                side,
+                                &overlay.points,
+                                face.plane.normal,
+                                &overlay.material,
+                                tint,
+                                selected,
+                            );
+                        }
                     }
                 }
             }
+        }
+    }
+
+    fn add_polygon(
+        &mut self,
+        side: &source_formats::vmf::Side,
+        points: &[DVec3],
+        normal: DVec3,
+        name: &str,
+        tint: [u8; 3],
+        selected: bool,
+    ) {
+        let material = self.material(name);
+        let info = self.library.get(material);
+        let tool = info.tool;
+        let size = glam::DVec2::new(f64::from(info.width), f64::from(info.height));
+        self.push_wire_loop(points.iter().map(|point| point.as_vec3()), tool);
+        let first = self.vertices.len() as u32;
+        for &point in points {
+            self.push_vertex(Vertex {
+                position: point.as_vec3().to_array(),
+                normal: normal.as_vec3().to_array(),
+                uv: (texel_uv(side, point) / size).as_vec2().to_array(),
+                color: [tint[0], tint[1], tint[2], 0],
+                lightmap: lightmap_vertex(side, point),
+                smoothing: side.smoothing_groups.unwrap_or(0),
+            });
+        }
+        for index in 1..points.len() as u32 - 1 {
+            self.indices[material].extend([first, first + index, first + index + 1]);
+        }
+        if selected {
+            self.push_loop(points.iter().map(|point| point.as_vec3()));
         }
     }
 
@@ -587,7 +640,19 @@ impl SceneMesh {
         selected: &HashSet<ObjectId>,
         selected_faces: &HashSet<FaceId>,
     ) -> Self {
+        Self::build_with_face_overlays(vmf, fs, library, selected, selected_faces, &[])
+    }
+
+    pub fn build_with_face_overlays(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selected: &HashSet<ObjectId>,
+        selected_faces: &HashSet<FaceId>,
+        overlays: &[FaceOverlay],
+    ) -> Self {
         let mut builder = Builder {
+            overlays,
             selected_faces,
             fs,
             library,

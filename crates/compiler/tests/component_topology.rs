@@ -5,6 +5,99 @@ use map_core::{Document, ObjectId, edit, subobject};
 use source_formats::bsp::{Brush, Face, Plane};
 
 #[test]
+fn repeatedly_rotated_thin_slope_compiles_inside_a_sealed_room() {
+    let source = source_formats::vmf::Vmf::parse(include_str!("fixtures/thin_slope.vmf")).unwrap();
+    let mut document = Document::new(common::room());
+    let ObjectId::Solid(id) = document
+        .edit("thin slope", |tx| {
+            let ObjectId::Solid(id) =
+                edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "brick/test")?
+            else {
+                unreachable!()
+            };
+            for (target, source) in tx
+                .solid_mut(id)?
+                .sides
+                .iter_mut()
+                .zip(&source.world.solids[0].sides)
+            {
+                let id = target.id;
+                *target = source.clone();
+                target.id = id;
+            }
+            Ok(ObjectId::Solid(id))
+        })
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let shape = subobject::topology(document.solid(id).unwrap()).unwrap();
+    let components = shape
+        .faces
+        .iter()
+        .map(|face| subobject::Component {
+            solid: id,
+            sides: vec![face.side],
+        })
+        .collect::<Vec<_>>();
+    let pivot = subobject::component_center(&document, &components).unwrap();
+    for degrees in [DVec3::X * 17.0, DVec3::Y * -23.0, DVec3::Z * 31.0] {
+        for degrees in [degrees, -degrees] {
+            let plan = subobject::plan_transform(
+                &document,
+                &components,
+                &subobject::ComponentTransform::Rotate(degrees),
+                Some(pivot),
+                true,
+            )
+            .unwrap();
+            document
+                .edit("rotate slope", |tx| {
+                    subobject::apply(tx, &plan.replacements)
+                })
+                .unwrap();
+            let reopened =
+                source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
+                    .unwrap();
+            reopened.validate_ids().unwrap();
+            document = Document::try_new(reopened).unwrap();
+        }
+    }
+    let after = subobject::topology(document.solid(id).unwrap()).unwrap();
+    for vertex in &shape.vertices {
+        assert!(
+            after.vertices[after.resolve(&vertex.sides).unwrap()[0]]
+                .position
+                .abs_diff_eq(vertex.position, 1e-6)
+        );
+    }
+    document
+        .edit("place slope in room", |tx| {
+            map_core::transform::transform(
+                tx,
+                &[ObjectId::Solid(id)],
+                map_core::transform::Transform {
+                    translation: DVec3::new(-4162.0, -5836.0, 16.0),
+                    texture_lock: true,
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let vmf = source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+    vmf.validate_ids().unwrap();
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.leak.is_none());
+    assert_eq!(output.stats.brushes, 7);
+    let bsp = output.bsp.unwrap();
+    assert!(!bsp.records::<Face>().unwrap().is_empty());
+    assert!(bsp.records::<Plane>().unwrap().iter().all(|plane| {
+        plane.dist.is_finite() && plane.normal.iter().all(|value| value.is_finite())
+    }));
+}
+
+#[test]
 fn welded_pyramid_compiles_inside_a_sealed_room_after_vmf_round_trip() {
     for target in [
         subobject::WeldTarget::Mean,

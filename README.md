@@ -926,7 +926,10 @@ and redo must be exact. Affine cycles use a fixed world pivot and mathematically
 inverted compound rotations. `validate_precision_cycles.py` checks translation
 by default; `--operation scale` or `--operation rotate` checks those shared
 operations through private headless MCP sessions. Round trips through other
-editors remain unverified.
+editors remain unverified. These tolerances describe editable VMF geometry;
+BSP uses float32 values and compiler plane snapping. A rotated thin-slope fixture
+also compiles inside a sealed room; exact export/runtime precision is a separate
+validation requirement.
 
 `preview_component_scale` accepts positive XYZ `factors`;
 `preview_component_rotate` accepts XYZ `degrees`. Both require the latest

@@ -168,4 +168,44 @@ mod tests {
                 .all(|point| plane.distance_to(**point).abs() < 1e-12)
         );
     }
+
+    #[test]
+    fn clipping_preserves_minor_slopes_for_every_signed_major_axis() {
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                for slope in [-1e-8, 1e-8] {
+                    let next = (axis + 1) % 3;
+                    let other = (axis + 2) % 3;
+                    let mut normal = DVec3::ZERO;
+                    normal[axis] = sign;
+                    normal[next] = slope;
+                    normal[other] = -0.75e-8;
+                    let plane = Plane {
+                        normal,
+                        dist: 0.051_596,
+                    };
+                    let points = [(-1.0, 3928.0), (-1.0, 4396.0), (1.0, 4396.0), (1.0, 3928.0)]
+                        .map(|(along, across)| {
+                            let mut point = DVec3::ZERO;
+                            point[axis] = along;
+                            point[next] = 5784.0;
+                            point[other] = across;
+                            point
+                        });
+                    let clipped = plane.clip_behind(&points);
+                    assert_eq!(clipped.len(), 4);
+                    let crossings = clipped
+                        .iter()
+                        .filter(|point| point[axis].abs() < 0.5)
+                        .collect::<Vec<_>>();
+                    assert_eq!(crossings.len(), 2);
+                    assert!(
+                        crossings
+                            .iter()
+                            .all(|point| plane.distance_to(**point).abs() < 1e-12)
+                    );
+                }
+            }
+        }
+    }
 }

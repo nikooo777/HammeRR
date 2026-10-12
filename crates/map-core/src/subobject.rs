@@ -23,6 +23,11 @@ pub use crease::{
 };
 mod partition;
 pub use partition::{Partition, PartitionLoop, PartitionVertex, VertexSource, plan_partitions};
+mod extrusion;
+pub use extrusion::{
+    ExtrusionFace, ExtrusionPiece, ExtrusionPlan, ExtrusionSpec, ExtrusionSurface,
+    MAX_EXTRUSION_PIECES, extrude_partitions, plan_partition_extrusion,
+};
 
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;

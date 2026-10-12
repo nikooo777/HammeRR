@@ -5,6 +5,70 @@ use map_core::{Document, ObjectId, edit, subobject};
 use source_formats::bsp::{Brush, Face, Plane};
 
 #[test]
+fn reflected_oblique_brushes_compile_after_vmf_round_trip() {
+    for reflection in [
+        [true, false, false],
+        [true, true, false],
+        [true, true, true],
+    ] {
+        let mut document = Document::new(common::room());
+        let id = document
+            .edit("brush", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::ZERO,
+                    DVec3::splat(64.0),
+                    "dev/dev_measuregeneric01",
+                )
+            })
+            .unwrap();
+        document
+            .edit("rotate", |tx| {
+                map_core::transform::transform(
+                    tx,
+                    &[id],
+                    map_core::transform::Transform {
+                        rotation: DVec3::new(17.0, -23.0, 31.0),
+                        pivot: DVec3::splat(32.0),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        document
+            .edit("mirror", |tx| {
+                map_core::transform::transform(
+                    tx,
+                    &[id],
+                    map_core::transform::Transform {
+                        reflection,
+                        basis: glam::DMat3::from_rotation_z(0.37),
+                        pivot: DVec3::new(32.125, 32.25, 64.5),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let vmf =
+            source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+        vmf.validate_ids().unwrap();
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.leak.is_none());
+        assert_eq!(output.stats.brushes, 7);
+        let bsp = output.bsp.unwrap();
+        assert!(!bsp.records::<Face>().unwrap().is_empty());
+        assert!(
+            bsp.records::<Plane>()
+                .unwrap()
+                .iter()
+                .all(|plane| plane.dist.is_finite()
+                    && plane.normal.iter().all(|value| value.is_finite()))
+        );
+    }
+}
+
+#[test]
 fn repeatedly_rotated_thin_slope_compiles_inside_a_sealed_room() {
     let source = source_formats::vmf::Vmf::parse(include_str!("fixtures/thin_slope.vmf")).unwrap();
     let mut document = Document::new(common::room());

@@ -317,6 +317,12 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
     });
     if let Some(preview) = session.transform_preview() {
         let spec = preview.transform;
+        if spec.reflection.into_iter().any(|axis| axis) {
+            app.set_transform_mode(3);
+        }
+        app.set_transform_reflect_x(spec.reflection[0]);
+        app.set_transform_reflect_y(spec.reflection[1]);
+        app.set_transform_reflect_z(spec.reflection[2]);
         let translation = spec.basis.transpose() * spec.translation;
         app.set_transform_preview_values(
             Rc::new(VecModel::from(
@@ -927,11 +933,15 @@ fn input_vector(values: [SharedString; 3]) -> Result<DVec3, String> {
 }
 
 fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(), String> {
-    let values = input_vector([
-        app.get_transform_x(),
-        app.get_transform_y(),
-        app.get_transform_z(),
-    ])?;
+    let values = if app.get_transform_mode() == 3 {
+        DVec3::ZERO
+    } else {
+        input_vector([
+            app.get_transform_x(),
+            app.get_transform_y(),
+            app.get_transform_z(),
+        ])?
+    };
     let mut transform = edit::Transform {
         texture_lock: app.get_transform_texture_lock(),
         texture_scale_lock: Some(app.get_transform_texture_scale_lock()),
@@ -941,7 +951,17 @@ fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(
         0 => transform.translation = values,
         1 => transform.rotation = values,
         2 => transform.scale = values,
-        _ => return Err("Choose Move, Rotate or Scale".into()),
+        3 => {
+            transform.reflection = [
+                app.get_transform_reflect_x(),
+                app.get_transform_reflect_y(),
+                app.get_transform_reflect_z(),
+            ];
+            if !transform.reflection.into_iter().any(|axis| axis) {
+                return Err("Choose at least one mirror axis".into());
+            }
+        }
+        _ => return Err("Choose Move, Rotate, Scale or Mirror".into()),
     }
     transform.basis = session.transform_basis(
         &session.selected_ids(),
@@ -7845,6 +7865,81 @@ mod tests {
 
     use slint::Model;
     use source_formats::vmf::Entity;
+
+    #[test]
+    fn mirror_controls_share_brush_transform_and_agent_preview() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let app = AppWindow::new().unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let id = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let before = state.document().vmf().clone();
+        app.set_has_selection(true);
+        app.set_can_apply_material(true);
+        app.set_show_transform(true);
+        app.set_transform_mode(3);
+        app.set_transform_reflect_x(true);
+        app.set_transform_reflect_y(false);
+        app.set_transform_reflect_z(false);
+        app.set_transform_pivot_mode(1);
+        apply_selection_transform(&app, &mut state).unwrap();
+        let bounds = map_core::query::bounds_of(state.document(), &[id]).unwrap();
+        assert!(bounds.0.abs_diff_eq(DVec3::new(-64.0, 0.0, 0.0), 1e-8));
+        state.undo(Actor::User).unwrap();
+        assert_eq!(state.document().vmf(), &before);
+        state
+            .preview_transform(
+                Actor::Agent,
+                &[id],
+                edit::Transform {
+                    reflection: [false, true, true],
+                    texture_scale_lock: Some(false),
+                    ..Default::default()
+                },
+                Some(DVec3::new(12.125, 7.25, 3.5)),
+            )
+            .unwrap();
+        refresh_interaction(&app, &state);
+        app.show().unwrap();
+        save_ui_snapshot(app.window(), "brush-reflection");
+        assert_eq!(app.get_transform_mode(), 3);
+        assert!(!app.get_transform_reflect_x());
+        assert!(app.get_transform_reflect_y());
+        assert!(app.get_transform_reflect_z());
+        assert!(!app.get_transform_texture_scale_lock());
+        for label in [
+            "Mirror X",
+            "Mirror Y",
+            "Mirror Z",
+            "Mirror textures with geometry",
+        ] {
+            assert_dialog_button_visible(&app, label);
+        }
+        state.cancel_transform_preview();
+        assert_eq!(state.document().vmf(), &before);
+        app.set_transform_reflect_y(false);
+        app.set_transform_reflect_z(false);
+        assert!(
+            apply_selection_transform(&app, &mut state)
+                .unwrap_err()
+                .contains("at least one")
+        );
+        assert_eq!(state.document().vmf(), &before);
+    }
 
     #[test]
     fn independent_texture_controls_share_numeric_and_agent_preview_modes() {

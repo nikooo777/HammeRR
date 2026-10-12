@@ -24,6 +24,17 @@ export component ComponentsWindow inherits Window {
     in property <string> picking-summary;
     in-out property <int> kind;
     in-out property <int> operation;
+    in-out property <string> scale-x: "0.5";
+    in-out property <string> scale-y: "0.5";
+    in-out property <string> scale-z: "1";
+    in-out property <string> rotate-x: "30";
+    in-out property <string> rotate-y: "0";
+    in-out property <string> rotate-z: "0";
+    in-out property <int> pivot-mode;
+    in-out property <string> pivot-x: "0";
+    in-out property <string> pivot-y: "0";
+    in-out property <string> pivot-z: "0";
+    in property <string> transform-center;
     in-out property <int> weld-target-mode;
     in-out property <int> weld-corner;
     in property <[string]> weld-corner-labels;
@@ -47,6 +58,7 @@ export component ComponentsWindow inherits Window {
     callback edited();
     callback choose-rise(float);
     callback choose-weld-mode();
+    callback choose-pivot();
     callback move-options();
     callback preview-edit();
     callback discard-preview();
@@ -59,7 +71,7 @@ export component ComponentsWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Move components, weld corners, or split a face or edge to add a raised corner."; color: #aeb9c8; }
+            Text { text: "Move, scale or rotate components. Weld corners, or split a face or edge to raise a new corner."; color: #aeb9c8; }
             HorizontalLayout {
                 spacing: 20px;
                 VerticalLayout {
@@ -88,7 +100,7 @@ export component ComponentsWindow inherits Window {
                 }
                 VerticalLayout {
                     width: 290px; spacing: 12px;
-                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise"]; current-index <=> root.operation; selected => { root.edited(); } }
+                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection"]; current-index <=> root.operation; selected => { root.edited(); } }
                     if root.operation == 0: VerticalLayout {
                     spacing: 12px;
                     CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
@@ -140,7 +152,29 @@ export component ComponentsWindow inherits Window {
                         Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         Text { text: "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
-                    Button { text: root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
+                    if root.operation >= 3: VerticalLayout {
+                        spacing: 10px;
+                        Text { text: root.operation == 3 ? "Scale factors · 1 = original size" : "Angles · degrees around world axes"; wrap: word-wrap; font-weight: 600; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout { spacing: 4px; Text { text: "X"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-x : root.rotate-x; input-type: decimal; accessible-label: "Component transform X"; edited(value) => { if root.operation == 3 { root.scale-x = value; } else { root.rotate-x = value; } root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Y"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-y : root.rotate-y; input-type: decimal; accessible-label: "Component transform Y"; edited(value) => { if root.operation == 3 { root.scale-y = value; } else { root.rotate-y = value; } root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Z · up"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-z : root.rotate-z; input-type: decimal; accessible-label: "Component transform Z"; edited(value) => { if root.operation == 3 { root.scale-z = value; } else { root.rotate-z = value; } root.edited(); } } }
+                        }
+                        Text { text: "Pivot"; font-weight: 600; }
+                        ComboBox { model: ["Center of selected components", "World position"]; current-index <=> root.pivot-mode; selected => { root.choose-pivot(); } }
+                        if root.pivot-mode == 0: Text { text: root.transform-center; wrap: word-wrap; color: #aeb9c8; }
+                        if root.pivot-mode == 1: HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout { spacing: 4px; Text { text: "X"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-x; input-type: decimal; accessible-label: "Component pivot X"; edited => { root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Y"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-y; input-type: decimal; accessible-label: "Component pivot Y"; edited => { root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Z"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-z; input-type: decimal; accessible-label: "Component pivot Z"; edited => { root.edited(); } } }
+                        }
+                        CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
+                        Text { text: "Unselected corners stay in place. Faces must remain flat and the brush convex."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    }
+                    Button { text: root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                     Rectangle { vertical-stretch: 1; }
@@ -153,7 +187,7 @@ export component ComponentsWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

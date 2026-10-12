@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use glam::DVec3;
+use glam::{DMat3, DVec3};
 use source_formats::vmf::Solid;
 
 use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction};
+
+mod transform;
+pub use transform::{ComponentTransform, TransformPlan, component_center, plan_transform};
 
 mod weld;
 pub use weld::{WeldChange, WeldPlan, WeldTarget, plan_weld, plan_weld_target};
@@ -245,13 +248,23 @@ pub fn plan_move_with_texture_lock(
     delta: DVec3,
     texture_lock: bool,
 ) -> Result<Vec<Replacement>, EditError> {
-    if components.is_empty() || components.len() > MAX_COMPONENTS {
-        return Err(invalid("Select between 1 and 512 faces, vertices or edges"));
-    }
     if !delta.is_finite() || delta.abs().max_element() > MAX_COORDINATE || delta == DVec3::ZERO {
         return Err(invalid(
             "Move needs a finite nonzero offset within ±65536 units",
         ));
+    }
+    plan_affine(document, components, DMat3::IDENTITY, delta, texture_lock)
+}
+
+fn plan_affine(
+    document: &Document,
+    components: &[Component],
+    linear: DMat3,
+    offset: DVec3,
+    texture_lock: bool,
+) -> Result<Vec<Replacement>, EditError> {
+    if components.is_empty() || components.len() > MAX_COMPONENTS {
+        return Err(invalid("Select between 1 and 512 faces, vertices or edges"));
     }
     let mut grouped: BTreeMap<u32, Vec<&Component>> = BTreeMap::new();
     for component in components {
@@ -267,7 +280,7 @@ pub fn plan_move_with_texture_lock(
         let (owner, source) = solid(document, id)?;
         if source.sides.iter().any(|side| side.displacement.is_some()) {
             return Err(invalid(format!(
-                "Brush {id} has displacements; component movement is unsupported"
+                "Brush {id} has displacements; component transforms are unsupported"
             )));
         }
         let topology = topology(source)?;
@@ -280,12 +293,11 @@ pub fn plan_move_with_texture_lock(
             .iter()
             .enumerate()
             .map(|(index, vertex)| {
-                vertex.position
-                    + if selected.contains(&index) {
-                        delta
-                    } else {
-                        DVec3::ZERO
-                    }
+                if selected.contains(&index) {
+                    linear * vertex.position + offset
+                } else {
+                    vertex.position
+                }
             })
             .collect::<Vec<_>>();
         if positions
@@ -293,13 +305,13 @@ pub fn plan_move_with_texture_lock(
             .any(|point| !point.is_finite() || point.abs().max_element() > MAX_COORDINATE)
         {
             return Err(invalid(format!(
-                "Brush {id}: moved vertices exceed ±65536 units"
+                "Brush {id}: transformed vertices exceed ±65536 units"
             )));
         }
         for edge in &topology.edges {
             if positions[edge.vertices[0]].distance(positions[edge.vertices[1]]) <= MIN_EDGE {
                 return Err(invalid(format!(
-                    "Brush {id}: move collapses edge {:?}",
+                    "Brush {id}: transform collapses edge {:?}",
                     edge.sides
                 )));
             }
@@ -324,7 +336,7 @@ pub fn plan_move_with_texture_lock(
             let triple = if moved == 0 {
                 original.plane.0
             } else if moved == face.vertices.len() {
-                original.plane.0.map(|point| point + delta)
+                original.plane.0.map(|point| linear * point + offset)
             } else {
                 let area = |points: &[DVec3; 3]| {
                     (points[0] - points[1])
@@ -338,18 +350,23 @@ pub fn plan_move_with_texture_lock(
                     .filter(|points| area(points) > EPSILON * EPSILON)
                     .ok_or_else(|| {
                         invalid(format!(
-                            "Brush {id}, face {}: move collapses the face",
+                            "Brush {id}, face {}: transform collapses the face",
                             face.side
                         ))
                     })?
             };
-            let plane = Plane::from_points(triple).unwrap();
+            let plane = Plane::from_points(triple).ok_or_else(|| {
+                invalid(format!(
+                    "Brush {id}, face {}: transform collapses the plane",
+                    face.side
+                ))
+            })?;
             if ring
                 .iter()
                 .any(|point| plane.distance_to(*point).abs() > EPSILON)
             {
                 return Err(invalid(format!(
-                    "Brush {id}, face {}: move makes the face nonplanar; move the whole edge or face together",
+                    "Brush {id}, face {}: transform makes the face nonplanar; move the whole edge or face together",
                     face.side
                 )));
             }
@@ -358,7 +375,7 @@ pub fn plan_move_with_texture_lock(
                 .any(|point| plane.distance_to(*point) > EPSILON)
             {
                 return Err(invalid(format!(
-                    "Brush {id}, face {}: move makes the brush concave or inverted",
+                    "Brush {id}, face {}: transform makes the brush concave or inverted",
                     face.side
                 )));
             }
@@ -389,7 +406,7 @@ pub fn plan_move_with_texture_lock(
             || rebuilt.edges.len() != topology.edges.len()
         {
             return Err(invalid(format!(
-                "Brush {id}: move changes topology; splitting and welding are not supported"
+                "Brush {id}: transform changes topology; use split or weld explicitly"
             )));
         }
         for (index, vertex) in topology.vertices.iter().enumerate() {
@@ -398,7 +415,7 @@ pub fn plan_move_with_texture_lock(
                     && after.position.distance(positions[index]) < EPSILON * 10.0
             }) {
                 return Err(invalid(format!(
-                    "Brush {id}: move changes vertex identity or enclosed geometry"
+                    "Brush {id}: transform changes vertex identity or enclosed geometry"
                 )));
             }
         }

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use glam::DVec3;
-use map_core::subobject::{Component, WeldTarget};
+use map_core::subobject::{Component, ComponentTransform, WeldTarget};
 use slint::{ComponentHandle, Model, VecModel};
 
 use crate::mcp::{SharedSession, lock};
@@ -82,8 +82,55 @@ fn weld_target(window: &ComponentsWindow, session: &Session) -> Result<WeldTarge
     }
 }
 
+fn vector(values: [slint::SharedString; 3]) -> Result<DVec3, String> {
+    let mut result = DVec3::ZERO;
+    for (index, value) in values.iter().enumerate() {
+        result[index] = value
+            .trim()
+            .parse()
+            .map_err(|_| "Enter numeric X, Y and Z values".to_string())?;
+    }
+    Ok(result)
+}
+
+fn transform_inputs(
+    window: &ComponentsWindow,
+) -> Result<(ComponentTransform, Option<DVec3>), String> {
+    let spec = if window.get_operation() == 3 {
+        ComponentTransform::Scale(vector([
+            window.get_scale_x(),
+            window.get_scale_y(),
+            window.get_scale_z(),
+        ])?)
+    } else {
+        ComponentTransform::Rotate(vector([
+            window.get_rotate_x(),
+            window.get_rotate_y(),
+            window.get_rotate_z(),
+        ])?)
+    };
+    let pivot = if window.get_pivot_mode() == 0 {
+        None
+    } else {
+        Some(vector([
+            window.get_pivot_x(),
+            window.get_pivot_y(),
+            window.get_pivot_z(),
+        ])?)
+    };
+    Ok((spec, pivot))
+}
+
 pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let was_topology_preview = window.get_topology_preview();
+    let center = session.component_center().ok().flatten();
+    window.set_transform_center(
+        center
+            .map_or("Select components to choose a center".into(), |point| {
+                format!("World position: {}", position(point))
+            })
+            .into(),
+    );
     let targets = session.component_weld_targets().unwrap_or_default();
     window.set_weld_corner_labels(
         Rc::new(VecModel::from(
@@ -245,7 +292,18 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let token = preview["token"].as_str().unwrap_or_default();
     let weld = preview["operation"] == "weld";
     let split = preview["operation"] == "split";
-    let operation = if split { 2 } else { i32::from(weld) };
+    let transform = preview["operation"] == "scale" || preview["operation"] == "rotate";
+    let operation = if transform {
+        if preview["operation"] == "scale" {
+            3
+        } else {
+            4
+        }
+    } else if split {
+        2
+    } else {
+        i32::from(weld)
+    };
     if !preview.is_null() && window.get_token() != token {
         window.set_operation(operation);
         if weld {
@@ -267,6 +325,25 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 window.set_weld_z(target["position"][2].as_f64().unwrap().to_string().into());
             }
         }
+        if transform {
+            let values = &preview["transform"]["value"];
+            if operation == 3 {
+                window.set_scale_x(values[0].as_f64().unwrap().to_string().into());
+                window.set_scale_y(values[1].as_f64().unwrap().to_string().into());
+                window.set_scale_z(values[2].as_f64().unwrap().to_string().into());
+            } else {
+                window.set_rotate_x(values[0].as_f64().unwrap().to_string().into());
+                window.set_rotate_y(values[1].as_f64().unwrap().to_string().into());
+                window.set_rotate_z(values[2].as_f64().unwrap().to_string().into());
+            }
+            let pivot = &preview["transform"]["pivot"];
+            window.set_pivot_mode(i32::from(!pivot.is_null()));
+            if !pivot.is_null() {
+                window.set_pivot_x(pivot[0].as_f64().unwrap().to_string().into());
+                window.set_pivot_y(pivot[1].as_f64().unwrap().to_string().into());
+                window.set_pivot_z(pivot[2].as_f64().unwrap().to_string().into());
+            }
+        }
         if split {
             let rise = preview["split"]["rise"].as_f64().unwrap();
             window.set_split_rise(rise.to_string().into());
@@ -284,7 +361,14 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
             && window.get_operation() == operation
-            && (if split {
+            && (if transform {
+                window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
+                    && transform_inputs(window).is_ok_and(|(spec, pivot)| {
+                        let resolved = pivot.or(center).unwrap();
+                        crate::session::components::transform_json(&spec, pivot, resolved)
+                            == preview["transform"]
+                    })
+            } else if split {
                 window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
             } else if weld {
                 weld_target(window, session).is_ok_and(|target| {
@@ -306,6 +390,11 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     );
     window.set_preview_summary(if preview.is_null() {
         "Preview the change before applying.".into()
+    } else if transform {
+        let values = &preview["transform"]["value"];
+        let pivot = &preview["transform"]["resolved_pivot"];
+        let point = DVec3::new(pivot[0].as_f64().unwrap(),pivot[1].as_f64().unwrap(),pivot[2].as_f64().unwrap());
+        format!("{}: {}, {}, {}{}\nPivot: {}\nThe map is unchanged until Apply.",if operation == 3 {"Scale factors"} else {"Angles"},values[0],values[1],values[2],if operation == 3 {""} else {" degrees"},position(point)).into()
     } else if split {
         let changes = preview["split"]["changes"].as_array().unwrap();
         let added: usize = changes.iter().map(|change| change["new_sides"].as_array().unwrap().len()).sum();
@@ -424,6 +513,20 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             )
         }
     });
+    window.on_choose_pivot({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            if window.get_pivot_mode() == 1
+                && let Ok(Some(point)) = lock(&shared).component_center()
+            {
+                window.set_pivot_x(point.x.to_string().into());
+                window.set_pivot_y(point.y.to_string().into());
+                window.set_pivot_z(point.z.to_string().into());
+            }
+            window.invoke_edited();
+        }
+    });
     window.on_choose_weld_mode({
         let (window, shared) = (window.as_weak(), shared.clone());
         move || {
@@ -495,7 +598,16 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             })
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
-            let result = if window.get_operation() == 2 {
+            let result = if window.get_operation() >= 3 {
+                transform_inputs(&window).and_then(|(spec, pivot)| {
+                    session.preview_component_transform(
+                        spec,
+                        pivot,
+                        window.get_texture_lock(),
+                        window.get_stamp().as_str(),
+                    )
+                })
+            } else if window.get_operation() == 2 {
                 window
                     .get_split_rise()
                     .trim()

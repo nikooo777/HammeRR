@@ -160,3 +160,62 @@ fn carved_room_compiles_after_removing_the_retained_cutter_and_vmf_round_trip() 
     assert_eq!(output.stats.brushes, 6);
     assert!(!output.bsp.unwrap().records::<Face>().unwrap().is_empty());
 }
+
+#[test]
+fn scaled_and_rotated_components_compile_after_vmf_round_trip() {
+    for (spec, whole) in [
+        (
+            subobject::ComponentTransform::Scale(DVec3::new(0.5, 0.5, 1.0)),
+            false,
+        ),
+        (
+            subobject::ComponentTransform::Rotate(DVec3::new(30.0, 0.0, 0.0)),
+            false,
+        ),
+        (
+            subobject::ComponentTransform::Scale(DVec3::new(2.0, 0.5, 1.25)),
+            true,
+        ),
+        (
+            subobject::ComponentTransform::Rotate(DVec3::new(15.0, -20.0, 30.0)),
+            true,
+        ),
+    ] {
+        let mut document = Document::new(common::room());
+        let ObjectId::Solid(id) = document
+            .edit("block", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::ZERO,
+                    DVec3::splat(64.0),
+                    "dev/dev_measuregeneric01",
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let shape = subobject::topology(document.solid(id).unwrap()).unwrap();
+        let selected = shape
+            .vertices
+            .iter()
+            .filter(|vertex| whole || vertex.position.z == 64.0)
+            .map(|vertex| subobject::Component {
+                solid: id,
+                sides: vertex.sides.clone(),
+            })
+            .collect::<Vec<_>>();
+        let plan = subobject::plan_transform(&document, &selected, &spec, None, whole).unwrap();
+        document
+            .edit("transform", |tx| subobject::apply(tx, &plan.replacements))
+            .unwrap();
+        let vmf =
+            source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+        vmf.validate_ids().unwrap();
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.leak.is_none());
+        assert_eq!(output.stats.brushes, 7);
+        assert!(!output.bsp.unwrap().records::<Face>().unwrap().is_empty());
+    }
+}

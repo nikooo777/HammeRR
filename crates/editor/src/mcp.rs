@@ -540,6 +540,22 @@ struct CarveArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentScaleArgs {
+    factors: [f64; 3],
+    pivot: Option<[f64; 3]>,
+    texture_lock: Option<bool>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentRotateArgs {
+    degrees: [f64; 3],
+    pivot: Option<[f64; 3]>,
+    texture_lock: Option<bool>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentSplitArgs {
     rise: f64,
     snapshot: String,
@@ -3122,7 +3138,45 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the exact shared movement, welding or splitting preview token as one undo step. Stored geometry matches the draft; splitting verifies generated face IDs before accepting. Retains resulting component selection and picking scope; welding/splitting select each resulting corner using its new incidence. Splitting changes active viewport picking to corners. Stale tokens, changed allocations and invalid handle updates reject without editing."
+        description = "Preview scaling selected faces, edges or corners with positive finite X/Y/Z factors. Default pivot is the selected component bounding-box center, reported by get_brush_components.component_center; optional pivot uses world coordinates within ±65536. Unselected corners remain fixed. Existing solid/side IDs, ownership, lighting and metadata stay. texture_lock=false keeps world projections; true preserves UVs at every corresponding corner and rejects incompatible projections. Invalid/nonplanar/concave/collapsed/displacement results, identity transforms and coordinates outside ±65536 reject atomically, retaining the preceding valid preview. Latest snapshot required; 512 components/16 brushes/64 sides. preview.transform reports input and resolved pivot. Move handles pause during this preview. Apply/cancel through commit_component_edit/cancel_component_edit; one undo step."
+    )]
+    fn preview_component_scale(
+        &self,
+        Parameters(args): Parameters<ComponentScaleArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_component_transform(
+                map_core::subobject::ComponentTransform::Scale(vec3(args.factors)),
+                args.pivot.map(vec3),
+                args.texture_lock.unwrap_or(false),
+                &args.snapshot,
+            )?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Preview rotating selected faces, edges or corners by X/Y/Z angles in degrees about the selected bounding-box center or optional world pivot. Uses right-handed world axes in X then Y then Z order. get_brush_components.component_center and preview.transform expose default/resolved pivots. All values must be finite; pivot/result coordinates within ±65536. Unselected corners stay fixed. Retains solid/side IDs, owners, materials, lighting and metadata. World UVs are default; texture_lock=true must preserve every corresponding corner UV or reject. Nonplanar/concave/collapsed/identity/displacement results reject atomically while retaining the prior valid draft. Latest snapshot required; 512 components/16 brushes/64 sides. Move handles pause until Apply/Discard. Use commit_component_edit/cancel_component_edit; one undo step."
+    )]
+    fn preview_component_rotate(
+        &self,
+        Parameters(args): Parameters<ComponentRotateArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_component_transform(
+                map_core::subobject::ComponentTransform::Rotate(vec3(args.degrees)),
+                args.pivot.map(vec3),
+                args.texture_lock.unwrap_or(false),
+                &args.snapshot,
+            )?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact shared movement, scaling, rotation, welding or splitting preview token as one undo step. Stored geometry matches the draft; splitting verifies generated face IDs before accepting. Retains resulting component selection and picking scope; welding/splitting select each resulting corner using its new incidence. Splitting changes active viewport picking to corners. Stale tokens, changed allocations and invalid handle updates reject without editing."
     )]
     fn commit_component_edit(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {
@@ -3133,7 +3187,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Discard the exact movement, weld or split preview without changing map, face allocation or history. Restores original component selection and retains viewport picking scope/kind. Stale tokens cannot discard a newer draft. Equivalent to Discard preview; stopping component picking clears the whole tool."
+        description = "Discard the exact movement, scale, rotate, weld or split preview without changing map, face allocation or history. Restores original component selection and retains viewport picking scope/kind. Stale tokens cannot discard a newer draft. Equivalent to Discard preview; stopping component picking clears the whole tool."
     )]
     fn cancel_component_edit(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {

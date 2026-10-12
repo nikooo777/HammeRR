@@ -91,6 +91,15 @@ pub fn crease(
     requests: &[Crease],
     rise: f64,
 ) -> Result<CreasePlan, EditError> {
+    crease_with_roof_textures(tx, requests, rise, false)
+}
+
+pub fn crease_with_roof_textures(
+    tx: &mut Transaction,
+    requests: &[Crease],
+    rise: f64,
+    roof_texture_lock: bool,
+) -> Result<CreasePlan, EditError> {
     if requests.is_empty() || requests.len() > MAX_SOLIDS {
         return Err(invalid(
             "Select one quad face in each of 1–16 brushes to crease",
@@ -185,6 +194,10 @@ pub fn crease(
             [ring[0], positions[0], positions[1], ring[3]],
             [positions[0], ring[1], ring[2], positions[1]],
         ];
+        let flat_roofs = [
+            [ring[0], pair.midpoints[0], pair.midpoints[1], ring[3]],
+            [pair.midpoints[0], ring[1], ring[2], pair.midpoints[1]],
+        ];
         let points = shape
             .vertices
             .iter()
@@ -225,6 +238,12 @@ pub fn crease(
                 )));
             }
             replacement.sides[index + roof_index].plane.0 = triple;
+            if roof_texture_lock {
+                let projection =
+                    crate::texture_deform::attach(original, &flat_roofs[roof_index], roof)?;
+                replacement.sides[index + roof_index].u_axis = projection.u;
+                replacement.sides[index + roof_index].v_axis = projection.v;
+            }
         }
         let after = topology(&replacement)?;
         if after.vertices.len() != points.len()
@@ -295,6 +314,195 @@ pub fn crease(
 mod tests {
     use super::*;
     use crate::edit;
+
+    #[test]
+    fn attached_roofs_preserve_all_flat_loop_uvs_and_exact_neighbor_projections() {
+        for oblique in [false, true] {
+            for owned in [false, true] {
+                let (mut document, id) = fixture();
+                document
+                    .edit("projection", |tx| {
+                        for side in &mut tx.solid_mut(id)?.sides {
+                            side.u_axis.offset = 17.123456789;
+                            side.v_axis.offset = -9.125;
+                            side.u_axis.scale = 0.3125;
+                            side.v_axis.scale = -0.523456789;
+                            side.lightmap_scale = 8;
+                            side.smoothing_groups = Some(7);
+                            side.extra_properties.set("vendor", "retain");
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+                if oblique {
+                    document
+                        .edit("oblique", |tx| {
+                            edit::transform(
+                                tx,
+                                &[ObjectId::Solid(id)],
+                                edit::Transform {
+                                    translation: DVec3::new(0.125, -7.25, 3.5),
+                                    rotation: DVec3::new(17.0, -23.0, 31.0),
+                                    scale: DVec3::new(1.125, 0.75, 1.5),
+                                    texture_lock: false,
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                        .unwrap();
+                }
+                if owned {
+                    document
+                        .edit("owner", |tx| {
+                            edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                        })
+                        .unwrap();
+                }
+                let (owner, source) = solid(&document, id).unwrap();
+                let source = source.clone();
+                for face in topology(&source).unwrap().faces {
+                    for pair in crease_pairs(&source, face.side).unwrap() {
+                        let request = Crease {
+                            solid: id,
+                            side: face.side,
+                            edges: pair.edges,
+                        };
+                        let partition = plan_partitions(&document, std::slice::from_ref(&request))
+                            .unwrap()
+                            .remove(0);
+                        let mut changed = document.clone();
+                        let plan = changed
+                            .edit("attached ridge", |tx| {
+                                crease_with_roof_textures(
+                                    tx,
+                                    std::slice::from_ref(&request),
+                                    16.125,
+                                    true,
+                                )
+                            })
+                            .unwrap();
+                        let (_, result) = solid(&changed, id).unwrap();
+                        let original = source
+                            .sides
+                            .iter()
+                            .find(|side| side.id == face.side)
+                            .unwrap();
+                        let raised = partition.positions(16.125);
+                        for piece in &partition.loops {
+                            let side_id = if piece.id == 0 {
+                                face.side
+                            } else {
+                                plan.changes[0].new_side
+                            };
+                            let side = result.sides.iter().find(|side| side.id == side_id).unwrap();
+                            for vertex in piece.vertices {
+                                let expected = crate::texel_uv(
+                                    original,
+                                    partition.vertices[vertex as usize].position,
+                                );
+                                let actual = crate::texel_uv(side, raised[vertex as usize]);
+                                assert!((expected - actual).abs().max_element() < 0.0001);
+                            }
+                            let mut expected = original.clone();
+                            expected.id = side.id;
+                            expected.plane = side.plane;
+                            expected.u_axis = side.u_axis;
+                            expected.v_axis = side.v_axis;
+                            assert_eq!(*side, expected);
+                        }
+                        for side in source.sides.iter().filter(|side| side.id != face.side) {
+                            assert_eq!(
+                                result
+                                    .sides
+                                    .iter()
+                                    .find(|candidate| candidate.id == side.id)
+                                    .unwrap(),
+                                side
+                            );
+                        }
+                        assert_eq!(changed.owner_of_solid(id), Some(owner));
+                        let vmf = source_formats::vmf::Vmf::parse(
+                            &changed.vmf().write(&Default::default()),
+                        )
+                        .unwrap();
+                        vmf.validate_ids().unwrap();
+                        assert_eq!(
+                            topology(vmf.solids().find(|solid| solid.id == id).unwrap())
+                                .unwrap()
+                                .vertices
+                                .len(),
+                            10
+                        );
+                        let after = changed.vmf().clone();
+                        changed.undo().unwrap();
+                        assert_eq!(changed.vmf(), document.vmf());
+                        changed.redo().unwrap();
+                        assert_eq!(changed.vmf(), &after);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_roof_projection_rejects_the_whole_batch_before_side_allocation() {
+        let (mut document, first) = fixture();
+        let ObjectId::Solid(second) = document
+            .edit("second", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(128.0, 0.0, 0.0),
+                    DVec3::new(192.0, 64.0, 64.0),
+                    "brick/test",
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let mut requests = Vec::new();
+        for id in [first, second] {
+            let source = document.solid(id).unwrap();
+            let side = source
+                .sides
+                .iter()
+                .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::Z)
+                .unwrap()
+                .id;
+            requests.push(request(&document, id, side, 0));
+        }
+        document
+            .edit("invalid projection", |tx| {
+                let side = tx
+                    .solid_mut(second)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == requests[1].side)
+                    .unwrap();
+                side.v_axis.axis = side.u_axis.axis;
+                Ok(())
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        assert!(
+            document
+                .edit("attach", |tx| crease_with_roof_textures(
+                    tx, &requests, 16.0, true
+                ))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("independent U and V")
+        );
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(
+            document.edit("allocate", |tx| tx.new_side_id()).unwrap(),
+            13
+        );
+        document
+            .edit("world ridge", |tx| crease(tx, &requests, 16.0))
+            .unwrap();
+    }
 
     fn fixture() -> (Document, u32) {
         let mut document = Document::empty();

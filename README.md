@@ -342,6 +342,11 @@ roof faces while all old corners stay fixed. Each brush has its own direction
 picker. New faces inherit the source material, precise world texture projection
 and metadata. Incompatible shapes are rejected before allocation.
 
+Enable **Keep roof texture at corners** to preserve the flat pieces' UVs on
+both raised roof faces, including their edge midpoints. Neighboring faces keep
+their world projection. This option also works when raising a flat partition;
+changing it requires a new preview before Apply.
+
 **Apply ridge** selects both new corners and records one undo step.
 **Discard preview** restores the original face selection without consuming IDs;
 **Cancel** closes the tool and drops its draft. Both directions have been checked
@@ -1007,6 +1012,7 @@ python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
 python -B scripts/validate_transform_display.py --output /tmp/hammerr-transform-display-check
 python -B scripts/validate_component_partitions.py --output /tmp/hammerr-partition-check
+python -B scripts/validate_roof_texture_attachment.py --output /tmp/hammerr-roof-texture-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1107,6 +1113,13 @@ side IDs, raised positions and resulting corner selections. Both old corners
 and world projections stay fixed. Nonplanar or concave results reject before
 allocation. Apply replays and verifies generated IDs through
 `commit_component_edit`; discard uses `cancel_component_edit`.
+
+Optional `roof_texture_lock: true` preserves corresponding UVs on the two roof
+faces. Neighboring side projections remain unchanged. Direct crease defaults
+to world projection; `raise_component_partition` retains its current policy
+when the field is omitted, including after returning to flat.
+`preview.crease.roof_texture_lock` and `preview.partition.roof_texture_lock`
+report the setting; raised attached drafts report `texture_mode: "roof_attached"`.
 
 `preview_component_partition` accepts the same opposing `pairs` and latest
 `snapshot`, then returns flat draft topology under `preview.partition`.

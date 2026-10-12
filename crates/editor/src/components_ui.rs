@@ -590,6 +590,13 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 .unwrap();
             window.set_split_rise(rise.to_string().into());
             window.set_split_rise_value(rise as f32);
+            if partition || crease {
+                window.set_roof_texture_lock(
+                    preview[if partition { "partition" } else { "crease" }]["roof_texture_lock"]
+                        .as_bool()
+                        .unwrap_or(false),
+                );
+            }
         }
         window.set_texture_lock(preview["texture_lock"].as_bool().unwrap_or(false));
         window.set_move_x(preview["delta"][0].as_f64().unwrap().to_string().into());
@@ -613,8 +620,10 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     })
             } else if partition {
                 window.get_split_rise().parse::<f64>().ok() == preview["partition"]["rise"].as_f64()
+                    && window.get_roof_texture_lock() == preview["partition"]["roof_texture_lock"].as_bool().unwrap_or(false)
             } else if crease {
                 window.get_split_rise().parse::<f64>().ok() == preview["crease"]["rise"].as_f64()
+                    && window.get_roof_texture_lock() == preview["crease"]["roof_texture_lock"].as_bool().unwrap_or(false)
                     && crease_inputs(window, session).is_ok_and(|inputs| serde_json::json!(inputs.iter().map(|pair|serde_json::json!({"solid":pair.solid,"edges":pair.edges})).collect::<Vec<_>>()) == preview["crease"]["pairs"])
             } else if split {
                 window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
@@ -1004,12 +1013,13 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                         .parse::<f64>()
                         .map_err(|_| "Enter a numeric ridge height".to_string())
                         .and_then(|rise| {
-                            session.raise_component_partition(
+                            session.raise_component_partition_with_texture(
                                 window
                                     .get_token()
                                     .parse()
                                     .map_err(|_| "Stage a partition first".to_string())?,
                                 rise,
+                                Some(window.get_roof_texture_lock()),
                             )
                         })
                 } else {
@@ -1025,7 +1035,12 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                     .map_err(|_| "Enter a numeric ridge height".to_string())
                     .and_then(|rise| {
                         let inputs = crease_inputs(&window, &session)?;
-                        session.preview_component_crease(&inputs, rise, window.get_stamp().as_str())
+                        session.preview_component_crease_with_texture(
+                            &inputs,
+                            rise,
+                            window.get_roof_texture_lock(),
+                            window.get_stamp().as_str(),
+                        )
                     })
             } else if window.get_operation() == 3 || window.get_operation() == 4 {
                 transform_inputs(&window).and_then(|(spec, pivot)| {

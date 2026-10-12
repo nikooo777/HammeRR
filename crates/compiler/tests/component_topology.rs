@@ -528,7 +528,12 @@ fn opposing_edge_ridges_compile_inside_a_sealed_room_after_vmf_round_trip() {
         let raised = partitions[0].positions(16.125);
         document
             .edit("crease", |tx| {
-                subobject::crease(tx, &[partitions[0].source.clone()], 16.125)
+                subobject::crease_with_roof_textures(
+                    tx,
+                    &[partitions[0].source.clone()],
+                    16.125,
+                    true,
+                )
             })
             .unwrap();
         let topology = subobject::topology(document.solid(id).unwrap()).unwrap();

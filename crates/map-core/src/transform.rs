@@ -12,6 +12,7 @@ pub struct Transform {
     pub translation: DVec3,
     pub rotation: DVec3,
     pub scale: DVec3,
+    pub reflection: [bool; 3],
     pub pivot: DVec3,
     pub basis: DMat3,
     pub texture_lock: bool,
@@ -24,6 +25,7 @@ impl Default for Transform {
             translation: DVec3::ZERO,
             rotation: DVec3::ZERO,
             scale: DVec3::ONE,
+            reflection: [false; 3],
             pivot: DVec3::ZERO,
             basis: DMat3::IDENTITY,
             texture_lock: true,
@@ -42,6 +44,8 @@ struct Mapping {
     texture_inverse_transpose: DMat3,
     texture_offset: DVec3,
     translation_only: bool,
+    reflected: bool,
+    reverses_winding: bool,
 }
 
 fn invalid(message: impl Into<String>) -> EditError {
@@ -68,6 +72,18 @@ impl Mapping {
                 "Transform basis must be a right-handed orthonormal frame",
             ));
         }
+        let reflected = transform.reflection.into_iter().any(|axis| axis);
+        if reflected && transform.pivot.abs().max_element() > crate::primitive::MAX_COORDINATE {
+            return Err(invalid(
+                "Reflection pivot exceeds the editor's coordinate bounds",
+            ));
+        }
+        let signed_scale = transform.scale
+            * DVec3::from_array(
+                transform
+                    .reflection
+                    .map(|axis| if axis { -1.0 } else { 1.0 }),
+            );
         let angles = transform
             .rotation
             .map(|angle| angle.rem_euclid(360.0).to_radians());
@@ -83,12 +99,12 @@ impl Mapping {
             transform.basis * local_rotation * transform.basis.transpose()
         };
         let rotation = DQuat::from_mat3(&rotation_matrix);
-        let linear = if transform.scale == DVec3::ONE {
+        let linear = if signed_scale == DVec3::ONE {
             rotation_matrix
         } else {
             rotation_matrix
                 * transform.basis
-                * DMat3::from_diagonal(transform.scale)
+                * DMat3::from_diagonal(signed_scale)
                 * transform.basis.transpose()
         };
         let inverse_transpose = linear.inverse().transpose();
@@ -102,10 +118,8 @@ impl Mapping {
         let texture_linear = match (transform.texture_lock, scale_lock) {
             (true, true) => linear,
             (true, false) => rotation_matrix,
-            (false, true) if transform.scale != DVec3::ONE => {
-                transform.basis
-                    * DMat3::from_diagonal(transform.scale)
-                    * transform.basis.transpose()
+            (false, true) if signed_scale != DVec3::ONE => {
+                transform.basis * DMat3::from_diagonal(signed_scale) * transform.basis.transpose()
             }
             (false, _) => DMat3::IDENTITY,
         };
@@ -128,7 +142,15 @@ impl Mapping {
             translation_texture_lock: transform.texture_lock,
             texture_inverse_transpose,
             texture_offset,
-            translation_only: angles == DVec3::ZERO && transform.scale == DVec3::ONE,
+            translation_only: angles == DVec3::ZERO && signed_scale == DVec3::ONE,
+            reflected,
+            reverses_winding: transform
+                .reflection
+                .into_iter()
+                .filter(|axis| *axis)
+                .count()
+                % 2
+                == 1,
         })
     }
 
@@ -226,6 +248,11 @@ impl Mapping {
     }
 
     fn solid(&self, solid: &mut Solid) -> Result<(), EditError> {
+        if self.reflected && solid.sides.iter().any(|side| side.displacement.is_some()) {
+            return Err(invalid(
+                "Reflection does not yet support displacement brushes",
+            ));
+        }
         if self.translation_only {
             crate::edit::translate_solid(solid, self.offset, self.translation_texture_lock);
         }
@@ -254,6 +281,9 @@ impl Mapping {
             for point in &mut side.plane.0 {
                 *point = self.point(*point)?;
             }
+            if self.reverses_winding {
+                side.plane.0.swap(0, 2);
+            }
             if self.texture_lock {
                 self.axis(&mut side.u_axis)?;
                 self.axis(&mut side.v_axis)?;
@@ -273,10 +303,24 @@ impl Mapping {
                 solid.id
             )));
         }
+        if self.reflected
+            && geometry.mins.abs().max(geometry.maxs.abs()).max_element()
+                > crate::primitive::MAX_COORDINATE
+        {
+            return Err(invalid(format!(
+                "Reflected brush {} exceeds the editor's coordinate bounds",
+                solid.id
+            )));
+        }
         Ok(())
     }
 
     fn entity(&self, entity: &mut Entity, rotate: bool) -> Result<(), EditError> {
+        if self.reflected && entity.solids.is_empty() {
+            return Err(invalid(
+                "Reflection currently supports brushes and brush entities only",
+            ));
+        }
         if let Some(value) = entity.properties.get("origin") {
             let origin = parse_vec3(value)
                 .filter(|point| point.is_finite())
@@ -360,7 +404,11 @@ pub fn transform(
         if !visited.insert(id) {
             continue;
         }
-        if !rotate && transform.scale == DVec3::ONE && transform.translation == DVec3::ZERO {
+        if !rotate
+            && !mapping.reflected
+            && transform.scale == DVec3::ONE
+            && transform.translation == DVec3::ZERO
+        {
             match id {
                 ObjectId::Solid(id) => {
                     tx.solid_mut(id)?;
@@ -412,6 +460,326 @@ mod tests {
     }
 
     #[test]
+    fn reflection_preserves_closed_geometry_winding_uvs_metadata_and_history() {
+        for mask in 1..8 {
+            for basis in [DMat3::IDENTITY, DMat3::from_rotation_z(0.37)] {
+                for lock in [false, true] {
+                    let mut document = Document::empty();
+                    let id = block(&mut document);
+                    let ObjectId::Solid(sid) = id else {
+                        unreachable!()
+                    };
+                    document
+                        .edit("authored mirror metadata", |tx| {
+                            for side in &mut tx.solid_mut(sid)?.sides {
+                                side.u_axis.axis *= 2.75;
+                                side.u_axis.offset = 17.123456789;
+                                side.v_axis.scale = -0.523456789;
+                                side.extra_properties.set("vendor", "preserve");
+                            }
+                            Ok(())
+                        })
+                        .unwrap();
+                    document
+                        .edit("oblique source", |tx| {
+                            transform(
+                                tx,
+                                &[id],
+                                Transform {
+                                    rotation: DVec3::new(17.0, -23.0, 31.0),
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                        .unwrap();
+                    let before = document.vmf().clone();
+                    let source = before.world.solids[0].clone();
+                    let source_geometry = crate::subobject::topology(&source).unwrap();
+                    let spec = Transform {
+                        reflection: [mask & 1 != 0, mask & 2 != 0, mask & 4 != 0],
+                        pivot: DVec3::new(12.125, -7.25, 3.5),
+                        basis,
+                        texture_scale_lock: Some(lock),
+                        ..Default::default()
+                    };
+                    let signs = DVec3::from_array(
+                        spec.reflection.map(|axis| if axis { -1.0 } else { 1.0 }),
+                    );
+                    let linear = basis * DMat3::from_diagonal(signs) * basis.transpose();
+                    document
+                        .edit("mirror", |tx| transform(tx, &[id], spec))
+                        .unwrap();
+                    let after = document.vmf().clone();
+                    let changed = solid(&document, id);
+                    let geometry = crate::subobject::topology(changed).unwrap();
+                    for point in &source_geometry.vertices {
+                        let reflected = linear * (point.position - spec.pivot) + spec.pivot;
+                        assert!(
+                            geometry
+                                .vertices
+                                .iter()
+                                .any(|point| point.position.abs_diff_eq(reflected, 1e-8))
+                        );
+                    }
+                    for (old, new) in source.sides.iter().zip(&changed.sides) {
+                        let mut metadata = old.clone();
+                        metadata.plane = new.plane;
+                        metadata.u_axis = new.u_axis;
+                        metadata.v_axis = new.v_axis;
+                        assert_eq!(&metadata, new);
+                        let plane = Plane::from_points(new.plane.0).unwrap();
+                        assert!(
+                            geometry
+                                .vertices
+                                .iter()
+                                .all(|point| plane.distance_to(point.position) < 1e-7)
+                        );
+                        for point in old.plane.0 {
+                            let moved = linear * (point - spec.pivot) + spec.pivot;
+                            assert!(
+                                new.plane
+                                    .0
+                                    .iter()
+                                    .any(|point| point.abs_diff_eq(moved, 1e-8))
+                            );
+                            if lock {
+                                assert!(
+                                    (texel_uv(old, point) - texel_uv(new, moved)).length() < 1e-8
+                                );
+                            } else {
+                                assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+                            }
+                        }
+                    }
+                    let reopened = Vmf::parse(&after.write(&Default::default())).unwrap();
+                    reopened.validate_ids().unwrap();
+                    let saved = crate::subobject::topology(&reopened.world.solids[0]).unwrap();
+                    assert_eq!(saved.vertices.len(), geometry.vertices.len());
+                    for point in geometry.vertices {
+                        assert!(
+                            saved
+                                .vertices
+                                .iter()
+                                .any(|saved| saved.position.abs_diff_eq(point.position, 1e-8))
+                        );
+                    }
+                    document.undo().unwrap();
+                    assert_eq!(document.vmf(), &before);
+                    document.redo().unwrap();
+                    assert_eq!(document.vmf(), &after);
+                    document
+                        .edit("mirror twice", |tx| transform(tx, &[id], spec))
+                        .unwrap();
+                    let restored = crate::subobject::topology(solid(&document, id)).unwrap();
+                    for point in source_geometry.vertices {
+                        assert!(
+                            restored
+                                .vertices
+                                .iter()
+                                .any(|saved| saved.position.abs_diff_eq(point.position, 1e-8))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reflection_rejects_point_entities_and_bounds_atomically() {
+        let mut document = Document::empty();
+        let brush = block(&mut document);
+        let entity = document
+            .edit("point", |tx| {
+                edit::create_entity(tx, "info_target", Some(DVec3::ONE), &[], vec![])
+            })
+            .unwrap();
+        for spec in [
+            Transform {
+                reflection: [true, false, false],
+                ..Default::default()
+            },
+            Transform {
+                reflection: [true, true, false],
+                ..Default::default()
+            },
+            Transform {
+                reflection: [true, false, false],
+                pivot: DVec3::X * 40_000.0,
+                ..Default::default()
+            },
+            Transform {
+                reflection: [true, false, false],
+                pivot: DVec3::X * 70_000.0,
+                ..Default::default()
+            },
+        ] {
+            let before = document.vmf().clone();
+            let history = document.undo_labels().count();
+            let ids = if spec.pivot == DVec3::ZERO {
+                vec![brush, entity]
+            } else {
+                vec![brush]
+            };
+            assert!(
+                document
+                    .edit("invalid reflection", |tx| transform(tx, &ids, spec))
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &before);
+            assert_eq!(document.undo_labels().count(), history);
+        }
+    }
+
+    #[test]
+    fn reflection_preserves_brush_entity_ownership_and_mirrors_its_origin() {
+        let mut document = Document::empty();
+        let ObjectId::Solid(brush) = block(&mut document) else {
+            unreachable!()
+        };
+        let entity = document
+            .edit("tie", |tx| {
+                edit::tie_to_entity(
+                    tx,
+                    &[brush],
+                    "func_detail",
+                    &[
+                        ("origin".into(), "8 16 4".into()),
+                        ("angles".into(), "0 15 0".into()),
+                    ],
+                )
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        document
+            .edit("mirror", |tx| {
+                transform(
+                    tx,
+                    &[entity],
+                    Transform {
+                        reflection: [true, false, false],
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let ObjectId::Entity(eid) = entity else {
+            unreachable!()
+        };
+        let changed = document.entity(eid).unwrap();
+        assert_eq!(changed.solids[0].id, brush);
+        assert_eq!(changed.origin(), Some(DVec3::new(-8.0, 16.0, 4.0)));
+        assert_eq!(changed.properties.get("angles"), Some("0 15 0"));
+        document.undo().unwrap();
+        assert_eq!(document.vmf(), &before);
+    }
+
+    #[test]
+    fn reflection_rejects_displacements_without_modifying_earlier_brushes() {
+        let mut document = Document::empty();
+        let first = block(&mut document);
+        let terrain = block(&mut document);
+        let ObjectId::Solid(id) = terrain else {
+            unreachable!()
+        };
+        document
+            .edit("terrain", |tx| {
+                tx.solid_mut(id)?.sides[0].displacement = Some(DispInfo {
+                    power: 2,
+                    start_position: DVec3::ZERO,
+                    flags: None,
+                    elevation: 0.0,
+                    subdivided: false,
+                    normals: None,
+                    distances: None,
+                    offsets: None,
+                    offset_normals: None,
+                    alphas: None,
+                    triangle_tags: None,
+                    allowed_verts: None,
+                    extra_properties: Properties::default(),
+                    extra: Vec::new(),
+                });
+                Ok(())
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let history = document.undo_labels().count();
+        let error = document
+            .edit("mirror terrain", |tx| {
+                transform(
+                    tx,
+                    &[first, terrain],
+                    Transform {
+                        reflection: [true, false, false],
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("displacement"));
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.undo_labels().count(), history);
+    }
+
+    #[test]
+    fn compound_reflection_uses_independent_texture_policies() {
+        for movement in [false, true] {
+            for stretch in [false, true] {
+                let mut document = Document::empty();
+                let id = block(&mut document);
+                let old = solid(&document, id).clone();
+                let basis = DMat3::from_rotation_z(0.37);
+                let spec = Transform {
+                    reflection: [true, false, true],
+                    translation: DVec3::new(12.125, -24.25, 8.5),
+                    rotation: DVec3::new(17.0, -23.0, 31.0),
+                    scale: DVec3::new(2.0, 0.5, 1.25),
+                    pivot: DVec3::new(-19.125, 42.25, 5.5),
+                    basis,
+                    texture_lock: movement,
+                    texture_scale_lock: Some(stretch),
+                };
+                let rotation = basis
+                    * (DMat3::from_rotation_z(spec.rotation.z.to_radians())
+                        * DMat3::from_rotation_y(spec.rotation.y.to_radians())
+                        * DMat3::from_rotation_x(spec.rotation.x.to_radians()))
+                    * basis.transpose();
+                let scaling = basis
+                    * DMat3::from_diagonal(spec.scale * DVec3::new(-1.0, 1.0, -1.0))
+                    * basis.transpose();
+                let projection = if movement { rotation } else { DMat3::IDENTITY }
+                    * if stretch { scaling } else { DMat3::IDENTITY };
+                document
+                    .edit("compound mirror", |tx| transform(tx, &[id], spec))
+                    .unwrap();
+                for (old, new) in old.sides.iter().zip(&solid(&document, id).sides) {
+                    for point in old.plane.0 {
+                        let moved = rotation * scaling * (point - spec.pivot)
+                            + spec.pivot
+                            + spec.translation;
+                        assert!(
+                            new.plane
+                                .0
+                                .iter()
+                                .any(|point| point.abs_diff_eq(moved, 1e-8))
+                        );
+                        let sample = projection.inverse()
+                            * (moved
+                                - spec.pivot
+                                - if movement {
+                                    spec.translation
+                                } else {
+                                    DVec3::ZERO
+                                })
+                            + spec.pivot;
+                        assert!((texel_uv(new, moved) - texel_uv(old, sample)).length() < 1e-8);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn brush_rotation_scale_and_texture_lock_preserve_corresponding_uvs() {
         for lock in [false, true] {
             let mut document = Document::empty();
@@ -425,6 +793,7 @@ mod tests {
                 basis: DMat3::IDENTITY,
                 texture_lock: lock,
                 texture_scale_lock: None,
+                reflection: [false; 3],
             };
             document
                 .edit("transform", |tx| transform(tx, &[id], spec))
@@ -486,6 +855,7 @@ mod tests {
                         basis,
                         texture_lock: movement,
                         texture_scale_lock: Some(stretch),
+                        reflection: [false; 3],
                     };
                     let local_rotation = DMat3::from_rotation_z(spec.rotation.z.to_radians())
                         * DMat3::from_rotation_y(spec.rotation.y.to_radians())

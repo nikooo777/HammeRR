@@ -170,6 +170,15 @@ preview the inspector shows its actual values; use **Apply transform** or
 | --- | --- |
 | ![A resized brush with repeated texture tiles](docs/images/object-texture-repeat.png) | ![The same resized brush with stretched texture tiles](docs/images/object-texture-stretch.png) |
 
+Choose **Mirror** for brush reflection. Check X, Y or Z, choose world/local axes
+and a pivot, then **Mirror selection**. **Mirror textures with geometry** keeps
+corresponding corner UVs; disabling it retains the original world projection.
+Odd axis combinations reverse plane winding while preserving side IDs. Brush
+entities keep their ownership and mirror their origins. Point entities and
+terrain currently reject the whole operation without changing the map.
+Reflected geometry and pivots must stay within ±65536 editor units; compilation
+still uses Source's narrower coordinate limits.
+
 Area selection works in perspective, Top, Front and Side, for objects or
 faces. It includes geometry through the view's depth and skips hidden brushes
 and hidden tool materials. A brush entity is selected as a whole. **Fully
@@ -882,6 +891,24 @@ For example, double the brush width while keeping its texture size:
 }
 ```
 
+Mirror through the same transform tool, including shared preview/apply/cancel:
+
+```json
+{
+  "tool": "transform_objects",
+  "arguments": {
+    "reflection": [true, false, false],
+    "pivot": [0, 0, 0],
+    "space": "world",
+    "texture_scale_lock": true,
+    "preview": true
+  }
+}
+```
+
+`get_transform_handles.state.preview.reflection` reports the chosen axes.
+Positive numeric scale factors remain independent of reflection.
+
 `edit_faces` supports material, UV offsets/scales, rotation, fitting, lightmap
 scale, smoothing groups and non-destructive previews. Commit or cancel the
 shared preview from either front end. Material browsing and inspector tools
@@ -922,6 +949,7 @@ python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
+python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_precision_cycles.py --output /tmp/hammerr-precision-check
 python -B scripts/validate_precision_cycles.py --operation scale --output /tmp/hammerr-scale-cycles
 python -B scripts/validate_precision_cycles.py --operation rotate --output /tmp/hammerr-rotation-cycles

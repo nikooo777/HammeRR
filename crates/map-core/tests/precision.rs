@@ -138,6 +138,27 @@ fn repeated_thin_slope_edits_preserve_authored_planes_and_incidence() {
             Ok(())
         })
         .unwrap();
+    let (geometry, texture) = common::repeated_affine(document.preview_snapshot(), id, 32);
+    eprintln!("thin affine slope: drift {geometry} units / {texture} texels");
     let (geometry, texture) = common::repeated_translation(document, id, 32);
     eprintln!("thin slope: drift {geometry} units / {texture} texels");
+}
+
+#[test]
+fn repeated_scale_and_compound_rotation_round_trips_preserve_precise_brushes() {
+    for origin in [
+        DVec3::new(0.125, -0.25, 0.375),
+        DVec3::new(8192.125, -4096.25, 1024.375),
+        DVec3::new(-32768.125, 16384.25, -8192.375),
+    ] {
+        for owner in [false, true] {
+            for sloped in [false, true] {
+                let (document, id) = fixture(origin, owner, sloped);
+                let (geometry, texture) = common::repeated_affine(document, id, 16);
+                eprintln!(
+                    "affine origin {origin}, entity {owner}, sloped {sloped}: drift {geometry} units / {texture} texels"
+                );
+            }
+        }
+    }
 }

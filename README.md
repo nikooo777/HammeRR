@@ -870,6 +870,8 @@ python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
 python -B scripts/validate_precision_cycles.py --output /tmp/hammerr-precision-check
+python -B scripts/validate_precision_cycles.py --operation scale --output /tmp/hammerr-scale-cycles
+python -B scripts/validate_precision_cycles.py --operation rotate --output /tmp/hammerr-rotation-cycles
 python -B scripts/validate_carving.py --output /tmp/hammerr-carving-check
 python -B scripts/validate_carve_many.py --output /tmp/hammerr-carve-many-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
@@ -885,9 +887,8 @@ to check an idle GUI session with a clean map and empty undo/redo history.
 Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
-`validate_audit_fixes.py`, `validate_component_topology.py`,
-`validate_component_transforms.py` and `validate_carving.py` use a private
-headless session and do not accept a GUI URL. Add `--render` to the topology
+The audit, component source/topology/transform, precision and carving validators
+use private headless sessions and do not accept a GUI URL. Add `--render` to the topology
 validator for offscreen GPU pixel checks without opening a desktop window.
 
 `get_component_sources` pages the selected owners' committed brushes without
@@ -908,13 +909,15 @@ at corresponding face corners. The default is world anchoring. The response
 reports `texture_mode` and the preview's `texture_lock` setting; incompatible
 deformations leave the previous valid draft intact.
 
-Repeated fractional edit/save/reopen checks cover standalone thin and oblique
-brushes, world/entity ownership and corner UVs. The optional installed SDK test
-samples 845 brushes from 217 maps; measured drift stays below `1e-5` world units
-and `1e-4` texels. `validate_precision_cycles.py` exercises the same operation
-through a private headless MCP session, with exact undo and explicit round-trip
-tolerances. These checks cover translation, not repeated rotation/scale or
-round trips through other editors.
+Repeated edit/save/reopen checks cover fractional translations, positive scaling
+and rotation of thin, oblique and large-coordinate brushes, with world/entity
+ownership and attached corner UVs. The installed SDK test samples 845 brushes
+from 217 maps. Drift must stay below `1e-5` world units and `1e-4` texels; undo
+and redo must be exact. Affine cycles use a fixed world pivot and mathematically
+inverted compound rotations. `validate_precision_cycles.py` checks translation
+by default; `--operation scale` or `--operation rotate` checks those shared
+operations through private headless MCP sessions. Round trips through other
+editors remain unverified.
 
 `preview_component_scale` accepts positive XYZ `factors`;
 `preview_component_rotate` accepts XYZ `degrees`. Both require the latest

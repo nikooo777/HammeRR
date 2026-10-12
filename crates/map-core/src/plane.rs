@@ -77,6 +77,9 @@ impl Plane {
                 let mut mid = p + (q - p) * (dp / (dp - dq));
                 // Axis-aligned planes are exact; avoid accumulating error there.
                 for axis in 0..3 {
+                    if (0..3).any(|other| other != axis && self.normal[other] != 0.0) {
+                        continue;
+                    }
                     if self.normal[axis] == 1.0 {
                         mid[axis] = self.dist;
                     } else if self.normal[axis] == -1.0 {
@@ -137,5 +140,32 @@ mod tests {
         assert_eq!(clipped.len(), 4);
         assert!(clipped.iter().all(|p| p.x <= 16.0));
         assert!(clipped.iter().any(|p| p.x == 16.0));
+    }
+
+    #[test]
+    fn clipping_preserves_tiny_slopes_when_the_major_normal_rounds_to_one() {
+        let plane = Plane {
+            normal: DVec3::new(0.0, 1e-8, -1.0),
+            dist: 0.051_596,
+        };
+        assert_eq!(plane.normal.z, -1.0);
+        let points = [
+            DVec3::new(3928.0, 5784.0, 0.0),
+            DVec3::new(4396.0, 5784.0, 0.0),
+            DVec3::new(4396.0, 5784.0, -1.0),
+            DVec3::new(3928.0, 5784.0, -1.0),
+        ];
+        let clipped = plane.clip_behind(&points);
+        assert_eq!(clipped.len(), 4);
+        let crossings = clipped
+            .iter()
+            .filter(|point| point.z < 0.0 && point.z > -0.5)
+            .collect::<Vec<_>>();
+        assert_eq!(crossings.len(), 2);
+        assert!(
+            crossings
+                .iter()
+                .all(|point| plane.distance_to(**point).abs() < 1e-12)
+        );
     }
 }

@@ -305,6 +305,15 @@ fn corpus_component_translation_preserves_geometry_and_corner_textures() {
 
 #[test]
 fn corpus_repeated_component_edit_save_cycles_preserve_precise_geometry() {
+    repeated_corpus_edits(false);
+}
+
+#[test]
+fn corpus_repeated_affine_edit_save_cycles_preserve_precise_geometry() {
+    repeated_corpus_edits(true);
+}
+
+fn repeated_corpus_edits(affine: bool) {
     use map_core::{Document, ObjectId, subobject};
 
     let mut sampled = 0;
@@ -382,11 +391,12 @@ fn corpus_repeated_component_edit_save_cycles_preserve_precise_geometry() {
                         isolated.entities.push(entity);
                     }
                 }
-                let (geometry, texture) = common::repeated_translation(
-                    Document::try_new(isolated).unwrap(),
-                    source.id,
-                    8,
-                );
+                let isolated = Document::try_new(isolated).unwrap();
+                let (geometry, texture) = if affine {
+                    common::repeated_affine(isolated, source.id, 8)
+                } else {
+                    common::repeated_translation(isolated, source.id, 8)
+                };
                 assert!(
                     geometry < 1e-5 && texture < 0.0001,
                     "{} brush {}",
@@ -400,7 +410,7 @@ fn corpus_repeated_component_edit_save_cycles_preserve_precise_geometry() {
         }
     }
     eprintln!(
-        "repeated edit/save: {sampled} sampled brushes from {qualified} qualified in {} maps; skipped {skipped:?}; worst drift {worst_geometry} units / {worst_texture} texels",
+        "repeated edit/save, affine {affine}: {sampled} sampled brushes from {qualified} qualified in {} maps; skipped {skipped:?}; worst drift {worst_geometry} units / {worst_texture} texels",
         maps.len()
     );
     if !maps.is_empty() {

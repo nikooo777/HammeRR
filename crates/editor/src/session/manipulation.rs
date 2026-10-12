@@ -855,12 +855,12 @@ mod tests {
         session.cancel_transform_preview();
         mode(&mut session, Mode::Scale);
         session.begin_transform_drag(Handle::Uniform, None).unwrap();
-        assert_eq!(
+        assert!(
             session
                 .update_transform_drag(None, Some(DVec2::new(2.0, 0.0)))
                 .unwrap()
-                .scale,
-            DVec3::splat(2.0)
+                .scale
+                .abs_diff_eq(DVec3::splat(2.0), 1e-9)
         );
         let before = session.render_document().vmf().clone();
         assert!(

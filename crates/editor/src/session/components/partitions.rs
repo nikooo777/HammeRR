@@ -839,28 +839,12 @@ impl Session {
             ),
             None => (Vec::new(), None),
         };
-        self.components.serial += 1;
-        let token = self.components.serial;
-        self.components.drag = None;
-        self.components.preview = Some(Preview {
-            document,
-            token,
-            delta: DVec3::ZERO,
-            texture_lock: false,
+        self.install_component_preview(Preview {
             replacements,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-            weld: None,
-            weld_target: None,
-            split: None,
             crease,
-            transform: None,
             partition: Some(draft),
-            selection,
-        });
-        self.scene_serial += 1;
-        self.view_serial += 1;
-        token
+            ..Preview::new(document, selection)
+        })
     }
 
     pub fn preview_component_partition(

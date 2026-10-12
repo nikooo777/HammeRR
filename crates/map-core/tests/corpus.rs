@@ -1,6 +1,8 @@
 //! Geometry checks against real Hammer maps. See source-formats' corpus test
 //! for how the corpus is located.
 
+mod common;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -299,4 +301,109 @@ fn corpus_component_translation_preserves_geometry_and_corner_textures() {
         "{}",
         failures.into_iter().take(30).collect::<Vec<_>>().join("\n")
     );
+}
+
+#[test]
+fn corpus_repeated_component_edit_save_cycles_preserve_precise_geometry() {
+    use map_core::{Document, ObjectId, subobject};
+
+    let mut sampled = 0;
+    let mut qualified = 0;
+    let mut skipped = std::collections::BTreeMap::new();
+    let mut worst_geometry = 0f64;
+    let mut worst_texture = 0f64;
+    let maps = corpus();
+    for (path, vmf) in &maps {
+        let document = Document::new(vmf.clone());
+        let mut world = Vec::new();
+        let mut entities = Vec::new();
+        for source in vmf.solids() {
+            let skip = if source.sides.iter().any(|side| side.displacement.is_some()) {
+                Some("displacements")
+            } else if subobject::solid(&document, source.id).is_err() {
+                Some("ambiguous identity")
+            } else if let Ok(shape) = subobject::topology(source) {
+                if shape
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.position.abs().max_element() > 65_535.0)
+                {
+                    Some("coordinate bounds")
+                } else if source.sides.iter().any(|side| {
+                    side.u_axis
+                        .axis
+                        .cross(side.v_axis.axis)
+                        .dot(map_core::Plane::from_points(side.plane.0).unwrap().normal)
+                        .abs()
+                        < 1e-10
+                }) {
+                    Some("degenerate texture projection")
+                } else {
+                    None
+                }
+            } else {
+                Some("unsupported topology")
+            };
+            if let Some(reason) = skip {
+                *skipped.entry(reason).or_insert(0) += 1;
+                continue;
+            }
+            qualified += 1;
+            if matches!(
+                document.owner_of_solid(source.id),
+                Some(ObjectId::Entity(_))
+            ) {
+                entities.push(source);
+            } else {
+                world.push(source);
+            }
+        }
+        for candidates in [&world, &entities] {
+            if candidates.is_empty() {
+                continue;
+            }
+            let indices = [
+                0,
+                candidates.len() / 3,
+                2 * candidates.len() / 3,
+                candidates.len() - 1,
+            ]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+            for index in indices {
+                let source = candidates[index];
+                let mut isolated = Document::empty().vmf().clone();
+                isolated.world.id = vmf.world.id;
+                match document.owner_of_solid(source.id).unwrap() {
+                    ObjectId::Solid(_) => isolated.world.solids.push(source.clone()),
+                    ObjectId::Entity(owner) => {
+                        let mut entity = document.entity(owner).unwrap().clone();
+                        entity.solids = vec![source.clone()];
+                        isolated.entities.push(entity);
+                    }
+                }
+                let (geometry, texture) = common::repeated_translation(
+                    Document::try_new(isolated).unwrap(),
+                    source.id,
+                    8,
+                );
+                assert!(
+                    geometry < 1e-5 && texture < 0.0001,
+                    "{} brush {}",
+                    path.display(),
+                    source.id
+                );
+                worst_geometry = worst_geometry.max(geometry);
+                worst_texture = worst_texture.max(texture);
+                sampled += 1;
+            }
+        }
+    }
+    eprintln!(
+        "repeated edit/save: {sampled} sampled brushes from {qualified} qualified in {} maps; skipped {skipped:?}; worst drift {worst_geometry} units / {worst_texture} texels",
+        maps.len()
+    );
+    if !maps.is_empty() {
+        assert!(sampled > 0);
+    }
 }

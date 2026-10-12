@@ -849,6 +849,7 @@ impl Session {
             "move brush components"
         };
         let replacements = preview.replacements.clone();
+        let preview_partition = preview.partition.is_some();
         let selection = preview.selection.clone();
         let rise = preview.split.as_ref().map(|split| split.rise);
         let texture_lock = preview.texture_lock;
@@ -879,6 +880,9 @@ impl Session {
                     return Err(EditError::Invalid(
                         "Face allocation changed; preview the crease again".into(),
                     ));
+                }
+                if preview_partition {
+                    partitions::consume_saved(tx, requests)?;
                 }
                 Ok(actual.replacements.len())
             } else if let Some(rise) = rise {

@@ -595,6 +595,12 @@ struct ComponentPartitionArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SavedPartitionsArgs {
+    sources: Vec<FaceRef>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct RaisePartitionArgs {
     token: String,
     /// Zero restores the flat draft; otherwise 0.125–4096 world units.
@@ -3322,7 +3328,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Stage two flat quad loops across opposing source-edge midpoints, one selected quad per brush across 1–16 ordinary brushes. pairs uses get_brush_components.crease_choices and the latest snapshot. Keeps independent draft vertex/loop IDs, exact authored planes, corner and edge incidence, ownership and source-side inheritance; never adds duplicate VMF sides or changes source history/allocators. Inspect preview.partition through get_brush_components, select loops with select_component_partitions and frame them with frame_component_partitions. Raise the shared ridge of both pieces with raise_component_partition. Flat Apply is rejected while retaining the draft. Save/compile/play and map replacement without explicit discard are blocked until Apply or Cancel; this temporary topology is not persistent metadata. Apply raised geometry with commit_component_edit; cancel with cancel_component_edit."
+        description = "Stage two flat quad loops across opposing source-edge midpoints, one selected quad per brush across 1–16 ordinary brushes. pairs uses get_brush_components.crease_choices and the latest snapshot. Keeps independent draft vertex/loop IDs, exact authored planes, corner and edge incidence, ownership and source-side inheritance; never adds duplicate VMF sides or changes source history/allocators. Inspect preview.partition through get_brush_components, select loops with select_component_partitions and frame them with frame_component_partitions. Keep flat pieces with store_component_partition, or raise both pieces' shared ridge with raise_component_partition and Apply through commit_component_edit. Generic flat commit is rejected while retaining the draft. Save/compile/play and map replacement without explicit discard are blocked until Keep, Apply or Cancel. Inspect/resume/remove kept pieces through the saved-partition tools. Cancel with cancel_component_edit."
     )]
     fn preview_component_partition(
         &self,
@@ -3350,6 +3356,71 @@ impl EditorServer {
                 args.roof_texture_lock,
             )?;
             selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Inspect saved flat face partitions, current validity and bounded metadata limits. Missing or changed sources remain listed with errors. Read-only; snapshot guards resume and remove operations.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_saved_component_partitions(&self) -> ToolResult {
+        run(|| Ok(self.session().saved_partition_report()))
+    }
+
+    #[tool(
+        description = "Keep a flat partition draft as bounded VMF editor metadata in one undoable edit. Requires its current token and zero rise. Closes the draft, permits save/compile/play, and leaves brush planes and compiler geometry unchanged. Resume later to inspect, highlight, frame or raise its pieces."
+    )]
+    fn store_component_partition(
+        &self,
+        Parameters(args): Parameters<VolumeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let count =
+                session.store_component_partition(Actor::Agent, parse_token(&args.token)?)?;
+            Ok(json!({"stored":count,"saved":session.saved_partition_report()}))
+        })
+    }
+
+    #[tool(
+        description = "Resume valid saved flat partitions identified by sources [{solid,side}] and the latest saved-partition snapshot. One source per brush across 1–16 brushes. Restores a shared flat draft for viewport/list inspection, picking, highlighting, framing, raising, keeping or cancellation. No geometry/history mutation; reject pending previews and stale or missing source records atomically."
+    )]
+    fn resume_component_partitions(
+        &self,
+        Parameters(args): Parameters<SavedPartitionsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let sources = args
+                .sources
+                .iter()
+                .map(|source| (source.solid, source.side))
+                .collect::<Vec<_>>();
+            session.resume_component_partitions(&sources, &args.snapshot)?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Remove 1–64 saved partition records by sources [{solid,side}] and the latest saved-partition snapshot in one undoable edit. Works for records whose geometry was deleted or changed. Brush planes remain unchanged. Reject pending previews, unknown sources and unsupported metadata atomically."
+    )]
+    fn remove_saved_component_partitions(
+        &self,
+        Parameters(args): Parameters<SavedPartitionsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let sources = args
+                .sources
+                .iter()
+                .map(|source| (source.solid, source.side))
+                .collect::<Vec<_>>();
+            let count = session.remove_saved_component_partitions(
+                Actor::Agent,
+                &sources,
+                &args.snapshot,
+            )?;
+            Ok(json!({"removed":count,"saved":session.saved_partition_report()}))
         })
     }
 

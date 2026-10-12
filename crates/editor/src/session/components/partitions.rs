@@ -4,6 +4,22 @@ use super::*;
 
 mod picking;
 
+pub(super) fn consume_saved(
+    tx: &mut map_core::Transaction,
+    requests: &[Crease],
+) -> Result<(), EditError> {
+    if let Ok(mut metadata) = map_core::partition_metadata::Metadata::parse(tx.vmf()) {
+        let count = metadata.entries.len();
+        for request in requests {
+            metadata.entries.remove(&(request.solid, request.side));
+        }
+        if metadata.entries.len() != count {
+            metadata.write(tx)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -15,6 +31,103 @@ pub struct PartitionRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_partition_lifecycle_shares_actors_geometry_history_and_materialization() {
+        for actor in [Actor::User, Actor::Agent] {
+            for direction in 0..2 {
+                let (mut session, id, pairs) = fixture(actor, direction);
+                let source = session.document.vmf().clone();
+                let history = session.document.undo_labels().count();
+                let token = session
+                    .preview_component_partition(&pairs, &session.component_stamp())
+                    .unwrap();
+                session.store_component_partition(actor, token).unwrap();
+                let stored = session.document.vmf().clone();
+                assert_eq!(stored.world, source.world);
+                assert_eq!(stored.entities, source.entities);
+                assert_eq!(session.partition_preview_token(), None);
+                session.ensure_partitions_resolved().unwrap();
+                assert_eq!(session.document.undo_labels().count(), history + 1);
+                let report = session.saved_partition_report();
+                assert_eq!(report["entries"].as_array().unwrap().len(), 1);
+                assert_eq!(report["entries"][0]["valid"], true);
+                let side = report["entries"][0]["side"].as_u64().unwrap() as u32;
+                assert!(
+                    session
+                        .resume_component_partitions(
+                            &[(id, side), (id, u32::MAX)],
+                            &session.component_stamp()
+                        )
+                        .is_err()
+                );
+                assert_eq!(session.partition_preview_token(), None);
+                let token = session
+                    .resume_component_partitions(&[(id, side)], &session.component_stamp())
+                    .unwrap();
+                let token = session.raise_component_partition(token, 16.125).unwrap();
+                let raised = session.render_document().vmf().clone();
+                assert!(
+                    map_core::partition_metadata::Metadata::parse(&raised)
+                        .unwrap()
+                        .entries
+                        .is_empty()
+                );
+                assert!(session.store_component_partition(actor, token).is_err());
+                session.commit_component_edit(actor, token).unwrap();
+                assert_eq!(session.document.vmf(), &raised);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &stored);
+                session
+                    .remove_saved_component_partitions(
+                        actor,
+                        &[(id, side)],
+                        &session.component_stamp(),
+                    )
+                    .unwrap();
+                assert_eq!(session.document.vmf(), &source);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &stored);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &source);
+            }
+        }
+    }
+
+    #[test]
+    fn keeping_an_unchanged_saved_partition_closes_the_draft_without_extra_history() {
+        let (mut session, id, pairs) = fixture(Actor::Agent, 0);
+        let token = session
+            .preview_component_partition(&pairs, &session.component_stamp())
+            .unwrap();
+        session
+            .store_component_partition(Actor::Agent, token)
+            .unwrap();
+        let report = session.saved_partition_report();
+        let side = report["entries"][0]["side"].as_u64().unwrap() as u32;
+        let source = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let token = session
+            .resume_component_partitions(&[(id, side)], &session.component_stamp())
+            .unwrap();
+        session
+            .store_component_partition(Actor::Agent, token)
+            .unwrap();
+        assert_eq!(session.partition_preview_token(), None);
+        session.ensure_partitions_resolved().unwrap();
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.document.undo_labels().count(), history);
+        let mut mesh = session.build_scene();
+        mesh.lines.clear();
+        session.append_partition_guides(&mut mesh);
+        assert_eq!(mesh.lines.len(), 16);
+        session
+            .set_component_picking(None, &[], &session.component_stamp())
+            .unwrap();
+        mesh.lines.clear();
+        session.append_partition_guides(&mut mesh);
+        assert!(mesh.lines.is_empty());
+    }
 
     #[test]
     fn draft_loop_picking_shares_projection_boundaries_and_read_only_guards() {
@@ -528,6 +641,154 @@ impl Draft {
 }
 
 impl Session {
+    pub fn saved_partition_report(&self) -> Value {
+        let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf());
+        let (entries, error) = match metadata {
+            Ok(metadata) => (metadata.resolve(&self.document).into_iter().map(|entry| {
+                json!({"solid":entry.source.solid,"side":entry.source.side,"edges":entry.source.edges,
+                    "valid":entry.result.is_ok(),"error":entry.result.err()})
+            }).collect::<Vec<_>>(), None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
+        json!({"snapshot":self.component_stamp(),"entries":entries,"error":error,
+            "limits":{"partitions":map_core::partition_metadata::MAX_PARTITIONS,"text_bytes":map_core::partition_metadata::MAX_TEXT_BYTES}})
+    }
+
+    pub fn store_component_partition(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
+        let draft = self.checked_partition(token)?;
+        if draft.rise != 0.0 {
+            return Err(
+                "Return to flat before keeping a partition; Apply commits raised geometry".into(),
+            );
+        }
+        let requests = draft.requests();
+        let selection = self.components.selection.clone();
+        let picking = self.components.picking.clone();
+        let count = self.edit(actor, "keep flat face partitions", |tx| {
+            for request in &requests {
+                map_core::partition_metadata::store(tx, request)?;
+            }
+            Ok(requests.len())
+        })?;
+        if self.partition_preview_token() == Some(token) {
+            self.cancel_component_move(token)?;
+        }
+        self.components.selection = selection;
+        self.components.picking = picking;
+        self.refresh_component_origin();
+        Ok(count)
+    }
+
+    pub fn resume_component_partitions(
+        &mut self,
+        sources: &[(u32, u32)],
+        stamp: &str,
+    ) -> Result<u64, String> {
+        self.check_component_stamp(stamp)?;
+        if sources.len() > subobject::MAX_SOLIDS {
+            return Err("Resume at most 16 saved partitions".into());
+        }
+        if self.components.preview.is_some() {
+            return Err(
+                "Apply or discard the current component preview before resuming saved pieces"
+                    .into(),
+            );
+        }
+        let sources = sources.iter().copied().collect::<BTreeSet<_>>();
+        let solids = sources
+            .iter()
+            .map(|source| source.0)
+            .collect::<BTreeSet<_>>();
+        if sources.is_empty()
+            || sources.len() > subobject::MAX_SOLIDS
+            || sources.len() != solids.len()
+        {
+            return Err("Resume one saved partition per brush across 1–16 brushes".into());
+        }
+        let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf())?;
+        let mut resolved = metadata
+            .resolve(&self.document)
+            .into_iter()
+            .map(|entry| ((entry.source.solid, entry.source.side), entry.result))
+            .collect::<BTreeMap<_, _>>();
+        let mut partitions = Vec::new();
+        for source in &sources {
+            partitions.push(
+                resolved
+                    .remove(source)
+                    .ok_or("Saved partition does not exist")??,
+            );
+        }
+        let ids = solids.into_iter().collect::<Vec<_>>();
+        self.set_component_picking(
+            Some(super::super::component_picking::Kind::Face),
+            &ids,
+            stamp,
+        )?;
+        let selection = sources
+            .into_iter()
+            .map(|(solid, side)| Component {
+                solid,
+                sides: vec![side],
+            })
+            .collect::<Vec<_>>();
+        self.select_components(&selection, SelectMode::Replace, &self.component_stamp())?;
+        let selection = partitions
+            .iter()
+            .flat_map(|part| {
+                part.loops.iter().map(|piece| PartitionRef {
+                    solid: part.source.solid,
+                    partition: piece.id,
+                })
+            })
+            .collect();
+        Ok(self.install_partition_preview(
+            Draft {
+                partitions,
+                rise: 0.0,
+                roof_texture_lock: false,
+                selection,
+            },
+            self.document.preview_snapshot(),
+            None,
+        ))
+    }
+
+    pub fn remove_saved_component_partitions(
+        &mut self,
+        actor: Actor,
+        sources: &[(u32, u32)],
+        stamp: &str,
+    ) -> Result<usize, String> {
+        self.check_component_stamp(stamp)?;
+        if sources.len() > map_core::partition_metadata::MAX_PARTITIONS {
+            return Err("Remove at most 64 saved partitions".into());
+        }
+        if self.components.preview.is_some() {
+            return Err(
+                "Apply or discard the current component preview before removing saved pieces"
+                    .into(),
+            );
+        }
+        let sources = sources.iter().copied().collect::<BTreeSet<_>>();
+        if sources.is_empty() || sources.len() > map_core::partition_metadata::MAX_PARTITIONS {
+            return Err("Choose 1–64 saved partitions to remove".into());
+        }
+        let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf())?;
+        if sources
+            .iter()
+            .any(|source| !metadata.entries.contains_key(source))
+        {
+            return Err("Saved partition does not exist".into());
+        }
+        self.edit(actor, "remove saved face partitions", |tx| {
+            for (solid, side) in &sources {
+                map_core::partition_metadata::remove(tx, *solid, *side)?;
+            }
+            Ok(sources.len())
+        })
+    }
+
     pub fn partition_preview_token(&self) -> Option<u64> {
         self.components
             .preview
@@ -538,7 +799,7 @@ impl Session {
 
     pub fn ensure_partitions_resolved(&self) -> Result<(), String> {
         if self.partition_preview_token().is_some() {
-            return Err("A temporary face partition is pending. Raise and Apply it, or Cancel it before saving, compiling or playing.".into());
+            return Err("A temporary face partition is pending. Keep flat pieces, raise and Apply, or Cancel before saving, compiling or playing.".into());
         }
         Ok(())
     }
@@ -650,7 +911,15 @@ impl Session {
         let requests = draft.requests();
         let current = subobject::plan_partitions(&self.document, &requests)
             .map_err(|error| error.to_string())?;
-        if current != draft.partitions {
+        if current
+            .iter()
+            .zip(&draft.partitions)
+            .any(|(current, saved)| {
+                let mut canonical = saved.clone();
+                canonical.loops = current.loops.clone();
+                current != &canonical
+            })
+        {
             return Err(
                 "Partition source geometry or ownership changed; stage the face again".into(),
             );
@@ -662,12 +931,14 @@ impl Session {
             Some(
                 document
                     .edit("preview raised partition", |tx| {
-                        subobject::crease_with_roof_textures(
+                        let plan = subobject::crease_with_roof_textures(
                             tx,
                             &requests,
                             rise,
                             draft.roof_texture_lock,
-                        )
+                        )?;
+                        consume_saved(tx, &requests)?;
+                        Ok(plan)
                     })
                     .map_err(|error| error.to_string())?,
             )
@@ -764,13 +1035,45 @@ impl Session {
 
     pub(super) fn append_partition_guides(&mut self, mesh: &mut render::SceneMesh) {
         let hidden = self.hidden_tool_brushes();
-        let Some(draft) = self
+        let saved;
+        let draft = if let Some(draft) = self
             .components
             .preview
             .as_ref()
             .and_then(|preview| preview.partition.as_ref())
-        else {
-            return;
+        {
+            draft
+        } else {
+            let ids = if self.components.picking.is_some() {
+                self.component_solids().into_iter().collect::<BTreeSet<_>>()
+            } else {
+                self.components
+                    .selection
+                    .iter()
+                    .map(|component| component.solid)
+                    .collect()
+            };
+            if ids.is_empty() {
+                return;
+            }
+            let Ok(metadata) =
+                map_core::partition_metadata::Metadata::parse(self.render_document().vmf())
+            else {
+                return;
+            };
+            let partitions = metadata
+                .resolve(self.render_document())
+                .into_iter()
+                .filter(|entry| ids.contains(&entry.source.solid))
+                .filter_map(|entry| entry.result.ok())
+                .collect();
+            saved = Draft {
+                partitions,
+                rise: 0.0,
+                roof_texture_lock: false,
+                selection: BTreeSet::new(),
+            };
+            &saved
         };
         for part in &draft.partitions {
             if self.component_hidden(part.source.solid, &hidden) {

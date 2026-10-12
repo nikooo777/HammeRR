@@ -291,6 +291,42 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let partition = &report["preview"]["partition"];
     window.set_has_partition_preview(!partition.is_null());
     window.set_partition_flat(partition["rise"].as_f64() == Some(0.0));
+    let saved = session.saved_partition_report();
+    let saved_rows = saved["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            let solid = entry["solid"].as_u64().unwrap();
+            let side = entry["side"].as_u64().unwrap();
+            ComponentRow {
+                key: format!("{solid}:{side}").into(),
+                label: format!("Brush {solid} · face {side}").into(),
+                detail: entry["error"]
+                    .as_str()
+                    .unwrap_or("Two flat pieces · resume to inspect or raise")
+                    .into(),
+                selected: entry["valid"].as_bool().unwrap(),
+            }
+        })
+        .collect::<Vec<_>>();
+    window.set_saved_partition_index(
+        window
+            .get_saved_partition_index()
+            .max(0)
+            .min(saved_rows.len().saturating_sub(1) as i32),
+    );
+    window.set_saved_partition_labels(
+        Rc::new(VecModel::from(
+            saved_rows
+                .iter()
+                .map(|row| row.label.clone())
+                .collect::<Vec<_>>(),
+        ))
+        .into(),
+    );
+    window.set_saved_partitions(Rc::new(VecModel::from(saved_rows)).into());
+    window.set_saved_partition_error(saved["error"].as_str().unwrap_or("").into());
     let mut parts = Vec::new();
     if let Some(partitions) = partition["partitions"].as_array() {
         for partition in partitions {
@@ -607,7 +643,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_token(token.into());
     window.set_ready(
         !preview.is_null()
-            && preview["can_apply"].as_bool().unwrap_or(true)
+            && (preview["can_apply"].as_bool().unwrap_or(true) || (partition && window.get_partition_flat()))
             && session
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
@@ -659,7 +695,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         let count = preview["partition"]["partitions"].as_array().unwrap().len();
         let rise = preview["partition"]["rise"].as_f64().unwrap();
         if rise == 0.0 {
-            format!("{} flat pieces staged. The source face is unchanged.\nRaise their shared ridge before Apply, or Cancel.",count*2).into()
+            format!("{} flat pieces staged. The source face is unchanged.\nKeep the pieces for later, raise their shared ridge, or Cancel.",count*2).into()
         } else {
             format!("{} pieces · shared ridge raised {} units.\nThe map is unchanged until Apply.",count*2,number(rise)).into()
         }
@@ -692,6 +728,33 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         )
         .into()
     });
+}
+
+fn saved_partition_action(window: &ComponentsWindow, shared: &SharedSession, remove: bool) {
+    let result = window
+        .get_saved_partitions()
+        .row_data(window.get_saved_partition_index() as usize)
+        .ok_or("Choose saved pieces first".to_string())
+        .and_then(|row| {
+            let component = component(row.key.as_str())?;
+            let sources = [(component.solid, component.sides[0])];
+            let mut session = lock(shared);
+            if remove {
+                session
+                    .remove_saved_component_partitions(
+                        Actor::User,
+                        &sources,
+                        window.get_stamp().as_str(),
+                    )
+                    .map(|_| ())
+            } else {
+                session
+                    .resume_component_partitions(&sources, window.get_stamp().as_str())
+                    .map(|_| ())
+            }
+        });
+    refresh(window, &lock(shared));
+    window.set_message(result.err().unwrap_or_default().into());
 }
 
 pub fn refresh_changed(window: &ComponentsWindow, session: &Session) {
@@ -729,6 +792,14 @@ fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
 }
 
 pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    window.on_resume_saved_partition({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || saved_partition_action(&window.unwrap(), &shared, false)
+    });
+    window.on_remove_saved_partition({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || saved_partition_action(&window.unwrap(), &shared, true)
+    });
     window.on_choose_partition({
         let (window, shared) = (window.as_weak(), shared.clone());
         move |key| {
@@ -1103,16 +1174,17 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                 return;
             }
             let mut session = lock(&shared);
+            let flat = window.get_has_partition_preview() && window.get_partition_flat();
             let result = window
                 .get_token()
                 .parse()
                 .map_err(|_| "Preview a change first".to_string())
-                .and_then(|token| session.commit_component_edit(Actor::User, token));
+                .and_then(|token| if flat { session.store_component_partition(Actor::User, token) } else { session.commit_component_edit(Actor::User, token) });
             refresh(&window, &session);
             window.set_message(
                 result
                     .map(|count| {
-                        format!("Changed {count} brushes. Undo restores the previous shape.")
+                        if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
                     })
                     .unwrap_or_else(|error| error)
                     .into(),

@@ -449,6 +449,10 @@ brush is hidden by the tool-material filter.
 | --- | --- |
 | ![Roof ridge direction, height and Apply/Discard/Cancel controls](docs/images/brush-roof-ridge.png) | ![Two roof planes joined at the raised opposing edge midpoints](docs/images/component-roof-ridge.png) |
 
+Core edge discovery supports convex faces with three to eight corners; polygon
+cut topology, saved membership and its UI/MCP authoring remain in development.
+Current partition controls support quad source faces.
+
 Movement and welding support 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
 collapse edges are rejected before the map is changed. Movement preserves

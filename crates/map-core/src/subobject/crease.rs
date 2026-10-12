@@ -1,5 +1,7 @@
 use super::*;
 
+pub const MAX_BOUNDARY_SOURCE_CORNERS: usize = 8;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreasePair {
     pub edges: [u32; 2],
@@ -34,6 +36,15 @@ pub fn crease_pairs(source: &Solid, side: u32) -> Result<Vec<CreasePair>, EditEr
 
 impl Topology {
     fn quad_boundary_edges(&self, side: u32) -> Result<Vec<(u32, DVec3)>, EditError> {
+        self.bounded_boundary_edges(side, 4..=4, "crease")
+    }
+
+    fn bounded_boundary_edges(
+        &self,
+        side: u32,
+        corners: std::ops::RangeInclusive<usize>,
+        operation: &str,
+    ) -> Result<Vec<(u32, DVec3)>, EditError> {
         let shape = self;
         let face = shape
             .faces
@@ -41,19 +52,28 @@ impl Topology {
             .find(|face| face.side == side)
             .ok_or_else(|| {
                 invalid(format!(
-                    "Brush {}: crease face {side} does not exist",
+                    "Brush {}: {operation} face {side} does not exist",
                     shape.solid
                 ))
             })?;
-        if face.vertices.len() != 4 {
+        if !corners.contains(&face.vertices.len()) {
+            if corners != (4..=4) {
+                return Err(invalid(format!(
+                    "Brush {}: boundary choices require 3–8 source corners",
+                    shape.solid
+                )));
+            }
             return Err(invalid(format!(
                 "Brush {}: a crease requires a face with exactly four corners",
                 shape.solid
             )));
         }
         let mut edges = Vec::new();
-        for index in 0..4 {
-            let mut vertices = [face.vertices[index], face.vertices[(index + 1) % 4]];
+        for index in 0..face.vertices.len() {
+            let mut vertices = [
+                face.vertices[index],
+                face.vertices[(index + 1) % face.vertices.len()],
+            ];
             vertices.sort_unstable();
             let edge = shape
                 .edges
@@ -91,21 +111,51 @@ impl Topology {
     }
 
     pub fn partition_pairs(&self, side: u32) -> Result<Vec<CreasePair>, EditError> {
-        let mut choices = self.crease_pairs(side)?;
-        let edges = self.quad_boundary_edges(side)?;
-        let mut adjacent = Vec::new();
-        for index in 0..4 {
-            let mut pair = [edges[index], edges[(index + 1) % 4]];
+        Ok(boundary_pair_choices(&self.quad_boundary_edges(side)?))
+    }
+
+    pub fn polygon_partition_pairs(&self, side: u32) -> Result<Vec<CreasePair>, EditError> {
+        Ok(boundary_pair_choices(&self.bounded_boundary_edges(
+            side,
+            3..=MAX_BOUNDARY_SOURCE_CORNERS,
+            "partition",
+        )?))
+    }
+}
+
+fn boundary_pair_choices(edges: &[(u32, DVec3)]) -> Vec<CreasePair> {
+    let mut choices = Vec::new();
+    if edges.len() == 4 {
+        for index in 0..2 {
+            let mut pair = [edges[index], edges[index + 2]];
             pair.sort_by_key(|edge| edge.0);
-            adjacent.push(CreasePair {
+            choices.push(CreasePair {
                 edges: pair.map(|edge| edge.0),
                 midpoints: pair.map(|edge| edge.1),
             });
         }
-        adjacent.sort_by_key(|pair| pair.edges);
-        choices.extend(adjacent);
-        Ok(choices)
+        choices.sort_by_key(|pair| pair.edges);
     }
+    let mut remaining = Vec::new();
+    for first in 0..edges.len() {
+        for second in first + 1..edges.len() {
+            let mut pair = [edges[first], edges[second]];
+            pair.sort_by_key(|edge| edge.0);
+            if choices
+                .iter()
+                .any(|choice| choice.edges == pair.map(|edge| edge.0))
+            {
+                continue;
+            }
+            remaining.push(CreasePair {
+                edges: pair.map(|edge| edge.0),
+                midpoints: pair.map(|edge| edge.1),
+            });
+        }
+    }
+    remaining.sort_by_key(|pair| pair.edges);
+    choices.extend(remaining);
+    choices
 }
 
 pub fn crease(
@@ -1082,3 +1132,6 @@ mod tests {
         assert_eq!(document.edit("allocate", |tx| tx.new_side_id()).unwrap(), 7);
     }
 }
+
+#[cfg(test)]
+mod polygon_choices;

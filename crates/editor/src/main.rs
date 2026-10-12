@@ -6011,6 +6011,12 @@ mod tests {
         window.invoke_preview_cut();
         assert!(window.get_ready());
         save_ui_snapshot(window.window(), "boundary-partition-controls");
+        window.invoke_apply();
+        assert!(!window.get_has_partition_preview());
+        let boundary_stored = lock(&shared).document().vmf().clone();
+        window.invoke_resume_saved_partition();
+        assert!(window.get_ready() && window.get_partition_flat());
+        assert!(!window.get_can_raise_partition());
         window.invoke_preview_edit();
         assert!(window.get_ready() && window.get_partition_flat());
         window.set_partition_mode(1);
@@ -6021,6 +6027,8 @@ mod tests {
         save_ui_snapshot(window.window(), "boundary-partition-extrusion");
         window.invoke_cancel();
         assert_eq!(lock(&shared).partition_preview_token(), None);
+        assert_eq!(lock(&shared).document().vmf(), &boundary_stored);
+        lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &source);
     }
 
@@ -6988,6 +6996,8 @@ mod tests {
     }
 
     fn save_ui_snapshot(window: &slint::Window, name: &str) {
+        window.take_snapshot().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
         let image = window.take_snapshot().unwrap();
         assert!(image.width() > 0 && image.height() > 0);
         if let Some(directory) = std::env::var_os("HAMMERR_UI_SNAPSHOTS") {

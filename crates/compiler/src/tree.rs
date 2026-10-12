@@ -41,7 +41,12 @@ impl Polyhedron {
         }
     }
 
-    fn bounding_box(mins: DVec3, maxs: DVec3, planes: &mut PlaneSet) -> Self {
+    fn bounding_box(mins: DVec3, maxs: DVec3, planes: &mut PlaneSet) -> Result<Self, String> {
+        if !mins.is_finite() || !maxs.is_finite() || !mins.cmplt(maxs).all() {
+            return Err(
+                "cannot construct BSP volume: bounds must be finite and have positive size".into(),
+            );
+        }
         let mut indices = Vec::with_capacity(6);
         for axis in 0..3 {
             let mut normal = DVec3::ZERO;
@@ -59,16 +64,18 @@ impl Polyhedron {
                         continue;
                     }
                     let clip = planes.get(other);
-                    winding = winding.clip_back(clip.normal, clip.dist).unwrap();
+                    winding = winding.clip_back(clip.normal, clip.dist).ok_or_else(|| {
+                        "cannot construct BSP volume: bounding planes enclose no supported volume".to_owned()
+                    })?;
                 }
-                Surface {
+                Ok(Surface {
                     plane: index,
                     winding,
                     tested: true,
-                }
+                })
             })
-            .collect();
-        Self { sides }
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self { sides })
     }
 
     pub fn bounds(&self) -> (DVec3, DVec3) {
@@ -238,7 +245,7 @@ impl Tree {
             mins - DVec3::splat(BOUNDS_PADDING),
             maxs + DVec3::splat(BOUNDS_PADDING),
             planes,
-        );
+        )?;
         let fragments: Vec<Fragment> = indices
             .iter()
             .map(|&brush| Fragment {
@@ -359,5 +366,30 @@ impl Tree {
             }
         }
         leaves
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_bounding_volumes_return_errors() {
+        for (mins, maxs) in [
+            (DVec3::splat(70_000.0), DVec3::splat(70_016.0)),
+            (DVec3::splat(f64::NAN), DVec3::ONE),
+            (DVec3::ZERO, DVec3::ZERO),
+            (DVec3::ONE, DVec3::ZERO),
+        ] {
+            assert!(Polyhedron::bounding_box(mins, maxs, &mut PlaneSet::default()).is_err());
+        }
+        assert!(
+            Polyhedron::bounding_box(
+                DVec3::splat(-16_392.0),
+                DVec3::splat(16_392.0),
+                &mut PlaneSet::default()
+            )
+            .is_ok()
+        );
     }
 }

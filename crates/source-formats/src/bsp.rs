@@ -81,6 +81,7 @@ pub mod contents {
     pub const GRATE: i32 = 0x8;
     pub const SLIME: i32 = 0x10;
     pub const WATER: i32 = 0x20;
+    pub const BLOCKLOS: i32 = 0x40;
     pub const OPAQUE: i32 = 0x80;
     pub const TESTFOGVOLUME: i32 = 0x100;
     pub const MOVEABLE: i32 = 0x4000;
@@ -340,6 +341,16 @@ fn u16_at(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap())
 }
 
+fn file_range(data: &[u8], offset: i32, length: i32) -> io::Result<&[u8]> {
+    let offset = usize::try_from(offset).map_err(|_| invalid("negative lump offset"))?;
+    let length = usize::try_from(length).map_err(|_| invalid("negative lump length"))?;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| invalid("lump range overflow"))?;
+    data.get(offset..end)
+        .ok_or_else(|| invalid("lump lies outside the file"))
+}
+
 fn align4(out: &mut Vec<u8>) {
     out.resize(out.len().next_multiple_of(4), 0);
 }
@@ -380,11 +391,8 @@ impl Bsp {
         let mut lumps = Vec::with_capacity(LUMP_COUNT);
         for index in 0..LUMP_COUNT {
             let entry = 8 + index * 16;
-            let offset = i32_at(data, entry) as usize;
-            let length = i32_at(data, entry + 4) as usize;
-            let bytes = data
-                .get(offset..offset + length)
-                .ok_or_else(|| invalid(format!("lump {index} lies outside the file")))?;
+            let bytes = file_range(data, i32_at(data, entry), i32_at(data, entry + 4))
+                .map_err(|error| invalid(format!("lump {index}: {error}")))?;
             lumps.push(Lump {
                 version: i32_at(data, entry + 8),
                 fourcc: data[entry + 12..entry + 16].try_into().unwrap(),
@@ -467,7 +475,6 @@ impl Bsp {
             .iter()
             .map(|chunk| {
                 let mut leaf: Leaf = bytemuck::pod_read_unaligned(&chunk[..size_of::<Leaf>()]);
-                leaf.water_data = u16_at(chunk, 52) as i16;
                 leaf.padding = 0;
                 leaf
             })
@@ -572,24 +579,25 @@ fn game_lump_id(raw: i32) -> [u8; 4] {
 }
 
 fn parse_game_lumps(file: &[u8], directory: &[u8]) -> io::Result<Vec<GameLump>> {
-    if directory.len() < 4 {
+    if directory.is_empty() {
         return Ok(Vec::new());
     }
-    let count = i32_at(directory, 0).max(0) as usize;
+    if directory.len() < 4 {
+        return Err(invalid("game lump directory is truncated"));
+    }
+    let count =
+        usize::try_from(i32_at(directory, 0)).map_err(|_| invalid("negative game lump count"))?;
+    if count > (directory.len() - 4) / 16 {
+        return Err(invalid("game lump count exceeds its directory"));
+    }
     let mut lumps = Vec::with_capacity(count);
     for i in 0..count {
         let entry = 4 + i * 16;
         let header = directory
             .get(entry..entry + 16)
             .ok_or_else(|| invalid("game lump directory is truncated"))?;
-        let offset = i32_at(header, 8) as usize;
-        let length = i32_at(header, 12) as usize;
-        let data = if length == 0 {
-            &[][..]
-        } else {
-            file.get(offset..offset + length)
-                .ok_or_else(|| invalid(format!("game lump {i} lies outside the file")))?
-        };
+        let data = file_range(file, i32_at(header, 8), i32_at(header, 12))
+            .map_err(|error| invalid(format!("game lump {i}: {error}")))?;
         lumps.push(GameLump {
             id: game_lump_id(i32_at(header, 0)),
             flags: u16_at(header, 4),

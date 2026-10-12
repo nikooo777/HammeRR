@@ -1,5 +1,8 @@
 //! Valve Material Type (VMT) files: a shader name plus parameters.
 
+mod compile;
+pub use compile::CompileSemantics;
+
 use std::io;
 
 use crate::gamefs::{GameFs, normalize};
@@ -112,6 +115,17 @@ impl Material {
             .is_some_and(|v| v != 0.0)
     }
 
+    pub fn compile_flag(&self, key: &str) -> bool {
+        self.get(key).is_some_and(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        })
+    }
+
+    pub fn compile_semantics(&self) -> CompileSemantics {
+        CompileSemantics::from_material(self)
+    }
+
     /// Textures the editor could show, best first, as `.vtf` game paths:
     /// `%tooltexture` (tool, water and blend materials), then `$basetexture`.
     /// Shipped games often omit tool textures, so use the first that exists.
@@ -136,25 +150,12 @@ impl Material {
     /// (clip, trigger, nodraw, skybox, ...). Water and other visible
     /// `%compile*` materials are not tools.
     pub fn is_tool(&self) -> bool {
-        const INVISIBLE: &[&str] = &[
-            "%compileareaportal",
-            "%compileblocklight",
-            "%compileclip",
-            "%compilefog",
-            "%compilehint",
-            "%compileinvisible",
-            "%compilenodraw",
-            "%compilenpcclip",
-            "%compileorigin",
-            "%compileplayerclip",
-            "%compileskip",
-            "%compilesky",
-            "%compiletrigger",
-        ];
-        INVISIBLE
-            .iter()
-            .any(|k| self.get(k).is_some_and(|v| v.trim() != "0"))
+        let semantics = self.compile_semantics();
+        !semantics.draws
+            || semantics.surface & crate::bsp::surf::SKY != 0
             || self.shader == "sky"
+            || self.compile_flag("%compileinvisible")
+            || self.compile_flag("%compileblocklight")
     }
 }
 

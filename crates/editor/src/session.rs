@@ -51,6 +51,8 @@ pub use connections::{ConnectionDraft, ConnectionFields, ConnectionRecord};
 mod references;
 pub use references::RenameDraft;
 mod manipulation;
+#[cfg(test)]
+mod preview_tests;
 mod rename_view;
 pub use manipulation::{AreaPreview, Pointer, TransformDrag, TransformPreview, TransformTool};
 
@@ -579,7 +581,7 @@ impl Session {
         preview: bool,
     ) -> Result<usize, String> {
         if preview {
-            let mut document = self.document.clone();
+            let mut document = self.document.preview_snapshot();
             let changed = document
                 .edit("preview face settings", |tx| {
                     edits.iter().try_fold(0, |count, (face, patch)| {
@@ -1053,7 +1055,8 @@ impl Session {
         let start = Instant::now();
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let vmf = Vmf::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        let document = Document::new(vmf);
+        let document =
+            Document::try_new(vmf).map_err(|error| format!("{}: {error}", path.display()))?;
         document
             .context()
             .map_err(|error| format!("{}: {error}", path.display()))?;

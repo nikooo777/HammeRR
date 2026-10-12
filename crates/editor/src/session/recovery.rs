@@ -304,7 +304,8 @@ impl Session {
             .ok_or("Recovery storage is unavailable")?
             .read(id)?;
         let vmf = Vmf::parse(&text).map_err(|e| format!("Recovery map could not be read: {e}"))?;
-        let mut document = Document::new(vmf);
+        let mut document = Document::try_new(vmf)
+            .map_err(|error| format!("Recovery map has invalid IDs: {error}"))?;
         document.context().map_err(|error| error.to_string())?;
         document.mark_unsaved();
         self.replace_document(document, None);
@@ -415,6 +416,76 @@ mod tests {
         session
             .finish_recovery_snapshot(Actor::User, &request, result)
             .unwrap()
+    }
+
+    #[test]
+    fn duplicate_ids_in_open_and_recovery_preserve_the_active_document() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (directory, mut session, id) = fixture();
+            session
+                .select(&[id], super::super::SelectMode::Replace)
+                .unwrap();
+            session
+                .edit(actor, "temporary", |tx| {
+                    tx.world_properties_mut().set("skyname", "temporary");
+                    Ok(())
+                })
+                .unwrap();
+            session.undo(actor).unwrap();
+            session
+                .create_primitive(actor, map_core::primitive::Spec::default(), true)
+                .unwrap();
+            let before = session.document.vmf().clone();
+            let preview = session.render_document().vmf().clone();
+            let state = (
+                session.document_generation,
+                session.document.revision(),
+                session.selected_ids(),
+                session.camera,
+            );
+            let text = "world { id 1 } entity { id 2 classname light } entity { id 2 classname info_target }";
+            let path = directory.path().join("duplicate.vmf");
+            std::fs::write(&path, text).unwrap();
+            assert!(
+                session
+                    .open(actor, &path, true)
+                    .unwrap_err()
+                    .contains("duplicate object ID 2")
+            );
+            let entry = session
+                .recovery
+                .store
+                .as_ref()
+                .unwrap()
+                .write(
+                    "invalid",
+                    None,
+                    "Invalid IDs",
+                    Kind::Manual,
+                    text.as_bytes(),
+                )
+                .unwrap();
+            assert!(
+                session
+                    .restore_recovery_snapshot(actor, &entry.id, true, None)
+                    .unwrap_err()
+                    .contains("duplicate object ID 2")
+            );
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.render_document().vmf(), &preview);
+            assert_eq!(
+                (
+                    session.document_generation,
+                    session.document.revision(),
+                    session.selected_ids(),
+                    session.camera
+                ),
+                state
+            );
+            assert_eq!(session.document.undo_labels().count(), 1);
+            assert_eq!(session.document.redo_labels().count(), 1);
+            assert!(session.path().is_none());
+        }
     }
 
     #[test]

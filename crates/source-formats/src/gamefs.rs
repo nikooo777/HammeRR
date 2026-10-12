@@ -3,6 +3,7 @@
 //! Files are looked up by game path (`materials/tools/toolsnodraw.vmt`)
 //! through an ordered list of mounts; the first mount that has the file wins.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,19 @@ pub fn normalize(path: &str) -> String {
     out
 }
 
+pub fn asset_relative(path: &str) -> io::Result<String> {
+    if path.starts_with(['/', '\\'])
+        || path.contains([':', '\0'])
+        || path.split(['/', '\\']).any(|part| part == "..")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "asset paths must be relative to a content mount and cannot contain '..'",
+        ));
+    }
+    Ok(normalize(path))
+}
+
 #[derive(Debug)]
 pub enum Mount {
     Directory(PathBuf),
@@ -49,7 +63,8 @@ impl Mount {
         match self {
             Self::Pak(vpk) => vpk.read(path),
             Self::Directory(root) => match find_case_insensitive(root, path) {
-                Some(file) => fs::read(file).map(Some),
+                Some(file) if file.is_file() => fs::read(file).map(Some),
+                Some(_) => Ok(None),
                 None => Ok(None),
             },
         }
@@ -66,20 +81,36 @@ impl Mount {
 /// Resolves `relative` under `root`, matching each component without regard
 /// to case when the exact path doesn't exist.
 fn find_case_insensitive(root: &Path, relative: &str) -> Option<PathBuf> {
+    let boundary = root.canonicalize().ok()?;
     let exact = root.join(relative);
-    if exact.is_file() {
+    if exact
+        .canonicalize()
+        .is_ok_and(|path| path.starts_with(&boundary))
+    {
         return Some(exact);
     }
     let mut current = root.to_path_buf();
-    for part in relative.split('/') {
-        let entry = fs::read_dir(&current).ok()?.flatten().find(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| n.eq_ignore_ascii_case(part))
-        })?;
-        current = entry.path();
+    for part in relative.split('/').filter(|part| !part.is_empty()) {
+        let exact = current.join(part);
+        current = if exact.exists() {
+            exact
+        } else {
+            fs::read_dir(&current)
+                .ok()?
+                .flatten()
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(part))
+                })?
+                .path()
+        };
+        if !current.canonicalize().ok()?.starts_with(&boundary) {
+            return None;
+        }
     }
-    current.is_file().then_some(current)
+    Some(current)
 }
 
 #[derive(Debug)]
@@ -222,7 +253,10 @@ impl GameFs {
 
     /// Reads a file from mounts tagged with `id`, or from every mount.
     pub fn read_from(&self, path: &str, id: Option<&str>) -> io::Result<Option<Vec<u8>>> {
-        let path = normalize(path);
+        let path = asset_relative(path)?;
+        if path.is_empty() {
+            return Ok(None);
+        }
         for mounted in &self.mounts {
             if id.is_some_and(|id| !mounted.ids.iter().any(|m| m == id)) {
                 continue;
@@ -238,7 +272,14 @@ impl GameFs {
     /// ending in `extension` (e.g. `.vmt`), normalized, sorted, without
     /// duplicates.
     pub fn list(&self, dir: &str, extension: &str) -> Vec<String> {
-        let prefix = format!("{}/", normalize(dir).trim_end_matches('/'));
+        let Ok(dir) = asset_relative(dir) else {
+            return Vec::new();
+        };
+        let prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
         let extension = extension.to_ascii_lowercase();
         let mut files = Vec::new();
         for mounted in self
@@ -253,8 +294,21 @@ impl GameFs {
                         .map(str::to_owned),
                 ),
                 Mount::Directory(root) => {
-                    let mut stack = vec![root.join(&prefix)];
+                    let Some(start) = find_case_insensitive(root, &dir) else {
+                        continue;
+                    };
+                    let Ok(boundary) = root.canonicalize() else {
+                        continue;
+                    };
+                    let mut seen = HashSet::new();
+                    let mut stack = vec![start];
                     while let Some(dir) = stack.pop() {
+                        let Ok(canonical) = dir.canonicalize() else {
+                            continue;
+                        };
+                        if !canonical.starts_with(&boundary) || !seen.insert(canonical) {
+                            continue;
+                        }
                         let Ok(entries) = fs::read_dir(&dir) else {
                             continue;
                         };
@@ -262,12 +316,14 @@ impl GameFs {
                             let path = entry.path();
                             if path.is_dir() {
                                 stack.push(path);
-                            } else if let Some(relative) = path
-                                .strip_prefix(root)
-                                .ok()
-                                .and_then(|p| p.to_str())
-                                .map(normalize)
-                                .filter(|p| p.ends_with(&extension))
+                            } else if path.is_file()
+                                && path.canonicalize().is_ok_and(|p| p.starts_with(&boundary))
+                                && let Some(relative) = path
+                                    .strip_prefix(root)
+                                    .ok()
+                                    .and_then(|p| p.to_str())
+                                    .map(normalize)
+                                    .filter(|p| p.ends_with(&extension))
                             {
                                 files.push(relative);
                             }

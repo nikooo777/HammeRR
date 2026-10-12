@@ -107,6 +107,7 @@ impl Properties {
 pub struct Vmf {
     pub version_info: Option<Properties>,
     pub visgroups: Option<Vec<VisGroup>>,
+    pub visgroups_extra: Vec<Node>,
     pub view_settings: Option<Properties>,
     pub world: World,
     /// Point and brush entities, in file order. Hidden ones carry `hidden`.
@@ -124,6 +125,7 @@ impl Vmf {
     pub fn from_nodes(nodes: &[Node]) -> Result<Self, Error> {
         let mut version_info = None;
         let mut visgroups = None;
+        let mut visgroups_extra = Vec::new();
         let mut view_settings = None;
         let mut world = None;
         let mut entities = Vec::new();
@@ -142,6 +144,12 @@ impl Vmf {
                 }
                 "visgroups" if visgroups.is_none() => {
                     visgroups = Some(VisGroup::parse_list(children, "visgroups")?);
+                    visgroups_extra.extend(
+                        children
+                            .iter()
+                            .filter(|node| node.key != "visgroup" || node.children().is_none())
+                            .cloned(),
+                    );
                 }
                 "viewsettings" if view_settings.is_none() => {
                     view_settings = Some(Properties::parse(children, "viewsettings")?);
@@ -167,6 +175,7 @@ impl Vmf {
         Ok(Self {
             version_info,
             visgroups,
+            visgroups_extra,
             view_settings,
             world: world.ok_or_else(|| invalid("(root)", "missing world block"))?,
             entities,
@@ -181,10 +190,15 @@ impl Vmf {
         if let Some(info) = &self.version_info {
             out.push(info.to_block("versioninfo"));
         }
-        if let Some(groups) = &self.visgroups {
+        if self.visgroups.is_some() || !self.visgroups_extra.is_empty() {
             out.push(Node::block(
                 "visgroups",
-                groups.iter().map(VisGroup::to_node).collect(),
+                self.visgroups
+                    .iter()
+                    .flatten()
+                    .map(VisGroup::to_node)
+                    .chain(self.visgroups_extra.iter().cloned())
+                    .collect(),
             ));
         }
         if let Some(settings) = &self.view_settings {
@@ -208,6 +222,44 @@ impl Vmf {
             .solids
             .iter()
             .chain(self.entities.iter().flat_map(|e| &e.solids))
+    }
+
+    pub fn object_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        std::iter::once(self.world.id)
+            .chain(self.world.groups.iter().map(|group| group.id))
+            .chain(self.entities.iter().map(|entity| entity.id))
+            .chain(self.solids().map(|solid| solid.id))
+    }
+
+    pub fn side_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.solids()
+            .flat_map(|solid| solid.sides.iter().map(|side| side.id))
+    }
+
+    pub fn validate_ids(&self) -> Result<(), Error> {
+        let mut ids = std::collections::HashSet::new();
+        for id in self.object_ids() {
+            if !ids.insert(id) {
+                return Err(invalid(
+                    "map",
+                    format!(
+                        "duplicate object ID {id}; world, groups, entities and brushes must have distinct IDs"
+                    ),
+                ));
+            }
+        }
+        ids.clear();
+        for id in self.side_ids() {
+            if !ids.insert(id) {
+                return Err(invalid(
+                    "map",
+                    format!(
+                        "duplicate side ID {id}; faces must have distinct IDs across all brushes"
+                    ),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

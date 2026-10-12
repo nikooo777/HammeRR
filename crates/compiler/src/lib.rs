@@ -9,6 +9,7 @@ pub mod planes;
 pub mod portals;
 pub mod tree;
 mod visibility;
+mod water;
 pub mod winding;
 
 use std::io::Write;
@@ -99,6 +100,8 @@ pub struct Stats {
     pub clusters: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
+    pub water_regions: usize,
+    pub water_leaves: usize,
     pub elapsed: Duration,
 }
 
@@ -191,6 +194,31 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
     if output.report.has_errors() {
         return Ok(());
     }
+    control.advance(Stage::Water)?;
+    let water = water::build(&map, &tree, &portals, &mut output.report, control)?;
+    output.stats.water_regions = water.records.len();
+    output.stats.water_leaves = water.leaves.iter().filter(|&&region| region >= 0).count();
+    if output.report.has_errors() {
+        return Ok(());
+    }
+    if !water.records.is_empty()
+        && !map
+            .entities
+            .iter()
+            .any(|entity| entity.classname == "water_lod_control")
+    {
+        map.entities.push(map::MapEntity {
+            id: 0,
+            classname: "water_lod_control".into(),
+            properties: vec![
+                ("classname".into(), "water_lod_control".into()),
+                ("cheapwaterstartdistance".into(), "1000".into()),
+                ("cheapwaterenddistance".into(), "2000".into()),
+            ],
+            brushes: Vec::new(),
+            origin: None,
+        });
+    }
     control.advance(Stage::Visibility)?;
     let visibility = visibility::build(&tree, &portals, control)?;
     output.stats.clusters = visibility.count;
@@ -230,7 +258,7 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     control.advance(Stage::Emitting)?;
-    let bsp = emit::build(&map, &models, &visibility, revision, control)?;
+    let bsp = emit::build(&map, &models, &visibility, &water, revision, control)?;
     control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();

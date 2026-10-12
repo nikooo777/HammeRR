@@ -7388,7 +7388,19 @@ mod tests {
             },
         )))
         .unwrap();
-        let (directory, game, _) = game::tests::fixture(true);
+        let (directory, mut game, _) = game::tests::fixture(true);
+        let materials = directory.path().join("materials");
+        std::fs::create_dir(&materials).unwrap();
+        std::fs::write(materials.join("water.vmt"), "Water { $abovewater 1 }").unwrap();
+        std::fs::write(
+            materials.join("nodraw.vmt"),
+            "UnlitGeneric { %compilenodraw 1 }",
+        )
+        .unwrap();
+        game.mounts.push(source_formats::gamefs::MountedPath {
+            ids: vec!["game".into()],
+            mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
+        });
         let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
         let controller = compile_ui::Controller::new(&shared).unwrap();
         controller.show(&lock(&shared)).unwrap();
@@ -7432,6 +7444,24 @@ mod tests {
             Ok(())
         })
         .unwrap();
+        room.edit("pool", |tx| {
+            let ObjectId::Solid(id) = map_core::edit::create_block(
+                tx,
+                DVec3::new(-128.0, -128.0, 0.0),
+                DVec3::new(128.0, 128.0, 64.0),
+                "nodraw",
+            )?
+            else {
+                unreachable!()
+            };
+            for side in &mut tx.solid_mut(id)?.sides {
+                if map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99 {
+                    side.material = "water".into();
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
         std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
         let request = lock(&shared)
@@ -7451,11 +7481,23 @@ mod tests {
             lock(&shared).compile_status()["job"]["result"]["stats"]["cubemap_samples"],
             1
         );
+        assert!(controller.window.get_details().contains("Visibility:"));
+        let stats = lock(&shared).compile_status()["job"]["result"]["stats"].clone();
+        assert!(stats["clusters"].as_u64().unwrap() > 1);
+        assert_eq!(stats["water_regions"], 1);
+        let leaves = stats["water_leaves"].as_u64().unwrap();
+        assert!(leaves > 0);
         assert!(
             controller
                 .window
                 .get_details()
-                .contains("Visibility: 1 cluster · 0 portals")
+                .contains(&format!("Water: 1 region · {leaves} submerged"))
+        );
+        assert!(
+            controller
+                .window
+                .get_diagnostics()
+                .contains("physics fluid volumes")
         );
         assert!(controller.window.get_launch_ready());
         assert!(controller.window.get_launch_details().contains("room.bsp"));

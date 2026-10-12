@@ -83,7 +83,14 @@ impl Geometry {
         Ok(id)
     }
 
-    fn face(&mut self, face: &Face, map: &Map, original: usize) -> Result<bsp::Face, String> {
+    fn face(
+        &mut self,
+        face: &Face,
+        map: &Map,
+        original: usize,
+        model: &Model,
+        water: &crate::water::Water,
+    ) -> Result<bsp::Face, String> {
         let vertices = face
             .winding
             .0
@@ -107,7 +114,11 @@ impl Geometry {
             edge_count: index(vertices.len(), "face edge")?,
             texinfo: index(face.texinfo, "texinfo")?,
             dispinfo: -1,
-            fog_volume: -1,
+            fog_volume: if model.entity == 0 {
+                water.face_volume(face, map, &model.tree)
+            } else {
+                -1
+            },
             styles: [255; 4],
             light_offset: -1,
             area: face.winding.area() as f32,
@@ -158,6 +169,7 @@ pub fn build(
     map: &Map,
     models: &[Model],
     visibility: &crate::visibility::Visibility,
+    water: &crate::water::Water,
     revision: i32,
     control: &crate::Control,
 ) -> Result<Bsp, String> {
@@ -195,6 +207,7 @@ pub fn build(
     };
     let mut faces = Vec::new();
     let mut bsp_models = Vec::new();
+    let mut water_distances = vec![u16::MAX; leaves.len()];
     let mut leaf_faces = vec![Vec::<u16>::new(); leaves.len()];
     let mut leaf_brushes = vec![Vec::<u16>::new(); leaves.len()];
     for (model, mapping) in models.iter().zip(&mappings) {
@@ -211,7 +224,7 @@ pub fn build(
                 let start = faces.len();
                 for face in groups.remove(&Some(node_index)).unwrap_or_default() {
                     let id = index(faces.len(), "leaf face")?;
-                    faces.push(geometry.face(face, map, faces.len())?);
+                    faces.push(geometry.face(face, map, faces.len(), model, water)?);
                     for &leaf in &face.leaves {
                         let leaf = (-1 - mapping[leaf]) as usize;
                         leaf_faces[leaf].push(id);
@@ -229,7 +242,20 @@ pub fn build(
                 };
             } else {
                 let open = !node.solid();
-                leaves[(-1 - mapping[node_index]) as usize] = bsp::Leaf {
+                let leaf = (-1 - mapping[node_index]) as usize;
+                let water_data = if model.entity == 0 {
+                    water.leaves[node_index]
+                } else {
+                    -1
+                };
+                if model.entity == 0 && open {
+                    water_distances[leaf] = if water_data >= 0 {
+                        0
+                    } else {
+                        water.distance(node.volume.bounds())
+                    };
+                }
+                leaves[leaf] = bsp::Leaf {
                     contents: node.contents,
                     cluster: if model.entity == 0 {
                         visibility.clusters[node_index]
@@ -241,14 +267,14 @@ pub fn build(
                     area_flags: if open { 1 | (OPEN_LEAF_FLAGS << 9) } else { 0 },
                     mins,
                     maxs,
-                    water_data: -1,
+                    water_data,
                     ..bsp::Leaf::default()
                 };
             }
         }
         for face in groups.remove(&None).unwrap_or_default() {
             let id = index(faces.len(), "leaf face")?;
-            faces.push(geometry.face(face, map, faces.len())?);
+            faces.push(geometry.face(face, map, faces.len(), model, water)?);
             for &leaf in &face.leaves {
                 leaf_faces[(-1 - mapping[leaf]) as usize].push(id);
             }
@@ -351,6 +377,7 @@ pub fn build(
     bsp.set_records(&sides);
     bsp.set_records(&bsp_models);
     bsp.set_records(&map.cubemaps);
+    bsp.set_records(&water.records);
     bsp.set_records(&[bsp::Area::default(); 2]);
     bsp.set_records(&[bsp::AreaPortal::default()]);
     bsp.set_values(lump::VERTEXES, &geometry.vertices);
@@ -362,7 +389,7 @@ pub fn build(
     bsp.set_values(lump::VERTNORMALS, &normals);
     bsp.set_values(lump::VERTNORMALINDICES, &geometry.normal_indices);
     bsp.set_values(lump::FACE_MACRO_TEXTURE_INFO, &vec![-1i16; faces.len()]);
-    bsp.set_values(lump::LEAFMINDISTTOWATER, &vec![u16::MAX; leaves.len()]);
+    bsp.set_values(lump::LEAFMINDISTTOWATER, &water_distances);
     bsp.set_values(lump::LEAF_AMBIENT_INDEX, &vec![[0u16; 2]; leaves.len()]);
     bsp.set_values(lump::MAP_FLAGS, &[0i32]);
     bsp.set_values(lump::OCCLUSION, &[0i32; 3]);

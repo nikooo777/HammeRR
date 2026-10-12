@@ -300,6 +300,17 @@ pub struct Cubemap {
     pub padding: [u8; 3],
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
+pub struct LeafWaterData {
+    pub surface_z: f32,
+    pub min_z: f32,
+    pub surface_texinfo: i16,
+    pub padding: i16,
+}
+
+pub const MAX_LEAF_WATER_RECORDS: usize = i16::MAX as usize + 1;
+
 pub const MAX_CUBEMAP_SAMPLES: usize = 1024;
 
 /// Lumps of fixed-size records and the struct each one holds.
@@ -332,6 +343,7 @@ records! {
     Area => AREAS,
     AreaPortal => AREAPORTALS,
     Cubemap => CUBEMAPS,
+    LeafWaterData => LEAFWATERDATA,
 }
 
 fn invalid(message: impl Into<String>) -> io::Error {
@@ -649,6 +661,31 @@ mod tests {
         assert_eq!(size_of::<Area>(), 8);
         assert_eq!(size_of::<AreaPortal>(), 12);
         assert_eq!(size_of::<Cubemap>(), 16);
+        assert_eq!(size_of::<LeafWaterData>(), 12);
+    }
+
+    #[test]
+    fn leaf_water_wire_padding_survives_read_write() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&64_f32.to_le_bytes());
+        bytes.extend_from_slice(&(-32_f32).to_le_bytes());
+        bytes.extend_from_slice(&17_i16.to_le_bytes());
+        bytes.extend_from_slice(&0x1234_i16.to_le_bytes());
+        let mut bsp = Bsp::new();
+        bsp.lumps[lump::LEAFWATERDATA].data = bytes.clone();
+        let parsed = Bsp::parse(&bsp.to_bytes()).unwrap();
+        let records = parsed.records::<LeafWaterData>().unwrap();
+        assert_eq!(
+            records[0],
+            LeafWaterData {
+                surface_z: 64.0,
+                min_z: -32.0,
+                surface_texinfo: 17,
+                padding: 0x1234,
+            }
+        );
+        bsp.set_records(&records);
+        assert_eq!(bsp.lumps[lump::LEAFWATERDATA].data, bytes);
     }
 
     #[test]

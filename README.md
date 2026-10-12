@@ -1152,6 +1152,7 @@ python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_origin_brushes.py --output /tmp/hammerr-origin-check
 python -B scripts/validate_cubemap_samples.py --output /tmp/hammerr-cubemap-check
 python -B scripts/validate_visibility.py --output /tmp/hammerr-visibility-check
+python -B scripts/validate_water_metadata.py --output /tmp/hammerr-water-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
 ```
@@ -1162,7 +1163,7 @@ Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
 The audit, component source/topology/transform, partition, precision, carving,
-favorites, spawn-clearance, origin-brush, cubemap-sample and visibility validators
+favorites, spawn-clearance, origin-brush, cubemap-sample, visibility and water-metadata validators
 use private headless sessions and do not accept a GUI URL. Add `--render` to the topology, boundary or polygon
 validator for offscreen GPU pixel checks without opening a desktop window.
 
@@ -1543,6 +1544,21 @@ Hidden helpers are omitted. Reflection material binding, manual face lists and
 texture capture remain unfinished and appear in build diagnostics; sample
 records alone do not provide baked reflections.
 
+World **water volumes** now compile native leaf regions and surface fog IDs.
+Create a world brush with **tools/toolsnodraw** on its sides and a water material
+on its horizontal top through the face inspector or MCP `edit_faces`. Connected
+water with the same surface height and material shares the lowest depth;
+different heights and materials remain separate. **Build details…** and MCP
+statistics report `water_regions` and `water_leaves`. The compiler supplies a
+native **water_lod_control** with distances 1,000 and 2,000 when none is authored;
+existing controls are preserved, and the source document stays unchanged.
+
+Sloped or enclosed tops and incompatible overlapping liquids fail with object
+diagnostics and preserve previous output. Hidden volumes are omitted; detail
+and brush-model liquids report their unsupported region metadata. Fluid physics,
+depth-specific material patches, below-water materials and in-game rendering
+remain unfinished. Native metadata alone does not establish playable water.
+
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
 output, an unavailable Linux client or an active build/game disable it with an
@@ -1556,7 +1572,7 @@ A map edit marks the build snapshot stale and prevents launching it.
 `get_compile_status.launch` reports readiness, the BSP path or the reason play
 is unavailable; `launch_game` performs the same launch as **Play built map**.
 
-![Build status with stage, visibility and cubemap counts, output path and diagnostics](docs/images/build-status.png)
+![Build status with stage, visibility, water and cubemap counts, output path and diagnostics](docs/images/build-status.png)
 
 Maps need sealed world geometry and
 at least one point entity in open space. A leak produces a `.lin` pointfile
@@ -1603,12 +1619,12 @@ Native sloped, near-axis, distant, reflected and thin-brush fixtures verify
 surface preservation and swept hulls against an independent geometric reference.
 CS:S collision runtime validation and physics output remain unfinished.
 
-Tighter VVIS portal flow, VRAD, physics collision, water volumes, compiled
-displacements,
-static props, areaportals and overlays remain unfinished. Cubemap samples
+Tighter VVIS portal flow, VRAD, physics collision, compiled displacements,
+static props, areaportals and overlays remain unfinished. Horizontal world water
+now has native leaf/surface metadata; fluid physics and rendering remain pending. Cubemap samples
 compile, while reflection binding/capture and lighting-origin references remain
-pending. Brush-entity origin volumes and explicit pivots compile; rotating, moving and trigger
-behavior still needs CS:S runtime validation. Unsupported geometry is reported
+pending. Brush-entity origin volumes and explicit pivots compile; rotating,
+moving and trigger behavior still needs CS:S runtime validation. Unsupported geometry is reported
 in diagnostics. The BSP reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,

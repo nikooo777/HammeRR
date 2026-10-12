@@ -5,6 +5,9 @@ use source_formats::vmf::Solid;
 
 use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction};
 
+mod weld;
+pub use weld::{WeldChange, WeldPlan, plan_weld};
+
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;
 pub const MAX_COMPONENTS: usize = 512;

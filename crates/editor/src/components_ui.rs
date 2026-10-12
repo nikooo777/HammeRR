@@ -67,6 +67,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         window.set_picking_summary(picking.hint().into());
     }
     window.set_has_selection(!session.component_selection().is_empty());
+    window.set_topology_preview(session.component_topology_preview());
     let ids = session.component_solids();
     let shapes = match session.component_topology(&ids) {
         Ok(shapes) => shapes,
@@ -100,7 +101,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     )
                     .into(),
                     detail: format!("{} → {}", position(a), position(b)).into(),
-                    selected: session.component_selection().contains(&component),
+                    selected: session.displayed_component_selection().contains(&component),
                 });
             }
         } else if window.get_kind() == 1 {
@@ -122,7 +123,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     )
                     .into(),
                     detail: format!("X, Y, Z: {}", position(vertex.position)).into(),
-                    selected: session.component_selection().contains(&component),
+                    selected: session.displayed_component_selection().contains(&component),
                 });
             }
         } else {
@@ -161,7 +162,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     label: format!("{direction} · face {}", face.side).into(),
                     detail: format!("{} corners · center {}", points.len(), position(center))
                         .into(),
-                    selected: session.component_selection().contains(&component),
+                    selected: session.displayed_component_selection().contains(&component),
                 });
             }
         }
@@ -176,7 +177,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             } else {
                 format!("{} brushes", shapes.len())
             },
-            session.component_selection().len()
+            session.displayed_component_selection().len()
         )
         .into()
     });
@@ -184,7 +185,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let report = session.component_report(&[]).unwrap();
     let preview = &report["preview"];
     let token = preview["token"].as_str().unwrap_or_default();
+    let weld = preview["operation"] == "weld";
     if !preview.is_null() && window.get_token() != token {
+        window.set_operation(i32::from(weld));
         window.set_texture_lock(preview["texture_lock"].as_bool().unwrap_or(false));
         window.set_move_x(preview["delta"][0].as_f64().unwrap().to_string().into());
         window.set_move_y(preview["delta"][1].as_f64().unwrap().to_string().into());
@@ -196,18 +199,28 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             && session
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
-            && window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
-            && [
-                window.get_move_x(),
-                window.get_move_y(),
-                window.get_move_z(),
-            ]
-            .iter()
-            .enumerate()
-            .all(|(index, value)| value.parse::<f64>().ok() == preview["delta"][index].as_f64()),
+            && window.get_operation() == i32::from(weld)
+            && (weld
+                || (window.get_texture_lock()
+                    == preview["texture_lock"].as_bool().unwrap_or(false)
+                    && [
+                        window.get_move_x(),
+                        window.get_move_y(),
+                        window.get_move_z(),
+                    ]
+                    .iter()
+                    .enumerate()
+                    .all(|(index, value)| {
+                        value.parse::<f64>().ok() == preview["delta"][index].as_f64()
+                    }))),
     );
     window.set_preview_summary(if preview.is_null() {
-        "Preview a move before applying.".into()
+        "Preview the change before applying.".into()
+    } else if weld {
+        let changes = preview["weld"].as_array().unwrap();
+        let merged: u64 = changes.iter().map(|change|change["merged_vertices"].as_u64().unwrap()).sum();
+        let removed: usize = changes.iter().map(|change|change["removed_sides"].as_array().unwrap().len()).sum();
+        format!("Merge {merged} corners into {}. Remove {removed} collapsed faces.\nThe map is unchanged until Apply.",changes.len()).into()
     } else {
         let delta = preview["delta"].as_array().unwrap();
         format!(
@@ -314,7 +327,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
         move || {
             let window = window.unwrap();
             window.set_ready(false);
-            window.set_message("Settings changed. Preview the new move before applying.".into());
+            window.set_message("Settings changed. Preview the change before applying.".into());
         }
     });
     window.on_move_options({
@@ -352,14 +365,18 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             })
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
-            let result = delta.and_then(|delta| {
-                session.preview_component_move(
-                    DVec3::new(delta[0], delta[1], delta[2]),
-                    window.get_snap(),
-                    window.get_texture_lock(),
-                    window.get_stamp().as_str(),
-                )
-            });
+            let result = if window.get_operation() == 1 {
+                session.preview_component_weld(window.get_stamp().as_str())
+            } else {
+                delta.and_then(|delta| {
+                    session.preview_component_move(
+                        DVec3::new(delta[0], delta[1], delta[2]),
+                        window.get_snap(),
+                        window.get_texture_lock(),
+                        window.get_stamp().as_str(),
+                    )
+                })
+            };
             refresh(&window, &session);
             match result {
                 Ok(_) => window.set_message("".into()),
@@ -381,19 +398,31 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             let result = window
                 .get_token()
                 .parse()
-                .map_err(|_| "Preview a move first".to_string())
-                .and_then(|token| session.commit_component_move(Actor::User, token));
+                .map_err(|_| "Preview a change first".to_string())
+                .and_then(|token| session.commit_component_edit(Actor::User, token));
             refresh(&window, &session);
             window.set_message(
                 result
                     .map(|count| {
-                        format!(
-                            "Moved components in {count} brushes. Undo restores the previous shape."
-                        )
+                        format!("Changed {count} brushes. Undo restores the previous shape.")
                     })
                     .unwrap_or_else(|error| error)
                     .into(),
             );
+        }
+    });
+    window.on_discard_preview({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let result = window
+                .get_token()
+                .parse()
+                .map_err(|_| "Preview a change first".to_string())
+                .and_then(|token| session.cancel_component_move(token));
+            refresh(&window, &session);
+            window.set_message(result.err().unwrap_or_default().into());
         }
     });
     window.on_cancel({

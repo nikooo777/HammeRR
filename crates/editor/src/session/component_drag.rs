@@ -111,7 +111,7 @@ impl Session {
     }
 
     pub fn component_guide(&self) -> Option<Guide> {
-        if !self.components.options.enabled {
+        if !self.components.options.enabled || self.component_topology_preview() {
             return None;
         }
         let origin = self.components.origin?

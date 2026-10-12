@@ -20,8 +20,10 @@ export component ComponentsWindow inherits Window {
     in property <bool> ready;
     in property <bool> has-selection;
     in property <bool> picking;
+    in property <bool> topology-preview;
     in property <string> picking-summary;
     in-out property <int> kind;
+    in-out property <int> operation;
     in-out property <string> move-x: "0";
     in-out property <string> move-y: "0";
     in-out property <string> move-z: "16";
@@ -37,6 +39,7 @@ export component ComponentsWindow inherits Window {
     callback edited();
     callback move-options();
     callback preview-edit();
+    callback discard-preview();
     callback apply();
     callback cancel();
     forward-focus: keys;
@@ -46,36 +49,38 @@ export component ComponentsWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Select faces, edges or corners. Drag the move handles or enter an exact offset."; color: #aeb9c8; }
+            Text { text: "Move faces, edges or corners, or weld selected corners into one."; color: #aeb9c8; }
             HorizontalLayout {
                 spacing: 20px;
                 VerticalLayout {
                     horizontal-stretch: 1; spacing: 10px;
                     HorizontalLayout {
                         spacing: 8px;
-                        ComboBox { model: ["Edges", "Vertices", "Faces"]; current-index <=> root.kind; selected => { root.change-kind(); } }
+                        ComboBox { model: ["Edges", "Vertices", "Faces"]; enabled: !root.topology-preview; current-index <=> root.kind; selected => { root.change-kind(); } }
                         Button { text: "Refresh"; clicked => { root.refresh(); } }
                     }
-                    Button { text: root.picking ? "Stop viewport picking" : "Pick in viewport"; enabled: root.rows.length > 0 || root.picking; clicked => { root.toggle-picking(); } }
+                    Button { text: root.picking ? "Stop viewport picking" : "Pick in viewport"; enabled: (root.rows.length > 0 && !root.topology-preview) || root.picking; clicked => { root.toggle-picking(); } }
                     if root.picking: Text { text: root.picking-summary; wrap: word-wrap; color: #9dd8f1; }
                     Text { text: root.summary; wrap: word-wrap; color: #aeb9c8; }
                     ListView {
                         vertical-stretch: 1;
                         for row in root.rows: VerticalLayout {
                             spacing: 4px; padding-top: 5px; padding-bottom: 7px;
-                            CheckBox { text: row.label; checked: row.selected; toggled => { root.choose(row.key); } }
+                            CheckBox { text: row.label; checked: row.selected; enabled: !root.topology-preview; toggled => { root.choose(row.key); } }
                             Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
                         }
                     }
                     HorizontalLayout {
                         spacing: 8px;
-                        Button { text: "Select all shown"; enabled: root.rows.length > 0; clicked => { root.select-all(); } }
-                        Button { text: "Clear selection"; enabled: root.has-selection; clicked => { root.clear(); } }
+                        Button { text: "Select all shown"; enabled: root.rows.length > 0 && !root.topology-preview; clicked => { root.select-all(); } }
+                        Button { text: "Clear selection"; enabled: root.has-selection && !root.topology-preview; clicked => { root.clear(); } }
                     }
                 }
                 VerticalLayout {
                     width: 290px; spacing: 12px;
-                    Text { text: "Move selection"; font-size: 18px; font-weight: 600; }
+                    ComboBox { model: ["Move selection", "Weld corners"]; current-index <=> root.operation; selected => { root.edited(); } }
+                    if root.operation == 0: VerticalLayout {
+                    spacing: 12px;
                     CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
                     Text { text: "Drag an arrow or plane square. Release applies; Esc cancels."; wrap: word-wrap; color: #aeb9c8; }
                     Text { text: "Offset from the current map · world units"; wrap: word-wrap; color: #aeb9c8; }
@@ -96,11 +101,19 @@ export component ComponentsWindow inherits Window {
                     }
                     CheckBox { text: "Use editor grid snapping"; checked <=> root.snap; toggled => { root.move-options(); } }
                     CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.move-options(); } }
-                    Button { text: "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
+                    }
+                    if root.operation == 1: VerticalLayout {
+                        spacing: 12px;
+                        Text { text: "Choose Vertices, then select at least two corners in each brush."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Selected corners merge at their average position. Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    }
+                    Button { text: root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
+                    if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                     Rectangle { vertical-stretch: 1; }
                     Text { text: root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                    Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                 }
             }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
@@ -108,7 +121,7 @@ export component ComponentsWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

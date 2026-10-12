@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
-use map_core::subobject::{self, Component, Replacement, Topology};
+use map_core::subobject::{self, Component, Replacement, Topology, WeldChange};
 use map_core::{Document, ObjectId};
 use serde_json::{Value, json};
 
@@ -15,6 +15,8 @@ pub struct Preview {
     replacements: Vec<Replacement>,
     generation: u64,
     revision: u64,
+    pub(super) weld: Option<Vec<WeldChange>>,
+    selection: BTreeSet<Component>,
 }
 
 #[derive(Default)]
@@ -52,6 +54,20 @@ impl Session {
 
     pub fn component_selection(&self) -> &BTreeSet<Component> {
         &self.components.selection
+    }
+
+    pub fn displayed_component_selection(&self) -> &BTreeSet<Component> {
+        self.components
+            .preview
+            .as_ref()
+            .map_or(&self.components.selection, |preview| &preview.selection)
+    }
+
+    pub fn component_topology_preview(&self) -> bool {
+        self.components
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.weld.is_some())
     }
 
     pub fn clear_component_edit(&mut self) {
@@ -108,7 +124,7 @@ impl Session {
     pub fn component_report(&self, ids: &[u32]) -> Result<Value, String> {
         let topology = self.component_topology(ids)?;
         let brushes = topology.iter().map(|shape| {
-            let selected = |sides: &[u32]| self.components.selection.contains(&Component { solid: shape.solid, sides: sides.to_vec() });
+            let selected = |sides: &[u32]| self.displayed_component_selection().contains(&Component { solid: shape.solid, sides: sides.to_vec() });
             json!({
                 "solid":shape.solid,
                 "vertices":shape.vertices.iter().map(|vertex| json!({"sides":vertex.sides,"position":vertex.position.to_array(),"selected":selected(&vertex.sides)})).collect::<Vec<_>>(),
@@ -119,8 +135,10 @@ impl Session {
         Ok(json!({
             "move_options":self.components.options, "drag":self.component_drag_report(),
             "picking":self.components.picking, "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
-            "brushes":brushes, "selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
-            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len()})),
+            "brushes":brushes, "selection":self.displayed_component_selection().iter().map(component_json).collect::<Vec<_>>(),
+            "source_selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
+            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.weld.is_some() {"weld"} else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len(),
+                "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>())})),
             "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS},
         }))
     }
@@ -132,6 +150,11 @@ impl Session {
         stamp: &str,
     ) -> Result<(), String> {
         self.check_component_stamp(stamp)?;
+        if self.component_topology_preview() {
+            return Err(
+                "Apply or cancel the topology preview before changing component selection".into(),
+            );
+        }
         if components.len() > subobject::MAX_COMPONENTS {
             return Err("Select at most 512 faces, vertices or edges".into());
         }
@@ -262,6 +285,47 @@ impl Session {
             replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
+            weld: None,
+            selection: self.components.selection.clone(),
+        });
+        self.scene_serial += 1;
+        self.view_serial += 1;
+        Ok(token)
+    }
+
+    pub fn preview_component_weld(&mut self, stamp: &str) -> Result<u64, String> {
+        self.check_component_stamp(stamp)?;
+        let components = self
+            .components
+            .selection
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let plan =
+            subobject::plan_weld(&self.document, &components).map_err(|error| error.to_string())?;
+        let mut document = self.document.preview_snapshot();
+        document
+            .edit("preview corner weld", |tx| {
+                subobject::apply(tx, &plan.replacements)
+            })
+            .map_err(|error| error.to_string())?;
+        self.components.serial += 1;
+        let token = self.components.serial;
+        self.components.drag = None;
+        self.components.preview = Some(Preview {
+            document,
+            token,
+            delta: DVec3::ZERO,
+            texture_lock: false,
+            replacements: plan.replacements,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+            selection: plan
+                .changes
+                .iter()
+                .map(|change| change.selection.clone())
+                .collect(),
+            weld: Some(plan.changes),
         });
         self.scene_serial += 1;
         self.view_serial += 1;
@@ -284,6 +348,13 @@ impl Session {
     }
 
     pub fn commit_component_move(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
+        if self.checked_component_preview(token)?.weld.is_some() {
+            return Err("Use Apply component edit for a corner weld".into());
+        }
+        self.commit_component_edit(actor, token)
+    }
+
+    pub fn commit_component_edit(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
         if self
             .components
             .drag
@@ -294,12 +365,16 @@ impl Session {
                 "The last handle update was invalid; move to a valid position or cancel".into(),
             );
         }
-        let replacements = self.checked_component_preview(token)?.replacements.clone();
-        let selection = self.components.selection.clone();
+        let preview = self.checked_component_preview(token)?;
+        let label = if preview.weld.is_some() {
+            "weld brush corners"
+        } else {
+            "move brush components"
+        };
+        let replacements = preview.replacements.clone();
+        let selection = preview.selection.clone();
         let picking = self.components.picking.clone();
-        let result = self.edit(actor, "move brush components", |tx| {
-            subobject::apply(tx, &replacements)
-        })?;
+        let result = self.edit(actor, label, |tx| subobject::apply(tx, &replacements))?;
         self.components.selection = selection;
         self.components.picking = picking;
         self.refresh_component_origin();
@@ -336,8 +411,7 @@ impl Session {
             }
             let mut selected_vertices = BTreeSet::new();
             for component in self
-                .components
-                .selection
+                .displayed_component_selection()
                 .iter()
                 .filter(|component| component.solid == shape.solid)
             {
@@ -374,11 +448,11 @@ impl Session {
                 }
             }
             for edge in &shape.edges {
-                let selected = self.components.selection.contains(&Component {
+                let selected = self.displayed_component_selection().contains(&Component {
                     solid: shape.solid,
                     sides: edge.sides.clone(),
                 }) || edge.sides.iter().any(|side| {
-                    self.components.selection.contains(&Component {
+                    self.displayed_component_selection().contains(&Component {
                         solid: shape.solid,
                         sides: vec![*side],
                     })
@@ -440,6 +514,107 @@ mod tests {
             )
             .unwrap();
         (session, id, component)
+    }
+
+    fn select_top_corners(session: &mut Session, id: u32) -> Vec<Component> {
+        let shape = session.component_topology(&[id]).unwrap().remove(0);
+        let corners = shape
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position.z == 64.0)
+            .map(|vertex| Component {
+                solid: id,
+                sides: vertex.sides.clone(),
+            })
+            .collect::<Vec<_>>();
+        session
+            .select_components(&corners, SelectMode::Replace, &session.component_stamp())
+            .unwrap();
+        corners
+    }
+
+    #[test]
+    fn component_weld_shares_atomic_preview_cancel_apply_and_result_selection() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, id, _) = fixture();
+            let corners = select_top_corners(&mut session, id);
+            let original = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let stamp = session.component_stamp();
+            let first = session.preview_component_weld(&stamp).unwrap();
+            let draft = session.render_document().vmf().clone();
+            assert_eq!(session.document.vmf(), &original);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert!(session.component_guide().is_none());
+            let report = session.component_report(&[id]).unwrap();
+            assert_eq!(report["preview"]["operation"], "weld");
+            assert_eq!(
+                report["brushes"][0]["vertices"].as_array().unwrap().len(),
+                5
+            );
+            assert_eq!(report["source_selection"].as_array().unwrap().len(), 4);
+            assert_eq!(report["selection"].as_array().unwrap().len(), 1);
+            assert!(session.preview_component_weld(&stamp).is_err());
+            assert!(
+                session
+                    .select_components(&[], SelectMode::Replace, &session.component_stamp())
+                    .is_err()
+            );
+            assert!(session.commit_component_move(actor, first).is_err());
+            session.cancel_component_move(first).unwrap();
+            assert_eq!(session.render_document().vmf(), &original);
+            assert_eq!(
+                session.component_selection(),
+                &corners.into_iter().collect()
+            );
+            let token = session
+                .preview_component_weld(&session.component_stamp())
+                .unwrap();
+            assert!(session.commit_component_edit(actor, first).is_err());
+            assert!(session.cancel_component_move(first).is_err());
+            session.commit_component_edit(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+            assert_eq!(session.component_selection().len(), 1);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            assert!(session.component_guide().is_some());
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &original);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+        }
+    }
+
+    #[test]
+    fn rejected_weld_preserves_move_preview_and_source_edits_invalidate_weld() {
+        let (mut session, id, _) = fixture();
+        let token = session
+            .preview_component_move(DVec3::Z * 16.0, false, false, &session.component_stamp())
+            .unwrap();
+        let draft = session.render_document().vmf().clone();
+        assert!(
+            session
+                .preview_component_weld(&session.component_stamp())
+                .is_err()
+        );
+        assert_eq!(session.components.preview.as_ref().unwrap().token, token);
+        assert_eq!(session.render_document().vmf(), &draft);
+        session.cancel_component_move(token).unwrap();
+        select_top_corners(&mut session, id);
+        let token = session
+            .preview_component_weld(&session.component_stamp())
+            .unwrap();
+        session
+            .create_block(
+                Actor::Agent,
+                DVec3::splat(128.0),
+                DVec3::splat(192.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        assert!(session.commit_component_edit(Actor::Agent, token).is_err());
+        assert!(session.cancel_component_move(token).is_err());
+        assert!(session.components.preview.is_none());
     }
 
     #[test]

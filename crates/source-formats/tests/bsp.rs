@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use source_formats::bsp::{
-    self, Brush, BrushSide, Bsp, Cubemap, Edge, Face, Leaf, Model, Node, Plane, TexData, TexInfo,
-    VisibilityKind,
+    self, Brush, BrushSide, Bsp, Cubemap, Edge, Face, Leaf, LeafWaterData, Model, Node, Plane,
+    TexData, TexInfo, VisibilityKind,
 };
 
 fn maps_dir() -> Option<PathBuf> {
@@ -33,6 +33,7 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let brushes = bsp.records::<Brush>().map_err(e)?;
     let sides = bsp.records::<BrushSide>().map_err(e)?;
     bsp.records::<Cubemap>().map_err(e)?;
+    let water = bsp.records::<LeafWaterData>().map_err(e)?;
     if let Some(visibility) = bsp.visibility().map_err(e)? {
         for cluster in 0..visibility.clusters() {
             visibility
@@ -56,7 +57,18 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     bsp.entities().map_err(e)?;
 
     let ensure = |ok: bool, what: &str| if ok { Ok(()) } else { Err(what.to_owned()) };
+    for region in &water {
+        ensure(
+            region.surface_texinfo >= 0 && (region.surface_texinfo as usize) < texinfo.len(),
+            "water texinfo",
+        )?;
+    }
     for face in &faces {
+        ensure(
+            face.fog_volume == -1
+                || (face.fog_volume >= 0 && (face.fog_volume as usize) < water.len()),
+            "face fog volume",
+        )?;
         ensure((face.plane as usize) < planes.len(), "face plane")?;
         ensure(
             face.texinfo < 0 || (face.texinfo as usize) < texinfo.len(),
@@ -95,6 +107,11 @@ fn check(bsp: &Bsp) -> Result<(), String> {
         }
     }
     for leaf in &leafs {
+        ensure(
+            leaf.water_data == -1
+                || (leaf.water_data >= 0 && (leaf.water_data as usize) < water.len()),
+            "leaf water data",
+        )?;
         let faces_end = leaf.first_leaf_face as usize + leaf.leaf_face_count as usize;
         let brushes_end = leaf.first_leaf_brush as usize + leaf.leaf_brush_count as usize;
         ensure(faces_end <= leaf_faces.len(), "leaf faces")?;

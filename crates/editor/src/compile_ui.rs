@@ -93,9 +93,19 @@ impl Controller {
                 format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label}")
             })
             .unwrap_or_default();
+        let water = result["stats"]["water_regions"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let leaves = result["stats"]["water_leaves"].as_u64().unwrap_or_default();
+                let region_label = if count == 1 { "region" } else { "regions" };
+                let leaf_label = if leaves == 1 { "leaf" } else { "leaves" };
+                format!("\nWater: {count} {region_label} · {leaves} submerged {leaf_label}")
+            })
+            .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}\n{}",
+                "Output: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,

@@ -362,21 +362,23 @@ changing it requires a new preview before Apply.
 **Cancel** closes the tool and drops its draft. Both directions have been checked
 through saved-map native compilation; CS:S runtime coverage remains separate.
 
-Choose **Flat partition** to stage two pieces before raising them. Select one
-quad face per brush. Choose an across-face direction for two quads, or
-**Trim corner** for a triangle and pentagon, then **Stage flat partition**.
+Choose **Flat partition** to stage two pieces for keeping or extrusion. Select one
+convex face with three to eight corners per brush. Choose a boundary-edge pair,
+or **Trim corner** to cut off a corner, then **Stage flat partition**. Quad
+faces retain their two across-face directions and four trim-corner choices.
 The viewport shows the dividing edge while the original brush stays unchanged.
 Use **Highlight pieces** and **Frame highlighted pieces** to inspect either
 piece. You can also click a visible piece in the viewport; Ctrl toggles its
 highlight and an empty ordinary click clears highlights. Hidden objects and
 foreground brushes follow the same visibility rules as face picking.
-Enter the **Shared ridge height** and **Preview ridge** to raise both
-pieces together; **Return to flat** restores the staged surface.
+When both pieces are quads, enter the **Shared ridge height** and **Preview ridge**
+to raise them together; **Return to flat** restores the staged surface.
 
 **Apply raised partition** records one undo step. **Discard preview** restores
 the original face selection, and **Cancel** closes the tool. **Keep flat pieces**
 saves the dividing intent without changing brush geometry. Save the map, reopen
-it later, and use **Saved flat pieces → Resume pieces** to inspect or raise them.
+it later, and use **Saved flat pieces → Resume pieces** to inspect or extrude them,
+or raise a supported two-quad ridge.
 **Remove saved** removes an intent, including one whose source was deleted or
 changed. Keeping, removing and applying raised pieces each share ordinary undo.
 Applying a raised partition consumes its saved flat intent in the same edit.
@@ -408,8 +410,9 @@ inputs or sliders. **Preview cut** creates unequal or diagonal pieces while
 retaining the original face. Keep these positions for later or extrude the
 pieces. Saved positions and piece identity survive reflection and reopening.
 Shared ridges can use adjusted endpoints when both raised quad pieces remain
-planar and convex. Triangle/pentagon cuts offer Keep and Extrude in the menu. A diagonal cut that would bend a roof is rejected while
-retaining the flat preview. Adjust the positions, extrude the pieces, or use
+planar and convex. Cuts without two quad pieces offer Keep and Extrude in the
+menu. A diagonal cut that would bend a roof is rejected while retaining the
+flat preview. Adjust the positions, extrude the pieces, or use
 **Reset cut to midpoint**. The bottom footer keeps Apply, Discard and Cancel
 accessible when the settings scroll.
 
@@ -449,9 +452,16 @@ brush is hidden by the tool-material filter.
 | --- | --- |
 | ![Roof ridge direction, height and Apply/Discard/Cancel controls](docs/images/brush-roof-ridge.png) | ![Two roof planes joined at the raised opposing edge midpoints](docs/images/component-roof-ridge.png) |
 
-Core edge discovery supports convex faces with three to eight corners; polygon
-cut topology, saved membership and its UI/MCP authoring remain in development.
-Current partition controls support quad source faces.
+Flat cuts support convex faces with three to eight corners and create two pieces
+with three to nine vertices each. Saved original-corner membership keeps piece
+materials attached after reflection and reopening. Ridges require two quad
+pieces; the operation menu offers flat keeping and extrusion for other shapes.
+One batch supports 16 source brushes and 32 extruded pieces, with at most 256
+generated planes. Previews validate the complete batch before allocating IDs.
+
+| Polygon cut controls | Octagon source split and extruded |
+| --- | --- |
+| ![Complete polygon cut choices, endpoint sliders and Keep/Cancel controls](docs/images/polygon-partition-controls.png) | ![Two independently styled polygon prisms above an octagonal source face](docs/images/polygon-partition-preview.png) |
 
 Movement and welding support 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
@@ -639,9 +649,13 @@ Other issues link you to the affected content for manual editing.
 ![Map issues, face navigation and an explicit repair preview](docs/images/map-checks.png)
 
 Checks include hidden content and inspect applied edits. Custom properties are
-preserved. Material/model checks verify paths; full asset dependencies, spawn
-clearance and engine-specific resource limits need further checks. Compile and
-test in CS:S to validate leaks and playability.
+preserved. Spawn checks warn when a visible team spawn's standing hull overlaps
+visible world or `func_detail` brushes with known player-blocking contents,
+including player clips. Touching floors are allowed; uncertain materials and
+invalid origins report unchecked clearance. Select or Focus locates the spawn.
+Models, terrain, other brush entities, gameplay objectives, full asset
+dependencies and engine-specific resource limits still need further checks.
+Compile and test in CS:S to validate leaks and playability.
 
 ### Design context
 
@@ -719,7 +733,11 @@ Choosing a thumbnail selects a candidate; **Use material** accepts it.
 
 Blank texture fields preserve existing values when selections are mixed.
 Fitting uses the material's real dimensions. Categories are inferred from
-material paths; favorites and recent applications last for the session.
+material paths. Favorites persist across sessions in the configured recovery
+directory; recent applications last for the session. The browser and MCP share
+up to 512 favorites and report storage failures while retaining the previous
+choices. Fix a rejected preferences file and restart to load it again; failed
+saves can be retried.
 
 ### Map textures across faces
 
@@ -1101,6 +1119,9 @@ python -B scripts/validate_partition_material_metadata.py --output /tmp/hammerr-
 python -B scripts/validate_partition_materials.py --output /tmp/hammerr-partition-materials
 python -B scripts/validate_adjusted_partition_ridges.py --output /tmp/hammerr-adjusted-ridges
 python -B scripts/validate_boundary_partitions.py --output /tmp/hammerr-boundary-partitions
+python -B scripts/validate_polygon_partitions.py --output /tmp/hammerr-polygon-partitions
+python -B scripts/validate_material_favorites.py --output /tmp/hammerr-material-favorites
+python -B scripts/validate_spawn_clearance.py --output /tmp/hammerr-spawn-clearance
 python -B scripts/validate_partition_extrusion.py --output /tmp/hammerr-extrusion-check
 python -B scripts/validate_partition_extrusion.py --adjusted --output /tmp/hammerr-adjusted-cut-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
@@ -1126,8 +1147,9 @@ to check an idle GUI session with a clean map and empty undo/redo history.
 Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
-The audit, component source/topology/transform, partition, precision and carving validators
-use private headless sessions and do not accept a GUI URL. Add `--render` to the topology
+The audit, component source/topology/transform, partition, precision, carving,
+favorites and spawn-clearance validators use private headless sessions and do
+not accept a GUI URL. Add `--render` to the topology, boundary or polygon
 validator for offscreen GPU pixel checks without opening a desktop window.
 
 Check extrusion guide visibility with a private offscreen GPU session:
@@ -1224,15 +1246,17 @@ when the field is omitted, including after returning to flat.
 report the setting; raised attached drafts report `texture_mode: "roof_attached"`.
 
 `preview_component_partition` accepts `pairs` and the latest `snapshot`.
-`get_brush_components.partition_choices` lists the two opposing pairs first,
-followed by four adjacent pairs. Opposing cuts make two quads; adjacent cuts make
-a triangle and pentagon. Flat draft topology is returned under `preview.partition`.
+`get_brush_components.partition_choices` lists every boundary-edge pair for
+three-to-eight-corner source faces, with up to 28 choices. Quads retain their two
+opposing pairs first, followed by four adjacent pairs. Opposing quad cuts make
+two quads; adjacent quad cuts make a triangle and pentagon. Flat draft topology
+is returned under `preview.partition`.
 Vertices retain source corner/edge incidence and exact source positions;
 `preview_position` includes the current ridge height. Loops have independent
 IDs **0** and **1** within each brush and inherit `source_side`. Each loop reports
-its `shape` and three to five vertex refs. `preview.partition.ridge_supported`
+its `shape` and three to nine vertex refs. `preview.partition.ridge_supported`
 reports the two-quad shape requirement; positive heights still validate planarity
-and convexity. Adjacent cuts keep the trimmed corner
+and convexity. Adjacent quad cuts keep the trimmed corner
 as triangle **0**, including after reflection and saved reopening.
 `select_component_partitions` takes `partitions: [{solid, partition}]`, a token
 and optional replace/add/remove/toggle mode for highlighting and framing.
@@ -1267,8 +1291,8 @@ neighboring side IDs; each endpoint runs between the sorted corner incidence
 lists reported in vertex provenance. Invalid or collapsed cuts retain the draft.
 Return to flat before adjusting a raised/extruded preview. Save positions with
 Keep, extrude, or raise the adjusted pieces. Positive ridge heights use the
-actual endpoints and require two planar, convex quad roofs. Triangle/pentagon
-pieces can be kept and extruded. Nonplanar cuts are
+actual endpoints and require two planar, convex quad roofs. Cuts without two
+quad pieces can be kept and extruded. Nonplanar cuts are
 rejected atomically; `rise: 0` retains their flat topology.
 `preview.partition.edge_parameters` reports shared values or null for mixed
 sources; saved inspection lists each source's positions. Existing midpoint
@@ -1291,8 +1315,9 @@ remain source projections or the selected geometry attachment policy.
 brushes. Updates replace the token and rebuild from the original source; invalid
 updates retain the previous draft. Tops use their planned material or source
 inheritance; bases retain the original source face material. Outer
-walls inherit neighboring faces, and the divider inherits the source face;
-all four walls receive fresh world UVs and the optional material override.
+walls inherit neighboring faces, and the divider inherits the source face.
+All boundary and divider walls receive fresh world UVs and the optional material
+override.
 Attached top UVs preserve corresponding corners, reported as `top_attached`.
 
 `preview.extrusion` lists every output solid, source piece, owner, bounds and
@@ -1519,6 +1544,12 @@ player spawned inside and fullbright rendering enabled by the engine.
 **The compiler is experimental.** It produces fullbright BSP v20 maps with
 a single visibility cluster. Lights are saved in VMF and carried into BSP
 entities; baked lighting is still pending.
+
+Brush collision includes axial and checked non-axial edge bevels. Native sloped,
+rotated, reflected and thin-brush fixtures verify supporting planes, emitted BSP
+brushsides and swept hulls against an independent geometric reference. CS:S
+collision runtime validation and physics output remain unfinished.
+Very small brush rotations can still expose authored-plane snapping errors.
 
 VVIS, VRAD, physics collision, water volumes, compiled displacements,
 static props, areaportals, overlays, cubemaps and origin brushes remain

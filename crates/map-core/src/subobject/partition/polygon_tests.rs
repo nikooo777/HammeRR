@@ -96,7 +96,7 @@ fn polygon_cuts_cover_all_pairs_and_replay_material_prisms_with_original_surface
                             },
                             edge_parameters,
                         };
-                        let part = plan_partitions_at(&original, &[cut.clone()])
+                        let part = plan_partitions_at(&original, std::slice::from_ref(&cut))
                             .unwrap()
                             .remove(0);
                         assert_eq!(part.cut().unwrap(), cut);

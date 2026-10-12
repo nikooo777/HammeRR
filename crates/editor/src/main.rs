@@ -8380,11 +8380,16 @@ mod tests {
         let favorites_directory = tempfile::tempdir().unwrap();
         session.configure_recovery(Ok(favorites_directory.path().join("recovery")));
         session.favorite_material("brick/wall", true).unwrap();
+        material.set_group("all".into());
+        material.set_offset(0);
+        material.set_material("dev/dev_measuregeneric01".into());
         refresh_material_catalog(&material, &mut session);
+        refresh_material_window(&material, &mut session);
         assert_eq!(
             material.get_favorites_status(),
             "Favorites saved across sessions"
         );
+        save_ui_snapshot(material.window(), "material-favorites-persistent");
         let favorite_path = favorites_directory
             .path()
             .join("recovery")

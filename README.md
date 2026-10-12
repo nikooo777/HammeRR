@@ -1153,6 +1153,7 @@ python -B scripts/validate_origin_brushes.py --output /tmp/hammerr-origin-check
 python -B scripts/validate_cubemap_samples.py --output /tmp/hammerr-cubemap-check
 python -B scripts/validate_visibility.py --output /tmp/hammerr-visibility-check
 python -B scripts/validate_water_metadata.py --output /tmp/hammerr-water-check
+python -B scripts/validate_sky_visibility.py --output /tmp/hammerr-sky-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
 ```
@@ -1163,7 +1164,7 @@ Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
 The audit, component source/topology/transform, partition, precision, carving,
-favorites, spawn-clearance, origin-brush, cubemap-sample, visibility and water-metadata validators
+favorites, spawn-clearance, origin-brush, cubemap-sample, visibility, water-metadata and sky-visibility validators
 use private headless sessions and do not accept a GUI URL. Add `--render` to the topology, boundary or polygon
 validator for offscreen GPU pixel checks without opening a desktop window.
 
@@ -1510,6 +1511,12 @@ the visible neighbors. **Build details…** and MCP compile statistics report
 `clusters`, `visibility_portals` and `visibility_bytes`. Detail brushes and
 brush-model leaves do not create world visibility clusters. Tight portal-flow
 clipping remains unfinished; the current bounds favor retaining visible geometry.
+Sky visibility follows compiled world sky surfaces and the visible sets.
+**tools/toolsskybox** marks 3D sky; materials with `%compile2dsky` mark 2D sky.
+Enclosed spaces and disconnected rooms do not inherit unrelated sky, while
+portal-visible sky propagates from the original surface clusters. Hidden and
+brush-model sky do not seed world flags. **Build details…** and MCP statistics
+report `sky_clusters`; the compiler sets no radial-culling flag.
 Visibility work and native lump limits fail with diagnostics and retain previous
 output. **Cancel build** waits for the worker to stop; cancelled builds keep the previous BSP and pointfile.
 Output is published atomically, and a build cannot be cancelled after publication.
@@ -1572,7 +1579,7 @@ A map edit marks the build snapshot stale and prevents launching it.
 `get_compile_status.launch` reports readiness, the BSP path or the reason play
 is unavailable; `launch_game` performs the same launch as **Play built map**.
 
-![Build status with stage, visibility, water and cubemap counts, output path and diagnostics](docs/images/build-status.png)
+![Build status with stage, visibility, water, sky and cubemap counts, output path and diagnostics](docs/images/build-status.png)
 
 Maps need sealed world geometry and
 at least one point entity in open space. A leak produces a `.lin` pointfile

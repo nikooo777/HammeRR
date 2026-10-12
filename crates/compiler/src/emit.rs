@@ -9,7 +9,6 @@ use crate::map::Map;
 use crate::tree::Tree;
 
 const VERTEX_PRECISION: f64 = 10_000.0;
-const OPEN_LEAF_FLAGS: i16 = 3;
 
 fn vertex_key(point: DVec3) -> [i64; 3] {
     (point * VERTEX_PRECISION).round().as_i64vec3().to_array()
@@ -264,7 +263,18 @@ pub fn build(
                     } else {
                         -1
                     },
-                    area_flags: if open { 1 | (OPEN_LEAF_FLAGS << 9) } else { 0 },
+                    area_flags: if open {
+                        let flags = if model.entity == 0 {
+                            visibility.clusters[node_index]
+                                .map(|cluster| visibility.sky[cluster])
+                                .unwrap_or_default()
+                        } else {
+                            0
+                        };
+                        1 | (flags << 9)
+                    } else {
+                        0
+                    },
                     mins,
                     maxs,
                     water_data,

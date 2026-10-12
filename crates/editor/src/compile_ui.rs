@@ -103,9 +103,17 @@ impl Controller {
                 format!("\nWater: {count} {region_label} · {leaves} submerged {leaf_label}")
             })
             .unwrap_or_default();
+        let sky = result["stats"]["sky_clusters"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let label = if count == 1 { "cluster" } else { "clusters" };
+                format!("\nSky visible from: {count} {label}")
+            })
+            .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}\n{}",
+                "Output: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}{sky}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,

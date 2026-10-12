@@ -102,6 +102,7 @@ pub struct Stats {
     pub visibility_bytes: usize,
     pub water_regions: usize,
     pub water_leaves: usize,
+    pub sky_clusters: usize,
     pub elapsed: Duration,
 }
 
@@ -220,7 +221,7 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
         });
     }
     control.advance(Stage::Visibility)?;
-    let visibility = visibility::build(&tree, &portals, control)?;
+    let mut visibility = visibility::build(&tree, &portals, control)?;
     output.stats.clusters = visibility.count;
     output.stats.visibility_portals = visibility.portals;
     output.stats.visibility_bytes = visibility.data.len();
@@ -251,6 +252,9 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
             faces,
         });
     }
+    control.advance(Stage::SkyVisibility)?;
+    visibility.mark_sky(&map, &models[0].faces, control)?;
+    output.stats.sky_clusters = visibility.sky.iter().filter(|&&flags| flags != 0).count();
     let revision = vmf
         .version_info
         .as_ref()

@@ -13,6 +13,7 @@ pub enum Stage {
     Visibility,
     Faces,
     Models,
+    SkyVisibility,
     Emitting,
     Writing,
 }
@@ -29,6 +30,7 @@ impl Stage {
             Self::Visibility => "visibility",
             Self::Faces => "faces",
             Self::Models => "brush_models",
+            Self::SkyVisibility => "sky_visibility",
             Self::Emitting => "bsp_records",
             Self::Writing => "writing",
         }
@@ -45,6 +47,7 @@ impl Stage {
             Self::Visibility => "Computing visible and audible space",
             Self::Faces => "Building world faces",
             Self::Models => "Building brush entities",
+            Self::SkyVisibility => "Finding sky-visible space",
             Self::Emitting => "Assembling BSP records",
             Self::Writing => "Writing compiled map",
         }

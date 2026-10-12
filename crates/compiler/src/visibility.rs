@@ -17,6 +17,7 @@ pub(crate) struct Visibility {
     pub count: usize,
     pub portals: usize,
     pub data: Vec<u8>,
+    pub sky: Vec<i16>,
 }
 
 struct DirectedPortal<'a> {
@@ -98,7 +99,56 @@ pub(crate) fn build(
         count,
         portals: directed.len() / 2,
         data,
+        sky: vec![0; count],
     })
+}
+
+impl Visibility {
+    pub(crate) fn mark_sky(
+        &mut self,
+        map: &crate::map::Map,
+        faces: &[crate::faces::Face],
+        control: &Control,
+    ) -> Result<(), String> {
+        use source_formats::bsp::{
+            Visibility as ParsedVisibility, VisibilityKind, leaf_flags, surf,
+        };
+        let mut direct = vec![0_i16; self.count];
+        for face in faces {
+            control.checkpoint()?;
+            let flags = map.texinfos.infos[face.texinfo].flags;
+            if flags & surf::SKY == 0 {
+                continue;
+            }
+            let sky = if flags & surf::SKY2D != 0 {
+                leaf_flags::SKY2D
+            } else {
+                leaf_flags::SKY
+            };
+            for &leaf in &face.leaves {
+                if let Some(cluster) = self.clusters[leaf] {
+                    direct[cluster] |= sky;
+                }
+            }
+        }
+        let parsed = ParsedVisibility::parse(&self.data).map_err(|error| error.to_string())?;
+        for (cluster, flags) in self.sky.iter_mut().enumerate() {
+            control.checkpoint()?;
+            *flags = 0;
+            let row = parsed
+                .row(cluster, VisibilityKind::Visible)
+                .map_err(|error| error.to_string())?;
+            for (other, &sky) in direct.iter().enumerate() {
+                if sky != 0 && bit(&row, other) {
+                    *flags |= sky;
+                }
+            }
+            if *flags & leaf_flags::SKY != 0 {
+                *flags &= !leaf_flags::SKY2D;
+            }
+        }
+        Ok(())
+    }
 }
 
 fn bit(row: &[u8], index: usize) -> bool {

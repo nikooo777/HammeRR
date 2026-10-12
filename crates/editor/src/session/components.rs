@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
-use map_core::subobject::{self, Component, Replacement, SplitChange, Topology, WeldChange};
+use map_core::subobject::{
+    self, Component, Replacement, SplitChange, Topology, WeldChange, WeldTarget,
+};
 use map_core::{Document, EditError, ObjectId};
 use serde_json::{Value, json};
 
@@ -16,6 +18,7 @@ pub struct Preview {
     generation: u64,
     revision: u64,
     pub(super) weld: Option<Vec<WeldChange>>,
+    weld_target: Option<WeldTarget>,
     split: Option<SplitDraft>,
     selection: BTreeSet<Component>,
 }
@@ -38,6 +41,16 @@ pub struct State {
 
 pub fn component_json(component: &Component) -> Value {
     json!({"solid": component.solid, "sides": component.sides})
+}
+
+pub fn weld_target_json(target: &WeldTarget) -> Value {
+    match target {
+        WeldTarget::Mean => json!({"mode":"mean"}),
+        WeldTarget::Position(position) => json!({"mode":"position","position":position.to_array()}),
+        WeldTarget::Corner(component) => {
+            json!({"mode":"corner","component":component_json(component)})
+        }
+    }
 }
 
 impl Session {
@@ -139,7 +152,10 @@ impl Session {
             "picking":self.components.picking, "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
             "brushes":brushes, "selection":self.displayed_component_selection().iter().map(component_json).collect::<Vec<_>>(),
             "source_selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
+            "weld_center":self.component_weld_center()?.map(|center|center.to_array()),
+            "weld_targets":self.component_weld_targets()?.iter().map(|(component,position)|json!({"component":component_json(component),"position":position.to_array()})).collect::<Vec<_>>(),
             "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len(),
+                "weld_target":preview.weld_target.as_ref().map(weld_target_json),
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
                 "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
             "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
@@ -290,6 +306,7 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             weld: None,
+            weld_target: None,
             split: None,
             selection: self.components.selection.clone(),
         });
@@ -298,7 +315,50 @@ impl Session {
         Ok(token)
     }
 
+    pub fn component_weld_center(&self) -> Result<Option<DVec3>, String> {
+        let selected = self
+            .component_weld_targets()?
+            .into_iter()
+            .filter(|(component, _)| self.components.selection.contains(component))
+            .map(|(_, position)| position)
+            .collect::<Vec<_>>();
+        Ok((!selected.is_empty()).then(|| selected.iter().sum::<DVec3>() / selected.len() as f64))
+    }
+
+    pub fn component_weld_targets(&self) -> Result<Vec<(Component, DVec3)>, String> {
+        let ids = self
+            .components
+            .selection
+            .iter()
+            .map(|component| component.solid)
+            .collect::<BTreeSet<_>>();
+        let mut targets = Vec::new();
+        for id in ids {
+            let (_, source) =
+                subobject::solid(&self.document, id).map_err(|error| error.to_string())?;
+            let shape = subobject::topology(source).map_err(|error| error.to_string())?;
+            targets.extend(shape.vertices.into_iter().map(|vertex| {
+                (
+                    Component {
+                        solid: id,
+                        sides: vertex.sides,
+                    },
+                    vertex.position,
+                )
+            }));
+        }
+        Ok(targets)
+    }
+
     pub fn preview_component_weld(&mut self, stamp: &str) -> Result<u64, String> {
+        self.preview_component_weld_target(WeldTarget::Mean, stamp)
+    }
+
+    pub fn preview_component_weld_target(
+        &mut self,
+        mut target: WeldTarget,
+        stamp: &str,
+    ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
         let components = self
             .components
@@ -306,8 +366,11 @@ impl Session {
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        let plan =
-            subobject::plan_weld(&self.document, &components).map_err(|error| error.to_string())?;
+        if let WeldTarget::Corner(component) = &mut target {
+            component.sides.sort_unstable();
+        }
+        let plan = subobject::plan_weld_target(&self.document, &components, &target)
+            .map_err(|error| error.to_string())?;
         let mut document = self.document.preview_snapshot();
         document
             .edit("preview corner weld", |tx| {
@@ -331,6 +394,7 @@ impl Session {
                 .map(|change| change.selection.clone())
                 .collect(),
             weld: Some(plan.changes),
+            weld_target: Some(target),
             split: None,
         });
         self.scene_serial += 1;
@@ -364,6 +428,7 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             weld: None,
+            weld_target: None,
             selection: plan
                 .changes
                 .iter()
@@ -606,6 +671,61 @@ mod tests {
             .select_components(&corners, SelectMode::Replace, &session.component_stamp())
             .unwrap();
         corners
+    }
+
+    #[test]
+    fn explicit_weld_targets_share_source_choices_guards_and_actor_paths() {
+        for actor in [Actor::User, Actor::Agent] {
+            for existing in [false, true] {
+                let (mut session, id, _) = fixture();
+                let corners = select_top_corners(&mut session, id);
+                let source = session.document.vmf().clone();
+                let mut corner = corners[0].clone();
+                corner.sides.reverse();
+                let target = if existing {
+                    WeldTarget::Corner(corner)
+                } else {
+                    WeldTarget::Position(DVec3::new(16.125, 24.25, 96.5))
+                };
+                let token = session
+                    .preview_component_weld_target(target.clone(), &session.component_stamp())
+                    .unwrap();
+                let draft = session.render_document().vmf().clone();
+                let report = session.component_report(&[id]).unwrap();
+                assert_eq!(report["weld_targets"].as_array().unwrap().len(), 8);
+                assert_eq!(
+                    report["brushes"][0]["vertices"].as_array().unwrap().len(),
+                    5
+                );
+                assert_eq!(
+                    report["preview"]["weld_target"]["mode"],
+                    if existing { "corner" } else { "position" }
+                );
+                assert_eq!(session.document.vmf(), &source);
+                assert!(
+                    session
+                        .preview_component_weld_target(
+                            WeldTarget::Position(DVec3::splat(65_537.0)),
+                            &session.component_stamp()
+                        )
+                        .is_err()
+                );
+                assert_eq!(session.components.preview.as_ref().unwrap().token, token);
+                session.cancel_component_move(token).unwrap();
+                assert_eq!(session.render_document().vmf(), &source);
+                assert_eq!(
+                    session.component_selection(),
+                    &corners.into_iter().collect::<BTreeSet<_>>()
+                );
+                let token = session
+                    .preview_component_weld_target(target, &session.component_stamp())
+                    .unwrap();
+                session.commit_component_edit(actor, token).unwrap();
+                assert_eq!(session.document.vmf(), &draft);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &source);
+            }
+        }
     }
 
     #[test]

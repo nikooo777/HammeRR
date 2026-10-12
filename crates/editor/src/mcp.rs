@@ -528,6 +528,8 @@ struct ComponentMoveArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentWeldArgs {
     snapshot: String,
+    target: Option<[f64; 3]>,
+    target_corner: Option<ComponentRef>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3075,7 +3077,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview welding selected corners to their average position independently within each brush. Requires the latest component snapshot and at least two distinct vertices per brush; edges/faces are rejected. Surviving solid/side IDs, ownership, materials, world UV projections, lighting and unknown metadata remain. Collapsed faces are removed and their side IDs reported in preview.weld; redundant, self-touching, nonplanar, concave, empty or displacement results reject atomically and preserve the preceding draft. Limits: 512 selected corners, 16 brushes, 64 sides per brush. Topology and guides show the merged selection, while source_selection retains the original corners. Apply or Cancel before selecting preview components or dragging. No map/history changes until commit_component_edit; cancel_component_edit discards the draft."
+        description = "Preview welding selected corners to their average position independently within each brush, or to target world coordinates or target_corner (solid/sides) from the edited brush scope. target and target_corner are mutually exclusive. get_brush_components.weld_targets lists existing source corners even during a draft. Fixed targets share one position across all edited brushes; preview.weld_target reports the mode. Target coordinates must be finite and within ±65536. Requires the latest component snapshot and at least two distinct vertices per brush; edges/faces are rejected. Surviving solid/side IDs, ownership, materials, world UV projections, lighting and unknown metadata remain. Collapsed faces are removed and their side IDs reported in preview.weld; redundant, self-touching, nonplanar, concave, empty or displacement results reject atomically and preserve the preceding draft. Limits: 512 selected corners, 16 brushes, 64 sides per brush. Topology and guides show the merged selection, while source_selection retains the original corners. Apply or Cancel before selecting preview components or dragging. No map/history changes until commit_component_edit; cancel_component_edit discards the draft."
     )]
     fn preview_component_weld(
         &self,
@@ -3083,7 +3085,24 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_component_weld(&args.snapshot)?;
+            let target = match (args.target, args.target_corner) {
+                (None, None) => map_core::subobject::WeldTarget::Mean,
+                (Some(position), None) => map_core::subobject::WeldTarget::Position(vec3(position)),
+                (None, Some(corner)) => {
+                    map_core::subobject::WeldTarget::Corner(map_core::subobject::Component {
+                        solid: corner.solid,
+                        sides: corner.sides,
+                    })
+                }
+                (Some(_), Some(_)) => {
+                    return Err("Choose either target or target_corner, not both".into());
+                }
+            };
+            if target == map_core::subobject::WeldTarget::Mean {
+                session.preview_component_weld(&args.snapshot)?;
+            } else {
+                session.preview_component_weld_target(target, &args.snapshot)?;
+            }
             selected_component_report(&session)
         })
     }
@@ -5821,8 +5840,11 @@ mod headless_tests {
         let server = EditorServer::new(shared.clone(), None);
         for commit in [false, true] {
             let snapshot = lock(&shared).component_stamp();
-            let preview =
-                value(server.preview_component_weld(Parameters(ComponentWeldArgs { snapshot })));
+            let preview = value(server.preview_component_weld(Parameters(ComponentWeldArgs {
+                snapshot,
+                target: None,
+                target_corner: None,
+            })));
             assert_eq!(preview["brushes"].as_array().unwrap().len(), 1);
             let token = preview["preview"]["token"].as_str().unwrap().to_string();
             let result = if commit {

@@ -14,7 +14,23 @@ pub struct WeldPlan {
     pub changes: Vec<WeldChange>,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum WeldTarget {
+    #[default]
+    Mean,
+    Position(DVec3),
+    Corner(Component),
+}
+
 pub fn plan_weld(document: &Document, components: &[Component]) -> Result<WeldPlan, EditError> {
+    plan_weld_target(document, components, &WeldTarget::Mean)
+}
+
+pub fn plan_weld_target(
+    document: &Document,
+    components: &[Component],
+    target: &WeldTarget,
+) -> Result<WeldPlan, EditError> {
     if !(2..=MAX_COMPONENTS).contains(&components.len()) {
         return Err(invalid("Weld needs 2–512 selected corners"));
     }
@@ -24,6 +40,30 @@ pub fn plan_weld(document: &Document, components: &[Component]) -> Result<WeldPl
     }
     if grouped.len() > MAX_SOLIDS {
         return Err(invalid("Weld supports at most 16 brushes at a time"));
+    }
+    let target = match target {
+        WeldTarget::Mean => None,
+        WeldTarget::Position(position) => Some(*position),
+        WeldTarget::Corner(component) => {
+            if !grouped.contains_key(&component.solid) {
+                return Err(invalid(
+                    "Choose a corner from one of the brushes being welded",
+                ));
+            }
+            let shape = topology(solid(document, component.solid)?.1)?;
+            let resolved = shape.resolve(&component.sides)?;
+            if resolved.len() != 1 {
+                return Err(invalid("A weld target must identify one existing corner"));
+            }
+            Some(shape.vertices[resolved[0]].position)
+        }
+    };
+    if target.is_some_and(|position| {
+        !position.is_finite() || position.abs().max_element() > MAX_COORDINATE
+    }) {
+        return Err(invalid(
+            "Weld target needs finite coordinates within ±65536 units",
+        ));
     }
     let mut plan = WeldPlan {
         replacements: Vec::new(),
@@ -52,11 +92,13 @@ pub fn plan_weld(document: &Document, components: &[Component]) -> Result<WeldPl
                 "Brush {id}: select at least two distinct corners to weld"
             )));
         }
-        let position = selected
-            .iter()
-            .map(|index| shape.vertices[*index].position)
-            .sum::<DVec3>()
-            / selected.len() as f64;
+        let position = target.unwrap_or_else(|| {
+            selected
+                .iter()
+                .map(|index| shape.vertices[*index].position)
+                .sum::<DVec3>()
+                / selected.len() as f64
+        });
         let positions = shape
             .vertices
             .iter()
@@ -214,6 +256,132 @@ mod tests {
             })
             .collect();
         (document, id, selection)
+    }
+
+    #[test]
+    fn explicit_position_and_existing_corner_keep_unselected_geometry_and_round_trip() {
+        let (document, id, selected) = fixture(DVec3::ZERO, 64.0);
+        let shape = topology(document.solid(id).unwrap()).unwrap();
+        let corner = selected[0].clone();
+        let corner_position = shape.vertices[shape.resolve(&corner.sides).unwrap()[0]].position;
+        for target in [
+            WeldTarget::Position(DVec3::new(16.125, 24.25, 96.5)),
+            WeldTarget::Corner(corner),
+        ] {
+            let expected = match &target {
+                WeldTarget::Position(position) => *position,
+                _ => corner_position,
+            };
+            let plan = plan_weld_target(&document, &selected, &target).unwrap();
+            assert_eq!(plan.changes[0].position, expected);
+            let mut changed = document.clone();
+            changed
+                .edit("targeted weld", |tx| apply(tx, &plan.replacements))
+                .unwrap();
+            let after = topology(changed.solid(id).unwrap()).unwrap();
+            assert_eq!(after.vertices.len(), 5);
+            assert!(
+                after
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.position.abs_diff_eq(expected, EPSILON))
+            );
+            for vertex in shape
+                .vertices
+                .iter()
+                .filter(|vertex| vertex.position.z == 0.0)
+            {
+                assert!(
+                    after
+                        .vertices
+                        .iter()
+                        .any(|after| after.position.abs_diff_eq(vertex.position, EPSILON))
+                );
+            }
+            let saved =
+                source_formats::vmf::Vmf::parse(&changed.vmf().write(&Default::default())).unwrap();
+            saved.validate_ids().unwrap();
+            assert_eq!(topology(&saved.world.solids[0]).unwrap().vertices.len(), 5);
+            changed.undo().unwrap();
+            assert_eq!(changed.vmf(), document.vmf());
+        }
+    }
+
+    #[test]
+    fn invalid_weld_targets_reject_before_source_changes() {
+        let (mut document, id, selected) = fixture(DVec3::ZERO, 64.0);
+        let ObjectId::Solid(other) = document
+            .edit("other", |tx| {
+                edit::create_block(tx, DVec3::splat(128.0), DVec3::splat(192.0), "brick/test")
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let other_corner = topology(document.solid(other).unwrap()).unwrap().vertices[0]
+            .sides
+            .clone();
+        for target in [
+            WeldTarget::Position(DVec3::new(f64::NAN, 0.0, 0.0)),
+            WeldTarget::Position(DVec3::splat(f64::INFINITY)),
+            WeldTarget::Position(DVec3::new(65_537.0, 0.0, 64.0)),
+            WeldTarget::Position(DVec3::new(32.0, 32.0, 0.0)),
+            WeldTarget::Corner(Component {
+                solid: other,
+                sides: other_corner,
+            }),
+            WeldTarget::Corner(Component {
+                solid: id,
+                sides: vec![document.solid(id).unwrap().sides[0].id],
+            }),
+        ] {
+            assert!(
+                plan_weld_target(&document, &selected, &target).is_err(),
+                "{target:?}"
+            );
+        }
+        assert_eq!(
+            topology(document.solid(id).unwrap())
+                .unwrap()
+                .vertices
+                .len(),
+            8
+        );
+    }
+
+    #[test]
+    fn fixed_weld_target_is_shared_across_brushes_while_mean_remains_per_brush() {
+        let (mut document, _, mut selected) = fixture(DVec3::ZERO, 64.0);
+        let ObjectId::Solid(other) = document
+            .edit("second", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(128.0, 0.0, 0.0),
+                    DVec3::new(192.0, 64.0, 64.0),
+                    "brick/test",
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        selected.extend(
+            topology(document.solid(other).unwrap())
+                .unwrap()
+                .vertices
+                .into_iter()
+                .filter(|vertex| vertex.position.z == 64.0)
+                .map(|vertex| Component {
+                    solid: other,
+                    sides: vertex.sides,
+                }),
+        );
+        let target = DVec3::new(96.125, 32.0, 128.0);
+        let fixed = plan_weld_target(&document, &selected, &WeldTarget::Position(target)).unwrap();
+        assert!(fixed.changes.iter().all(|change| change.position == target));
+        let mean = plan_weld(&document, &selected).unwrap();
+        assert_eq!(mean.changes[0].position, DVec3::new(32.0, 32.0, 64.0));
+        assert_eq!(mean.changes[1].position, DVec3::new(160.0, 32.0, 64.0));
     }
 
     #[test]

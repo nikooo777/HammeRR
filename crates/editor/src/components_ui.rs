@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use glam::DVec3;
-use map_core::subobject::Component;
+use map_core::subobject::{Component, WeldTarget};
 use slint::{ComponentHandle, Model, VecModel};
 
 use crate::mcp::{SharedSession, lock};
@@ -52,8 +52,55 @@ fn position(point: DVec3) -> String {
     )
 }
 
+fn weld_target(window: &ComponentsWindow, session: &Session) -> Result<WeldTarget, String> {
+    match window.get_weld_target_mode() {
+        0 => Ok(WeldTarget::Mean),
+        1 => session
+            .component_weld_targets()?
+            .get(window.get_weld_corner() as usize)
+            .map(|(component, _)| WeldTarget::Corner(component.clone()))
+            .ok_or("Choose an existing brush corner".into()),
+        2 => {
+            let values = [
+                window.get_weld_x(),
+                window.get_weld_y(),
+                window.get_weld_z(),
+            ]
+            .iter()
+            .map(|value| {
+                value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter numeric weld target coordinates".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+            Ok(WeldTarget::Position(DVec3::new(
+                values[0], values[1], values[2],
+            )))
+        }
+        _ => Err("Choose a weld target mode".into()),
+    }
+}
+
 pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let was_topology_preview = window.get_topology_preview();
+    let targets = session.component_weld_targets().unwrap_or_default();
+    window.set_weld_corner_labels(
+        Rc::new(VecModel::from(
+            targets
+                .iter()
+                .map(|(component, point)| {
+                    format!("Brush {} · {}", component.solid, position(*point)).into()
+                })
+                .collect::<Vec<slint::SharedString>>(),
+        ))
+        .into(),
+    );
+    window.set_weld_corner(
+        window
+            .get_weld_corner()
+            .clamp(0, targets.len().saturating_sub(1) as i32),
+    );
     let topology_preview = session.component_topology_preview();
     window.set_stamp(session.component_stamp().into());
     window.set_move_handles(session.component_move_options().enabled);
@@ -201,6 +248,25 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let operation = if split { 2 } else { i32::from(weld) };
     if !preview.is_null() && window.get_token() != token {
         window.set_operation(operation);
+        if weld {
+            let target = &preview["weld_target"];
+            window.set_weld_target_mode(match target["mode"].as_str() {
+                Some("corner") => 1,
+                Some("position") => 2,
+                _ => 0,
+            });
+            if window.get_weld_target_mode() == 1 {
+                if let Some(index) = targets.iter().position(|(component, _)| {
+                    crate::session::components::component_json(component) == target["component"]
+                }) {
+                    window.set_weld_corner(index as i32);
+                }
+            } else if window.get_weld_target_mode() == 2 {
+                window.set_weld_x(target["position"][0].as_f64().unwrap().to_string().into());
+                window.set_weld_y(target["position"][1].as_f64().unwrap().to_string().into());
+                window.set_weld_z(target["position"][2].as_f64().unwrap().to_string().into());
+            }
+        }
         if split {
             let rise = preview["split"]["rise"].as_f64().unwrap();
             window.set_split_rise(rise.to_string().into());
@@ -220,9 +286,12 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             && window.get_operation() == operation
             && (if split {
                 window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
+            } else if weld {
+                weld_target(window, session).is_ok_and(|target| {
+                    crate::session::components::weld_target_json(&target) == preview["weld_target"]
+                })
             } else {
-                weld || (window.get_texture_lock()
-                    == preview["texture_lock"].as_bool().unwrap_or(false)
+                window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
                     && [
                         window.get_move_x(),
                         window.get_move_y(),
@@ -232,7 +301,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     .enumerate()
                     .all(|(index, value)| {
                         value.parse::<f64>().ok() == preview["delta"][index].as_f64()
-                    }))
+                    })
             }),
     );
     window.set_preview_summary(if preview.is_null() {
@@ -247,7 +316,13 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         let changes = preview["weld"].as_array().unwrap();
         let merged: u64 = changes.iter().map(|change|change["merged_vertices"].as_u64().unwrap()).sum();
         let removed: usize = changes.iter().map(|change|change["removed_sides"].as_array().unwrap().len()).sum();
-        format!("Merge {merged} corners into {}. Remove {removed} collapsed faces.\nThe map is unchanged until Apply.",changes.len()).into()
+        let target = if preview["weld_target"]["mode"] == "mean" { "Average selected corners in each brush".into() } else if changes.len() == 1 {
+            let values = &changes[0]["position"];
+            format!("Target: {}",position(DVec3::new(values[0].as_f64().unwrap(),values[1].as_f64().unwrap(),values[2].as_f64().unwrap())))
+        } else { "One shared world-space target".into() };
+        let corner_word = if changes.len() == 1 { "corner" } else { "corners" };
+        let face_word = if removed == 1 { "face" } else { "faces" };
+        format!("Merge {merged} corners into {} {corner_word}. Remove {removed} collapsed {face_word}.\n{target}\nThe map is unchanged until Apply.",changes.len()).into()
     } else {
         let delta = preview["delta"].as_array().unwrap();
         format!(
@@ -349,6 +424,20 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             )
         }
     });
+    window.on_choose_weld_mode({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            if window.get_weld_target_mode() == 2
+                && let Ok(Some(center)) = lock(&shared).component_weld_center()
+            {
+                window.set_weld_x(center.x.to_string().into());
+                window.set_weld_y(center.y.to_string().into());
+                window.set_weld_z(center.z.to_string().into());
+            }
+            window.invoke_edited();
+        }
+    });
     window.on_edited({
         let window = window.as_weak();
         move || {
@@ -416,7 +505,9 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                         session.preview_component_split(rise, window.get_stamp().as_str())
                     })
             } else if window.get_operation() == 1 {
-                session.preview_component_weld(window.get_stamp().as_str())
+                weld_target(&window, &session).and_then(|target| {
+                    session.preview_component_weld_target(target, window.get_stamp().as_str())
+                })
             } else {
                 delta.and_then(|delta| {
                     session.preview_component_move(

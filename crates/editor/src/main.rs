@@ -5418,6 +5418,107 @@ mod tests {
     }
 
     #[test]
+    fn component_weld_target_controls_preview_existing_corners_and_world_positions() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let selected = state.component_topology(&[id]).unwrap()[0]
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position.z == 64.0)
+            .map(|vertex| map_core::subobject::Component {
+                solid: id,
+                sides: vertex.sides.clone(),
+            })
+            .collect::<Vec<_>>();
+        state
+            .select_components(&selected, SelectMode::Replace, &state.component_stamp())
+            .unwrap();
+        let original = state.document().vmf().clone();
+        let corner_index = state
+            .component_weld_targets()
+            .unwrap()
+            .iter()
+            .position(|(component, _)| component == &selected[0])
+            .unwrap();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        window.set_kind(1);
+        window.set_operation(1);
+        components_ui::refresh(&window, &lock(&shared));
+        assert_eq!(window.get_weld_corner_labels().row_count(), 8);
+        window.set_weld_target_mode(2);
+        window.invoke_choose_weld_mode();
+        assert_eq!(window.get_weld_x(), "32");
+        assert_eq!(window.get_weld_y(), "32");
+        assert_eq!(window.get_weld_z(), "64");
+        window.set_weld_x("16.125".into());
+        window.set_weld_y("24.25".into());
+        window.set_weld_z("96.5".into());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert!(
+            window
+                .get_preview_summary()
+                .contains("Target: (16.125, 24.25, 96.5)")
+        );
+        let draft = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-weld-position");
+        for label in [
+            "Cancel",
+            "Apply weld",
+            "Discard preview",
+            "Preview weld",
+            "Weld target X",
+            "Weld target Y",
+            "Weld target Z",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.set_weld_z("65537".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert_eq!(lock(&shared).render_document().vmf(), &draft);
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.set_weld_z("96.5".into());
+        window.invoke_preview_edit();
+        window.invoke_discard_preview();
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
+        window.set_weld_target_mode(1);
+        window.set_weld_corner(corner_index as i32);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(window.get_weld_target_mode(), 1);
+        save_ui_snapshot(window.window(), "brush-weld-corner");
+        window.invoke_apply();
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_cancel();
+    }
+
+    #[test]
     fn component_split_controls_show_new_corners_validate_rise_and_restore_selection() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -1219,9 +1219,6 @@ impl Session {
             &saved
         };
         for part in &draft.partitions {
-            if self.component_hidden(part.source.solid, &hidden) {
-                continue;
-            }
             let positions = part.positions(draft.rise);
             let mut pieces = part.loops.iter().collect::<Vec<_>>();
             pieces.sort_by_key(|piece| {
@@ -1231,6 +1228,20 @@ impl Session {
                 })
             });
             for piece in pieces {
+                let solid = self
+                    .components
+                    .preview
+                    .as_ref()
+                    .and_then(|preview| preview.extrusion.as_ref())
+                    .and_then(|draft| {
+                        draft.plan.pieces.iter().find(|result| {
+                            result.source.solid == part.source.solid && result.partition == piece.id
+                        })
+                    })
+                    .map_or(part.source.solid, |result| result.solid.id);
+                if self.component_hidden(solid, &hidden) {
+                    continue;
+                }
                 let selected = draft.selection.contains(&PartitionRef {
                     solid: part.source.solid,
                     partition: piece.id,

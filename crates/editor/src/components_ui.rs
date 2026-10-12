@@ -203,7 +203,19 @@ fn refresh_crease_choices(
             }
             ComponentCreaseRow {
                 key: key.into(),
-                label: format!("Brush {} · ridge direction", component.solid).into(),
+                label: format!(
+                    "Brush {} · {} direction",
+                    component.solid,
+                    if preview["operation"] == "partition"
+                        || preview["operation"] == "extrusion"
+                        || window.get_operation() == 6
+                    {
+                        "cut"
+                    } else {
+                        "ridge"
+                    }
+                )
+                .into(),
                 first: ridge_direction(&pairs[0]).into(),
                 second: ridge_direction(&pairs[1]).into(),
                 choice,

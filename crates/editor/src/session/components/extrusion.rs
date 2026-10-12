@@ -388,6 +388,112 @@ mod tests {
     }
 
     #[test]
+    fn extrusion_guide_visibility_tracks_output_materials_and_hidden_owners() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("materials/tools")).unwrap();
+        std::fs::write(
+            directory.path().join("materials/tools/toolsnodraw.vmt"),
+            "UnlitGeneric { %compilenodraw 1 }",
+        )
+        .unwrap();
+        let gameinfo = directory.path().join("gameinfo.txt");
+        std::fs::write(
+            &gameinfo,
+            "GameInfo { FileSystem { SearchPaths { Game |gameinfo_path|. } } }",
+        )
+        .unwrap();
+        let game =
+            std::sync::Arc::new(source_formats::gamefs::GameFs::from_gameinfo(gameinfo).unwrap());
+        let (mut session, id, flat) = fixture(Actor::Agent, false, 0);
+        session.game = game.clone();
+        session.view.tool_textures = false;
+        session.cancel_component_move(flat).unwrap();
+        let side = session.component_selection().iter().next().unwrap().sides[0];
+        session
+            .edit(Actor::Agent, "tool surfaces", |tx| {
+                map_core::edit::set_material(
+                    tx,
+                    &[map_core::edit::FaceTarget::Object(ObjectId::Solid(id))],
+                    "tools/toolsnodraw",
+                )
+            })
+            .unwrap();
+        let flat = session
+            .resume_component_partitions(&[(id, side)], &session.component_stamp())
+            .unwrap();
+        session
+            .select_component_partitions(
+                flat,
+                &[PartitionRef {
+                    solid: id,
+                    partition: 0,
+                }],
+                SelectMode::Replace,
+            )
+            .unwrap();
+        let token = session
+            .preview_partition_extrusion(flat, spec(32.0))
+            .unwrap();
+        let mut mesh = render::SceneMesh::build(
+            Document::empty().vmf(),
+            &game,
+            &mut render::MaterialLibrary::default(),
+            &std::collections::HashSet::new(),
+        );
+        session.append_partition_guides(&mut mesh);
+        assert_eq!(
+            mesh.lines.len(),
+            24,
+            "Visible non-tool walls need the full highlighted prism outline"
+        );
+        let token = session
+            .preview_partition_extrusion(
+                token,
+                ExtrusionSpec {
+                    height: 32.0,
+                    wall_material: None,
+                    texture_lock: false,
+                },
+            )
+            .unwrap();
+        mesh.lines.clear();
+        session.append_partition_guides(&mut mesh);
+        assert!(
+            mesh.lines.is_empty(),
+            "An entirely tool-textured result stays hidden"
+        );
+        session.cancel_component_move(token).unwrap();
+        for owned in [false, true] {
+            let (mut session, id, flat) = fixture(Actor::Agent, owned, 0);
+            session.game = game.clone();
+            let side = session.component_selection().iter().next().unwrap().sides[0];
+            let owner = subobject::solid(session.document(), id).unwrap().0;
+            session.cancel_component_move(flat).unwrap();
+            session
+                .edit(Actor::Agent, "hidden owner", |tx| {
+                    match owner {
+                        ObjectId::Solid(id) => tx.solid_mut(id)?.hidden = true,
+                        ObjectId::Entity(id) => tx.entity_mut(id)?.hidden = true,
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let flat = session
+                .resume_component_partitions(&[(id, side)], &session.component_stamp())
+                .unwrap();
+            session
+                .preview_partition_extrusion(flat, spec(32.0))
+                .unwrap();
+            mesh.lines.clear();
+            session.append_partition_guides(&mut mesh);
+            assert!(
+                mesh.lines.is_empty(),
+                "Hidden output owners must not leave guides"
+            );
+        }
+    }
+
+    #[test]
     fn extrusion_body_picking_maps_back_to_the_source_piece() {
         let (mut session, id, flat) = fixture(Actor::Agent, false, 0);
         session

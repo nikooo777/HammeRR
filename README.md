@@ -407,6 +407,10 @@ that path explicitly.
 | --- | --- |
 | ![Height, wall material and top texture controls for highlighted pieces](docs/images/partition-extrusion-controls.png) | ![Two flat pieces extruded to different heights above an unchanged source brush](docs/images/partition-extrusion-preview.png) |
 
+Extrusion outlines follow the visibility of the new volume, including its wall
+materials and hidden owner. Visible walls remain highlighted when the source
+brush is hidden by the tool-material filter.
+
 | Flat pieces staged | Shared ridge raised |
 | --- | --- |
 | ![An independent dividing edge on an unchanged brush face](docs/images/component-partition-flat.png) | ![The staged pieces raised into two checked roof planes](docs/images/component-partition-raised.png) |
@@ -1091,6 +1095,12 @@ camera, selection and view.
 The audit, component source/topology/transform, precision and carving validators
 use private headless sessions and do not accept a GUI URL. Add `--render` to the topology
 validator for offscreen GPU pixel checks without opening a desktop window.
+
+Check extrusion guide visibility with a private offscreen GPU session:
+
+```sh
+python -B scripts/validate_partition_visibility.py --output /tmp/hammerr-partition-visibility
+```
 
 `get_component_sources` pages the selected owners' committed brushes without
 expanding full topology. It returns ID, owner, material, bounds, total, active

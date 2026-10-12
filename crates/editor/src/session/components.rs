@@ -295,6 +295,7 @@ impl Session {
             "component_center":self.component_center()?.map(|point|point.to_array()),
             "weld_center":self.component_weld_center()?.map(|center|center.to_array()),
             "crease_choices":self.component_crease_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+            "partition_choices":self.component_partition_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "weld_targets":self.component_weld_targets()?.iter().map(|(component,position)|json!({"component":component_json(component),"position":position.to_array()})).collect::<Vec<_>>(),
             "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.extrusion.is_some() {"extrusion"} else if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.partitions.len()),"can_apply":preview.extrusion.as_ref().map_or_else(||preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0),|extrusion|preview.partition.as_ref().is_some_and(|draft|draft.selection==extrusion.selection)),"extrusion":preview.extrusion.as_ref().map(extrusion::Draft::report),"partition":preview.partition.as_ref().map(|draft|draft.report(&self.document)),
                 "weld_target":preview.weld_target.as_ref().map(weld_target_json),
@@ -625,6 +626,17 @@ impl Session {
     }
 
     pub fn component_crease_choices(&self) -> Result<Vec<(Component, Vec<CreasePair>)>, String> {
+        self.component_cut_choices(false)
+    }
+
+    pub fn component_partition_choices(&self) -> Result<Vec<(Component, Vec<CreasePair>)>, String> {
+        self.component_cut_choices(true)
+    }
+
+    fn component_cut_choices(
+        &self,
+        boundary: bool,
+    ) -> Result<Vec<(Component, Vec<CreasePair>)>, String> {
         let mut choices = Vec::new();
         let mut shapes = BTreeMap::new();
         for component in &self.components.selection {
@@ -645,9 +657,12 @@ impl Session {
             {
                 choices.push((
                     component.clone(),
-                    shape
-                        .crease_pairs(component.sides[0])
-                        .map_err(|error| error.to_string())?,
+                    if boundary {
+                        shape.partition_pairs(component.sides[0])
+                    } else {
+                        shape.crease_pairs(component.sides[0])
+                    }
+                    .map_err(|error| error.to_string())?,
                 ));
             }
         }

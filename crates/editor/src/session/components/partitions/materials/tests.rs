@@ -7,34 +7,107 @@ fn piece(solid: u32, partition: u32) -> PartitionRef {
 }
 
 #[test]
-fn boundary_cut_authoring_waits_for_shared_storage_and_controls() {
+fn boundary_cut_authoring_shares_materials_storage_extrusion_and_history() {
     for actor in [Actor::User, Actor::Agent] {
-        let (mut session, solid, pairs) = fixture(actor, 0);
-        let token = session
-            .preview_component_partition(&pairs, &session.component_stamp())
-            .unwrap();
-        let side = session.checked_partition(token).unwrap().partitions[0]
-            .source
-            .side;
-        let (_, source) = subobject::solid(session.document(), solid).unwrap();
-        let adjacent = subobject::partition_pairs(source, side).unwrap()[2].edges;
-        let report = session.component_report(&[solid]).unwrap();
-        let before = session.document.vmf().clone();
-        let history = session.document.undo_labels().count();
-        let error = session
-            .preview_component_partition(
-                &[CreaseEdges {
+        for owned in [false, true] {
+            for direction in 0..4 {
+                let (mut session, solid, _) = fixture(actor, usize::from(owned));
+                let choices = session.component_partition_choices().unwrap();
+                assert_eq!(choices[0].1.len(), 6);
+                assert_eq!(
+                    session.component_crease_choices().unwrap()[0].1,
+                    choices[0].1[..2]
+                );
+                let side = choices[0].0.sides[0];
+                let pairs = [CreaseEdges {
                     solid,
-                    edges: adjacent,
-                }],
-                &session.component_stamp(),
-            )
-            .unwrap_err();
-        assert!(error.contains("opposing edges"));
-        assert_eq!(session.partition_preview_token(), Some(token));
-        assert_eq!(session.component_report(&[solid]).unwrap(), report);
-        assert_eq!(session.document.vmf(), &before);
-        assert_eq!(session.document.undo_labels().count(), history);
+                    edges: choices[0].1[direction + 2].edges,
+                }];
+                let before = session.document.vmf().clone();
+                let token = session
+                    .preview_component_partition(&pairs, &session.component_stamp())
+                    .unwrap();
+                let token = session
+                    .update_component_partition_cut(token, [0.2, 0.8])
+                    .unwrap();
+                let token = session
+                    .update_component_partition_material(
+                        token,
+                        &[piece(solid, 0)],
+                        Some("brick/triangle"),
+                    )
+                    .unwrap();
+                let token = session
+                    .update_component_partition_material(
+                        token,
+                        &[piece(solid, 1)],
+                        Some("wood/pentagon"),
+                    )
+                    .unwrap();
+                let report = session.component_report(&[solid]).unwrap();
+                assert!(
+                    session
+                        .raise_component_partition(token, 16.0)
+                        .unwrap_err()
+                        .contains("two quad")
+                );
+                assert_eq!(session.component_report(&[solid]).unwrap(), report);
+                assert_eq!(session.document.vmf(), &before);
+                session.store_component_partition(actor, token).unwrap();
+                let stored = session.document.vmf().clone();
+                let history = session.document.undo_labels().count();
+                let token = session
+                    .resume_component_partitions(&[(solid, side)], &session.component_stamp())
+                    .unwrap();
+                let draft = session.checked_partition(token).unwrap();
+                assert_eq!(
+                    draft.partitions[0]
+                        .loops
+                        .each_ref()
+                        .map(|piece| piece.vertices.len()),
+                    [3, 5]
+                );
+                let spec = subobject::ExtrusionSpec {
+                    height: 16.125,
+                    wall_material: None,
+                    texture_lock: true,
+                };
+                let token = session
+                    .preview_partition_extrusion(token, spec.clone())
+                    .unwrap();
+                let applied = session.render_document().vmf().clone();
+                let plan = session
+                    .checked_component_preview(token)
+                    .unwrap()
+                    .extrusion
+                    .as_ref()
+                    .unwrap()
+                    .plan
+                    .clone();
+                assert_eq!(
+                    plan.pieces
+                        .iter()
+                        .map(|piece| piece.solid.sides.len())
+                        .collect::<Vec<_>>(),
+                    vec![5, 7]
+                );
+                assert_eq!(session.document.undo_labels().count(), history);
+                session.cancel_component_move(token).unwrap();
+                assert_eq!(session.document.vmf(), &stored);
+                let token = session
+                    .resume_component_partitions(&[(solid, side)], &session.component_stamp())
+                    .unwrap();
+                let token = session.preview_partition_extrusion(token, spec).unwrap();
+                assert_eq!(session.render_document().vmf(), &applied);
+                session.commit_component_edit(actor, token).unwrap();
+                assert_eq!(session.document.vmf(), &applied);
+                assert_eq!(session.document.undo_labels().count(), history + 1);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &stored);
+                session.redo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &applied);
+            }
+        }
     }
 }
 

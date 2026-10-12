@@ -132,7 +132,11 @@ fn crease_inputs(
     window: &ComponentsWindow,
     session: &Session,
 ) -> Result<Vec<crate::session::components::CreaseEdges>, String> {
-    let choices = session.component_crease_choices()?;
+    let choices = if window.get_operation() == 6 {
+        session.component_partition_choices()?
+    } else {
+        session.component_crease_choices()?
+    };
     if choices.len() != session.component_selection().len() {
         return Err("Select one face with four corners per brush".into());
     }
@@ -143,10 +147,10 @@ fn crease_inputs(
                 .get_crease_rows()
                 .iter()
                 .find(|row| row.key == key(component))
-                .ok_or("Choose opposing edges for each face")?;
+                .ok_or("Choose a cut direction for each face")?;
             let pair = pairs
                 .get(row.choice as usize)
-                .ok_or("Choose a ridge direction")?;
+                .ok_or("Choose an available direction")?;
             Ok(crate::session::components::CreaseEdges {
                 solid: component.solid,
                 edges: pair.edges,
@@ -182,7 +186,17 @@ fn refresh_crease_choices(
     let previous = window.get_crease_rows().iter().collect::<Vec<_>>();
     let preview = &report["preview"];
     let changed = !preview.is_null() && window.get_token() != preview["token"].as_str().unwrap();
-    let choices = session.component_crease_choices().unwrap_or_default();
+    let partition = if changed {
+        preview["operation"] == "partition" || preview["operation"] == "extrusion"
+    } else {
+        window.get_operation() == 6
+    };
+    let choices = if partition {
+        session.component_partition_choices()
+    } else {
+        session.component_crease_choices()
+    }
+    .unwrap_or_default();
     let rows = choices
         .iter()
         .map(|(component, pairs)| {
@@ -190,7 +204,8 @@ fn refresh_crease_choices(
             let mut choice = previous
                 .iter()
                 .find(|row| row.key == key)
-                .map_or(0, |row| row.choice);
+                .map_or(0, |row| row.choice)
+                .clamp(0, pairs.len() as i32 - 1);
             let requests =
                 if preview["operation"] == "partition" || preview["operation"] == "extrusion" {
                     &preview["partition"]["partitions"]
@@ -206,7 +221,7 @@ fn refresh_crease_choices(
                 choice = pairs
                     .iter()
                     .position(|pair| serde_json::json!(pair.edges) == request["edges"])
-                    .unwrap() as i32;
+                    .unwrap_or(0) as i32;
             }
             ComponentCreaseRow {
                 key: key.into(),
@@ -223,8 +238,35 @@ fn refresh_crease_choices(
                     }
                 )
                 .into(),
-                first: ridge_direction(&pairs[0]).into(),
-                second: ridge_direction(&pairs[1]).into(),
+                choices: Rc::new(VecModel::from(
+                    pairs
+                        .iter()
+                        .enumerate()
+                        .map(|(index, pair)| {
+                            if index < 2 {
+                                ridge_direction(pair).into()
+                            } else {
+                                let (_, source) =
+                                    map_core::subobject::solid(session.document(), component.solid)
+                                        .unwrap();
+                                let shape = map_core::subobject::topology(source).unwrap();
+                                let corner = shape
+                                    .vertices
+                                    .iter()
+                                    .find(|vertex| {
+                                        vertex.sides.contains(&component.sides[0])
+                                            && pair
+                                                .edges
+                                                .iter()
+                                                .all(|edge| vertex.sides.contains(edge))
+                                    })
+                                    .unwrap();
+                                format!("Trim corner at {}", position(corner.position)).into()
+                            }
+                        })
+                        .collect::<Vec<slint::SharedString>>(),
+                ))
+                .into(),
                 choice,
             }
         })
@@ -310,6 +352,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     refresh_crease_choices(window, &report, session);
     let partition = &report["preview"]["partition"];
     window.set_has_partition_preview(!partition.is_null());
+    window.set_can_raise_partition(partition["ridge_supported"].as_bool().unwrap_or(true));
     window.set_has_extrusion_preview(!report["preview"]["extrusion"].is_null());
     window.set_partition_flat(partition["rise"].as_f64() == Some(0.0));
     window.set_cut_is_midpoint(
@@ -372,7 +415,12 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 let id = piece["id"].as_u64().unwrap();
                 parts.push(ComponentRow {
                     key: format!("{solid}:{id}").into(),
-                    label: format!("Brush {solid} · piece {}", id + 1).into(),
+                    label: format!(
+                        "Brush {solid} · {} {}",
+                        piece["shape"].as_str().unwrap(),
+                        id + 1
+                    )
+                    .into(),
                     detail: format!(
                         "{}{}",
                         piece["effective_material"]
@@ -1477,11 +1525,9 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                         )
                     })
                 } else if window.get_has_partition_preview() {
-                    window
-                        .get_split_rise()
-                        .trim()
-                        .parse::<f64>()
-                        .map_err(|_| "Enter a numeric ridge height".to_string())
+                    (if window.get_can_raise_partition() {
+                        window.get_split_rise().trim().parse::<f64>().map_err(|_| "Enter a numeric ridge height".to_string())
+                    } else { Ok(0.0) })
                         .and_then(|rise| {
                             session.raise_component_partition_with_texture(
                                 window

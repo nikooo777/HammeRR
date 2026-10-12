@@ -10,8 +10,7 @@ export struct ComponentRow {
 export struct ComponentCreaseRow {
     key: string,
     label: string,
-    first: string,
-    second: string,
+    choices: [string],
     choice: int,
 }
 
@@ -24,6 +23,7 @@ export component ComponentsWindow inherits Window {
     in property <[ComponentRow]> partition-rows;
     in property <bool> has-partition-preview;
     in property <bool> partition-flat;
+    in property <bool> can-raise-partition: true;
     in-out property <bool> show-top-material;
     in-out property <string> top-material;
     in property <string> top-material-baseline;
@@ -184,7 +184,7 @@ export component ComponentsWindow inherits Window {
                     content-width: self.width;
                     VerticalLayout {
                     padding-right: 15px; spacing: 12px;
-                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection", "Roof ridge", "Flat partition"]; current-index <=> root.operation; selected => { root.edited(); } }
+                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection", "Roof ridge", "Flat partition"]; current-index <=> root.operation; selected => { root.refresh(); root.edited(); } }
                     if root.operation == 0: VerticalLayout {
                     spacing: 12px;
                     CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
@@ -246,7 +246,7 @@ export component ComponentsWindow inherits Window {
                             for row in root.crease-rows: VerticalLayout {
                                 spacing: 6px;
                                 Text { text: row.label; font-weight: 600; }
-                                ComboBox { model: [row.first, row.second]; current-index: row.choice; selected => { root.choose-crease-pair(row.key, self.current-index); } }
+                                ComboBox { model: row.choices; current-index: row.choice; selected => { root.choose-crease-pair(row.key, self.current-index); } }
                             }
                         }
                         Text { text: "Ridge height above the face · world units"; wrap: word-wrap; color: #aeb9c8; }
@@ -264,7 +264,7 @@ export component ComponentsWindow inherits Window {
                             for row in root.crease-rows: VerticalLayout {
                                 spacing: 6px;
                                 Text { text: row.label; font-weight: 600; }
-                                ComboBox { enabled: !root.has-partition-preview; model: [row.first, row.second]; current-index: row.choice; selected => { root.choose-crease-pair(row.key, self.current-index); } }
+                                ComboBox { enabled: !root.has-partition-preview; model: row.choices; current-index: row.choice; selected => { root.choose-crease-pair(row.key, self.current-index); } }
                             }
                         }
                         if root.has-partition-preview: VerticalLayout {
@@ -301,7 +301,7 @@ export component ComponentsWindow inherits Window {
                             CheckBox { text: "Adjust dividing edge"; checked <=> root.show-cut-settings; }
                             if root.show-cut-settings: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: "Cut positions · % along each opposing edge"; wrap: word-wrap; color: #aeb9c8; }
+                                Text { text: "Cut positions · % along each chosen edge"; wrap: word-wrap; color: #aeb9c8; }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     VerticalLayout {
@@ -322,8 +322,8 @@ export component ComponentsWindow inherits Window {
                                 Button { text: "Preview cut"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.preview-cut(); } }
                                 if !root.cut-is-midpoint: Button { text: "Reset cut to midpoint"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.choose-cut-position(0,50); root.choose-cut-position(1,50); root.preview-cut(); } }
                             }
-                            ComboBox { model: ["Raise shared ridge", "Extrude highlighted pieces"]; current-index <=> root.partition-mode; selected => { root.edited(); } }
-                            if root.partition-mode == 0: VerticalLayout {
+                            ComboBox { model: root.can-raise-partition ? ["Raise shared ridge", "Extrude highlighted pieces"] : ["Keep flat pieces", "Extrude highlighted pieces"]; current-index <=> root.partition-mode; selected => { root.edited(); } }
+                            if root.partition-mode == 0 && root.can-raise-partition: VerticalLayout {
                                 spacing: 6px;
                                 if !root.cut-is-midpoint: Text { text: root.cut-first == "" || root.cut-second == "" ? "Saved sources have different cut positions" : "Cut positions · A " + root.cut-first + "% · B " + root.cut-second + "%"; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                                 Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: #aeb9c8; }
@@ -331,7 +331,7 @@ export component ComponentsWindow inherits Window {
                                 Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                                 CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
                             }
-                            if root.partition-mode == 0 && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                            if root.partition-mode == 0 && root.can-raise-partition && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                             if root.partition-mode == 1: VerticalLayout {
                                 spacing: 6px;
                                 Text { text: "Extrusion height · world units"; color: #aeb9c8; }
@@ -349,7 +349,8 @@ export component ComponentsWindow inherits Window {
                             }
                             Button { text: "Return to flat"; enabled: !root.partition-flat || root.has-extrusion-preview; clicked => { root.flatten-partitions(); } }
                         }
-                        if root.partition-mode == 0: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        if !root.can-raise-partition: Text { text: "Ridges need two quad pieces. Keep these flat or extrude them."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        if root.partition-mode == 0 && root.can-raise-partition: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         Text { text: "Preview before Apply. Keep flat pieces to resume them later."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         if !root.has-partition-preview && root.saved-partitions.length > 0: VerticalLayout {
                             spacing: 6px;
@@ -386,7 +387,7 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Unselected corners stay in place. Faces must remain flat and the brush convex."; wrap: word-wrap; color: #aeb9c8; }
                         Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
-                    Button { text: root.operation == 6 ? (root.has-partition-preview ? (root.partition-mode == 1 ? "Preview extrusion" : "Preview ridge") : "Stage flat partition") : root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
+                    Button { text: root.operation == 6 ? (root.has-partition-preview ? (root.partition-mode == 1 ? "Preview extrusion" : (root.can-raise-partition ? "Preview ridge" : "Preview flat pieces")) : "Stage flat partition") : root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     Rectangle { vertical-stretch: 1; }
                     if !root.has-partition-preview: Text { text: root.has-partition-preview ? "Click a visible piece to highlight it. Ctrl toggles; an empty click clears. Orange outlines show highlights." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }

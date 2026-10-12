@@ -15,6 +15,8 @@ const KIND: &str = "opposing_midpoints";
 const EDGE_KIND: &str = "opposing_edges";
 const MATERIAL_KIND: &str = "opposing_midpoints_materials";
 const EDGE_MATERIAL_KIND: &str = "opposing_edges_materials";
+const BOUNDARY_KIND: &str = "boundary_edges";
+const BOUNDARY_MATERIAL_KIND: &str = "boundary_edges_materials";
 const MATERIAL_FIELDS: [&str; 2] = ["top_material_0", "top_material_1"];
 const PARAMETERS_FIELD: &str = "edge_parameters";
 const VERSION: &str = "1";
@@ -23,6 +25,7 @@ const RECORD_FIELDS: [&str; 5] = ["kind", "solid", "side", "edges", "corner"];
 #[derive(Debug, Clone, PartialEq)]
 pub struct Intent {
     pub source: Crease,
+    pub adjacent: bool,
     pub edge_parameters: [f64; 2],
     pub top_materials: [Option<String>; 2],
     pub corners: [Vec<u32>; 4],
@@ -137,6 +140,10 @@ impl Intent {
     fn from_partition(partition: &Partition) -> Self {
         Self {
             source: partition.source.clone(),
+            adjacent: partition
+                .loops
+                .iter()
+                .any(|piece| piece.vertices.len() != 4),
             edge_parameters: partition.cut().unwrap().edge_parameters,
             top_materials: [None, None],
             corners: std::array::from_fn(|index| match &partition.vertices[index].source {
@@ -168,13 +175,23 @@ impl Intent {
         {
             return Err("Partition source IDs must be distinct, positive and canonical".into());
         }
+        let second = if self.adjacent {
+            if self.corners[0].contains(&self.source.edges[1]) {
+                3
+            } else {
+                1
+            }
+        } else {
+            2
+        };
         for (index, corner) in self.corners.iter().enumerate() {
             if !(3..=subobject::MAX_SIDES).contains(&corner.len())
                 || corner.first() == Some(&0)
                 || corner.windows(2).any(|pair| pair[0] >= pair[1])
                 || !corner.contains(&self.source.side)
-                || !corner.contains(&self.source.edges[index / 2])
-                || corner.contains(&self.source.edges[1 - index / 2])
+                || corner.contains(&self.source.edges[0]) != (index < 2)
+                || corner.contains(&self.source.edges[1])
+                    != (index == second || index == (second + 1) % 4)
             {
                 return Err("Partition corner incidence is invalid".into());
             }
@@ -184,7 +201,8 @@ impl Intent {
         }
         if self.extra.iter().any(|node| {
             RECORD_FIELDS.contains(&node.key.as_str())
-                || (self.edge_parameters != [0.5; 2] && node.key == PARAMETERS_FIELD)
+                || ((self.adjacent || self.edge_parameters != [0.5; 2])
+                    && node.key == PARAMETERS_FIELD)
                 || (self.top_materials.iter().any(Option::is_some)
                     && MATERIAL_FIELDS.contains(&node.key.as_str()))
         }) {
@@ -198,20 +216,23 @@ impl Intent {
             Node::string(
                 "kind",
                 match (
+                    self.adjacent,
                     self.edge_parameters == [0.5; 2],
                     self.top_materials.iter().any(Option::is_some),
                 ) {
-                    (true, false) => KIND,
-                    (false, false) => EDGE_KIND,
-                    (true, true) => MATERIAL_KIND,
-                    (false, true) => EDGE_MATERIAL_KIND,
+                    (true, _, false) => BOUNDARY_KIND,
+                    (true, _, true) => BOUNDARY_MATERIAL_KIND,
+                    (false, true, false) => KIND,
+                    (false, false, false) => EDGE_KIND,
+                    (false, true, true) => MATERIAL_KIND,
+                    (false, false, true) => EDGE_MATERIAL_KIND,
                 },
             ),
             Node::string("solid", self.source.solid.to_string()),
             Node::string("side", self.source.side.to_string()),
             Node::string("edges", encoded(&self.source.edges)),
         ];
-        if self.edge_parameters != [0.5; 2] {
+        if self.adjacent || self.edge_parameters != [0.5; 2] {
             fields.push(Node::string(
                 PARAMETERS_FIELD,
                 format!("{} {}", self.edge_parameters[0], self.edge_parameters[1]),
@@ -244,29 +265,37 @@ impl Intent {
         .map_err(|error| error.to_string())?
         .remove(0);
         let current = Self::from_partition(&partition);
-        if current.corners.iter().collect::<BTreeSet<_>>()
-            != self.corners.iter().collect::<BTreeSet<_>>()
+        if current.adjacent != self.adjacent
+            || current.corners.iter().collect::<BTreeSet<_>>()
+                != self.corners.iter().collect::<BTreeSet<_>>()
         {
             return Err(format!(
                 "Brush {}, face {}: saved partition corner incidence changed",
                 self.source.solid, self.source.side
             ));
         }
-        let membership = |corners: &[Vec<u32>; 4], piece: usize| {
-            if piece == 0 {
-                [&corners[0], &corners[3]]
-            } else {
-                [&corners[1], &corners[2]]
-            }
-            .into_iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
+        let first = if self.adjacent {
+            self.corners
+                .iter()
+                .filter(|corner| self.source.edges.iter().all(|edge| corner.contains(edge)))
+                .cloned()
+                .collect::<BTreeSet<_>>()
+        } else {
+            [self.corners[0].clone(), self.corners[3].clone()]
+                .into_iter()
+                .collect()
         };
-        let expected = [membership(&self.corners, 0), membership(&self.corners, 1)];
-        let actual = [
-            membership(&current.corners, 0),
-            membership(&current.corners, 1),
-        ];
+        let second = self
+            .corners
+            .iter()
+            .filter(|corner| !first.contains(*corner))
+            .cloned()
+            .collect();
+        let expected = [first, second];
+        let actual = partition
+            .loops
+            .each_ref()
+            .map(|piece| piece_corners(&partition, piece));
         if actual == [expected[1].clone(), expected[0].clone()] {
             partition.loops.swap(0, 1);
             partition.loops[0].id = 0;
@@ -313,13 +342,25 @@ impl Metadata {
             }
             let fields = node.children().ok_or("Partition entry must be a block")?;
             let kind = field(fields, "kind")?;
-            if ![KIND, EDGE_KIND, MATERIAL_KIND, EDGE_MATERIAL_KIND].contains(&kind) {
+            if ![
+                KIND,
+                EDGE_KIND,
+                MATERIAL_KIND,
+                EDGE_MATERIAL_KIND,
+                BOUNDARY_KIND,
+                BOUNDARY_MATERIAL_KIND,
+            ]
+            .contains(&kind)
+            {
                 return Err(
                     "Unsupported partition intent kind; raw metadata has been preserved".into(),
                 );
             }
-            let adjusted = kind == EDGE_KIND || kind == EDGE_MATERIAL_KIND;
-            let styled = kind == MATERIAL_KIND || kind == EDGE_MATERIAL_KIND;
+            let adjacent = kind == BOUNDARY_KIND || kind == BOUNDARY_MATERIAL_KIND;
+            let adjusted = adjacent || kind == EDGE_KIND || kind == EDGE_MATERIAL_KIND;
+            let styled = kind == MATERIAL_KIND
+                || kind == EDGE_MATERIAL_KIND
+                || kind == BOUNDARY_MATERIAL_KIND;
             let edge_parameters = if adjusted {
                 let values = field(fields, PARAMETERS_FIELD)?
                     .split_whitespace()
@@ -370,6 +411,7 @@ impl Metadata {
             };
             let intent = Intent {
                 source,
+                adjacent,
                 edge_parameters,
                 top_materials,
                 corners,
@@ -1463,3 +1505,6 @@ mod tests {
         assert_eq!(document.vmf(), &before);
     }
 }
+
+#[cfg(test)]
+mod boundary_tests;

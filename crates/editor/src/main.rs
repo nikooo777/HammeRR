@@ -5943,7 +5943,82 @@ mod tests {
             .find(|row| row.key == format!("{id}:{side}"))
             .unwrap();
         window.invoke_choose(top.key);
+        window.set_operation(5);
+        window.invoke_refresh();
+        assert_eq!(
+            window
+                .get_crease_rows()
+                .row_data(0)
+                .unwrap()
+                .choices
+                .row_count(),
+            2
+        );
+        let agent_token = {
+            let mut session = lock(&shared);
+            let choices = session.component_partition_choices().unwrap();
+            let stamp = session.component_stamp();
+            session
+                .preview_component_partition(
+                    &[crate::session::components::CreaseEdges {
+                        solid: id,
+                        edges: choices[0].1[3].edges,
+                    }],
+                    &stamp,
+                )
+                .unwrap()
+        };
+        window.invoke_refresh();
+        assert_eq!(window.get_operation(), 6);
+        assert_eq!(
+            window
+                .get_crease_rows()
+                .row_data(0)
+                .unwrap()
+                .choices
+                .row_count(),
+            6
+        );
+        assert_eq!(window.get_crease_rows().row_data(0).unwrap().choice, 3);
+        lock(&shared).cancel_component_move(agent_token).unwrap();
+        window.invoke_refresh();
+        let row = window.get_crease_rows().row_data(0).unwrap();
+        assert_eq!(row.choices.row_count(), 6);
+        assert!(row.choices.row_data(2).unwrap().starts_with("Trim corner"));
+        window.invoke_choose_crease_pair(row.key, 2);
         window.invoke_preview_edit();
+        assert!(window.get_has_partition_preview() && window.get_ready());
+        assert!(!window.get_can_raise_partition());
+        assert!(
+            window
+                .get_partition_rows()
+                .row_data(0)
+                .unwrap()
+                .label
+                .contains("triangle")
+        );
+        assert!(
+            window
+                .get_partition_rows()
+                .row_data(1)
+                .unwrap()
+                .label
+                .contains("pentagon")
+        );
+        window.set_show_cut_settings(true);
+        window.invoke_choose_cut_position(0, 20.0);
+        window.invoke_choose_cut_position(1, 80.0);
+        window.invoke_preview_cut();
+        assert!(window.get_ready());
+        save_ui_snapshot(window.window(), "boundary-partition-controls");
+        window.invoke_preview_edit();
+        assert!(window.get_ready() && window.get_partition_flat());
+        window.set_partition_mode(1);
+        window.invoke_choose_extrusion_height(16.125);
+        window.invoke_preview_edit();
+        assert!(window.get_ready() && window.get_has_extrusion_preview());
+        window.set_show_cut_settings(false);
+        save_ui_snapshot(window.window(), "boundary-partition-extrusion");
         window.invoke_cancel();
         assert_eq!(lock(&shared).partition_preview_token(), None);
         assert_eq!(lock(&shared).document().vmf(), &source);
@@ -6470,8 +6545,9 @@ mod tests {
         window.invoke_choose(top.key);
         assert_eq!(window.get_crease_rows().row_count(), 1);
         let row = window.get_crease_rows().row_data(0).unwrap();
-        assert!(row.first.contains("direction"));
-        assert!(row.second.contains("direction"));
+        assert_eq!(row.choices.row_count(), 2);
+        assert!(row.choices.row_data(0).unwrap().contains("direction"));
+        assert!(row.choices.row_data(1).unwrap().contains("direction"));
         window.invoke_preview_edit();
         assert!(window.get_ready());
         assert!(window.get_topology_preview());

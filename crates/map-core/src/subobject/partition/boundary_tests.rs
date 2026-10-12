@@ -191,7 +191,7 @@ fn adjacent_boundary_cuts_extrude_checked_triangles_and_pentagons() {
 }
 
 #[test]
-fn unsupported_boundary_roofs_storage_and_invalid_plans_reject_atomically() {
+fn unsupported_boundary_roofs_and_invalid_plans_reject_atomically() {
     let (mut document, id) = super::tests::fixture(false);
     let source = document.solid(id).unwrap();
     let side = source
@@ -220,13 +220,6 @@ fn unsupported_boundary_roofs_storage_and_invalid_plans_reject_atomically() {
         .err()
         .unwrap();
     assert!(error.to_string().contains("two quad"));
-    assert!(
-        document
-            .edit("unsupported storage", |tx| {
-                crate::partition_metadata::store_partition(tx, &part)
-            })
-            .is_err()
-    );
     for kind in 0..4 {
         let mut invalid = part.clone();
         match kind {

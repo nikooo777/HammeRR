@@ -598,6 +598,15 @@ impl Session {
     }
 
     pub fn preview_component_split(&mut self, rise: f64, stamp: &str) -> Result<u64, String> {
+        self.preview_component_split_with_texture(rise, false, stamp)
+    }
+
+    pub fn preview_component_split_with_texture(
+        &mut self,
+        rise: f64,
+        texture_lock: bool,
+        stamp: &str,
+    ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
         let components = self
             .components
@@ -608,7 +617,7 @@ impl Session {
         let mut document = self.document.preview_snapshot();
         let plan = document
             .edit("preview component split", |tx| {
-                subobject::split(tx, &components, rise)
+                subobject::split_with_textures(tx, &components, rise, texture_lock)
             })
             .map_err(|error| error.to_string())?;
         self.components.serial += 1;
@@ -618,7 +627,7 @@ impl Session {
             document,
             token,
             delta: DVec3::ZERO,
-            texture_lock: false,
+            texture_lock,
             replacements: plan.replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
@@ -832,6 +841,7 @@ impl Session {
         let replacements = preview.replacements.clone();
         let selection = preview.selection.clone();
         let rise = preview.split.as_ref().map(|split| split.rise);
+        let texture_lock = preview.texture_lock;
         let crease = preview.crease.as_ref().map(|crease| {
             (
                 crease.requests.clone(),
@@ -862,7 +872,7 @@ impl Session {
                 }
                 Ok(actual.replacements.len())
             } else if let Some(rise) = rise {
-                let actual = subobject::split(tx, &components, rise)?;
+                let actual = subobject::split_with_textures(tx, &components, rise, texture_lock)?;
                 if actual.replacements != replacements {
                     return Err(EditError::Invalid(
                         "Face allocation changed; preview the split again".into(),
@@ -1376,6 +1386,41 @@ mod tests {
         assert!(session.commit_component_edit(Actor::Agent, token).is_err());
         assert!(session.cancel_component_move(token).is_err());
         assert!(session.components.preview.is_none());
+    }
+
+    #[test]
+    fn attached_splits_share_policy_replay_and_retain_valid_drafts_on_failure() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, id, _) = fixture();
+            let source = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let token = session
+                .preview_component_split_with_texture(16.125, true, &session.component_stamp())
+                .unwrap();
+            let draft = session.render_document().vmf().clone();
+            let report = session.component_report(&[id]).unwrap();
+            assert_eq!(report["texture_mode"], "attached");
+            assert_eq!(report["preview"]["texture_lock"], true);
+            assert!(
+                session
+                    .preview_component_split_with_texture(0.0, false, &session.component_stamp())
+                    .is_err()
+            );
+            assert_eq!(session.component_report(&[id]).unwrap(), report);
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.document.undo_labels().count(), history);
+            session.cancel_component_move(token).unwrap();
+            let token = session
+                .preview_component_split_with_texture(16.125, true, &session.component_stamp())
+                .unwrap();
+            assert_eq!(session.render_document().vmf(), &draft);
+            session.commit_component_edit(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &source);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+        }
     }
 
     #[test]

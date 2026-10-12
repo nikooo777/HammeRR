@@ -618,6 +618,8 @@ struct FramePartitionsArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentSplitArgs {
     rise: f64,
+    /// Preserve each fan triangle's original corner and center/midpoint UVs. Defaults false (world projection).
+    texture_lock: Option<bool>,
     snapshot: String,
 }
 
@@ -3265,7 +3267,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview splitting one selected face or edge per brush by inserting and raising its center/midpoint outward. rise is 0.125–4096 world units, normal to the face or along the normalized sum of the two edge face normals. Requires the latest component snapshot. Replaces affected faces with convex triangle fans; keeps each source side ID on its first triangle and allocates IDs for additional faces. New faces inherit their source material, world UV projection, lighting and unknown metadata. Existing corner positions, solid IDs and entity ownership remain. preview.split reports rise, inserted positions, source/new side IDs and face inheritance. Rejects corners, multiple components per brush, neighboring-face crossings, invalid/nonconvex geometry, displacements, 64-face overflow or coordinates outside ±65536 atomically. Drafts show the new corner selection; source_selection retains inputs. Apply/cancel with commit_component_edit/cancel_component_edit. Apply verifies allocated IDs and is one undo step; selecting or dragging draft topology is blocked."
+        description = "Preview splitting one selected face or edge per brush by inserting and raising its center/midpoint outward. rise is 0.125–4096 world units, normal to the face or along the normalized sum of the two edge face normals. Requires the latest component snapshot. Replaces affected faces with convex triangle fans; keeps each source side ID on its first triangle and allocates IDs for additional faces. New faces inherit their source material, lighting and unknown metadata. texture_lock defaults false (world UV projection); true preserves every fan triangle corner UV, including the original face center/edge midpoint. Existing corner positions, solid IDs and entity ownership remain. preview.split reports rise, inserted positions, source/new side IDs and face inheritance. Rejects corners, multiple components per brush, neighboring-face crossings, invalid/nonconvex geometry, displacements, 64-face overflow or coordinates outside ±65536 atomically. Drafts show the new corner selection; source_selection retains inputs. Apply/cancel with commit_component_edit/cancel_component_edit. Apply verifies allocated IDs and is one undo step; selecting or dragging draft topology is blocked."
     )]
     fn preview_component_split(
         &self,
@@ -3273,13 +3275,17 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_component_split(args.rise, &args.snapshot)?;
+            if let Some(lock) = args.texture_lock {
+                session.preview_component_split_with_texture(args.rise, lock, &args.snapshot)?;
+            } else {
+                session.preview_component_split(args.rise, &args.snapshot)?;
+            }
             selected_component_report(&session)
         })
     }
 
     #[tool(
-        description = "Preview a roof/ridge crease on one selected quad face per brush, across 1–16 brushes. First select faces and inspect get_brush_components.crease_choices: each pair identifies the two neighboring face IDs at opposing source edges and their midpoints. pairs supplies {solid, edges:[neighbor_side,neighbor_side]} for every selected face; order is irrelevant. Raise both edge midpoints by rise (0.125–4096 units) along the source face normal, making two flat roof planes. Preserve all old corners, original side/solid IDs, entity ownership, lighting, unknown metadata and precise world UV projections; the additional roof side inherits the source face. Reject nonquad, nonplanar, concave, neighboring-plane crossing, displacement, 64-face overflow and out-of-bounds results atomically before allocating IDs. Latest snapshot required. preview.crease reports new side IDs, ridge positions and the two resulting corner selections; source_selection and crease_choices remain original. Invalid updates retain the preceding draft. Apply/cancel with commit_component_edit/cancel_component_edit. Apply verifies generated IDs and records one undo step. Picking and movement of draft topology are blocked."
+        description = "Preview a roof/ridge crease on one selected quad face per brush, across 1–16 brushes. First select faces and inspect get_brush_components.crease_choices: each pair identifies the two neighboring face IDs at opposing source edges and their midpoints. pairs supplies {solid, edges:[neighbor_side,neighbor_side]} for every selected face; order is irrelevant. Raise both edge midpoints by rise (0.125–4096 units) along the source face normal, making two flat roof planes. Preserve all old corners, original side/solid IDs, entity ownership, lighting and unknown metadata; the additional roof side inherits the source face. roof_texture_lock defaults false (world UV projection); true preserves corresponding corner/midpoint UVs on both roof faces only. Neighboring projections remain exact. Reject nonquad, nonplanar, concave, neighboring-plane crossing, displacement, 64-face overflow and out-of-bounds results atomically before allocating IDs. Latest snapshot required. preview.crease reports new side IDs, ridge positions and the two resulting corner selections; source_selection and crease_choices remain original. Invalid updates retain the preceding draft. Apply/cancel with commit_component_edit/cancel_component_edit. Apply verifies generated IDs and records one undo step. Picking and movement of draft topology are blocked."
     )]
     fn preview_component_crease(
         &self,

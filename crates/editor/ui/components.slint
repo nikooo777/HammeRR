@@ -197,7 +197,8 @@ export component ComponentsWindow inherits Window {
                         LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Split rise"; edited => { root.edited(); } }
                         Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                         Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                        Text { text: "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
+                        Text { text: root.texture-lock ? "Each triangle keeps its original corner and center texture coordinates. Textures stretch with the raised fan." : "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
                     if root.operation == 5: VerticalLayout {
                         spacing: 10px;

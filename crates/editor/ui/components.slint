@@ -24,6 +24,12 @@ export component ComponentsWindow inherits Window {
     in property <string> picking-summary;
     in-out property <int> kind;
     in-out property <int> operation;
+    in-out property <int> weld-target-mode;
+    in-out property <int> weld-corner;
+    in property <[string]> weld-corner-labels;
+    in-out property <string> weld-x: "32";
+    in-out property <string> weld-y: "32";
+    in-out property <string> weld-z: "64";
     in-out property <string> split-rise: "16";
     in property <float> split-rise-value: 16;
     in-out property <string> move-x: "0";
@@ -40,6 +46,7 @@ export component ComponentsWindow inherits Window {
     callback clear();
     callback edited();
     callback choose-rise(float);
+    callback choose-weld-mode();
     callback move-options();
     callback preview-edit();
     callback discard-preview();
@@ -108,7 +115,20 @@ export component ComponentsWindow inherits Window {
                     if root.operation == 1: VerticalLayout {
                         spacing: 12px;
                         Text { text: "Choose Vertices, then select at least two corners in each brush."; wrap: word-wrap; color: #aeb9c8; }
-                        Text { text: "Selected corners merge at their average position. Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Merge corners at"; font-weight: 600; }
+                        ComboBox { model: ["Average selected corners", "Existing brush corner", "World position"]; current-index <=> root.weld-target-mode; selected => { root.choose-weld-mode(); } }
+                        if root.weld-target-mode == 1: ComboBox { model: root.weld-corner-labels; current-index <=> root.weld-corner; selected => { root.edited(); } }
+                        if root.weld-target-mode == 2: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "Target · world units"; color: #aeb9c8; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VerticalLayout { spacing: 4px; Text { text: "X"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-x; input-type: decimal; accessible-label: "Weld target X"; edited => { root.edited(); } } }
+                                VerticalLayout { spacing: 4px; Text { text: "Y"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-y; input-type: decimal; accessible-label: "Weld target Y"; edited => { root.edited(); } } }
+                                VerticalLayout { spacing: 4px; Text { text: "Z · up"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-z; input-type: decimal; accessible-label: "Weld target Z"; edited => { root.edited(); } } }
+                            }
+                        }
+                        Text { text: "Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: #aeb9c8; }
                         Text { text: "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
                     if root.operation == 2: VerticalLayout {

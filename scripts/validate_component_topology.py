@@ -249,8 +249,150 @@ def validate(client, output, render=False):
     client.call("commit_component_edit", {"token": token})
     compiled = client.call("compile_map", {"path": str(output / "weld-room.bsp")})
     check(compiled["success"], "Native compiler accepts the welded sealed-room fixture")
+    validate_weld_targets(client, output, check, render)
     validate_splitting(client, output, check, render)
     return checks
+
+
+def validate_weld_targets(client, output, check, render):
+    for mode in ["position", "corner"]:
+        client.call("new_map", {"discard_changes": True})
+        target = client.call(
+            "create_block",
+            {
+                "mins": [0, 0, 0],
+                "maxs": [64, 64, 64],
+                "material": "dev/dev_measuregeneric01",
+            },
+        )["id"]
+        solid = int(target.split(":")[1])
+
+        def inspect(solid_id=solid):
+            return client.call("get_brush_components", {"solids": [solid_id]})
+
+        shape = inspect()["brushes"][0]
+        corners = [
+            {"solid": solid, "sides": vertex["sides"]}
+            for vertex in shape["vertices"]
+            if vertex["position"][2] == 64
+        ]
+        client.call(
+            "select_brush_components",
+            {"components": corners, "snapshot": inspect()["snapshot"]},
+        )
+        source_choices = inspect()["weld_targets"]
+        chosen = next(
+            choice for choice in source_choices if choice["component"] == corners[0]
+        )
+        point = [16.125, 24.25, 96.5] if mode == "position" else chosen["position"]
+        args = (
+            {"target": point}
+            if mode == "position"
+            else {
+                "target_corner": {
+                    **chosen["component"],
+                    "sides": list(reversed(chosen["component"]["sides"])),
+                }
+            }
+        )
+        original = detail(client, [target])
+        history = client.call("get_map_info")["undo"]
+        if render:
+            client.call(
+                "set_component_move_options",
+                {"enabled": False, "snapshot": inspect()["snapshot"]},
+            )
+            client.call(
+                "set_camera", {"position": [160, -180, 160], "look_at": [32, 32, 40]}
+            )
+            baseline = client.render(output / f"before-weld-{mode}.png", surface="flat")
+        snapshot = inspect()["snapshot"]
+        draft = client.call("preview_component_weld", {**args, "snapshot": snapshot})
+        token = draft["preview"]["token"]
+        check(
+            draft["preview"]["weld_target"]["mode"] == mode
+            and draft["preview"]["weld"][0]["position"] == point,
+            f"{mode} weld: mode and exact target are shared",
+        )
+        check(
+            draft["weld_targets"] == source_choices
+            and len(draft["brushes"][0]["vertices"]) == 5,
+            f"{mode} weld: original corner choices remain available in the changed draft",
+        )
+        check(
+            detail(client, [target]) == original
+            and client.call("get_map_info")["undo"] == history,
+            f"{mode} weld: preview preserves map and history",
+        )
+        if render:
+            pixels = client.render(output / f"preview-weld-{mode}.png", surface="flat")
+            check(pixels != baseline, f"{mode} weld: renderer shows the chosen target")
+        for invalid in [
+            {"target": [32, 32, 65537]},
+            {"target": [32, 32, 0]},
+            {"target": point, "target_corner": chosen["component"]},
+            {"target_corner": {"solid": solid, "sides": [shape["faces"][0]["side"]]}},
+        ]:
+            client.call(
+                "preview_component_weld",
+                {**invalid, "snapshot": inspect()["snapshot"]},
+                error=True,
+            )
+        client.call(
+            "preview_component_weld", {**args, "snapshot": snapshot}, error=True
+        )
+        check(
+            inspect()["preview"]["token"] == token,
+            f"{mode} weld: invalid targets, dual inputs and stale snapshots retain the draft",
+        )
+        client.call("cancel_component_edit", {"token": token})
+        check(
+            detail(client, [target]) == original
+            and inspect()["selection"]
+            == sorted(corners, key=lambda component: component["sides"]),
+            f"{mode} weld: discard restores geometry and corner selection",
+        )
+        if render:
+            check(
+                client.render(output / f"cancelled-weld-{mode}.png", surface="flat")
+                == baseline,
+                f"{mode} weld: discard restores identical pixels",
+            )
+        draft = client.call(
+            "preview_component_weld", {**args, "snapshot": inspect()["snapshot"]}
+        )
+        client.call("commit_component_edit", {"token": token}, error=True)
+        client.call("commit_component_edit", {"token": draft["preview"]["token"]})
+        applied = detail(client, [target])
+        check(
+            len(applied[0]["faces"]) == 5
+            and len(client.call("get_map_info")["undo"]) == len(history) + 1,
+            f"{mode} weld: exact target applies in one undo step",
+        )
+        if render:
+            check(
+                client.render(output / f"applied-weld-{mode}.png", surface="flat")
+                == pixels,
+                f"{mode} weld: applied target matches preview pixels",
+            )
+        client.call("undo")
+        check(
+            detail(client, [target]) == original,
+            f"{mode} weld: undo restores the exact source",
+        )
+        client.call("redo")
+        check(
+            detail(client, [target]) == applied,
+            f"{mode} weld: redo restores the exact target",
+        )
+        saved = output / f"weld-{mode}.vmf"
+        client.call("save_map", {"path": str(saved)})
+        client.call("open_map", {"path": str(saved)})
+        vertices = inspect()["brushes"][0]["vertices"]
+        check(
+            any(math.dist(vertex["position"], point) < 1e-5 for vertex in vertices),
+            f"{mode} weld: target survives VMF save/reopen",
+        )
 
 
 def validate_splitting(client, output, check, render):

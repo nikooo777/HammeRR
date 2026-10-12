@@ -228,7 +228,12 @@ option or move the whole face when that happens.
 
 Choose **Weld corners**, select **Vertices**, and select at least two corners in
 each brush. **Preview weld** merges them at their average position. For example,
-welding a box's four upper corners creates a pyramid. Collapsed faces are removed;
+welding a box's four upper corners creates a pyramid. Under **Merge corners at**,
+choose **Average selected corners**, **Existing brush corner**, or **World
+position**. The corner picker keeps the original brush choices during preview;
+world-position fields start at the selected corners' shared center and accept
+exact X/Y/Z coordinates. An explicit target uses the same position in every
+edited brush. Collapsed faces are removed;
 the preview shows their count and highlights the resulting corner. Surviving
 faces keep their IDs, material, world texture projection and metadata.
 Nonplanar, concave, empty or redundant geometry is rejected. Movement handles
@@ -238,6 +243,10 @@ one undo step; **Discard preview** restores the original corner selection.
 | Welding controls | Shared pyramid preview |
 | --- | --- |
 | ![Merged selection and Apply/Cancel controls](docs/images/brush-welding.png) | ![Four box corners welded into a pyramid apex](docs/images/component-weld-preview.png) |
+
+| Exact weld target | Shared target preview |
+| --- | --- |
+| ![World-position weld inputs with Apply, Discard and Cancel](docs/images/brush-weld-position.png) | ![A pyramid welded to a fractional custom apex](docs/images/component-weld-position.png) |
 
 Choose **Split and raise**, then select one face or edge per brush. A face gains
 a corner at its center, raised along the face normal. An edge gains a corner at
@@ -854,6 +863,11 @@ reports `texture_mode` and the preview's `texture_lock` setting; incompatible
 deformations leave the previous valid draft intact.
 
 `preview_component_weld` uses the current selected vertices and `snapshot`.
+Omit target inputs for a per-brush mean, pass `target: [x, y, z]` for a fixed
+position, or `target_corner: {solid, sides}` for a source corner. The two target
+inputs are mutually exclusive. `get_brush_components.weld_targets` lists
+original corner choices and `weld_center` gives their selected center;
+`preview.weld_target` records the chosen mode.
 Each brush welds to its own average position, with world-anchored textures.
 The response reports `preview.operation`, merged positions and removed side IDs
 in `preview.weld`. `selection` identifies the resulting corners;

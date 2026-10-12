@@ -627,6 +627,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     && crease_inputs(window, session).is_ok_and(|inputs| serde_json::json!(inputs.iter().map(|pair|serde_json::json!({"solid":pair.solid,"edges":pair.edges})).collect::<Vec<_>>()) == preview["crease"]["pairs"])
             } else if split {
                 window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
+                    && window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
             } else if weld {
                 weld_target(window, session).is_ok_and(|target| {
                     crate::session::components::weld_target_json(&target) == preview["weld_target"]
@@ -1058,7 +1059,11 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                     .parse::<f64>()
                     .map_err(|_| "Enter a numeric split rise".to_string())
                     .and_then(|rise| {
-                        session.preview_component_split(rise, window.get_stamp().as_str())
+                        session.preview_component_split_with_texture(
+                            rise,
+                            window.get_texture_lock(),
+                            window.get_stamp().as_str(),
+                        )
                     })
             } else if window.get_operation() == 1 {
                 weld_target(&window, &session).and_then(|target| {

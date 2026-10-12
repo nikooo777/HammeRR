@@ -13,7 +13,7 @@ pub use weld::{WeldChange, WeldPlan, WeldTarget, plan_weld, plan_weld_target};
 mod split;
 pub use split::{
     MAX_RISE as MAX_SPLIT_RISE, MIN_RISE as MIN_SPLIT_RISE, SplitChange, SplitFace, SplitPlan,
-    split,
+    split, split_with_textures,
 };
 mod crease;
 pub use crease::{

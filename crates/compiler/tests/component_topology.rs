@@ -300,7 +300,12 @@ fn split_face_and_edge_compile_inside_a_sealed_room_after_vmf_round_trip() {
         };
         document
             .edit("split", |tx| {
-                subobject::split(tx, &[subobject::Component { solid: id, sides }], 16.0)
+                subobject::split_with_textures(
+                    tx,
+                    &[subobject::Component { solid: id, sides }],
+                    16.0,
+                    true,
+                )
             })
             .unwrap();
         let vmf =

@@ -30,6 +30,15 @@ pub fn split(
     components: &[Component],
     rise: f64,
 ) -> Result<SplitPlan, EditError> {
+    split_with_textures(tx, components, rise, false)
+}
+
+pub fn split_with_textures(
+    tx: &mut Transaction,
+    components: &[Component],
+    rise: f64,
+    texture_lock: bool,
+) -> Result<SplitPlan, EditError> {
     if components.is_empty() || components.len() > MAX_SOLIDS {
         return Err(invalid(
             "Select one face or edge in each of 1–16 brushes to split",
@@ -162,6 +171,12 @@ pub fn split(
                     )));
                 }
                 let mut side = original.clone();
+                if texture_lock {
+                    let before = [center, points[1], points[2]];
+                    let projection = crate::texture_deform::attach(original, &before, &points)?;
+                    side.u_axis = projection.u;
+                    side.v_axis = projection.v;
+                }
                 if !first {
                     side.id = tx.new_side_id()?;
                     new_sides.push(side.id);
@@ -243,6 +258,184 @@ mod tests {
             unreachable!()
         };
         (document, id)
+    }
+
+    #[test]
+    fn attached_face_and_edge_fans_preserve_corner_and_inserted_uvs() {
+        for oblique in [false, true] {
+            for owned in [false, true] {
+                let (mut document, id) = fixture();
+                document
+                    .edit("metadata", |tx| {
+                        for side in &mut tx.solid_mut(id)?.sides {
+                            side.u_axis.offset = 17.123456789;
+                            side.v_axis.offset = -9.125;
+                            side.u_axis.scale = 0.3125;
+                            side.v_axis.scale = -0.523456789;
+                            side.lightmap_scale = 8;
+                            side.smoothing_groups = Some(7);
+                            side.extra_properties.set("vendor", "retain");
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+                if oblique {
+                    document
+                        .edit("oblique", |tx| {
+                            edit::transform(
+                                tx,
+                                &[ObjectId::Solid(id)],
+                                edit::Transform {
+                                    translation: DVec3::new(0.125, -7.25, 3.5),
+                                    rotation: DVec3::new(17.0, -23.0, 31.0),
+                                    scale: DVec3::new(1.125, 0.75, 1.5),
+                                    texture_lock: false,
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                        .unwrap();
+                }
+                if owned {
+                    document
+                        .edit("owner", |tx| {
+                            edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                        })
+                        .unwrap();
+                }
+                let (owner, source) = solid(&document, id).unwrap();
+                let source = source.clone();
+                let shape = topology(&source).unwrap();
+                let components = shape
+                    .faces
+                    .iter()
+                    .map(|face| Component {
+                        solid: id,
+                        sides: vec![face.side],
+                    })
+                    .chain(shape.edges.iter().map(|edge| Component {
+                        solid: id,
+                        sides: edge.sides.clone(),
+                    }));
+                for component in components {
+                    let vertices = shape.resolve(&component.sides).unwrap();
+                    let center = vertices
+                        .iter()
+                        .map(|index| shape.vertices[*index].position)
+                        .sum::<DVec3>()
+                        / vertices.len() as f64;
+                    let mut changed = document.clone();
+                    let plan = changed
+                        .edit("attached split", |tx| {
+                            split_with_textures(tx, std::slice::from_ref(&component), 16.125, true)
+                        })
+                        .unwrap();
+                    let result = solid(&changed, id).unwrap().1;
+                    let after = topology(result).unwrap();
+                    for face in &plan.changes[0].faces {
+                        let original = source
+                            .sides
+                            .iter()
+                            .find(|side| side.id == face.source)
+                            .unwrap();
+                        let side = result
+                            .sides
+                            .iter()
+                            .find(|side| side.id == face.side)
+                            .unwrap();
+                        let triangle = after
+                            .faces
+                            .iter()
+                            .find(|candidate| candidate.side == face.side)
+                            .unwrap();
+                        assert_eq!(triangle.vertices.len(), 3);
+                        for vertex in &triangle.vertices {
+                            let point = after.vertices[*vertex].position;
+                            let before = if point.distance(plan.changes[0].position) < EPSILON {
+                                center
+                            } else {
+                                point
+                            };
+                            assert!(
+                                (crate::texel_uv(original, before) - crate::texel_uv(side, point))
+                                    .abs()
+                                    .max_element()
+                                    < 0.0001
+                            );
+                        }
+                        let mut expected = original.clone();
+                        expected.id = side.id;
+                        expected.plane = side.plane;
+                        expected.u_axis = side.u_axis;
+                        expected.v_axis = side.v_axis;
+                        assert_eq!(*side, expected);
+                    }
+                    for side in source
+                        .sides
+                        .iter()
+                        .filter(|side| !component.sides.contains(&side.id))
+                    {
+                        assert_eq!(
+                            result
+                                .sides
+                                .iter()
+                                .find(|candidate| candidate.id == side.id)
+                                .unwrap(),
+                            side
+                        );
+                    }
+                    assert_eq!(changed.owner_of_solid(id), Some(owner));
+                    let applied = changed.vmf().clone();
+                    changed.undo().unwrap();
+                    assert_eq!(changed.vmf(), document.vmf());
+                    changed.redo().unwrap();
+                    assert_eq!(changed.vmf(), &applied);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_split_texture_rejects_batch_without_consuming_side_ids() {
+        let (mut document, first) = fixture();
+        let ObjectId::Solid(second) = document
+            .edit("second", |tx| {
+                edit::create_block(tx, DVec3::splat(128.0), DVec3::splat(192.0), "brick/test")
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let components = [first, second].map(|id| Component {
+            solid: id,
+            sides: vec![document.solid(id).unwrap().sides[0].id],
+        });
+        document
+            .edit("invalid projection", |tx| {
+                let side = &mut tx.solid_mut(second)?.sides[0];
+                side.v_axis.axis = side.u_axis.axis;
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let history = document.undo_labels().count();
+        let expected = document.vmf().side_ids().max().unwrap() + 1;
+        let error = document
+            .edit("attached split", |tx| {
+                split_with_textures(tx, &components, 16.0, true)
+            })
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("independent U and V"));
+        assert_eq!(document.vmf(), &source);
+        assert_eq!(document.undo_labels().count(), history);
+        assert_eq!(
+            document.edit("allocate", |tx| tx.new_side_id()).unwrap(),
+            expected
+        );
+        document
+            .edit("world split", |tx| split(tx, &components, 16.0))
+            .unwrap();
     }
 
     #[test]

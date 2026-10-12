@@ -320,6 +320,11 @@ in place, and the affected faces become triangles. Each source face keeps its ID
 on the first triangle; added faces get new IDs and inherit its material, world
 texture projection, lighting and metadata.
 
+Enable **Keep textures at corners** to stretch each new triangle with its
+raised corner. Original corner UVs stay fixed; the inserted corner keeps the UV
+at the flat face center or edge midpoint. Changing this option requires another
+preview before Apply.
+
 The preview highlights the inserted corner and reports added faces.
 **Apply split** verifies the planned IDs and records one undo step, keeping
 the new corner selected for further editing. **Discard preview** restores the
@@ -1013,6 +1018,7 @@ python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transfo
 python -B scripts/validate_transform_display.py --output /tmp/hammerr-transform-display-check
 python -B scripts/validate_component_partitions.py --output /tmp/hammerr-partition-check
 python -B scripts/validate_roof_texture_attachment.py --output /tmp/hammerr-roof-texture-check
+python -B scripts/validate_split_texture_attachment.py --output /tmp/hammerr-split-texture-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1099,7 +1105,10 @@ Selection changes and handles remain unavailable until Apply or Cancel.
 `preview_component_split` accepts `rise` and the latest component `snapshot`.
 Select one face or edge per brush first. `preview.split` reports inserted
 positions, source/new side IDs and each generated face's source. New faces
-inherit world texture projections. Apply verifies allocation and switches
+inherit world texture projections by default. Optional `texture_lock: true`
+preserves each triangle's original corner UVs and its flat center/midpoint UV.
+`preview.texture_lock` and `texture_mode` expose the chosen policy.
+Apply verifies allocation and switches
 active picking to vertices in the same captured brush scope. Discard preserves
 the original picking kind and selection. Both use the generic component
 commit/cancel calls.

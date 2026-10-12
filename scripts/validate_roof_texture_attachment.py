@@ -268,6 +268,11 @@ def validate(client, output, render=False):
                                 {"enabled": False, "snapshot": inspect()["snapshot"]},
                             )
                             client.call("select", {"ids": []})
+                            client.call("select_faces", {"faces": []})
+                            client.call(
+                                "select_brush_components",
+                                {"components": [], "snapshot": inspect()["snapshot"]},
+                            )
                             pixels = client.render(
                                 output / f"roof-{direction}-{int(lock)}.png",
                                 surface="textured",

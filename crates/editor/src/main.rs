@@ -6046,9 +6046,14 @@ mod tests {
             .find(|row| row.label.starts_with("Top"))
             .unwrap();
         window.invoke_choose(top.key);
+        window.set_texture_lock(true);
         window.invoke_preview_edit();
         assert!(window.get_ready());
         assert!(window.get_topology_preview());
+        assert_eq!(
+            lock(&shared).component_report(&[id]).unwrap()["texture_mode"],
+            "attached"
+        );
         assert_eq!(window.get_kind(), 1);
         assert_eq!(window.get_rows().row_count(), 9);
         assert!(
@@ -6059,7 +6064,12 @@ mod tests {
         let draft = lock(&shared).render_document().vmf().clone();
         window.show().unwrap();
         save_ui_snapshot(window.window(), "brush-face-split");
-        for label in ["Apply split", "Discard preview", "Cancel"] {
+        for label in [
+            "Apply split",
+            "Discard preview",
+            "Cancel",
+            "Keep textures at corners",
+        ] {
             assert_dialog_button_visible(&window, label);
         }
         window.set_split_rise("0".into());

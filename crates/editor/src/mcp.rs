@@ -2929,7 +2929,7 @@ impl EditorServer {
             "bsp": output.bsp.as_ref().map(|_| result.path.display().to_string()),
             "diagnostics": diagnostics,
             "leak": output.leak.as_ref().map(|leak| json!({ "entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>(), "pointfile": result.path.with_extension("lin").display().to_string() })),
-            "stats": { "brushes": output.stats.brushes, "nodes": output.stats.nodes, "leaves": output.stats.leaves, "faces": output.stats.faces, "models": output.stats.models, "elapsed_ms": output.stats.elapsed.as_millis() },
+            "stats": crate::session::compilation::stats_json(&output.stats),
             "game": game.as_ref().map(game_log_json),
         });
         if output.bsp.is_some() {

@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use source_formats::bsp::{
-    self, Brush, BrushSide, Bsp, Edge, Face, Leaf, Model, Node, Plane, TexData, TexInfo,
+    self, Brush, BrushSide, Bsp, Cubemap, Edge, Face, Leaf, Model, Node, Plane, TexData, TexInfo,
 };
 
 fn maps_dir() -> Option<PathBuf> {
@@ -31,6 +31,7 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let models = bsp.records::<Model>().map_err(e)?;
     let brushes = bsp.records::<Brush>().map_err(e)?;
     let sides = bsp.records::<BrushSide>().map_err(e)?;
+    bsp.records::<Cubemap>().map_err(e)?;
     let vertices = bsp.vertices().map_err(e)?;
     let surfedges = bsp.surfedges().map_err(e)?;
     let leaf_faces = bsp.leaf_faces().map_err(e)?;

@@ -94,6 +94,7 @@ pub struct Stats {
     pub leaves: usize,
     pub faces: usize,
     pub models: usize,
+    pub cubemap_samples: usize,
     pub elapsed: Duration,
 }
 
@@ -152,6 +153,7 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
     control.advance(Stage::Loading)?;
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
+    output.stats.cubemap_samples = map.cubemaps.len();
     for info in map.materials.iter().filter(|m| !m.found) {
         output.report.diagnostics.push(Diagnostic::warning(
             format!("material {} was not found", info.name),

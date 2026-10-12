@@ -294,8 +294,11 @@ pub struct AreaPortal {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
 pub struct Cubemap {
     pub origin: [i32; 3],
-    pub size: i32,
+    pub size: u8,
+    pub padding: [u8; 3],
 }
+
+pub const MAX_CUBEMAP_SAMPLES: usize = 1024;
 
 /// Lumps of fixed-size records and the struct each one holds.
 pub trait Record: Pod {
@@ -644,6 +647,25 @@ mod tests {
         assert_eq!(size_of::<Area>(), 8);
         assert_eq!(size_of::<AreaPortal>(), 12);
         assert_eq!(size_of::<Cubemap>(), 16);
+    }
+
+    #[test]
+    fn cubemap_size_is_one_byte_and_padding_round_trips() {
+        let mut bsp = Bsp::new();
+        let mut bytes = Vec::new();
+        for origin in [-12_i32, 34, -56] {
+            bytes.extend_from_slice(&origin.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[9, 0xab, 0xcd, 0xef]);
+        bsp.lumps[lump::CUBEMAPS].data = bytes.clone();
+        let parsed = Bsp::parse(&bsp.to_bytes()).unwrap();
+        let samples = parsed.records::<Cubemap>().unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].origin, [-12, 34, -56]);
+        assert_eq!(samples[0].size, 9);
+        assert_eq!(samples[0].padding, [0xab, 0xcd, 0xef]);
+        bsp.set_records(&samples);
+        assert_eq!(bsp.lumps[lump::CUBEMAPS].data, bytes);
     }
 
     #[test]

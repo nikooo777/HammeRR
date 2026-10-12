@@ -343,6 +343,7 @@ pub fn build(
     bsp.set_records(&brushes);
     bsp.set_records(&sides);
     bsp.set_records(&bsp_models);
+    bsp.set_records(&map.cubemaps);
     bsp.set_records(&[bsp::Area::default(); 2]);
     bsp.set_records(&[bsp::AreaPortal::default()]);
     bsp.set_values(lump::VERTEXES, &geometry.vertices);

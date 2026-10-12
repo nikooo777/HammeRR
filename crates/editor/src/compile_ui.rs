@@ -77,9 +77,14 @@ impl Controller {
             return;
         }
         self.window.set_summary(session.compile_label().into());
+        let result = &job["result"];
+        let samples = result["stats"]["cubemap_samples"]
+            .as_u64()
+            .map(|count| format!("\nCubemap samples: {count}"))
+            .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nStage: {} · {:.2}s elapsed\n{}",
+                "Output: {}\nStage: {} · {:.2}s elapsed{samples}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,
@@ -91,7 +96,6 @@ impl Controller {
             )
             .into(),
         );
-        let result = &job["result"];
         let mut messages = Vec::new();
         if let Some(error) = result["error"].as_str() {
             messages.push(error.to_owned());

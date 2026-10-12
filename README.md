@@ -1150,6 +1150,7 @@ python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tool
 python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 python -B scripts/validate_compile_jobs.py --output /tmp/hammerr-compile-check
 python -B scripts/validate_origin_brushes.py --output /tmp/hammerr-origin-check
+python -B scripts/validate_cubemap_samples.py --output /tmp/hammerr-cubemap-check
 python -B scripts/validate_saved_views.py --output /tmp/hammerr-views-check
 python -B scripts/validate_view_modes.py --output /tmp/hammerr-modes-check
 ```
@@ -1160,8 +1161,8 @@ Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
 The audit, component source/topology/transform, partition, precision, carving,
-favorites, spawn-clearance and origin-brush validators use private headless
-sessions and do not accept a GUI URL. Add `--render` to the topology, boundary or polygon
+favorites, spawn-clearance, origin-brush and cubemap-sample validators use private
+headless sessions and do not accept a GUI URL. Add `--render` to the topology, boundary or polygon
 validator for offscreen GPU pixel checks without opening a desktop window.
 
 Check extrusion guide visibility with a private offscreen GPU session:
@@ -1525,6 +1526,15 @@ unchanged. Duplicate pivots, world/func_detail origin brushes, origin-only
 entities and local model bounds outside ±16,384 units fail with object
 diagnostics and preserve previous output. Hidden origin volumes are ignored.
 
+Visible **env_cubemap** helpers now compile into native sample records. Use the
+entity inspector or MCP entity properties to choose **Cubemap Size**: game
+default or 1–256 pixels. **Build details…**, compile status and MCP results report
+the sample count. The compiler accepts up to 1,024 visible samples and rejects
+invalid sizes, out-of-range origins or brush geometry on the point helper.
+Hidden helpers are omitted. Reflection material binding, manual face lists and
+texture capture remain unfinished and appear in build diagnostics; sample
+records alone do not provide baked reflections.
+
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
 output, an unavailable Linux client or an active build/game disable it with an
@@ -1538,7 +1548,7 @@ A map edit marks the build snapshot stale and prevents launching it.
 `get_compile_status.launch` reports readiness, the BSP path or the reason play
 is unavailable; `launch_game` performs the same launch as **Play built map**.
 
-![Build status with stage, output path and structured diagnostics](docs/images/build-status.png)
+![Build status with stage, output path, cubemap count and diagnostics](docs/images/build-status.png)
 
 Maps need sealed world geometry and
 at least one point entity in open space. A leak produces a `.lin` pointfile
@@ -1585,7 +1595,9 @@ surface preservation and swept hulls against an independent geometric reference.
 CS:S collision runtime validation and physics output remain unfinished.
 
 VVIS, VRAD, physics collision, water volumes, compiled displacements,
-static props, areaportals, overlays and cubemaps remain unfinished. Brush-entity
+static props, areaportals and overlays remain unfinished. Cubemap samples
+compile, while reflection binding/capture and lighting-origin references remain
+pending. Brush-entity
 origin volumes and explicit pivots compile; rotating, moving and trigger
 behavior still needs CS:S runtime validation. Unsupported geometry is reported
 in diagnostics. The BSP

@@ -1,0 +1,296 @@
+use glam::DVec3;
+use map_core::brush::BrushGeometry;
+
+use super::MapSide;
+use crate::Control;
+use crate::planes::PlaneSet;
+use crate::winding::ON_EPSILON;
+
+pub(super) const MAX_PLANES: usize = u16::MAX as usize + 1;
+pub(super) const MAX_BRUSH_SIDES: usize = i32::MAX as usize;
+const CHECKPOINT_POINT_INTERVAL: usize = 256;
+
+#[derive(Debug)]
+pub(super) enum Error {
+    Cancelled(String),
+    Limit(&'static str),
+}
+
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Self::Cancelled(message)
+    }
+}
+
+fn find_plane(planes: &mut PlaneSet, normal: DVec3, dist: f64) -> Result<usize, Error> {
+    if planes.len() > MAX_PLANES {
+        return Err(Error::Limit(
+            "BSP collision plane limit exceeded; reduce map geometry",
+        ));
+    }
+    let plane = planes.find(normal, dist);
+    if planes.len() > MAX_PLANES {
+        return Err(Error::Limit(
+            "BSP collision plane limit exceeded; reduce map geometry",
+        ));
+    }
+    Ok(plane)
+}
+
+fn append_side(sides: &mut Vec<MapSide>, plane: usize, side_budget: usize) -> Result<(), Error> {
+    if sides.len() >= side_budget {
+        return Err(Error::Limit(
+            "BSP collision brush side limit exceeded; reduce map geometry",
+        ));
+    }
+    let first = &sides[0];
+    sides.push(MapSide {
+        plane,
+        material: first.material,
+        texinfo: first.texinfo,
+        smoothing_groups: 0,
+        winding: None,
+        bevel: true,
+        visible: false,
+    });
+    Ok(())
+}
+
+fn support_distance(
+    geometry: &BrushGeometry,
+    normal: DVec3,
+    control: &Control,
+) -> Result<f64, Error> {
+    let mut dist = f64::MIN;
+    for face in &geometry.faces {
+        control.checkpoint()?;
+        for (index, &point) in face.vertices.iter().enumerate() {
+            if index % CHECKPOINT_POINT_INTERVAL == 0 {
+                control.checkpoint()?;
+            }
+            dist = dist.max(normal.dot(point));
+        }
+    }
+    Ok(dist)
+}
+
+fn emitted_distance(
+    normal: DVec3,
+    support: f64,
+    geometry: &BrushGeometry,
+    control: &Control,
+) -> Result<f64, Error> {
+    let emitted_normal = normal.as_vec3().as_dvec3();
+    let emitted_support = support_distance(geometry, emitted_normal, control)?;
+    let boundary = support.max(emitted_support);
+    let rounded = boundary as f32;
+    let rounded = if f64::from(rounded) < boundary {
+        rounded.next_up()
+    } else {
+        rounded
+    };
+    Ok(f64::from(rounded))
+}
+
+pub(super) fn add(
+    sides: &mut Vec<MapSide>,
+    planes: &mut PlaneSet,
+    geometry: &BrushGeometry,
+    side_budget: usize,
+    control: &Control,
+) -> Result<(), Error> {
+    control.checkpoint()?;
+    for axis in 0..3 {
+        for sign in [1.0, -1.0] {
+            let mut normal = DVec3::ZERO;
+            normal[axis] = sign;
+            if sides.iter().any(|s| planes.get(s.plane).normal == normal) {
+                continue;
+            }
+            let dist = if sign > 0.0 {
+                geometry.maxs[axis]
+            } else {
+                -geometry.mins[axis]
+            };
+            let plane = find_plane(planes, normal, dist)?;
+            append_side(sides, plane, side_budget)?;
+        }
+    }
+    if geometry.faces.len() == 6
+        && geometry
+            .faces
+            .iter()
+            .all(|face| face.plane.normal.abs().max_element() == 1.0)
+    {
+        return Ok(());
+    }
+
+    for face in &geometry.faces {
+        for (index, &point) in face.vertices.iter().enumerate() {
+            control.checkpoint()?;
+            let next = face.vertices[(index + 1) % face.vertices.len()];
+            let Some(edge) = (next - point).try_normalize() else {
+                continue;
+            };
+            for axis in [DVec3::X, DVec3::Y, DVec3::Z] {
+                let Some(normal) = edge.cross(axis).try_normalize() else {
+                    continue;
+                };
+                for normal in [normal, -normal] {
+                    let dist = normal.dot(point);
+                    if !normal.is_finite() || !dist.is_finite() {
+                        continue;
+                    }
+                    let support = support_distance(geometry, normal, control)?;
+                    if support - dist > ON_EPSILON {
+                        continue;
+                    }
+                    let dist = emitted_distance(normal, support, geometry, control)?;
+                    let plane = planes.find_checked(normal, dist, |candidate| {
+                        if candidate.kind < 3 {
+                            return Ok(false);
+                        }
+                        let support = support_distance(geometry, candidate.normal, control)?;
+                        let emitted_support = support_distance(
+                            geometry,
+                            candidate.normal.as_vec3().as_dvec3(),
+                            control,
+                        )?;
+                        Ok::<_, Error>(
+                            (support - candidate.dist).abs() <= ON_EPSILON
+                                && (emitted_support - f64::from(candidate.dist as f32)).abs()
+                                    <= ON_EPSILON,
+                        )
+                    })?;
+                    let Some(plane) = plane else {
+                        continue;
+                    };
+                    if planes.len() > MAX_PLANES {
+                        return Err(Error::Limit(
+                            "BSP collision plane limit exceeded; reduce map geometry",
+                        ));
+                    }
+                    if sides.iter().any(|side| side.plane == plane) {
+                        continue;
+                    }
+                    append_side(sides, plane, side_budget)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::winding::Winding;
+
+    fn tetrahedron(size: f64) -> (BrushGeometry, Vec<MapSide>, PlaneSet) {
+        let authored = [
+            map_core::Plane {
+                normal: DVec3::NEG_X,
+                dist: 0.0,
+            },
+            map_core::Plane {
+                normal: DVec3::NEG_Y,
+                dist: 0.0,
+            },
+            map_core::Plane {
+                normal: DVec3::NEG_Z,
+                dist: 0.0,
+            },
+            map_core::Plane {
+                normal: DVec3::ONE.normalize(),
+                dist: size / 3.0f64.sqrt(),
+            },
+        ];
+        let geometry = BrushGeometry::from_planes(&authored).unwrap();
+        let mut planes = PlaneSet::default();
+        let sides = geometry
+            .faces
+            .iter()
+            .map(|face| MapSide {
+                plane: planes.find(face.plane.normal, face.plane.dist),
+                material: face.side,
+                texinfo: face.side,
+                smoothing_groups: 0,
+                winding: Some(Winding(face.vertices.clone())),
+                bevel: false,
+                visible: true,
+            })
+            .collect();
+        (geometry, sides, planes)
+    }
+
+    #[test]
+    fn short_edges_and_duplicate_points_produce_finite_supporting_bevels() {
+        let (mut geometry, mut sides, mut planes) = tetrahedron(0.125);
+        let point = geometry.faces[0].vertices[0];
+        geometry.faces[0].vertices.insert(0, point);
+        add(
+            &mut sides,
+            &mut planes,
+            &geometry,
+            MAX_BRUSH_SIDES,
+            &Control::default(),
+        )
+        .unwrap();
+        assert_eq!(sides.len(), 10);
+        for side in sides.iter().filter(|side| side.bevel) {
+            let plane = planes.get(side.plane);
+            assert!(plane.normal.is_finite() && plane.dist.is_finite());
+            assert!(
+                support_distance(&geometry, plane.normal, &Control::default()).unwrap()
+                    - plane.dist
+                    <= ON_EPSILON
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_prevents_bevel_work_and_encoded_side_limits_return_errors() {
+        let (geometry, mut sides, mut planes) = tetrahedron(64.0);
+        let control = Control::default();
+        control.cancel().unwrap();
+        let side_count = sides.len();
+        let plane_count = planes.len();
+        assert!(matches!(
+            add(
+                &mut sides,
+                &mut planes,
+                &geometry,
+                MAX_BRUSH_SIDES,
+                &control
+            ),
+            Err(Error::Cancelled(_))
+        ));
+        assert_eq!(sides.len(), side_count);
+        assert_eq!(planes.len(), plane_count);
+        assert!(matches!(
+            add(
+                &mut sides,
+                &mut planes,
+                &geometry,
+                side_count,
+                &Control::default()
+            ),
+            Err(Error::Limit(_))
+        ));
+        assert_eq!(sides.len(), side_count);
+    }
+
+    #[test]
+    fn plane_index_limit_allows_reuse_but_rejects_new_pairs() {
+        let mut planes = PlaneSet::default();
+        for dist in 0..MAX_PLANES / 2 {
+            planes.find(DVec3::X, dist as f64);
+        }
+        assert_eq!(planes.len(), MAX_PLANES);
+        assert!(find_plane(&mut planes, DVec3::X, 32.0).is_ok());
+        assert!(matches!(
+            find_plane(&mut planes, DVec3::Y, 32.0),
+            Err(Error::Limit(_))
+        ));
+    }
+}

@@ -10,6 +10,8 @@ use source_formats::vmf::UvAxis;
 
 use super::{Actor, SelectMode, Session};
 
+mod spawns;
+
 const SDK_MAX_BRUSHES: usize = 8192;
 const SDK_MAX_ENTITIES: usize = 8192;
 const SDK_MAX_BRUSH_SIDES: usize = 65536;
@@ -350,19 +352,12 @@ impl Session {
                 }
             }
         }
-        for (classname, label) in [
-            ("info_player_terrorist", "Terrorist"),
-            ("info_player_counterterrorist", "Counter-Terrorist"),
-        ] {
-            if !vmf.entities.iter().any(|entity| {
-                !entity.hidden
-                    && entity
-                        .classname()
-                        .is_some_and(|name| name.eq_ignore_ascii_case(classname))
-            }) {
-                result.add(Severity::Warning, "missing_team_spawn", &Location::default(), format!("No visible {label} spawn ({classname}). Add a spawn before testing that team."), None);
-            }
-        }
+        spawns::check(
+            vmf,
+            asset_checks.then_some(&self.game),
+            &counts,
+            &mut result,
+        );
         for (label, count, limit) in [
             ("brushes", vmf.solids().count(), SDK_MAX_BRUSHES),
             ("entities", vmf.entities.len() + 1, SDK_MAX_ENTITIES),
@@ -449,7 +444,7 @@ impl Session {
             json!({"report":report.token.to_string(),"generation":report.generation,"revision":report.revision,"definitions_revision":report.definitions_revision,"elapsed_ms":report.elapsed_ms,
             "stale":self.map_checks_stale(), "total":report.result.issues.len(),"matching":matching.len(),"offset":offset,"issues":issues,"omitted":report.result.omitted,
             "counts":{"error":report.result.issues.iter().filter(|issue|issue.severity==Severity::Error).count(),"warning":report.result.issues.iter().filter(|issue|issue.severity==Severity::Warning).count(),"info":report.result.issues.iter().filter(|issue|issue.severity==Severity::Info).count()},
-            "fix_preview":self.map_fix_preview_json(),"notes":["Checks inspect applied map data, including hidden objects; pending edit previews are excluded.","These checks do not prove the map is leak-free or playable. Compile and test in CS:S.","Native builds currently use fullbright lighting and a single visibility cluster. Asset checks verify material/model paths, not complete dependencies."]}),
+            "fix_preview":self.map_fix_preview_json(),"notes":["Checks inspect applied map data, including hidden objects; pending edit previews are excluded.",spawns::SCOPE,"These checks do not prove the map is leak-free or playable. Compile and test in CS:S.","Native builds currently use fullbright lighting and a single visibility cluster. Asset checks verify material/model paths, not complete dependencies."]}),
         )
     }
 

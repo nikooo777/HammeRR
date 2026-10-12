@@ -184,8 +184,13 @@ fn refresh_crease_choices(
                 .iter()
                 .find(|row| row.key == key)
                 .map_or(0, |row| row.choice);
+            let requests = if preview["operation"] == "partition" {
+                &preview["partition"]["partitions"]
+            } else {
+                &preview["crease"]["pairs"]
+            };
             if changed
-                && let Some(requests) = preview["crease"]["pairs"].as_array()
+                && let Some(requests) = requests.as_array()
                 && let Some(request) = requests
                     .iter()
                     .find(|request| request["solid"] == component.solid)
@@ -283,6 +288,25 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     refresh_sources(window, session);
     let report = session.component_report(&[]).unwrap();
     refresh_crease_choices(window, &report, session);
+    let partition = &report["preview"]["partition"];
+    window.set_has_partition_preview(!partition.is_null());
+    window.set_partition_flat(partition["rise"].as_f64() == Some(0.0));
+    let mut parts = Vec::new();
+    if let Some(partitions) = partition["partitions"].as_array() {
+        for partition in partitions {
+            let solid = partition["solid"].as_u64().unwrap();
+            for piece in partition["loops"].as_array().unwrap() {
+                let id = piece["id"].as_u64().unwrap();
+                parts.push(ComponentRow {
+                    key: format!("{solid}:{id}").into(),
+                    label: format!("Brush {solid} · piece {}", id + 1).into(),
+                    detail: "".into(),
+                    selected: piece["selected"].as_bool().unwrap(),
+                });
+            }
+        }
+    }
+    window.set_partition_rows(Rc::new(VecModel::from(parts)).into());
     let center = session.component_center().ok().flatten();
     window.set_transform_center(
         center
@@ -455,14 +479,53 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         )
         .into()
     });
+    if let Some(partitions) = report["preview"]["partition"]["partitions"].as_array() {
+        rows.clear();
+        for partition in partitions {
+            let solid = partition["solid"].as_u64().unwrap();
+            for vertex in partition["vertices"].as_array().unwrap() {
+                let id = vertex["id"].as_u64().unwrap();
+                let values = &vertex["preview_position"];
+                let point = DVec3::new(
+                    values[0].as_f64().unwrap(),
+                    values[1].as_f64().unwrap(),
+                    values[2].as_f64().unwrap(),
+                );
+                let label = if vertex["source"]["kind"] == "corner" {
+                    format!("Source corner {}", id + 1)
+                } else {
+                    format!("Edge midpoint {}", id - 3)
+                };
+                rows.push(ComponentRow {
+                    key: format!("{solid}:{id}").into(),
+                    label: format!("Brush {solid} · {label}").into(),
+                    detail: format!("X, Y, Z: {}", position(point)).into(),
+                    selected: false,
+                });
+            }
+        }
+        window.set_summary(
+            format!(
+                "{} staged pieces · {} corners and edge midpoints · coordinates in X, Y, Z",
+                partitions.len() * 2,
+                rows.len()
+            )
+            .into(),
+        );
+        window
+            .set_picking_summary("Staged partition · highlight pieces to inspect and frame".into());
+    }
     window.set_rows(Rc::new(VecModel::from(rows)).into());
     let preview = &report["preview"];
     let token = preview["token"].as_str().unwrap_or_default();
     let weld = preview["operation"] == "weld";
     let split = preview["operation"] == "split";
     let crease = preview["operation"] == "crease";
+    let partition = preview["operation"] == "partition";
     let transform = preview["operation"] == "scale" || preview["operation"] == "rotate";
-    let operation = if crease {
+    let operation = if partition {
+        6
+    } else if crease {
         5
     } else if transform {
         if preview["operation"] == "scale" {
@@ -515,8 +578,14 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 window.set_pivot_z(pivot[2].as_f64().unwrap().to_string().into());
             }
         }
-        if split || crease {
-            let rise = preview[if crease { "crease" } else { "split" }]["rise"]
+        if split || crease || partition {
+            let rise = preview[if partition {
+                "partition"
+            } else if crease {
+                "crease"
+            } else {
+                "split"
+            }]["rise"]
                 .as_f64()
                 .unwrap();
             window.set_split_rise(rise.to_string().into());
@@ -530,6 +599,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_token(token.into());
     window.set_ready(
         !preview.is_null()
+            && preview["can_apply"].as_bool().unwrap_or(true)
             && session
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
@@ -541,6 +611,8 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                         crate::session::components::transform_json(&spec, pivot, resolved)
                             == preview["transform"]
                     })
+            } else if partition {
+                window.get_split_rise().parse::<f64>().ok() == preview["partition"]["rise"].as_f64()
             } else if crease {
                 window.get_split_rise().parse::<f64>().ok() == preview["crease"]["rise"].as_f64()
                     && crease_inputs(window, session).is_ok_and(|inputs| serde_json::json!(inputs.iter().map(|pair|serde_json::json!({"solid":pair.solid,"edges":pair.edges})).collect::<Vec<_>>()) == preview["crease"]["pairs"])
@@ -571,6 +643,14 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         let pivot = &preview["transform"]["resolved_pivot"];
         let point = DVec3::new(pivot[0].as_f64().unwrap(),pivot[1].as_f64().unwrap(),pivot[2].as_f64().unwrap());
         format!("{}: {}, {}, {}{}\nPivot: {}\nThe map is unchanged until Apply.",if operation == 3 {"Scale factors"} else {"Angles"},values[0],values[1],values[2],if operation == 3 {""} else {" degrees"},position(point)).into()
+    } else if partition {
+        let count = preview["partition"]["partitions"].as_array().unwrap().len();
+        let rise = preview["partition"]["rise"].as_f64().unwrap();
+        if rise == 0.0 {
+            format!("{} flat pieces staged. The source face is unchanged.\nRaise their shared ridge before Apply, or Cancel.",count*2).into()
+        } else {
+            format!("{} pieces · shared ridge raised {} units.\nThe map is unchanged until Apply.",count*2,number(rise)).into()
+        }
     } else if crease {
         let count = preview["crease"]["changes"].as_array().unwrap().len();
         let rise = number(preview["crease"]["rise"].as_f64().unwrap());
@@ -637,6 +717,58 @@ fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
 }
 
 pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    window.on_choose_partition({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move |key| {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let result = component(key.as_str()).and_then(|component| {
+                session.select_component_partitions(
+                    window
+                        .get_token()
+                        .parse()
+                        .map_err(|_| "Stage a partition first".to_string())?,
+                    &[crate::session::components::PartitionRef {
+                        solid: component.solid,
+                        partition: component.sides[0],
+                    }],
+                    SelectMode::Toggle,
+                )
+            });
+            refresh(&window, &session);
+            window.set_message(result.err().unwrap_or_default().into());
+        }
+    });
+    window.on_frame_partitions({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let result = window
+                .get_token()
+                .parse()
+                .map_err(|_| "Stage a partition first".to_string())
+                .and_then(|token| {
+                    session.frame_component_partitions(Actor::User, token, window.get_aspect())
+                });
+            refresh(&window, &session);
+            window.set_message(result.err().unwrap_or_default().into());
+        }
+    });
+    window.on_flatten_partitions({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let result = window
+                .get_token()
+                .parse()
+                .map_err(|_| "Stage a partition first".to_string())
+                .and_then(|token| session.raise_component_partition(token, 0.0));
+            refresh(&window, &session);
+            window.set_message(result.err().unwrap_or_default().into());
+        }
+    });
     window.on_choose_crease_pair({
         let window = window.as_weak();
         move |key, choice| {
@@ -811,8 +943,9 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
         move || {
             let window = window.unwrap();
             if let Ok(rise) = window.get_split_rise().parse::<f64>()
-                && (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
-                    .contains(&rise)
+                && ((window.get_operation() == 6 && rise == 0.0)
+                    || (map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE)
+                        .contains(&rise))
             {
                 window.set_split_rise_value(rise as f32);
             }
@@ -863,7 +996,28 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             })
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
-            let result = if window.get_operation() == 5 {
+            let result = if window.get_operation() == 6 {
+                if window.get_has_partition_preview() {
+                    window
+                        .get_split_rise()
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| "Enter a numeric ridge height".to_string())
+                        .and_then(|rise| {
+                            session.raise_component_partition(
+                                window
+                                    .get_token()
+                                    .parse()
+                                    .map_err(|_| "Stage a partition first".to_string())?,
+                                rise,
+                            )
+                        })
+                } else {
+                    crease_inputs(&window, &session).and_then(|pairs| {
+                        session.preview_component_partition(&pairs, window.get_stamp().as_str())
+                    })
+                }
+            } else if window.get_operation() == 5 {
                 window
                     .get_split_rise()
                     .trim()

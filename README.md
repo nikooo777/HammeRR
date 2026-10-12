@@ -347,6 +347,25 @@ and metadata. Incompatible shapes are rejected before allocation.
 **Cancel** closes the tool and drops its draft. Both directions have been checked
 through saved-map native compilation; CS:S runtime coverage remains separate.
 
+Choose **Flat partition** to stage two pieces before raising them. Select one
+quad face per brush and choose the direction, then **Stage flat partition**.
+The viewport shows the dividing edge while the original brush stays unchanged.
+Use **Highlight pieces** and **Frame highlighted pieces** to inspect either
+piece. Enter the **Shared ridge height** and **Preview ridge** to raise both
+pieces together; **Return to flat** restores the staged surface.
+
+**Apply raised partition** records one undo step. **Discard preview** restores
+the original face selection, and **Cancel** closes the tool. Flat pieces are
+temporary drafts: raise and Apply, or Cancel, before saving, compiling or
+playing. Flat Apply is disabled. Highlighting controls inspection and framing;
+raising always affects the shared ridge of both pieces.
+
+| Flat pieces staged | Shared ridge raised |
+| --- | --- |
+| ![An independent dividing edge on an unchanged brush face](docs/images/component-partition-flat.png) | ![The staged pieces raised into two checked roof planes](docs/images/component-partition-raised.png) |
+
+![Flat partition controls with source corners, midpoints and highlighted pieces](docs/images/component-partition-controls.png)
+
 | Ridge controls | Shared ridge preview |
 | --- | --- |
 | ![Roof ridge direction, height and Apply/Discard/Cancel controls](docs/images/brush-roof-ridge.png) | ![Two roof planes joined at the raised opposing edge midpoints](docs/images/component-roof-ridge.png) |
@@ -862,6 +881,7 @@ For example, place a warm light:
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
+| Staged flat partitions | `preview_component_partition`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -985,6 +1005,8 @@ python -B scripts/validate_component_sources.py --output /tmp/hammerr-source-che
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
+python -B scripts/validate_transform_display.py --output /tmp/hammerr-transform-display-check
+python -B scripts/validate_component_partitions.py --output /tmp/hammerr-partition-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1085,6 +1107,20 @@ side IDs, raised positions and resulting corner selections. Both old corners
 and world projections stay fixed. Nonplanar or concave results reject before
 allocation. Apply replays and verifies generated IDs through
 `commit_component_edit`; discard uses `cancel_component_edit`.
+
+`preview_component_partition` accepts the same opposing `pairs` and latest
+`snapshot`, then returns flat draft topology under `preview.partition`.
+Vertices retain source corner/edge incidence and exact source positions;
+`preview_position` includes the current ridge height. Loops have independent
+IDs **0** and **1** within each brush and inherit `source_side`.
+`select_component_partitions` takes `partitions: [{solid, partition}]`, a token
+and optional replace/add/remove/toggle mode for highlighting and framing.
+`frame_component_partitions` accepts that token and optional `aspect`.
+`raise_component_partition` takes the current token and `rise`; zero restores
+flat topology, otherwise use 0.125–4096 units. Successful height changes return
+a new token. Commit raised geometry with `commit_component_edit` or discard
+with `cancel_component_edit`. Flat commit and save/compile/play are blocked
+while this temporary draft remains pending.
 
 `get_carve_preview` exposes candidates, limits and the latest `stamp`.
 `preview_carve` takes numeric `cutter` and `targets` brush IDs, including children
@@ -1306,8 +1342,9 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes staged component partitions, displacement
-clipping and authoring, model rendering and broader map checks.
+Editor work ahead includes persistent flat partitions, independent piece
+extrusion, displacement clipping and authoring, model rendering and broader
+map checks.
 
 ## Project layout
 

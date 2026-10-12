@@ -2449,12 +2449,13 @@ fn report(app: &AppWindow, result: Result<String, String>) {
 /// Asks before throwing away unsaved changes, then runs `then`.
 fn confirm_discard(ui: &SharedUi, then: impl FnOnce() + 'static) {
     let shared = session_of(ui);
-    let (dirty, generation, revision) = {
+    let (dirty, generation, revision, partition) = {
         let session = lock(&shared);
         (
-            session.document().is_dirty(),
+            session.document().is_dirty() || session.partition_preview_token().is_some(),
             session.document_generation(),
             session.document().revision(),
+            session.partition_preview_token(),
         )
     };
     if !dirty {
@@ -2470,6 +2471,7 @@ fn confirm_discard(ui: &SharedUi, then: impl FnOnce() + 'static) {
             let mut session = lock(&shared);
             if session.document_generation() != generation
                 || session.document().revision() != revision
+                || session.partition_preview_token() != partition
             {
                 session.log(
                     Actor::System,
@@ -3214,6 +3216,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap()
                 .clone_strong();
             components_ui::refresh(&window, &lock(&session_of(&ui)));
+            window.set_aspect(
+                (app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0))
+                    .max(0.01),
+            );
             if let Err(error) = window.show() {
                 app.unwrap().set_message(error.to_string().into());
             }
@@ -4247,6 +4253,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(window) = &ui.components_window
                     && window.window().is_visible()
                 {
+                    window.set_aspect(
+                        (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01),
+                    );
                     components_ui::refresh_changed(window, &lock(&ui.session));
                 }
                 if let Some(window) = &ui.pointfile_window
@@ -5494,6 +5503,145 @@ mod tests {
         lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &original);
         window.invoke_cancel();
+    }
+
+    #[test]
+    fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_and_cancel() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = state
+            .document()
+            .solid(id)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        state
+            .set_component_picking(
+                Some(session::component_picking::Kind::Face),
+                &[id],
+                &state.component_stamp(),
+            )
+            .unwrap();
+        state
+            .select_components(
+                &[map_core::subobject::Component {
+                    solid: id,
+                    sides: vec![side],
+                }],
+                SelectMode::Replace,
+                &state.component_stamp(),
+            )
+            .unwrap();
+        let source = state.document().vmf().clone();
+        let history = state.document().undo_labels().count();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        components_ui::refresh(&window, &lock(&shared));
+        window.set_operation(6);
+        window.set_kind(2);
+        window.show().unwrap();
+        window
+            .window()
+            .set_size(slint::PhysicalSize::new(1100, 900));
+        assert_dialog_button_visible(&window, "Stage flat partition");
+        window.invoke_preview_edit();
+        save_ui_snapshot(window.window(), "flat-face-partition");
+        assert_eq!(window.get_operation(), 6);
+        assert!(window.get_has_partition_preview() && window.get_partition_flat());
+        assert!(!window.get_ready());
+        assert_eq!(window.get_partition_rows().row_count(), 2);
+        assert!(
+            window
+                .get_preview_summary()
+                .contains("2 flat pieces staged")
+        );
+        for label in [
+            "Frame highlighted pieces",
+            "Partition ridge height",
+            "Preview ridge",
+            "Return to flat",
+            "Apply raised partition",
+            "Discard preview",
+            "Cancel",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        let first = window.get_partition_rows().row_data(0).unwrap();
+        window.invoke_choose_partition(first.key);
+        assert!(!window.get_partition_rows().row_data(0).unwrap().selected);
+        window.invoke_frame_partitions();
+        assert!(window.get_message().is_empty());
+        assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        window.invoke_choose_rise(16.125);
+        window.invoke_preview_edit();
+        save_ui_snapshot(window.window(), "raised-face-partition");
+        assert!(window.get_ready() && !window.get_partition_flat());
+        let raised = lock(&shared).render_document().vmf().clone();
+        window.invoke_flatten_partitions();
+        assert!(window.get_partition_flat() && !window.get_ready());
+        assert_eq!(lock(&shared).render_document().vmf(), &source);
+        assert!(!window.get_partition_rows().row_data(0).unwrap().selected);
+        window.set_split_rise("0.01".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert!(window.get_message().contains("0.125"));
+        assert!(window.get_has_partition_preview());
+        window.invoke_choose_rise(16.125);
+        window.invoke_preview_edit();
+        assert_eq!(lock(&shared).render_document().vmf(), &raised);
+        window.invoke_discard_preview();
+        assert!(!window.get_has_partition_preview());
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        window.invoke_preview_edit();
+        window.invoke_choose_rise(16.125);
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &raised);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        components_ui::refresh(&window, &lock(&shared));
+        window.set_kind(2);
+        window.invoke_change_kind();
+        window.set_operation(6);
+        let top = window
+            .get_rows()
+            .iter()
+            .find(|row| row.key == format!("{id}:{side}"))
+            .unwrap();
+        window.invoke_choose(top.key);
+        window.invoke_preview_edit();
+        assert!(window.get_has_partition_preview());
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).partition_preview_token(), None);
+        assert_eq!(lock(&shared).document().vmf(), &source);
     }
 
     #[test]

@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 
 use super::{Actor, SelectMode, Session};
 
+mod partitions;
+pub use partitions::PartitionRef;
+
 pub const SOURCE_PAGE_SIZE: usize = 100;
 pub const MAX_SOURCE_PAGE_SIZE: usize = 256;
 
@@ -33,6 +36,7 @@ pub struct Preview {
     weld_target: Option<WeldTarget>,
     split: Option<SplitDraft>,
     crease: Option<CreaseDraft>,
+    partition: Option<partitions::Draft>,
     pub(super) transform: Option<TransformDraft>,
     selection: BTreeSet<Component>,
 }
@@ -128,7 +132,10 @@ impl Session {
 
     pub fn component_topology_preview(&self) -> bool {
         self.components.preview.as_ref().is_some_and(|preview| {
-            preview.weld.is_some() || preview.split.is_some() || preview.crease.is_some()
+            preview.weld.is_some()
+                || preview.split.is_some()
+                || preview.crease.is_some()
+                || preview.partition.is_some()
         })
     }
 
@@ -264,7 +271,7 @@ impl Session {
             "weld_center":self.component_weld_center()?.map(|center|center.to_array()),
             "crease_choices":self.component_crease_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "weld_targets":self.component_weld_targets()?.iter().map(|(component,position)|json!({"component":component_json(component),"position":position.to_array()})).collect::<Vec<_>>(),
-            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len(),
+            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.partitions.len()),"can_apply":preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0),"partition":preview.partition.as_ref().map(partitions::Draft::report),
                 "weld_target":preview.weld_target.as_ref().map(weld_target_json),
                 "transform":preview.transform.as_ref().map(|transform|transform_json(&transform.spec,transform.pivot,transform.resolved_pivot)),
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
@@ -417,6 +424,7 @@ impl Session {
             replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
+            partition: None,
             weld: None,
             weld_target: None,
             split: None,
@@ -481,6 +489,7 @@ impl Session {
             replacements: plan.replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
+            partition: None,
             weld: None,
             weld_target: None,
             split: None,
@@ -570,6 +579,7 @@ impl Session {
             replacements: plan.replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
+            partition: None,
             selection: plan
                 .changes
                 .iter()
@@ -611,6 +621,7 @@ impl Session {
             replacements: plan.replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
+            partition: None,
             weld: None,
             weld_target: None,
             selection: plan
@@ -667,6 +678,11 @@ impl Session {
         stamp: &str,
     ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
+        let requests = self.crease_requests(pairs)?;
+        self.install_crease_preview(requests, rise)
+    }
+
+    fn crease_requests(&self, pairs: &[CreaseEdges]) -> Result<Vec<Crease>, String> {
         let mut inputs = BTreeMap::new();
         for pair in pairs {
             let mut edges = pair.edges;
@@ -678,7 +694,7 @@ impl Session {
         let mut requests = Vec::new();
         for component in &self.components.selection {
             if component.sides.len() != 1 {
-                return Err("Select one quad face per brush to crease".into());
+                return Err("Select one quad face per brush".into());
             }
             let edges = inputs
                 .remove(&component.solid)
@@ -690,8 +706,12 @@ impl Session {
             });
         }
         if !inputs.is_empty() {
-            return Err("Crease pairs must belong to the selected faces".into());
+            return Err("Opposing edge pairs must belong to the selected faces".into());
         }
+        Ok(requests)
+    }
+
+    fn install_crease_preview(&mut self, requests: Vec<Crease>, rise: f64) -> Result<u64, String> {
         let mut document = self.document.preview_snapshot();
         let plan = document
             .edit("preview opposing-edge crease", |tx| {
@@ -709,6 +729,7 @@ impl Session {
             replacements: plan.replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
+            partition: None,
             weld: None,
             weld_target: None,
             split: None,
@@ -749,6 +770,7 @@ impl Session {
             || self.checked_component_preview(token)?.split.is_some()
             || self.checked_component_preview(token)?.crease.is_some()
             || self.checked_component_preview(token)?.transform.is_some()
+            || self.checked_component_preview(token)?.partition.is_some()
         {
             return Err("Use Apply component edit for this operation".into());
         }
@@ -767,7 +789,16 @@ impl Session {
             );
         }
         let preview = self.checked_component_preview(token)?;
-        let label = if preview.weld.is_some() {
+        if preview
+            .partition
+            .as_ref()
+            .is_some_and(|draft| draft.rise == 0.0)
+        {
+            return Err("Flat partitions are temporary drafts. Raise the shared ridge before Apply, or Cancel.".into());
+        }
+        let label = if preview.partition.is_some() {
+            "raise flat face partitions"
+        } else if preview.weld.is_some() {
             "weld brush corners"
         } else if preview.crease.is_some() {
             "crease opposing edges"
@@ -838,6 +869,7 @@ impl Session {
     }
 
     pub fn append_component_guides(&mut self, mesh: &mut render::SceneMesh) {
+        self.append_partition_guides(mesh);
         let hidden = self.hidden_tool_brushes();
         let ids = if self.components.picking.is_some() {
             self.component_solids()

@@ -77,6 +77,7 @@ impl Session {
         actor: Actor,
         path: Option<&Path>,
     ) -> Result<CompileRequest, String> {
+        self.ensure_partitions_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }

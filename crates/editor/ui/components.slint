@@ -21,6 +21,13 @@ export component ComponentsWindow inherits Window {
     preferred-height: 720px;
     in property <[ComponentRow]> rows;
     in property <[ComponentCreaseRow]> crease-rows;
+    in property <[ComponentRow]> partition-rows;
+    in property <bool> has-partition-preview;
+    in property <bool> partition-flat;
+    in property <float> aspect: 1.6;
+    callback choose-partition(string);
+    callback frame-partitions();
+    callback flatten-partitions();
     callback choose-crease-pair(string, int);
     in property <[string]> source-labels;
     in property <[string]> source-ids;
@@ -126,7 +133,8 @@ export component ComponentsWindow inherits Window {
                         vertical-stretch: 1;
                         for row in root.rows: VerticalLayout {
                             spacing: 4px; padding-top: 5px; padding-bottom: 7px;
-                            CheckBox { text: row.label; checked: row.selected; enabled: !root.topology-preview; toggled => { root.choose(row.key); } }
+                            if root.has-partition-preview: Text { text: row.label; color: #e6e8ec; }
+                            if !root.has-partition-preview: CheckBox { text: row.label; checked: row.selected; enabled: !root.topology-preview; toggled => { root.choose(row.key); } }
                             Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
                         }
                     }
@@ -138,7 +146,7 @@ export component ComponentsWindow inherits Window {
                 }
                 VerticalLayout {
                     width: 290px; spacing: 12px;
-                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection", "Roof ridge"]; current-index <=> root.operation; selected => { root.edited(); } }
+                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection", "Roof ridge", "Flat partition"]; current-index <=> root.operation; selected => { root.edited(); } }
                     if root.operation == 0: VerticalLayout {
                     spacing: 12px;
                     CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
@@ -207,6 +215,33 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Old corners stay fixed. The two roof faces keep the source material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
+                    if root.operation == 6: VerticalLayout {
+                        spacing: 10px;
+                        Text { text: "Divide one quad face per brush into two flat pieces. Stage first, then raise their shared ridge."; wrap: word-wrap; color: #aeb9c8; }
+                        ListView {
+                            preferred-height: 90px;
+                            for row in root.crease-rows: VerticalLayout {
+                                spacing: 6px;
+                                Text { text: row.label; font-weight: 600; }
+                                ComboBox { enabled: !root.has-partition-preview; model: [row.first, row.second]; current-index: row.choice; selected => { root.choose-crease-pair(row.key, self.current-index); } }
+                            }
+                        }
+                        if root.has-partition-preview: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "Highlight pieces"; font-weight: 600; }
+                            ListView {
+                                preferred-height: 95px;
+                                for row in root.partition-rows: CheckBox { text: row.label; checked: row.selected; toggled => { root.choose-partition(row.key); } }
+                            }
+                            Button { text: "Frame highlighted pieces"; clicked => { root.frame-partitions(); } }
+                            Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: #aeb9c8; }
+                            LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Partition ridge height"; edited => { root.edited(); } }
+                            Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
+                            Button { text: "Return to flat"; enabled: !root.partition-flat; clicked => { root.flatten-partitions(); } }
+                        }
+                        Text { text: "Raising moves the shared ridge of both pieces. Highlighting changes inspection and framing."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: "Flat pieces are temporary. Raise and Apply, or Cancel, before saving or compiling."; wrap: word-wrap; color: #ffc66d; font-size: 12px; }
+                    }
                     if root.operation == 3 || root.operation == 4: VerticalLayout {
                         spacing: 10px;
                         Text { text: root.operation == 3 ? "Scale factors · 1 = original size" : "Angles · degrees around world axes"; wrap: word-wrap; font-weight: 600; }
@@ -229,7 +264,7 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Unselected corners stay in place. Faces must remain flat and the brush convex."; wrap: word-wrap; color: #aeb9c8; }
                         Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
-                    Button { text: root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
+                    Button { text: root.operation == 6 ? (root.has-partition-preview ? "Preview ridge" : "Stage flat partition") : root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                     Rectangle { vertical-stretch: 1; }
@@ -242,7 +277,7 @@ export component ComponentsWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: root.operation == 5 ? "Apply ridge" : root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.operation == 6 ? "Apply raised partition" : root.operation == 5 ? "Apply ridge" : root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

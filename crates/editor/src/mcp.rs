@@ -618,6 +618,16 @@ struct FramePartitionsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PartitionPixelArgs {
+    token: String,
+    x: f64,
+    y: f64,
+    width: Option<u32>,
+    height: Option<u32>,
+    camera: Option<CameraSpec>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentSplitArgs {
     rise: f64,
     /// Preserve each fan triangle's original corner and center/midpoint UVs. Defaults false (world projection).
@@ -3377,6 +3387,36 @@ impl EditorServer {
             )?;
             Ok(
                 json!({"camera":camera_json(&session.camera()),"components":selected_component_report(&session)?}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Read staged flat or raised partition pieces under a viewport pixel through the same Session query as a UI click. Requires the current draft token; x/y are continuous pixels from top-left, with the camera and size of render_view. Uses the nearest visible brush surface, hidden ownership and shared tool filters. Returns partition refs, world hit positions and camera depth; Hits within half a pixel of a shared boundary may contain both pieces ordered by depth then solid/piece ID. Read-only. Pass a chosen ref and the same token to select_component_partitions; ordinary UI clicks replace highlights, Ctrl toggles, empty ordinary clicks clear. Source geometry, source selection, draft token and undo history stay unchanged.",
+        annotations(read_only_hint = true)
+    )]
+    fn pick_component_partitions(
+        &self,
+        Parameters(args): Parameters<PartitionPixelArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let size = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)?;
+            let picks = session.pick_component_partitions(
+                parse_token(&args.token)?,
+                camera,
+                crate::session::Pointer {
+                    position: DVec2::new(args.x, args.y),
+                    size,
+                },
+            )?;
+            Ok(
+                json!({"token":args.token,"camera":camera_json(&camera),"width":size.0,"height":size.1,"total":picks.len(),
+                "candidates":picks.iter().map(|pick|json!({"partition":{"solid":pick.partition.solid,"partition":pick.partition.partition},"position":pick.position.to_array(),"depth":pick.depth})).collect::<Vec<_>>() }),
             )
         })
     }

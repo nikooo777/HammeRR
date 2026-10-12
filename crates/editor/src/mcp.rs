@@ -531,6 +531,13 @@ struct ComponentWeldArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct CarveArgs {
+    cutter: u32,
+    targets: Vec<u32>,
+    stamp: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentSplitArgs {
     rise: f64,
     snapshot: String,
@@ -2810,6 +2817,49 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Inspect selected brush candidates and the shared carve preview, source owners/bounds/materials, snapshot stamp, exact token, target brush IDs, resulting fragments, removed/unchanged brushes, per-face inheritance and limits. One convex cutter is retained; up to 16 targets and 256 fragments. World brushes may be removed completely; removing every brush from an entity rejects. No map edits.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_carve_preview(&self) -> ToolResult {
+        ok(self.session().carve_report())
+    }
+
+    #[tool(
+        description = "Preview subtracting one convex cutter brush from explicit target brush IDs, including children of brush entities. Requires the latest stamp from get_carve_preview. The cutter stays unchanged. Disjoint/tangent targets remain unchanged; an entirely disjoint batch rejects. Generated cut faces inherit the corresponding cutter face's material, world UV projection, lighting and unknown metadata. Surviving original faces retain metadata; original IDs remain on the first surviving fragment and later fragments get unique IDs. Preserves owner entities and unrelated objects. Whole world brushes can be removed; empty brush entities, displacements, invalid/thin geometry, 64-face overflow and budgets reject atomically. render_view uses the draft. Apply/cancel require the exact token."
+    )]
+    fn preview_carve(&self, Parameters(args): Parameters<CarveArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_carve(args.cutter, &args.targets, &args.stamp)?;
+            Ok(session.carve_report())
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact shared carving preview as one undo step. Rechecks fragment IDs, face inheritance and geometry against the draft. Retains the cutter and entity ownership; selects surviving carved objects. Source edits, selection/tool changes and other previews invalidate the token. Allocation changes reject without mutation."
+    )]
+    fn commit_carve(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let result = self.session().commit_carve(
+                Actor::Agent,
+                args.token.parse().map_err(|_| "Invalid carve token")?,
+            )?;
+            Ok(crate::session::carving::result_json(&result))
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact carving preview token without changing geometry, IDs or undo history. Stale tokens cannot cancel a replacement draft. Shares Discard preview and Cancel in the editor."
+    )]
+    fn cancel_carve(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_carve(args.token.parse().map_err(|_| "Invalid carve token")?)?;
+            Ok(session.carve_report())
+        })
+    }
+
+    #[tool(
         description = "Preview hollowing selected brushes or brush entities into convex wall pieces. Optional open_faces leaves those source boundaries open and unexpanded; each source must retain at least one wall. Thickness is 0.125–4096 units along face normals. outward=false insets walls inside the source bounds; true expands outside and preserves the original cavity. Requires latest stamp from get_hollow_preview. At most 16 source brushes, 64 sides each and 256 output walls; displacements, ambiguous IDs and invalid/thin inner geometry reject atomically. Existing surfaces retain metadata; generated inner faces inherit their corresponding source face's material, world projection and lighting. render_view uses the draft. Apply/Cancel use its token."
     )]
     fn preview_hollow(&self, Parameters(args): Parameters<HollowArgs>) -> ToolResult {
@@ -2876,7 +2926,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the current component preview when present. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections default to world anchoring; texture_mode describes the current component preview.",
+        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the currently rendered geometry preview when present, including generated hollow/carve brushes; applying or selecting draft-only components still requires committing that geometry first. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections default to world anchoring; texture_mode describes the current component preview.",
         annotations(read_only_hint = true)
     )]
     fn get_brush_components(&self, Parameters(args): Parameters<ComponentQueryArgs>) -> ToolResult {

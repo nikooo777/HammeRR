@@ -1,3 +1,4 @@
+mod carve_ui;
 mod checks_ui;
 mod compile_ui;
 mod components_ui;
@@ -152,6 +153,7 @@ struct Ui {
     pointfile_window: Option<PointfileWindow>,
     components_window: Option<ComponentsWindow>,
     hollow_window: Option<HollowWindow>,
+    carve_window: Option<CarveWindow>,
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
@@ -2849,6 +2851,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pointfile_window: None,
         components_window: None,
         hollow_window: None,
+        carve_window: None,
         recovery_window: None,
         checks_window: None,
         context_window: None,
@@ -3083,6 +3086,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let window = ui.borrow().hollow_window.as_ref().unwrap().clone_strong();
             hollow_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_carve_brushes({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if ui.borrow().carve_window.is_none() {
+                match CarveWindow::new() {
+                    Ok(window) => {
+                        carve_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().carve_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui.borrow().carve_window.as_ref().unwrap().clone_strong();
+            carve_ui::refresh(&window, &lock(&session_of(&ui)));
             if let Err(error) = window.show() {
                 app.unwrap().set_message(error.to_string().into());
             }
@@ -4134,6 +4159,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     && window.window().is_visible()
                 {
                     hollow_ui::refresh_changed(window, &lock(&ui.session));
+                }
+                if let Some(window) = &ui.carve_window
+                    && window.window().is_visible()
+                {
+                    carve_ui::refresh_changed(window, &lock(&ui.session));
                 }
                 if let Some(window) = &ui.components_window
                     && window.window().is_visible()
@@ -5579,6 +5609,97 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &original);
         window.invoke_refresh();
         window.invoke_cancel();
+    }
+
+    #[test]
+    fn carve_controls_keep_targets_show_preview_and_share_apply_discard_cancel() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                renderer_name: Some("software".into()),
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let target = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let untouched = state
+            .create_block(
+                Actor::Agent,
+                DVec3::splat(256.0),
+                DVec3::splat(288.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let cutter = state
+            .create_block(
+                Actor::Agent,
+                DVec3::splat(16.0),
+                DVec3::splat(48.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        state
+            .select(&[target, untouched, cutter], SelectMode::Replace)
+            .unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = CarveWindow::new().unwrap();
+        carve_ui::bind(&window, &shared);
+        carve_ui::refresh(&window, &lock(&shared));
+        assert_eq!(window.get_cutter(), 2);
+        let untouched_key = window.get_targets().row_data(1).unwrap().solid;
+        window.invoke_choose_target(untouched_key.clone());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert!(window.get_summary().contains("6 fragments"));
+        assert_eq!(window.get_targets().row_count(), 3);
+        assert!(!window.get_targets().row_data(1).unwrap().selected);
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        let draft = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-carving");
+        for label in ["Cancel", "Discard preview", "Preview carve", "Apply carve"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        let target_key = window.get_targets().row_data(0).unwrap().solid;
+        window.invoke_choose_target(target_key.clone());
+        assert!(!window.get_ready());
+        assert!(!window.get_can_preview());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_choose_target(target_key);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.invoke_discard();
+        assert!(!window.get_ready());
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &draft);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        lock(&shared)
+            .select(&[target, untouched, cutter], SelectMode::Replace)
+            .unwrap();
+        carve_ui::refresh(&window, &lock(&shared));
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.invoke_cancel();
+        assert!(!window.window().is_visible());
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
+        assert!(lock(&shared).carve_state()["preview"].is_null());
     }
 
     #[test]

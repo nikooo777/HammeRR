@@ -26,7 +26,7 @@ and the shared entity inspector and activity panel.*
 | Viewport and brushes | Textured, flat, wireframe and diagnostic modes in every projection; grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
-| Brush hollowing | Inward/outward wall shells with inherited materials and lighting, cavity inspection, cancellable previews and one-step undo. |
+| Brush hollowing and carving | Wall shells and convex cutter subtraction, with inherited materials and lighting, cancellable previews and one-step undo. |
 | Brush clipping | Planar cuts, three-point surface picking, exact planes and 3D move/rotation handles; keep either side or both, cap materials and one-step undo. |
 | Brush components | Viewport/list selection, move handles, exact offsets, corner welding and edge/face splitting, with guarded previews and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
@@ -300,13 +300,36 @@ face's material, world-space texture mapping and lighting settings. Brush
 entities retain ownership of their walls. The tool rejects invalid inner space,
 displacements and ambiguous geometry before replacing a valid preview. Limits
 are 16 source brushes, 64 sides per brush, 256 output walls and thickness from
-0.125 to 4096 units. Carving remains future work.
+0.125 to 4096 units.
 
 | Hollow controls | Inside the shared preview |
 | --- | --- |
 | ![Wall thickness, opening faces and cancellable shell preview](docs/images/hollow-brushes.png) | ![Textured interior of a hollowed brush before applying](docs/images/hollow-interior.png) |
 
 ![An open roof and front face, with full-height side walls](docs/images/hollow-open-shell.png)
+
+### Carve brushes
+
+Select a cutter and the brushes to carve, then open **Carve brushes…**. Choose
+**Cutter · shape to subtract** and check the **Target brushes**. **Preview carve**
+shows the resulting convex fragments and lists fully removed and unchanged
+brushes. **Apply carve** records one undo step; **Discard preview** or **Cancel**
+leaves the map unchanged. Unchecked candidates remain available during preview.
+
+The cutter stays in the map. Move or delete it when the carved space should be
+empty. Original fragment faces retain their surface settings; new cut faces
+inherit the corresponding cutter face's material, world texture projection,
+lighting and metadata. Brush-entity ownership and unrelated objects remain.
+An entirely covered world brush can disappear; removing every brush from an
+entity is rejected so its meaning cannot silently change.
+
+Limits are one convex cutter, 16 targets, 256 fragments and 64 faces per brush.
+Displacements, invalid or thin fragments and budget overflow reject atomically.
+Apply checks generated brush and face IDs against the exact preview.
+
+| Carving controls | Shared fragment preview |
+| --- | --- |
+| ![Cutter selector, target checkboxes and guarded preview actions](docs/images/brush-carving.png) | ![Six carved fragments around the retained cutter](docs/images/carve-preview.png) |
 
 ### Brush clipping
 
@@ -739,6 +762,7 @@ For example, place a warm light:
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
+| Brush carving | `get_carve_preview`, `preview_carve`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component topology | `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
@@ -799,6 +823,7 @@ python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-ch
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
+python -B scripts/validate_carving.py --output /tmp/hammerr-carving-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
 python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tools-check
 python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
@@ -812,7 +837,7 @@ to check an idle GUI session with a clean map and empty undo/redo history.
 Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
-`validate_audit_fixes.py` and `validate_component_topology.py` use a private
+`validate_audit_fixes.py`, `validate_component_topology.py` and `validate_carving.py` use a private
 headless session and do not accept a GUI URL. Add `--render` to the topology
 validator for offscreen GPU pixel checks without opening a desktop window.
 
@@ -843,6 +868,13 @@ inherit world texture projections. Apply verifies allocation and switches
 active picking to vertices in the same captured brush scope. Discard preserves
 the original picking kind and selection. Both use the generic component
 commit/cancel calls.
+
+`get_carve_preview` exposes candidates, limits and the latest `stamp`.
+`preview_carve` takes numeric `cutter` and `targets` brush IDs, including children
+of brush entities. Its `preview.result` lists changed fragments, fully removed
+and unchanged brushes, and face inheritance. `commit_carve` or `cancel_carve`
+requires the exact `preview.token`. Invalid updates retain the valid draft;
+source changes and competing geometry tools invalidate it.
 
 For component picking, `set_component_picking` captures the brush IDs and kind;
 `get_brush_components` reports that shared mode. `pick_brush_components` accepts
@@ -1053,7 +1085,7 @@ unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes broader component split/weld controls, displacement clipping,
-carving, displacement tools, model rendering and broader map checks.
+multi-cutter carving, displacement tools, model rendering and broader map checks.
 
 ## Project layout
 

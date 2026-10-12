@@ -113,11 +113,7 @@ impl Session {
         if ids.len() > subobject::MAX_SOLIDS {
             return Err("Inspect at most 16 brushes at a time".into());
         }
-        let document = self
-            .components
-            .preview
-            .as_ref()
-            .map_or(&self.document, |preview| &preview.document);
+        let document = self.render_document();
         ids.iter()
             .map(|id| {
                 let (_, solid) =
@@ -228,6 +224,7 @@ impl Session {
         self.cancel_face_preview();
         self.cancel_clip_preview();
         self.clear_hollow_preview();
+        self.clear_carve_preview();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.cancel_transform_preview();

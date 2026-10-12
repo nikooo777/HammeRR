@@ -1,0 +1,58 @@
+import { Button, CheckBox, ComboBox, ListView } from "std-widgets.slint";
+
+export struct CarveRow { solid: string, label: string, selected: bool, cutter: bool }
+
+export component CarveWindow inherits Window {
+    title: "Carve brushes - HammeRR";
+    preferred-width: 800px; preferred-height: 650px;
+    in property <[CarveRow]> targets;
+    in property <[string]> cutters;
+    in property <string> source;
+    in property <string> stamp;
+    in property <string> token;
+    in property <string> summary;
+    in property <string> message;
+    in property <bool> ready;
+    in property <bool> can-preview;
+    in-out property <int> cutter: 0;
+    callback choose-cutter();
+    callback choose-target(string);
+    callback preview-edit();
+    callback discard();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px; spacing: 12px;
+            Text { text: "Subtract a brush shape"; font-size: 24px; font-weight: 600; }
+            Text { text: "Choose a cutter from the selected brushes, then the brushes to carve. Only overlapping volume is removed. The cutter stays unchanged."; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "Cutter · shape to subtract"; font-weight: 600; }
+            ComboBox { model: root.cutters; current-index <=> root.cutter; enabled: root.cutters.length > 1; selected => { root.choose-cutter(); } }
+            Text { text: "Target brushes"; font-size: 18px; font-weight: 600; }
+            ListView {
+                vertical-stretch: 1; min-height: 160px;
+                for target in root.targets: CheckBox {
+                    text: target.label + (target.cutter ? " · Cutter" : "");
+                    checked: target.selected;
+                    enabled: !target.cutter;
+                    toggled => { root.choose-target(target.solid); }
+                }
+            }
+            Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
+            Text { text: "New cut faces inherit the cutter's material, texture projection and lighting. Original faces keep their settings. Whole world brushes may disappear; removing every brush from an entity is rejected."; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "One convex cutter · up to 16 targets · 256 fragments. Displacement brushes are unsupported."; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Discard preview"; enabled: root.token != ""; clicked => { root.discard(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Preview carve"; enabled: root.can-preview; clicked => { root.preview-edit(); } }
+                Button { text: "Apply carve"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

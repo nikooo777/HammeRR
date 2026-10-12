@@ -41,6 +41,27 @@ pub struct Preview {
     selection: BTreeSet<Component>,
 }
 
+impl Preview {
+    fn new(document: Document, selection: BTreeSet<Component>) -> Self {
+        Self {
+            document,
+            selection,
+            token: 0,
+            generation: 0,
+            revision: 0,
+            delta: DVec3::ZERO,
+            texture_lock: false,
+            replacements: Vec::new(),
+            weld: None,
+            weld_target: None,
+            split: None,
+            crease: None,
+            partition: None,
+            transform: None,
+        }
+    }
+}
+
 pub(super) struct TransformDraft {
     spec: ComponentTransform,
     pivot: Option<DVec3>,
@@ -412,30 +433,14 @@ impl Session {
                 subobject::apply(tx, &replacements)
             })
             .map_err(|error| error.to_string())?;
-        self.components.serial += 1;
-        let token = self.components.serial;
-        self.components.drag = None;
         self.components.options.snap = snap;
         self.components.options.texture_lock = texture_lock;
-        self.components.preview = Some(Preview {
-            document,
-            token,
+        Ok(self.install_component_preview(Preview {
             delta,
             texture_lock,
             replacements,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-            partition: None,
-            weld: None,
-            weld_target: None,
-            split: None,
-            crease: None,
-            transform: None,
-            selection: self.components.selection.clone(),
-        });
-        self.scene_serial += 1;
-        self.view_serial += 1;
-        Ok(token)
+            ..Preview::new(document, self.components.selection.clone())
+        }))
     }
 
     pub fn component_center(&self) -> Result<Option<DVec3>, String> {
@@ -478,33 +483,17 @@ impl Session {
                 subobject::apply(tx, &plan.replacements)
             })
             .map_err(|error| error.to_string())?;
-        self.components.serial += 1;
-        let token = self.components.serial;
-        self.components.drag = None;
         self.components.options.texture_lock = texture_lock;
-        self.components.preview = Some(Preview {
-            document,
-            token,
-            delta: DVec3::ZERO,
+        Ok(self.install_component_preview(Preview {
             texture_lock,
             replacements: plan.replacements,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-            partition: None,
-            weld: None,
-            weld_target: None,
-            split: None,
-            crease: None,
             transform: Some(TransformDraft {
                 spec,
                 pivot,
                 resolved_pivot: plan.pivot,
             }),
-            selection: self.components.selection.clone(),
-        });
-        self.scene_serial += 1;
-        self.view_serial += 1;
-        Ok(token)
+            ..Preview::new(document, self.components.selection.clone())
+        }))
     }
 
     pub fn component_weld_center(&self) -> Result<Option<DVec3>, String> {
@@ -579,32 +568,18 @@ impl Session {
                 subobject::apply(tx, &plan.replacements)
             })
             .map_err(|error| error.to_string())?;
-        self.components.serial += 1;
-        let token = self.components.serial;
-        self.components.drag = None;
-        self.components.preview = Some(Preview {
-            document,
-            token,
-            delta: DVec3::ZERO,
+        let selection = plan
+            .changes
+            .iter()
+            .map(|change| change.selection.clone())
+            .collect();
+        Ok(self.install_component_preview(Preview {
             texture_lock,
             replacements: plan.replacements,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-            partition: None,
-            selection: plan
-                .changes
-                .iter()
-                .map(|change| change.selection.clone())
-                .collect(),
             weld: Some(plan.changes),
             weld_target: Some(target),
-            split: None,
-            crease: None,
-            transform: None,
-        });
-        self.scene_serial += 1;
-        self.view_serial += 1;
-        Ok(token)
+            ..Preview::new(document, selection)
+        }))
     }
 
     pub fn preview_component_split(&mut self, rise: f64, stamp: &str) -> Result<u64, String> {
@@ -630,35 +605,20 @@ impl Session {
                 subobject::split_with_textures(tx, &components, rise, texture_lock)
             })
             .map_err(|error| error.to_string())?;
-        self.components.serial += 1;
-        let token = self.components.serial;
-        self.components.drag = None;
-        self.components.preview = Some(Preview {
-            document,
-            token,
-            delta: DVec3::ZERO,
+        let selection = plan
+            .changes
+            .iter()
+            .map(|change| change.selection.clone())
+            .collect();
+        Ok(self.install_component_preview(Preview {
             texture_lock,
             replacements: plan.replacements,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-            partition: None,
-            weld: None,
-            weld_target: None,
-            selection: plan
-                .changes
-                .iter()
-                .map(|change| change.selection.clone())
-                .collect(),
-            transform: None,
-            crease: None,
             split: Some(SplitDraft {
                 rise,
                 changes: plan.changes,
             }),
-        });
-        self.scene_serial += 1;
-        self.view_serial += 1;
-        Ok(token)
+            ..Preview::new(document, selection)
+        }))
     }
 
     pub fn component_crease_choices(&self) -> Result<Vec<(Component, Vec<CreasePair>)>, String> {
@@ -753,37 +713,33 @@ impl Session {
                 subobject::crease_with_roof_textures(tx, &requests, rise, roof_texture_lock)
             })
             .map_err(|error| error.to_string())?;
-        self.components.serial += 1;
-        let token = self.components.serial;
-        self.components.drag = None;
-        self.components.preview = Some(Preview {
-            document,
-            token,
-            delta: DVec3::ZERO,
-            texture_lock: false,
+        let selection = plan
+            .changes
+            .iter()
+            .flat_map(|change| change.selection.iter().cloned())
+            .collect();
+        Ok(self.install_component_preview(Preview {
             replacements: plan.replacements,
-            generation: self.document_generation,
-            revision: self.document.revision(),
-            partition: None,
-            weld: None,
-            weld_target: None,
-            split: None,
-            transform: None,
-            selection: plan
-                .changes
-                .iter()
-                .flat_map(|change| change.selection.iter().cloned())
-                .collect(),
             crease: Some(CreaseDraft {
                 rise,
                 roof_texture_lock,
                 requests,
                 changes: plan.changes,
             }),
-        });
+            ..Preview::new(document, selection)
+        }))
+    }
+
+    fn install_component_preview(&mut self, mut preview: Preview) -> u64 {
+        self.components.serial += 1;
+        preview.token = self.components.serial;
+        preview.generation = self.document_generation;
+        preview.revision = self.document.revision();
+        self.components.drag = None;
+        self.components.preview = Some(preview);
         self.scene_serial += 1;
         self.view_serial += 1;
-        Ok(token)
+        self.components.serial
     }
 
     fn checked_component_preview(&self, token: u64) -> Result<&Preview, String> {

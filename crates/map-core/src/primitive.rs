@@ -290,7 +290,7 @@ fn prism(bottom: &[DVec3], top: &[DVec3]) -> Vec<Vec<DVec3>> {
     faces
 }
 
-fn planes(faces: Vec<Vec<DVec3>>) -> Result<Vec<[DVec3; 3]>, EditError> {
+pub(crate) fn convex_planes(faces: Vec<Vec<DVec3>>) -> Result<Vec<[DVec3; 3]>, EditError> {
     let vertices = faces.iter().flatten().copied().collect::<Vec<_>>();
     let center = vertices.iter().sum::<DVec3>() / vertices.len() as f64;
     let mut points = Vec::new();
@@ -344,7 +344,7 @@ pub fn create(tx: &mut Transaction, spec: &Spec) -> Result<Vec<ObjectId>, EditEr
     let planned = spec
         .polygons()
         .into_iter()
-        .map(planes)
+        .map(convex_planes)
         .collect::<Result<Vec<_>, _>>()?;
     let mut ids = Vec::with_capacity(planned.len());
     for points in planned {

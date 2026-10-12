@@ -65,7 +65,7 @@ def thin_fixture(path, entity=False):
     path.write_text(text)
 
 
-def validate(client, output, cycles):
+def validate(client, output, cycles, operation="translation"):
     checks = []
     worst_geometry = 0
     worst_texture = 0
@@ -116,6 +116,14 @@ def validate(client, output, cycles):
         components = [
             {"solid": solid, "sides": [face["side"]]} for face in shape["faces"]
         ]
+        pivot = [
+            (
+                min(point[axis] for point in vertices.values())
+                + max(point[axis] for point in vertices.values())
+            )
+            / 2
+            for axis in range(3)
+        ]
         for cycle in range(cycles):
             displacement = [
                 [0.125, -0.25, 0.375],
@@ -132,15 +140,33 @@ def validate(client, output, cycles):
                 )
                 source = detail(client, [owner])
                 history = len(client.call("get_map_info")["undo"])
-                draft = client.call(
-                    "preview_component_move",
-                    {
-                        "delta": [sign * value for value in displacement],
-                        "snap": False,
-                        "texture_lock": True,
-                        "snapshot": selected["snapshot"],
-                    },
-                )
+                arguments = {"texture_lock": True, "snapshot": selected["snapshot"]}
+                if operation == "translation":
+                    tool = "preview_component_move"
+                    arguments.update(
+                        delta=[sign * value for value in displacement], snap=False
+                    )
+                elif operation == "scale":
+                    tool = "preview_component_scale"
+                    factors = [1.125, 0.875, 1.0625]
+                    arguments.update(
+                        factors=[
+                            value if sign == 1 else 1 / value for value in factors
+                        ],
+                        pivot=pivot,
+                    )
+                else:
+                    tool = "preview_component_rotate"
+                    degrees = [[17, 0, 0], [0, -23, 0], [0, 0, 31]][cycle % 3]
+                    arguments.update(
+                        degrees=[sign * value for value in degrees], pivot=pivot
+                    )
+                try:
+                    draft = client.call(tool, arguments)
+                except AssertionError as error:
+                    raise AssertionError(
+                        f"{label}, {operation}, cycle {cycle + 1}, direction {sign}: {error}"
+                    ) from error
                 assert detail(client, [owner]) == source
                 client.call(
                     "commit_component_edit", {"token": draft["preview"]["token"]}
@@ -207,6 +233,7 @@ def validate(client, output, cycles):
     return {
         "passed": len(checks),
         "cycles_per_fixture": cycles,
+        "operation": operation,
         "geometry_drift": worst_geometry,
         "texture_drift": worst_texture,
         "checks": checks,
@@ -220,13 +247,16 @@ def main():
         "--output", type=Path, default=Path("/tmp/hammerr-precision-cycles")
     )
     parser.add_argument("--cycles", type=int, default=16)
+    parser.add_argument(
+        "--operation", choices=["translation", "scale", "rotate"], default="translation"
+    )
     args = parser.parse_args()
     if not 1 <= args.cycles <= 128:
         parser.error("cycles must be between 1 and 128")
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)
     try:
-        result = validate(client, args.output, args.cycles)
+        result = validate(client, args.output, args.cycles, args.operation)
         (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2))
     finally:

@@ -1,8 +1,16 @@
-use glam::DVec3;
+use glam::{DQuat, DVec3, EulerRot};
 use map_core::{Document, ObjectId, subobject, texel_uv};
 use source_formats::vmf::Vmf;
 
-pub fn repeated_translation(mut document: Document, id: u32, cycles: usize) -> (f64, f64) {
+pub fn repeated_translation(document: Document, id: u32, cycles: usize) -> (f64, f64) {
+    repeated_edits(document, id, cycles, false)
+}
+
+pub fn repeated_affine(document: Document, id: u32, cycles: usize) -> (f64, f64) {
+    repeated_edits(document, id, cycles, true)
+}
+
+fn repeated_edits(mut document: Document, id: u32, cycles: usize, affine: bool) -> (f64, f64) {
     let original = subobject::solid(&document, id).unwrap().1.clone();
     let owner = document.owner_of_solid(id).unwrap();
     let before = subobject::topology(&original).unwrap();
@@ -14,6 +22,7 @@ pub fn repeated_translation(mut document: Document, id: u32, cycles: usize) -> (
             sides: vec![face.side],
         })
         .collect::<Vec<_>>();
+    let pivot = subobject::component_center(&document, &components).unwrap();
     let owner_properties = match owner {
         ObjectId::Entity(id) => Some(document.entity(id).unwrap().properties.clone()),
         _ => None,
@@ -26,13 +35,45 @@ pub fn repeated_translation(mut document: Document, id: u32, cycles: usize) -> (
             DVec3::new(-0.375, 0.125, -0.25),
             DVec3::new(0.25, 0.375, -0.125),
         ][cycle % 3];
-        for displacement in [offset, -offset] {
+        let degrees = DVec3::new(17.0, -23.0, 31.0);
+        let radians = degrees.map(f64::to_radians);
+        let (z, y, x) = DQuat::from_euler(EulerRot::ZYX, radians.z, radians.y, radians.x)
+            .inverse()
+            .to_euler(EulerRot::ZYX);
+        let inverse_degrees = DVec3::new(x, y, z).map(f64::to_degrees);
+        for forward in [true, false] {
             let source = document.vmf().clone();
-            let plan =
-                subobject::plan_move_with_texture_lock(&document, &components, displacement, true)
-                    .unwrap();
+            let plan = if affine {
+                let spec = if cycle % 2 == 0 {
+                    let factors = DVec3::new(1.125, 0.875, 1.0625);
+                    subobject::ComponentTransform::Scale(if forward {
+                        factors
+                    } else {
+                        DVec3::ONE / factors
+                    })
+                } else {
+                    subobject::ComponentTransform::Rotate(if forward {
+                        degrees
+                    } else {
+                        inverse_degrees
+                    })
+                };
+                subobject::plan_transform(&document, &components, &spec, Some(pivot), true)
+                    .unwrap_or_else(|error| {
+                        panic!("brush {id}, cycle {cycle}, forward {forward}: {error}")
+                    })
+                    .replacements
+            } else {
+                subobject::plan_move_with_texture_lock(
+                    &document,
+                    &components,
+                    if forward { offset } else { -offset },
+                    true,
+                )
+                .unwrap()
+            };
             document
-                .edit("fractional translation", |tx| subobject::apply(tx, &plan))
+                .edit("precise component edit", |tx| subobject::apply(tx, &plan))
                 .unwrap();
             let changed = document.vmf().clone();
             document.undo().unwrap();

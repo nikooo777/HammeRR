@@ -157,8 +157,18 @@ drag applies one undo step; Escape or **Cancel** discards the draft.
 
 Enable **Transform selection** in the inspector for exact XYZ inputs. Choose
 the selection center, world origin or custom coordinates as the pivot. These
-settings also control handles. **Keep textures attached** preserves surface
-UVs. Numeric transforms remain exact, independent of grid snapping.
+settings also control handles. **Follow move and rotation** moves the texture
+with the brush. **Stretch textures when scaling** controls scaling separately:
+enable it to preserve corner UVs, or disable it to keep the texture's size and
+add repetitions as the brush grows. Both off keeps the original world
+projection. The same choices are available in the scale-handle toolbar.
+Numeric transforms remain exact, independent of grid snapping. During a shared
+preview the inspector shows its actual values; use **Apply transform** or
+**Cancel** before applying another numeric operation.
+
+| Texture keeps its size | Texture stretches with the brush |
+| --- | --- |
+| ![A resized brush with repeated texture tiles](docs/images/object-texture-repeat.png) | ![The same resized brush with stretched texture tiles](docs/images/object-texture-stretch.png) |
 
 Area selection works in perspective, Top, Front and Side, for objects or
 faces. It includes geometry through the view's depth and skips hidden brushes
@@ -850,6 +860,28 @@ For example, place a warm light:
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
 | Compile and play | `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
 
+`transform_objects` accepts independent `texture_lock` (follow movement and
+rotation) and `texture_scale_lock` (stretch during scaling). Both use the chosen
+pivot and world/local frame. Omit `texture_scale_lock` to inherit `texture_lock`
+and retain the previous complete-lock/world-fixed behavior. The same flags in
+`set_transform_tool` configure handles; omitted fields preserve their current
+settings. `get_transform_handles.state` reports both effective values for
+settings and drafts. Preview, commit, cancel and undo share the Session path.
+
+For example, double the brush width while keeping its texture size:
+
+```json
+{
+  "name": "transform_objects",
+  "arguments": {
+    "scale": [2, 1, 1],
+    "texture_lock": true,
+    "texture_scale_lock": false,
+    "preview": true
+  }
+}
+```
+
 `edit_faces` supports material, UV offsets/scales, rotation, fitting, lightmap
 scale, smoothing groups and non-destructive previews. Commit or cancel the
 shared preview from either front end. Material browsing and inspector tools
@@ -889,6 +921,7 @@ python -B scripts/validate_component_sources.py --output /tmp/hammerr-source-che
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
+python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_precision_cycles.py --output /tmp/hammerr-precision-check
 python -B scripts/validate_precision_cycles.py --operation scale --output /tmp/hammerr-scale-cycles
 python -B scripts/validate_precision_cycles.py --operation rotate --output /tmp/hammerr-rotation-cycles

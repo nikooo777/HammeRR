@@ -155,7 +155,7 @@ frame_selection frames the selection or whole map. Named cameras persist through
 (top XY, front XZ, side YZ), shared snapping and depth; preview=true leaves the map \
 and undo history untouched. Inspect get_map_info.block_preview and cancel with cancel_block_preview. \
 transform_objects applies exact move/rotation/positive scale, with an optional world-space pivot \
-(default: selection bounds center) and texture locking. Rotation is world X/Y/Z, in degrees. \
+(default: selection bounds center) and independent texture_lock (move/rotation) and texture_scale_lock (stretch); omitted scale lock inherits movement locking. Rotation is world X/Y/Z, in degrees. \
 space: local uses the first selected object's frame; preview: true creates a shared transform draft. \
 set_transform_tool configures move/rotate/scale handles, pivots and angle snap. Inspect \
 get_transform_handles, begin_transform_drag, then update_transform_drag with total amounts \
@@ -972,8 +972,10 @@ pub struct TransformArgs {
     pub scale: Option<[f64; 3]>,
     /// World pivot [x,y,z]; omitted uses the combined selection bounds center.
     pub pivot: Option<[f64; 3]>,
-    /// Preserve UV coordinates at corresponding transformed points, including scaling; default true.
+    /// Follow translation/rotation about the pivot; default true.
     pub texture_lock: Option<bool>,
+    /// Stretch textures with scale about the pivot. Omitted inherits texture_lock for backward compatibility.
+    pub texture_scale_lock: Option<bool>,
     /// world (default) or local; local follows the first selected object's frame.
     pub space: Option<String>,
     /// Draft geometry without changing the document or history; commit or cancel separately.
@@ -991,6 +993,8 @@ pub struct TransformToolArgs {
     pub pivot_mode: Option<String>,
     pub pivot: Option<[f64; 3]>,
     pub texture_lock: Option<bool>,
+    /// Stretch textures with scale independently of movement locking. Omitted preserves the current mode, which initially inherits texture_lock.
+    pub texture_scale_lock: Option<bool>,
     /// Rotation snapping in degrees, 0 disables it. Shared Snap also controls snapping.
     pub angle_step: Option<f64>,
 }
@@ -1167,9 +1171,9 @@ fn transform_mode_name(mode: Option<render::handles::Mode>) -> &'static str {
 
 fn transform_state(session: &Session) -> Value {
     let tool = session.transform_tool();
-    json!({"settings": {"mode": transform_mode_name(tool.mode), "space": if tool.local {"local"} else {"world"}, "pivot": tool.pivot.map(|pivot| pivot.to_array()), "texture_lock": tool.texture_lock, "angle_step": tool.angle_step},
+    json!({"settings": {"mode": transform_mode_name(tool.mode), "space": if tool.local {"local"} else {"world"}, "pivot": tool.pivot.map(|pivot| pivot.to_array()), "texture_lock": tool.texture_lock, "texture_scale_lock": tool.texture_scale_lock.unwrap_or(tool.texture_lock), "angle_step": tool.angle_step},
         "drag": session.transform_drag().map(|drag| json!({"handle": drag.handle.name(), "mode": transform_mode_name(Some(drag.mode)), "amount": drag.amount.to_array(), "pivot": drag.pivot.to_array(), "basis": drag.basis.to_cols_array_2d(), "camera": camera_json(&drag.camera)})),
-        "preview": session.transform_preview().map(|preview| json!({"ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "bounds": bounds_json(query::bounds_of(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()}))})
+        "preview": session.transform_preview().map(|preview| json!({"ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "texture_scale_lock": preview.transform.texture_scale_lock.unwrap_or(preview.transform.texture_lock), "bounds": bounds_json(query::bounds_of(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()}))})
 }
 
 fn area_matches(matches: &map_core::region::Selection) -> Value {
@@ -4205,7 +4209,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Move, rotate and scale objects in one atomic undoable edit, or create a shared draft with preview=true. Choose world (default) or local space. Scale about the pivot, rotate X/Y/Z in that frame, then translate in that frame. Defaults to selection and its bounds center. Point entities rotate their Source orientation and move with the group; model size stays unchanged. Positive scale only. Inspect get_transform_handles for the shared draft; commit_transform_preview or cancel_transform_preview completes it."
+        description = "Move, rotate and scale objects in one atomic undoable edit, or create a shared draft with preview=true. Choose world (default) or local space. Scale about the pivot, rotate X/Y/Z in that frame, then translate in that frame. Defaults to selection and its bounds center. texture_lock follows movement/rotation; texture_scale_lock stretches about the pivot independently. Omitted scale lock inherits texture_lock, retaining the prior complete-lock/world-fixed behavior. Both false preserve original projections exactly. Point entities rotate their Source orientation and move with the group; model size stays unchanged. Positive scale only. Inspect get_transform_handles for the shared draft; commit_transform_preview or cancel_transform_preview completes it."
     )]
     fn transform_objects(&self, Parameters(args): Parameters<TransformArgs>) -> ToolResult {
         run(|| {
@@ -4222,6 +4226,7 @@ impl EditorServer {
                 rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
                 scale: args.scale.map(vec3).unwrap_or(DVec3::ONE),
                 texture_lock: args.texture_lock.unwrap_or(true),
+                texture_scale_lock: args.texture_scale_lock,
                 basis,
                 ..edit::Transform::default()
             };
@@ -4668,7 +4673,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Read or set the shared viewport transform tool: select/move/rotate/scale, world/local axes, selection/world/custom pivot, texture locking and angle snap. Local axes follow the first selected brush's first face or point-entity orientation. Changing controls cancels pending transform/area interactions."
+        description = "Read or set the shared viewport transform tool: select/move/rotate/scale, world/local axes, selection/world/custom pivot, independent texture movement/rotation and scale-stretch locking, and angle snap. Local axes follow the first selected brush's first face or point-entity orientation. Changing controls cancels pending transform/area interactions."
     )]
     fn set_transform_tool(&self, Parameters(args): Parameters<TransformToolArgs>) -> ToolResult {
         run(|| {
@@ -4706,6 +4711,9 @@ impl EditorServer {
                 tool.pivot = Some(vec3(pivot));
             }
             tool.texture_lock = args.texture_lock.unwrap_or(tool.texture_lock);
+            if let Some(scale_lock) = args.texture_scale_lock {
+                tool.texture_scale_lock = Some(scale_lock);
+            }
             tool.angle_step = args.angle_step.unwrap_or(tool.angle_step);
             session.set_transform_tool(Actor::Agent, tool)?;
             Ok(transform_state(&session))

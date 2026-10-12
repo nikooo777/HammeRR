@@ -15,6 +15,7 @@ pub struct Transform {
     pub pivot: DVec3,
     pub basis: DMat3,
     pub texture_lock: bool,
+    pub texture_scale_lock: Option<bool>,
 }
 
 impl Default for Transform {
@@ -26,6 +27,7 @@ impl Default for Transform {
             pivot: DVec3::ZERO,
             basis: DMat3::IDENTITY,
             texture_lock: true,
+            texture_scale_lock: None,
         }
     }
 }
@@ -36,6 +38,9 @@ struct Mapping {
     rotation: DQuat,
     offset: DVec3,
     texture_lock: bool,
+    translation_texture_lock: bool,
+    texture_inverse_transpose: DMat3,
+    texture_offset: DVec3,
     translation_only: bool,
 }
 
@@ -91,12 +96,38 @@ impl Mapping {
         if !inverse_transpose.is_finite() || !offset.is_finite() {
             return Err(invalid("Transform is too large or too small"));
         }
+        let scale_lock = transform
+            .texture_scale_lock
+            .unwrap_or(transform.texture_lock);
+        let texture_linear = match (transform.texture_lock, scale_lock) {
+            (true, true) => linear,
+            (true, false) => rotation_matrix,
+            (false, true) if transform.scale != DVec3::ONE => {
+                transform.basis
+                    * DMat3::from_diagonal(transform.scale)
+                    * transform.basis.transpose()
+            }
+            (false, _) => DMat3::IDENTITY,
+        };
+        let texture_inverse_transpose = texture_linear.inverse().transpose();
+        let texture_offset = transform.pivot - texture_linear * transform.pivot
+            + if transform.texture_lock {
+                transform.translation
+            } else {
+                DVec3::ZERO
+            };
+        if !texture_inverse_transpose.is_finite() || !texture_offset.is_finite() {
+            return Err(invalid("Transform produces an invalid texture mapping"));
+        }
         Ok(Self {
             linear,
             inverse_transpose,
             rotation,
             offset,
-            texture_lock: transform.texture_lock,
+            texture_lock: transform.texture_lock || scale_lock,
+            translation_texture_lock: transform.texture_lock,
+            texture_inverse_transpose,
+            texture_offset,
             translation_only: angles == DVec3::ZERO && transform.scale == DVec3::ONE,
         })
     }
@@ -110,7 +141,10 @@ impl Mapping {
     }
 
     fn axis(&self, axis: &mut UvAxis) -> Result<(), EditError> {
-        let transformed = self.inverse_transpose * axis.axis;
+        if self.texture_inverse_transpose == DMat3::IDENTITY && self.texture_offset == DVec3::ZERO {
+            return Ok(());
+        }
+        let transformed = self.texture_inverse_transpose * axis.axis;
         let length = transformed.length();
         let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
         if !length.is_finite() || length <= 0.0 || !scale.is_finite() || !axis.offset.is_finite() {
@@ -118,7 +152,7 @@ impl Mapping {
         }
         axis.axis = transformed / length;
         axis.scale = scale / length;
-        axis.offset -= self.offset.dot(axis.axis) / axis.scale;
+        axis.offset -= self.texture_offset.dot(axis.axis) / axis.scale;
         if !axis.scale.is_finite() || axis.scale == 0.0 || !axis.offset.is_finite() {
             return Err(invalid("Transform produces an invalid texture projection"));
         }
@@ -193,7 +227,7 @@ impl Mapping {
 
     fn solid(&self, solid: &mut Solid) -> Result<(), EditError> {
         if self.translation_only {
-            crate::edit::translate_solid(solid, self.offset, self.texture_lock);
+            crate::edit::translate_solid(solid, self.offset, self.translation_texture_lock);
         }
         for side in &mut solid.sides {
             if side.plane.0.iter().any(|point| !point.is_finite())
@@ -205,7 +239,7 @@ impl Mapping {
                 return Err(invalid("Transform produces a nonfinite brush coordinate"));
             }
             if self.translation_only {
-                if self.texture_lock
+                if self.translation_texture_lock
                     && [&side.u_axis, &side.v_axis]
                         .iter()
                         .any(|axis| !axis.offset.is_finite())
@@ -390,6 +424,7 @@ mod tests {
                 pivot: DVec3::new(-19.0, 42.0, 5.0),
                 basis: DMat3::IDENTITY,
                 texture_lock: lock,
+                texture_scale_lock: None,
             };
             document
                 .edit("transform", |tx| transform(tx, &[id], spec))
@@ -418,6 +453,162 @@ mod tests {
                     .iter()
                     .all(|face| face.plane.distance_to(brush.center()) < 0.0)
             );
+        }
+    }
+
+    #[test]
+    fn independent_texture_modes_preserve_density_pivots_metadata_and_round_trip() {
+        for basis in [DMat3::IDENTITY, DMat3::from_rotation_z(0.37)] {
+            for movement in [false, true] {
+                for stretch in [false, true] {
+                    let mut document = Document::empty();
+                    let id = block(&mut document);
+                    let ObjectId::Solid(sid) = id else {
+                        unreachable!()
+                    };
+                    document
+                        .edit("authored projections", |tx| {
+                            for side in &mut tx.solid_mut(sid)?.sides {
+                                side.u_axis.axis *= 2.75;
+                                side.u_axis.offset = 17.123456789;
+                                side.v_axis.scale = -0.523456789;
+                                side.extra_properties.set("vendor", "preserve");
+                            }
+                            Ok(())
+                        })
+                        .unwrap();
+                    let before = document.vmf().clone();
+                    let spec = Transform {
+                        translation: DVec3::new(12.125, -24.25, 8.5),
+                        rotation: DVec3::new(30.0, -20.0, 65.0),
+                        scale: DVec3::new(2.0, 0.5, 1.25),
+                        pivot: DVec3::new(-19.125, 42.25, 5.5),
+                        basis,
+                        texture_lock: movement,
+                        texture_scale_lock: Some(stretch),
+                    };
+                    let local_rotation = DMat3::from_rotation_z(spec.rotation.z.to_radians())
+                        * DMat3::from_rotation_y(spec.rotation.y.to_radians())
+                        * DMat3::from_rotation_x(spec.rotation.x.to_radians());
+                    let rotation = basis * local_rotation * basis.transpose();
+                    let scaling = basis * DMat3::from_diagonal(spec.scale) * basis.transpose();
+                    let projection = if movement { rotation } else { DMat3::IDENTITY }
+                        * if stretch { scaling } else { DMat3::IDENTITY };
+                    let projection_translation = if movement {
+                        spec.translation
+                    } else {
+                        DVec3::ZERO
+                    };
+                    document
+                        .edit("independent modes", |tx| transform(tx, &[id], spec))
+                        .unwrap();
+                    let after = document.vmf().clone();
+                    for (old, new) in before.world.solids[0]
+                        .sides
+                        .iter()
+                        .zip(&after.world.solids[0].sides)
+                    {
+                        assert_eq!(old.extra_properties, new.extra_properties);
+                        assert_eq!(old.lightmap_scale, new.lightmap_scale);
+                        assert_eq!(old.id, new.id);
+                        for point in old.plane.0 {
+                            let moved = rotation * scaling * (point - spec.pivot)
+                                + spec.pivot
+                                + spec.translation;
+                            let sampled = projection.inverse()
+                                * (moved - spec.pivot - projection_translation)
+                                + spec.pivot;
+                            assert!(
+                                (texel_uv(new, moved) - texel_uv(old, sampled)).length() < 1e-8
+                            );
+                            if movement && stretch {
+                                assert!(
+                                    (texel_uv(new, moved) - texel_uv(old, point)).length() < 1e-8
+                                );
+                            }
+                        }
+                        if !movement && !stretch {
+                            assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+                        }
+                    }
+                    let reopened = Vmf::parse(&after.write(&WriteOptions::default())).unwrap();
+                    for (expected, saved) in after.world.solids[0]
+                        .sides
+                        .iter()
+                        .zip(&reopened.world.solids[0].sides)
+                    {
+                        assert_eq!(
+                            (expected.u_axis, expected.v_axis),
+                            (saved.u_axis, saved.v_axis)
+                        );
+                    }
+                    document.undo().unwrap();
+                    assert_eq!(document.vmf(), &before);
+                    document.redo().unwrap();
+                    assert_eq!(document.vmf(), &after);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scale_lock_is_independent_of_translation_and_omitted_mode_keeps_legacy_behavior() {
+        let mut baseline = Document::empty();
+        let id = block(&mut baseline);
+        for movement in [false, true] {
+            for stretch in [false, true] {
+                let mut document = baseline.clone();
+                let translation = DVec3::new(12.125, 24.25, 36.5);
+                let spec = Transform {
+                    translation,
+                    texture_lock: movement,
+                    texture_scale_lock: Some(stretch),
+                    ..Default::default()
+                };
+                document
+                    .edit("translate", |tx| transform(tx, &[id], spec))
+                    .unwrap();
+                for (old, new) in solid(&baseline, id)
+                    .sides
+                    .iter()
+                    .zip(&solid(&document, id).sides)
+                {
+                    if movement {
+                        assert!(
+                            (texel_uv(old, old.plane.0[0]) - texel_uv(new, new.plane.0[0]))
+                                .length()
+                                < 1e-10
+                        );
+                    } else {
+                        assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+                    }
+                }
+            }
+            let spec = Transform {
+                translation: DVec3::new(12.125, 24.25, 36.5),
+                rotation: DVec3::new(13.0, 27.0, 39.0),
+                scale: DVec3::new(2.0, 0.5, 1.25),
+                texture_lock: movement,
+                ..Default::default()
+            };
+            let mut legacy = baseline.clone();
+            legacy
+                .edit("legacy", |tx| transform(tx, &[id], spec))
+                .unwrap();
+            let mut explicit = baseline.clone();
+            explicit
+                .edit("explicit", |tx| {
+                    transform(
+                        tx,
+                        &[id],
+                        Transform {
+                            texture_scale_lock: Some(movement),
+                            ..spec
+                        },
+                    )
+                })
+                .unwrap();
+            assert_eq!(legacy.vmf(), explicit.vmf());
         }
     }
 
@@ -669,6 +860,56 @@ mod tests {
         assert_eq!(new_disp.triangle_tags, old_disp.triangle_tags);
         assert_eq!(new_disp.allowed_verts, old_disp.allowed_verts);
         assert_eq!(new_disp.extra, old_disp.extra);
+        let source = {
+            let mut vmf = document.vmf().clone();
+            vmf.world.solids[0] = before.clone();
+            vmf
+        };
+        for movement in [false, true] {
+            for stretch in [false, true] {
+                let mut candidate = Document::try_new(source.clone()).unwrap();
+                candidate
+                    .edit("terrain texture policy", |tx| {
+                        transform(
+                            tx,
+                            &[id],
+                            Transform {
+                                texture_lock: movement,
+                                texture_scale_lock: Some(stretch),
+                                ..spec
+                            },
+                        )
+                    })
+                    .unwrap();
+                let changed = solid(&candidate, id);
+                assert_eq!(changed.sides[0].displacement, after.sides[0].displacement);
+                assert_eq!(
+                    changed
+                        .sides
+                        .iter()
+                        .map(|side| side.plane)
+                        .collect::<Vec<_>>(),
+                    after
+                        .sides
+                        .iter()
+                        .map(|side| side.plane)
+                        .collect::<Vec<_>>()
+                );
+                let vmf = Vmf::parse(&candidate.vmf().write(&WriteOptions::default())).unwrap();
+                let saved = vmf.world.solids[0].sides[0].displacement.as_ref().unwrap();
+                assert_eq!(saved.extra_properties.get("custom"), Some("kept"));
+                assert_eq!(saved.allowed_verts, new_disp.allowed_verts);
+                let geometry = BrushGeometry::from_solid(&vmf.world.solids[0]).unwrap();
+                let face = geometry.faces.iter().find(|face| face.side == 0).unwrap();
+                let mesh = DisplacementMesh::build(face, saved).unwrap();
+                assert!(
+                    mesh.positions
+                        .iter()
+                        .zip(&new_mesh.positions)
+                        .all(|(saved, expected)| saved.abs_diff_eq(*expected, 1e-8))
+                );
+            }
+        }
     }
 
     #[test]

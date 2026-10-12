@@ -276,7 +276,23 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
     }
     app.set_transform_space_index(i32::from(tool.local));
     app.set_rotation_step(tool.angle_step.to_string().into());
-    app.set_transform_texture_lock(tool.texture_lock);
+    let (texture_lock, texture_scale_lock) = session.transform_preview().map_or(
+        (
+            tool.texture_lock,
+            tool.texture_scale_lock.unwrap_or(tool.texture_lock),
+        ),
+        |preview| {
+            (
+                preview.transform.texture_lock,
+                preview
+                    .transform
+                    .texture_scale_lock
+                    .unwrap_or(preview.transform.texture_lock),
+            )
+        },
+    );
+    app.set_transform_texture_lock(texture_lock);
+    app.set_transform_texture_scale_lock(texture_scale_lock);
     app.set_transform_pivot_mode(match tool.pivot {
         None => 0,
         Some(pivot) if pivot == DVec3::ZERO => 1,
@@ -299,6 +315,30 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
         SelectMode::Remove => 2,
         SelectMode::Toggle => 3,
     });
+    if let Some(preview) = session.transform_preview() {
+        let spec = preview.transform;
+        let translation = spec.basis.transpose() * spec.translation;
+        app.set_transform_preview_values(
+            Rc::new(VecModel::from(
+                [translation, spec.rotation, spec.scale]
+                    .iter()
+                    .flat_map(|value| {
+                        value
+                            .to_array()
+                            .map(|value| SharedString::from(value.to_string()))
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+            .into(),
+        );
+        app.set_transform_space_index(i32::from(
+            !spec.basis.abs_diff_eq(glam::DMat3::IDENTITY, 1e-8),
+        ));
+        app.set_transform_pivot_mode(2);
+        app.set_pivot_x(spec.pivot.x.to_string().into());
+        app.set_pivot_y(spec.pivot.y.to_string().into());
+        app.set_pivot_z(spec.pivot.z.to_string().into());
+    }
     app.set_has_transform_preview(session.transform_preview().is_some());
     app.set_has_area_preview(session.area_preview().is_some());
     let summary = if let Some(drag) = session.component_drag() {
@@ -393,6 +433,7 @@ fn transform_tool_from_controls(app: &AppWindow) -> Result<TransformTool, String
         local: app.get_transform_space_index() == 1,
         pivot,
         texture_lock: app.get_transform_texture_lock(),
+        texture_scale_lock: Some(app.get_transform_texture_scale_lock()),
         angle_step: app
             .get_rotation_step()
             .parse()
@@ -893,6 +934,7 @@ fn apply_selection_transform(app: &AppWindow, session: &mut Session) -> Result<(
     ])?;
     let mut transform = edit::Transform {
         texture_lock: app.get_transform_texture_lock(),
+        texture_scale_lock: Some(app.get_transform_texture_scale_lock()),
         ..edit::Transform::default()
     };
     match app.get_transform_mode() {
@@ -7803,6 +7845,82 @@ mod tests {
 
     use slint::Model;
     use source_formats::vmf::Entity;
+
+    #[test]
+    fn independent_texture_controls_share_numeric_and_agent_preview_modes() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let app = AppWindow::new().unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let id = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let before = state.document().vmf().clone();
+        app.set_has_selection(true);
+        app.set_can_apply_material(true);
+        app.set_show_transform(true);
+        app.set_transform_mode(2);
+        app.set_transform_x("2".into());
+        app.set_transform_y("1".into());
+        app.set_transform_z("1".into());
+        app.set_transform_texture_lock(true);
+        app.set_transform_texture_scale_lock(false);
+        let tool = transform_tool_from_controls(&app).unwrap();
+        assert!(tool.texture_lock);
+        assert_eq!(tool.texture_scale_lock, Some(false));
+        state.set_transform_tool(Actor::User, tool).unwrap();
+        apply_selection_transform(&app, &mut state).unwrap();
+        let ObjectId::Solid(solid) = id else {
+            unreachable!()
+        };
+        for (old, new) in before.world.solids[0]
+            .sides
+            .iter()
+            .zip(&state.document().solid(solid).unwrap().sides)
+        {
+            assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+        }
+        state.undo(Actor::User).unwrap();
+        assert_eq!(state.document().vmf(), &before);
+        state
+            .preview_transform(
+                Actor::Agent,
+                &[id],
+                edit::Transform {
+                    scale: DVec3::new(2.0, 1.0, 1.0),
+                    texture_lock: false,
+                    texture_scale_lock: Some(true),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        refresh_interaction(&app, &state);
+        assert!(!app.get_transform_texture_lock());
+        assert!(app.get_transform_texture_scale_lock());
+        app.show().unwrap();
+        save_ui_snapshot(app.window(), "independent-texture-scale-lock");
+        assert_eq!(app.get_transform_x(), "2");
+        assert_eq!(app.get_transform_y(), "1");
+        assert_eq!(app.get_transform_z(), "1");
+        for label in ["Follow move and rotation", "Stretch textures when scaling"] {
+            assert_dialog_button_visible(&app, label);
+        }
+        state.cancel_transform_preview();
+        assert_eq!(state.document().vmf(), &before);
+    }
 
     #[test]
     fn transform_controls_apply_usable_defaults_and_shared_selection_operations() {

@@ -41,6 +41,7 @@ pub struct TransformTool {
     pub local: bool,
     pub pivot: Option<DVec3>,
     pub texture_lock: bool,
+    pub texture_scale_lock: Option<bool>,
     pub angle_step: f64,
 }
 
@@ -51,6 +52,7 @@ impl Default for TransformTool {
             local: false,
             pivot: None,
             texture_lock: true,
+            texture_scale_lock: None,
             angle_step: 15.0,
         }
     }
@@ -540,6 +542,7 @@ impl Session {
             pivot: drag.pivot,
             basis: drag.basis,
             texture_lock: self.transform_tool.texture_lock,
+            texture_scale_lock: self.transform_tool.texture_scale_lock,
             ..Transform::default()
         };
         match drag.mode {
@@ -758,6 +761,67 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn scale_handles_share_independent_texture_policy_cancel_and_actor_history() {
+        for actor in [Actor::User, Actor::Agent] {
+            for stretch in [false, true] {
+                let (mut session, id) = fixture();
+                let before = session.document.vmf().clone();
+                session
+                    .set_transform_tool(
+                        actor,
+                        TransformTool {
+                            mode: Some(Mode::Scale),
+                            texture_lock: false,
+                            texture_scale_lock: Some(stretch),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                session.begin_transform_drag(Handle::X, None).unwrap();
+                let spec = session
+                    .update_transform_drag(None, Some(DVec2::new(2.0, 0.0)))
+                    .unwrap();
+                assert!(!spec.texture_lock);
+                assert_eq!(spec.texture_scale_lock, Some(stretch));
+                assert_eq!(session.document.vmf(), &before);
+                let draft = session.render_document().vmf().clone();
+                session.cancel_transform_preview();
+                assert_eq!(session.render_document().vmf(), &before);
+                session.begin_transform_drag(Handle::X, None).unwrap();
+                session
+                    .update_transform_drag(None, Some(DVec2::new(2.0, 0.0)))
+                    .unwrap();
+                session.commit_transform_preview(actor).unwrap();
+                assert_eq!(session.document.vmf(), &draft);
+                let ObjectId::Solid(solid) = id else {
+                    unreachable!()
+                };
+                let old = before
+                    .world
+                    .solids
+                    .iter()
+                    .find(|brush| brush.id == solid)
+                    .unwrap();
+                let new = session.document.solid(solid).unwrap();
+                for (old, new) in old.sides.iter().zip(&new.sides) {
+                    if stretch {
+                        assert!(
+                            (map_core::texel_uv(old, old.plane.0[0])
+                                - map_core::texel_uv(new, new.plane.0[0]))
+                            .length()
+                                < 1e-8
+                        );
+                    } else {
+                        assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+                    }
+                }
+                session.undo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &before);
+            }
+        }
     }
 
     #[test]

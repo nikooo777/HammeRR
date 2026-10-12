@@ -25,14 +25,16 @@ pub use crease::{
 mod partition;
 pub(crate) use partition::checked_partition;
 pub use partition::{
-    Partition, PartitionCut, PartitionLoop, PartitionVertex, VertexSource, partition_pairs,
-    plan_partitions, plan_partitions_at, polygon_partition_pairs,
+    MAX_PARTITION_LOOP_VERTICES, MAX_PARTITION_VERTICES, Partition, PartitionCut, PartitionLoop,
+    PartitionVertex, VertexSource, partition_pairs, plan_partitions, plan_partitions_at,
+    polygon_partition_pairs,
 };
 mod extrusion;
 pub use extrusion::{
     ExtrusionFace, ExtrusionPiece, ExtrusionPlan, ExtrusionSpec, ExtrusionSurface,
-    MAX_EXTRUSION_PIECES, extrude_partitions, extrude_partitions_with_materials,
-    plan_partition_extrusion, plan_partition_extrusion_with_materials,
+    MAX_EXTRUSION_PIECES, MAX_EXTRUSION_PLANES, MAX_EXTRUSION_SOURCE_VERTICES, extrude_partitions,
+    extrude_partitions_with_materials, plan_partition_extrusion,
+    plan_partition_extrusion_with_materials,
 };
 mod partition_materials;
 pub use partition_materials::{PartitionMaterial, crease_partitions_with_materials};

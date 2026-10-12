@@ -111,7 +111,7 @@ impl Topology {
     }
 
     pub fn partition_pairs(&self, side: u32) -> Result<Vec<CreasePair>, EditError> {
-        Ok(boundary_pair_choices(&self.quad_boundary_edges(side)?))
+        self.polygon_partition_pairs(side)
     }
 
     pub fn polygon_partition_pairs(&self, side: u32) -> Result<Vec<CreasePair>, EditError> {
@@ -186,7 +186,7 @@ pub(super) fn crease_partition_roofs(
         .any(|part| part.loops.iter().any(|piece| piece.vertices.len() != 4))
     {
         return Err(invalid(
-            "Shared ridges require two quad roof pieces; extrude adjacent cuts",
+            "Shared ridges require two quad roof pieces; keep or extrude these cuts",
         ));
     }
     let requests = partitions

@@ -138,7 +138,12 @@ fn crease_inputs(
         session.component_crease_choices()?
     };
     if choices.len() != session.component_selection().len() {
-        return Err("Select one face with four corners per brush".into());
+        return Err(if window.get_operation() == 6 {
+            "Select one face with 3–8 corners per brush"
+        } else {
+            "Select one face with four corners per brush"
+        }
+        .into());
     }
     choices
         .iter()
@@ -200,6 +205,15 @@ fn refresh_crease_choices(
     let rows = choices
         .iter()
         .map(|(component, pairs)| {
+            let shape = map_core::subobject::solid(session.document(), component.solid)
+                .and_then(|(_, source)| map_core::subobject::topology(source))
+                .ok();
+            let quad = shape.as_ref().is_some_and(|shape| {
+                shape
+                    .faces
+                    .iter()
+                    .any(|face| face.side == component.sides[0] && face.vertices.len() == 4)
+            });
             let key = key(component);
             let mut choice = previous
                 .iter()
@@ -243,25 +257,22 @@ fn refresh_crease_choices(
                         .iter()
                         .enumerate()
                         .map(|(index, pair)| {
-                            if index < 2 {
+                            if quad && index < 2 {
                                 ridge_direction(pair).into()
-                            } else {
-                                let (_, source) =
-                                    map_core::subobject::solid(session.document(), component.solid)
-                                        .unwrap();
-                                let shape = map_core::subobject::topology(source).unwrap();
-                                let corner = shape
-                                    .vertices
-                                    .iter()
-                                    .find(|vertex| {
-                                        vertex.sides.contains(&component.sides[0])
-                                            && pair
-                                                .edges
-                                                .iter()
-                                                .all(|edge| vertex.sides.contains(edge))
-                                    })
-                                    .unwrap();
+                            } else if let Some(corner) = shape.as_ref().and_then(|shape| {
+                                shape.vertices.iter().find(|vertex| {
+                                    vertex.sides.contains(&component.sides[0])
+                                        && pair.edges.iter().all(|edge| vertex.sides.contains(edge))
+                                })
+                            }) {
                                 format!("Trim corner at {}", position(corner.position)).into()
+                            } else {
+                                format!(
+                                    "Cut from {} to {}",
+                                    position(pair.midpoints[0]),
+                                    position(pair.midpoints[1])
+                                )
+                                .into()
                             }
                         })
                         .collect::<Vec<slint::SharedString>>(),
@@ -670,6 +681,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         rows.clear();
         for partition in partitions {
             let solid = partition["solid"].as_u64().unwrap();
+            let source_corners = partition["source_corner_count"].as_u64().unwrap();
             for vertex in partition["vertices"].as_array().unwrap() {
                 let id = vertex["id"].as_u64().unwrap();
                 let values = &vertex["preview_position"];
@@ -688,7 +700,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                         } else {
                             "point"
                         },
-                        id - 3
+                        id - source_corners + 1
                     )
                 };
                 rows.push(ComponentRow {
@@ -902,6 +914,8 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         let rise = preview["partition"]["rise"].as_f64().unwrap();
         if rise==0.0 && !window.get_cut_is_midpoint() {
             format!("{} adjusted flat pieces staged. The source face is unchanged.\nKeep, extrude highlighted pieces, or Cancel.",count*2).into()
+        } else if rise == 0.0 && preview["partition"]["ridge_supported"] != true {
+            format!("{} flat pieces staged. The source face is unchanged.\nKeep, extrude highlighted pieces, or Cancel.",count*2).into()
         } else if rise == 0.0 {
             format!("{} flat pieces staged. The source face is unchanged.\nKeep the pieces for later, raise their shared ridge, or Cancel.",count*2).into()
         } else {

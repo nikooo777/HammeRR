@@ -258,7 +258,7 @@ export component ComponentsWindow inherits Window {
                     }
                     if root.operation == 6: VerticalLayout {
                         spacing: 10px;
-                        Text { text: "Divide a quad face into two pieces. Keep them, raise a ridge, or extrude highlighted pieces."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Divide a convex face with 3–8 corners into two pieces. Keep them, raise a ridge, or extrude highlighted pieces."; wrap: word-wrap; color: #aeb9c8; }
                         if !root.has-partition-preview || root.partition-mode == 0: ListView {
                             preferred-height: 90px;
                             for row in root.crease-rows: VerticalLayout {

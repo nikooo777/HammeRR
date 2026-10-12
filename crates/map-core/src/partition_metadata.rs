@@ -17,6 +17,9 @@ const MATERIAL_KIND: &str = "opposing_midpoints_materials";
 const EDGE_MATERIAL_KIND: &str = "opposing_edges_materials";
 const BOUNDARY_KIND: &str = "boundary_edges";
 const BOUNDARY_MATERIAL_KIND: &str = "boundary_edges_materials";
+const POLYGON_KIND: &str = "polygon_boundary_edges";
+const POLYGON_MATERIAL_KIND: &str = "polygon_boundary_edges_materials";
+const MEMBERSHIP_FIELDS: [&str; 2] = ["piece_0_corner", "piece_1_corner"];
 const MATERIAL_FIELDS: [&str; 2] = ["top_material_0", "top_material_1"];
 const PARAMETERS_FIELD: &str = "edge_parameters";
 const VERSION: &str = "1";
@@ -28,7 +31,8 @@ pub struct Intent {
     pub adjacent: bool,
     pub edge_parameters: [f64; 2],
     pub top_materials: [Option<String>; 2],
-    pub corners: [Vec<u32>; 4],
+    pub corners: Vec<Vec<u32>>,
+    pub piece_membership: Option<[Vec<Vec<u32>>; 2]>,
     pub extra: Vec<Node>,
 }
 
@@ -140,15 +144,25 @@ impl Intent {
     fn from_partition(partition: &Partition) -> Self {
         Self {
             source: partition.source.clone(),
-            adjacent: partition
-                .loops
-                .iter()
-                .any(|piece| piece.vertices.len() != 4),
+            adjacent: partition.source_corner_count() == 4
+                && partition
+                    .loops
+                    .iter()
+                    .any(|piece| piece.vertices.len() != 4),
             edge_parameters: partition.cut().unwrap().edge_parameters,
             top_materials: [None, None],
-            corners: std::array::from_fn(|index| match &partition.vertices[index].source {
-                VertexSource::Corner(sides) => sides.clone(),
-                _ => unreachable!(),
+            corners: partition.vertices[..partition.source_corner_count()]
+                .iter()
+                .map(|vertex| match &vertex.source {
+                    VertexSource::Corner(sides) => sides.clone(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            piece_membership: (partition.source_corner_count() != 4).then(|| {
+                partition
+                    .loops
+                    .each_ref()
+                    .map(|piece| piece_corners(partition, piece).into_iter().collect())
             }),
             extra: Vec::new(),
         }
@@ -175,7 +189,31 @@ impl Intent {
         {
             return Err("Partition source IDs must be distinct, positive and canonical".into());
         }
-        let second = if self.adjacent {
+        let count = self.corners.len();
+        let polygon = self.piece_membership.is_some();
+        if (polygon
+            && (!(3..=subobject::MAX_BOUNDARY_SOURCE_CORNERS).contains(&count)
+                || count == 4
+                || self.adjacent))
+            || (!polygon && count != 4)
+        {
+            return Err("Partition kind disagrees with its bounded source corner count".into());
+        }
+        if self
+            .corners
+            .iter()
+            .any(|corner| !(3..=subobject::MAX_SIDES).contains(&corner.len()))
+        {
+            return Err("Partition corner incidence exceeds its bounded source".into());
+        }
+        let second = if polygon {
+            (1..count)
+                .find(|index| {
+                    self.corners[*index].contains(&self.source.edges[1])
+                        && self.corners[(*index + 1) % count].contains(&self.source.edges[1])
+                })
+                .ok_or("Polygon partition second edge incidence is invalid")?
+        } else if self.adjacent {
             if self.corners[0].contains(&self.source.edges[1]) {
                 3
             } else {
@@ -191,20 +229,55 @@ impl Intent {
                 || !corner.contains(&self.source.side)
                 || corner.contains(&self.source.edges[0]) != (index < 2)
                 || corner.contains(&self.source.edges[1])
-                    != (index == second || index == (second + 1) % 4)
+                    != (index == second || index == (second + 1) % count)
             {
                 return Err("Partition corner incidence is invalid".into());
             }
         }
-        if self.corners.iter().collect::<BTreeSet<_>>().len() != 4 {
-            return Err("Partition needs four distinct source corners".into());
+        if self.corners.iter().collect::<BTreeSet<_>>().len() != count {
+            return Err("Partition needs distinct source corners".into());
+        }
+        if let Some(membership) = &self.piece_membership {
+            if membership.iter().any(|piece| {
+                piece.is_empty()
+                    || piece.len() >= count
+                    || piece
+                        .iter()
+                        .any(|corner| !(3..=subobject::MAX_SIDES).contains(&corner.len()))
+            }) || membership.iter().map(Vec::len).sum::<usize>() != count
+            {
+                return Err("Polygon piece corner membership exceeds its bounded source".into());
+            }
+            let actual = membership
+                .each_ref()
+                .map(|piece| piece.iter().collect::<BTreeSet<_>>());
+            if membership
+                .iter()
+                .zip(&actual)
+                .any(|(piece, unique)| piece.len() != unique.len())
+            {
+                return Err("Polygon piece corner membership repeats a source corner".into());
+            }
+            let first = self.corners[1..=second].iter().collect::<BTreeSet<_>>();
+            let remaining = self
+                .corners
+                .iter()
+                .filter(|corner| !first.contains(corner))
+                .collect::<BTreeSet<_>>();
+            let expected = [first, remaining];
+            if actual != expected && actual != [expected[1].clone(), expected[0].clone()] {
+                return Err(
+                    "Polygon piece corner membership does not cover the boundary cut".into(),
+                );
+            }
         }
         if self.extra.iter().any(|node| {
             RECORD_FIELDS.contains(&node.key.as_str())
-                || ((self.adjacent || self.edge_parameters != [0.5; 2])
+                || ((polygon || self.adjacent || self.edge_parameters != [0.5; 2])
                     && node.key == PARAMETERS_FIELD)
                 || (self.top_materials.iter().any(Option::is_some)
                     && MATERIAL_FIELDS.contains(&node.key.as_str()))
+                || (polygon && MEMBERSHIP_FIELDS.contains(&node.key.as_str()))
         }) {
             return Err("Partition extra metadata repeats a reserved field".into());
         }
@@ -215,24 +288,32 @@ impl Intent {
         let mut fields = vec![
             Node::string(
                 "kind",
-                match (
-                    self.adjacent,
-                    self.edge_parameters == [0.5; 2],
-                    self.top_materials.iter().any(Option::is_some),
-                ) {
-                    (true, _, false) => BOUNDARY_KIND,
-                    (true, _, true) => BOUNDARY_MATERIAL_KIND,
-                    (false, true, false) => KIND,
-                    (false, false, false) => EDGE_KIND,
-                    (false, true, true) => MATERIAL_KIND,
-                    (false, false, true) => EDGE_MATERIAL_KIND,
+                if self.piece_membership.is_some() {
+                    if self.top_materials.iter().any(Option::is_some) {
+                        POLYGON_MATERIAL_KIND
+                    } else {
+                        POLYGON_KIND
+                    }
+                } else {
+                    match (
+                        self.adjacent,
+                        self.edge_parameters == [0.5; 2],
+                        self.top_materials.iter().any(Option::is_some),
+                    ) {
+                        (true, _, false) => BOUNDARY_KIND,
+                        (true, _, true) => BOUNDARY_MATERIAL_KIND,
+                        (false, true, false) => KIND,
+                        (false, false, false) => EDGE_KIND,
+                        (false, true, true) => MATERIAL_KIND,
+                        (false, false, true) => EDGE_MATERIAL_KIND,
+                    }
                 },
             ),
             Node::string("solid", self.source.solid.to_string()),
             Node::string("side", self.source.side.to_string()),
             Node::string("edges", encoded(&self.source.edges)),
         ];
-        if self.adjacent || self.edge_parameters != [0.5; 2] {
+        if self.piece_membership.is_some() || self.adjacent || self.edge_parameters != [0.5; 2] {
             fields.push(Node::string(
                 PARAMETERS_FIELD,
                 format!("{} {}", self.edge_parameters[0], self.edge_parameters[1]),
@@ -248,6 +329,15 @@ impl Intent {
                 .iter()
                 .map(|corner| Node::string("corner", encoded(corner))),
         );
+        if let Some(membership) = &self.piece_membership {
+            for (key, piece) in MEMBERSHIP_FIELDS.iter().zip(membership) {
+                fields.extend(
+                    piece
+                        .iter()
+                        .map(|corner| Node::string(*key, encoded(corner))),
+                );
+            }
+        }
         if include_extra {
             fields.extend(self.extra.clone());
         }
@@ -255,6 +345,7 @@ impl Intent {
     }
 
     fn resolve(&self, document: &Document) -> Result<Partition, String> {
+        self.validate()?;
         let mut partition = subobject::plan_partitions_at(
             document,
             &[subobject::PartitionCut {
@@ -266,6 +357,7 @@ impl Intent {
         .remove(0);
         let current = Self::from_partition(&partition);
         if current.adjacent != self.adjacent
+            || current.piece_membership.is_some() != self.piece_membership.is_some()
             || current.corners.iter().collect::<BTreeSet<_>>()
                 != self.corners.iter().collect::<BTreeSet<_>>()
         {
@@ -274,24 +366,30 @@ impl Intent {
                 self.source.solid, self.source.side
             ));
         }
-        let first = if self.adjacent {
-            self.corners
-                .iter()
-                .filter(|corner| self.source.edges.iter().all(|edge| corner.contains(edge)))
-                .cloned()
-                .collect::<BTreeSet<_>>()
+        let expected = if let Some(membership) = &self.piece_membership {
+            membership
+                .each_ref()
+                .map(|piece| piece.iter().cloned().collect::<BTreeSet<_>>())
         } else {
-            [self.corners[0].clone(), self.corners[3].clone()]
-                .into_iter()
-                .collect()
+            let first = if self.adjacent {
+                self.corners
+                    .iter()
+                    .filter(|corner| self.source.edges.iter().all(|edge| corner.contains(edge)))
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+            } else {
+                [self.corners[0].clone(), self.corners[3].clone()]
+                    .into_iter()
+                    .collect()
+            };
+            let second = self
+                .corners
+                .iter()
+                .filter(|corner| !first.contains(*corner))
+                .cloned()
+                .collect();
+            [first, second]
         };
-        let second = self
-            .corners
-            .iter()
-            .filter(|corner| !first.contains(*corner))
-            .cloned()
-            .collect();
-        let expected = [first, second];
         let actual = partition
             .loops
             .each_ref()
@@ -349,6 +447,8 @@ impl Metadata {
                 EDGE_MATERIAL_KIND,
                 BOUNDARY_KIND,
                 BOUNDARY_MATERIAL_KIND,
+                POLYGON_KIND,
+                POLYGON_MATERIAL_KIND,
             ]
             .contains(&kind)
             {
@@ -357,10 +457,12 @@ impl Metadata {
                 );
             }
             let adjacent = kind == BOUNDARY_KIND || kind == BOUNDARY_MATERIAL_KIND;
-            let adjusted = adjacent || kind == EDGE_KIND || kind == EDGE_MATERIAL_KIND;
+            let polygon = kind == POLYGON_KIND || kind == POLYGON_MATERIAL_KIND;
+            let adjusted = polygon || adjacent || kind == EDGE_KIND || kind == EDGE_MATERIAL_KIND;
             let styled = kind == MATERIAL_KIND
                 || kind == EDGE_MATERIAL_KIND
-                || kind == BOUNDARY_MATERIAL_KIND;
+                || kind == BOUNDARY_MATERIAL_KIND
+                || kind == POLYGON_MATERIAL_KIND;
             let edge_parameters = if adjusted {
                 let values = field(fields, PARAMETERS_FIELD)?
                     .split_whitespace()
@@ -390,8 +492,14 @@ impl Metadata {
             let edges = ids(field(fields, "edges")?, 2, 2)?.try_into().unwrap();
             let mut corners = Vec::new();
             for corner in fields.iter().filter(|field| field.key == "corner") {
-                if corners.len() == 4 {
-                    return Err("Partition needs exactly four corner incidences".into());
+                if corners.len()
+                    == if polygon {
+                        subobject::MAX_BOUNDARY_SOURCE_CORNERS
+                    } else {
+                        4
+                    }
+                {
+                    return Err("Partition source corner incidence exceeds its kind's limit".into());
                 }
                 corners.push(ids(
                     corner
@@ -401,9 +509,32 @@ impl Metadata {
                     subobject::MAX_SIDES,
                 )?);
             }
-            let corners = corners
-                .try_into()
-                .map_err(|_| "Partition needs exactly four corner incidences")?;
+            let piece_membership = if polygon {
+                let mut membership = [Vec::new(), Vec::new()];
+                let mut total = 0;
+                for (key, piece) in MEMBERSHIP_FIELDS.iter().zip(&mut membership) {
+                    for corner in fields.iter().filter(|field| field.key == *key) {
+                        if piece.len() == subobject::MAX_BOUNDARY_SOURCE_CORNERS - 1
+                            || total == subobject::MAX_BOUNDARY_SOURCE_CORNERS
+                        {
+                            return Err(
+                                "Polygon piece corner membership exceeds its bounded source".into(),
+                            );
+                        }
+                        piece.push(ids(
+                            corner
+                                .as_str()
+                                .ok_or("Polygon piece corner must be a side-ID list")?,
+                            3,
+                            subobject::MAX_SIDES,
+                        )?);
+                        total += 1;
+                    }
+                }
+                Some(membership)
+            } else {
+                None
+            };
             let source = Crease {
                 solid: id(field(fields, "solid")?)?,
                 side: id(field(fields, "side")?)?,
@@ -415,12 +546,14 @@ impl Metadata {
                 edge_parameters,
                 top_materials,
                 corners,
+                piece_membership,
                 extra: fields
                     .iter()
                     .filter(|field| {
                         !RECORD_FIELDS.contains(&field.key.as_str())
                             && !(adjusted && field.key == PARAMETERS_FIELD)
                             && !(styled && MATERIAL_FIELDS.contains(&field.key.as_str()))
+                            && !(polygon && MEMBERSHIP_FIELDS.contains(&field.key.as_str()))
                     })
                     .cloned()
                     .collect(),
@@ -547,6 +680,7 @@ fn store_partition_plan(
         intent.extra = previous.extra.clone();
         if previous.source == intent.source && previous.resolve(tx.document()).is_ok() {
             intent.corners = previous.corners.clone();
+            intent.piece_membership = previous.piece_membership.clone();
             intent.top_materials = previous.top_materials.clone();
         } else if previous.top_materials.iter().any(Option::is_some) {
             return Err(EditError::Invalid(
@@ -1508,3 +1642,6 @@ mod tests {
 
 #[cfg(test)]
 mod boundary_tests;
+
+#[cfg(test)]
+mod polygon_tests;

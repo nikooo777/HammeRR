@@ -113,8 +113,8 @@ fn bounded_polygon_choices_capture_every_distinct_boundary_pair() {
                     assert_eq!(choices, partition_pairs(source, side).unwrap());
                     assert_eq!(choices[..2], crease_pairs(source, side).unwrap());
                 } else {
-                    assert!(partition_pairs(source, side).is_err());
-                    assert!(
+                    assert_eq!(choices, partition_pairs(source, side).unwrap());
+                    assert_eq!(
                         plan_partitions(
                             &document,
                             &[Crease {
@@ -123,7 +123,9 @@ fn bounded_polygon_choices_capture_every_distinct_boundary_pair() {
                                 edges: choices[0].edges
                             }]
                         )
-                        .is_err()
+                        .unwrap()[0]
+                            .source_corner_count(),
+                        corners as usize
                     );
                     assert!(
                         choices

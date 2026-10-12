@@ -6046,6 +6046,198 @@ mod tests {
     }
 
     #[test]
+    fn polygon_partition_controls_offer_complete_choices_keep_resume_and_cancel_extrusion() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        for corners in [3, 5, 6, 8] {
+            let mut state = Session::new(Err("no assets needed".into()));
+            let ids = state
+                .create_primitive(
+                    Actor::Agent,
+                    map_core::primitive::Spec {
+                        shape: map_core::primitive::Shape::Cylinder,
+                        segments: corners,
+                        mins: DVec3::ZERO,
+                        maxs: DVec3::splat(64.0),
+                        material: "brick/test".into(),
+                        ..Default::default()
+                    },
+                    false,
+                )
+                .unwrap();
+            let ObjectId::Solid(id) = ids[0] else {
+                unreachable!()
+            };
+            let side = state
+                .document()
+                .solid(id)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            state
+                .set_component_picking(
+                    Some(session::component_picking::Kind::Face),
+                    &[id],
+                    &state.component_stamp(),
+                )
+                .unwrap();
+            state
+                .select_components(
+                    &[map_core::subobject::Component {
+                        solid: id,
+                        sides: vec![side],
+                    }],
+                    SelectMode::Replace,
+                    &state.component_stamp(),
+                )
+                .unwrap();
+            let source = state.document().vmf().clone();
+            let shared = Arc::new(Mutex::new(state));
+            let window = ComponentsWindow::new().unwrap();
+            components_ui::bind(&window, &shared);
+            window.set_kind(2);
+            window.set_operation(6);
+            components_ui::refresh(&window, &lock(&shared));
+            window.show().unwrap();
+            window
+                .window()
+                .set_size(slint::PhysicalSize::new(1100, 900));
+            let row = window.get_crease_rows().row_data(0).unwrap();
+            assert_eq!(
+                row.choices.row_count(),
+                (corners * (corners - 1) / 2) as usize
+            );
+            assert!(
+                row.choices
+                    .iter()
+                    .any(|label| label.starts_with("Trim corner"))
+            );
+            let choice = if corners == 3 {
+                0
+            } else {
+                row.choices
+                    .iter()
+                    .position(|label| label.starts_with("Cut from"))
+                    .unwrap() as i32
+            };
+            window.set_operation(5);
+            window.invoke_refresh();
+            assert_eq!(window.get_crease_rows().row_count(), 0);
+            let agent_token = {
+                let mut state = lock(&shared);
+                let pair = state.component_partition_choices().unwrap()[0].1[choice as usize].edges;
+                let stamp = state.component_stamp();
+                state
+                    .preview_component_partition(
+                        &[session::components::CreaseEdges {
+                            solid: id,
+                            edges: pair,
+                        }],
+                        &stamp,
+                    )
+                    .unwrap()
+            };
+            window.invoke_refresh();
+            assert_eq!(window.get_operation(), 6);
+            assert_eq!(
+                window
+                    .get_crease_rows()
+                    .row_data(0)
+                    .unwrap()
+                    .choices
+                    .row_count(),
+                (corners * (corners - 1) / 2) as usize
+            );
+            assert_eq!(window.get_crease_rows().row_data(0).unwrap().choice, choice);
+            lock(&shared).cancel_component_move(agent_token).unwrap();
+            window.invoke_refresh();
+            window.invoke_choose_crease_pair(row.key, choice);
+            window.invoke_preview_edit();
+            assert!(window.get_ready() && window.get_partition_flat());
+            assert!(!window.get_can_raise_partition());
+            assert_eq!(window.get_partition_rows().row_count(), 2);
+            assert!(
+                window
+                    .get_preview_summary()
+                    .contains("extrude highlighted pieces")
+            );
+            assert!(!window.get_preview_summary().contains("shared ridge"));
+            let edge_labels: Vec<_> = window
+                .get_rows()
+                .iter()
+                .filter(|row| row.label.contains("Edge midpoint"))
+                .map(|row| row.label.to_string())
+                .collect();
+            assert_eq!(
+                edge_labels,
+                [
+                    format!("Brush {id} · Edge midpoint 1"),
+                    format!("Brush {id} · Edge midpoint 2"),
+                ]
+            );
+            window.set_show_cut_settings(true);
+            window.invoke_choose_cut_position(0, 20.0);
+            window.invoke_choose_cut_position(1, 80.0);
+            window.invoke_preview_cut();
+            assert!(window.get_ready());
+            window.set_show_top_material(true);
+            window.set_top_material("brick/polygon".into());
+            window.invoke_edited();
+            window.invoke_preview_partition_material();
+            assert!(window.get_ready());
+            window.invoke_frame_partitions();
+            assert!(window.get_message().is_empty());
+            assert_dialog_button_visible(&window, "Keep flat pieces");
+            assert_dialog_button_visible(&window, "Cancel");
+            save_ui_snapshot(
+                window.window(),
+                &format!("polygon-{corners}-partition-controls"),
+            );
+            window.invoke_apply();
+            assert!(window.get_message().contains("Kept 1 flat partitions"));
+            let stored = lock(&shared).document().vmf().clone();
+            assert_eq!(stored.world, source.world);
+            window.invoke_resume_saved_partition();
+            assert!(window.get_ready() && window.get_partition_flat());
+            assert!(!window.get_can_raise_partition());
+            assert!(
+                window
+                    .get_partition_rows()
+                    .iter()
+                    .all(|row| row.detail.contains("brick/polygon"))
+            );
+            window.set_partition_mode(1);
+            window.invoke_choose_extrusion_height(16.125);
+            window.invoke_preview_edit();
+            assert!(window.get_ready() && window.get_has_extrusion_preview());
+            assert_dialog_button_visible(&window, "Apply extrusion");
+            assert_dialog_button_visible(&window, "Cancel");
+            let draft = lock(&shared).component_report(&[]).unwrap();
+            assert_eq!(
+                draft["preview"]["extrusion"]["pieces"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            window.invoke_cancel();
+            assert_eq!(lock(&shared).partition_preview_token(), None);
+            assert_eq!(lock(&shared).document().vmf(), &stored);
+            lock(&shared).undo(Actor::Agent).unwrap();
+            assert_eq!(lock(&shared).document().vmf(), &source);
+        }
+    }
+
+    #[test]
     fn component_source_controls_page_large_owners_and_edit_one_child() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

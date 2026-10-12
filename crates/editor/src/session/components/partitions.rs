@@ -5,6 +5,9 @@ use super::*;
 mod materials;
 mod picking;
 
+#[cfg(test)]
+mod polygon_tests;
+
 pub(super) fn consume_saved(
     tx: &mut map_core::Transaction,
     requests: &[Crease],
@@ -742,9 +745,9 @@ impl Draft {
             "partitions":self.partitions.iter().map(|part| {
                 let positions = part.positions(self.rise);
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
-                json!({"solid":part.source.solid,"source_side":part.source.side,"edges":part.source.edges,"owner":owner,"plane":part.plane.map(|point|point.to_array()),
+                json!({"solid":part.source.solid,"source_side":part.source.side,"source_corner_count":part.source_corner_count(),"edges":part.source.edges,"owner":owner,"plane":part.plane.map(|point|point.to_array()),
                     "vertices":part.vertices.iter().map(|vertex|json!({"id":vertex.id,"position":vertex.position.to_array(),"preview_position":positions[vertex.id as usize].to_array(),"source":match &vertex.source {VertexSource::Corner(sides)=>json!({"kind":"corner","sides":sides}),VertexSource::Edge{corners,parameter}=>json!({"kind":"edge","corners":corners,"parameter":parameter})}})).collect::<Vec<_>>(),
-                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"shape":match piece.vertices.len(){3=>"triangle",4=>"quad",5=>"pentagon",_=>unreachable!()},"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
+                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"shape":match piece.vertices.len(){3=>"triangle",4=>"quad",5=>"pentagon",6=>"hexagon",7=>"heptagon",8=>"octagon",9=>"nonagon",_=>unreachable!()},"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
             }).collect::<Vec<_>>()})
     }
 }
@@ -755,6 +758,8 @@ impl Session {
         let (entries, error) = match metadata {
             Ok(metadata) => (metadata.resolve(&self.document).into_iter().map(|entry| {
                 json!({"solid":entry.source.solid,"side":entry.source.side,"edges":entry.source.edges,
+                    "piece_membership":metadata.entries.get(&(entry.source.solid, entry.source.side)).and_then(|intent|intent.piece_membership.as_ref()),
+                    "source_corner_count":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.corners.len()),
                     "top_materials":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.top_materials.each_ref().map(|value|value.as_ref().map(|name|name.to_ascii_lowercase()))),
                     "effective_materials":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent| std::array::from_fn::<_, 2, _>(|index| intent.top_materials[index].as_deref().or_else(||subobject::solid(&self.document, entry.source.solid).ok()?.1.sides.iter().find(|side|side.id==entry.source.side).map(|side|side.material.as_str())).map(str::to_ascii_lowercase))),
                     "valid":entry.result.is_ok(),"edge_parameters":entry.result.as_ref().ok().map(|part|part.cut().unwrap().edge_parameters),"error":entry.result.err()})

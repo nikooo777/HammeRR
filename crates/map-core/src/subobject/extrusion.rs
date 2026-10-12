@@ -2,6 +2,8 @@ use super::*;
 use source_formats::vmf::{Properties, Side, UvAxis};
 
 pub const MAX_EXTRUSION_PIECES: usize = MAX_SOLIDS * 2;
+pub const MAX_EXTRUSION_SOURCE_VERTICES: usize = MAX_SOLIDS * MAX_PARTITION_VERTICES;
+pub const MAX_EXTRUSION_PLANES: usize = MAX_SOLIDS * (MAX_BOUNDARY_SOURCE_CORNERS + 8);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtrusionSpec {
@@ -93,15 +95,37 @@ pub fn plan_partition_extrusion_with_materials(
     if selection.is_empty() || selection.len() > MAX_EXTRUSION_PIECES {
         return Err(invalid("Select 1–32 flat pieces to extrude"));
     }
-    let materials = super::partition_materials::checked_materials(document, partitions, materials)?;
+    let mut source_vertices = 0;
+    for part in partitions {
+        super::partition::check_partition_bounds(part)?;
+        source_vertices += part.vertices.len();
+    }
+    if source_vertices > MAX_EXTRUSION_SOURCE_VERTICES {
+        return Err(invalid(
+            "Extrusion source topology exceeds its aggregate vertex budget",
+        ));
+    }
     let mut sources = BTreeMap::new();
     for part in partitions {
         if sources.insert(part.source.solid, part).is_some() {
             return Err(invalid("Select one partition per source brush"));
         }
     }
+    let selection = selection.iter().copied().collect::<BTreeSet<_>>();
+    let mut planes = 0;
+    for (solid, piece) in &selection {
+        let piece = sources
+            .get(solid)
+            .and_then(|part| part.loops.iter().find(|part| part.id == *piece))
+            .ok_or_else(|| invalid("Choose pieces from the current flat partition"))?;
+        planes += piece.vertices.len() + 2;
+    }
+    if planes > MAX_EXTRUSION_PLANES {
+        return Err(invalid("Extrusion exceeds its aggregate plane budget"));
+    }
+    let materials = super::partition_materials::checked_materials(document, partitions, materials)?;
     let mut pieces = Vec::new();
-    for (solid_id, partition_id) in selection.iter().copied().collect::<BTreeSet<_>>() {
+    for (solid_id, partition_id) in selection {
         let part = sources
             .get(&solid_id)
             .ok_or_else(|| invalid("Choose pieces from the current flat partition"))?;

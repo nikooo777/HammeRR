@@ -1,7 +1,7 @@
 use super::*;
 use crate::{edit, partition_metadata, transform::Transform};
 
-fn fixture(owned: bool, reflected: bool, direction: usize) -> (Document, Partition) {
+pub(super) fn fixture(owned: bool, reflected: bool, direction: usize) -> (Document, Partition) {
     let mut document = Document::empty();
     let ObjectId::Solid(id) = document
         .edit("block", |tx| {
@@ -76,7 +76,7 @@ fn fixture(owned: bool, reflected: bool, direction: usize) -> (Document, Partiti
     (document, partition)
 }
 
-fn materials(partition: &Partition) -> Vec<PartitionMaterial> {
+pub(super) fn materials(partition: &Partition) -> Vec<PartitionMaterial> {
     ["brick/red", "wood/blue"]
         .into_iter()
         .enumerate()

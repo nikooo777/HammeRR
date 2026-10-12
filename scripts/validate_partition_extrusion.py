@@ -112,7 +112,7 @@ def validate(client, output, render=False, adjusted=False):
                     )
                     check(
                         inspect()["preview"] == draft,
-                        f"{label}: midpoint-only ridge rejects without snapping",
+                        f"{label}: nonplanar diagonal ridge rejects without snapping",
                     )
                 client.call("store_component_partition", {"token": draft["token"]})
                 if adjusted:

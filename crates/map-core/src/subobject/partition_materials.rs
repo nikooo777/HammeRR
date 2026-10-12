@@ -63,17 +63,7 @@ pub fn crease_partitions_with_materials(
     materials: &[PartitionMaterial],
 ) -> Result<CreasePlan, EditError> {
     let materials = checked_materials(tx.document(), partitions, materials)?;
-    if partitions
-        .iter()
-        .any(|part| part.cut().unwrap().edge_parameters != [0.5; 2])
-    {
-        return Err(invalid("Shared ridges require midpoint cuts"));
-    }
-    let requests = partitions
-        .iter()
-        .map(|part| part.source.clone())
-        .collect::<Vec<_>>();
-    let mut plan = crease_with_roof_textures(tx, &requests, rise, texture_lock)?;
+    let mut plan = super::crease::crease_partition_roofs(tx, partitions, rise, texture_lock)?;
     for part in partitions {
         let change = plan
             .changes
@@ -113,5 +103,7 @@ pub fn crease_partitions_with_materials(
     Ok(plan)
 }
 
+#[cfg(test)]
+mod ridges;
 #[cfg(test)]
 mod tests;

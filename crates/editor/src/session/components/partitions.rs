@@ -738,13 +738,13 @@ impl Draft {
                         .all(|parameters| parameters[index] == *value)
                 })
         });
-        json!({"edge_parameters":edge_parameters,"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
+        json!({"ridge_supported":self.partitions.iter().all(|part|part.loops.iter().all(|piece|piece.vertices.len()==4)),"edge_parameters":edge_parameters,"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
             "partitions":self.partitions.iter().map(|part| {
                 let positions = part.positions(self.rise);
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
                 json!({"solid":part.source.solid,"source_side":part.source.side,"edges":part.source.edges,"owner":owner,"plane":part.plane.map(|point|point.to_array()),
                     "vertices":part.vertices.iter().map(|vertex|json!({"id":vertex.id,"position":vertex.position.to_array(),"preview_position":positions[vertex.id as usize].to_array(),"source":match &vertex.source {VertexSource::Corner(sides)=>json!({"kind":"corner","sides":sides}),VertexSource::Edge{corners,parameter}=>json!({"kind":"edge","corners":corners,"parameter":parameter})}})).collect::<Vec<_>>(),
-                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
+                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"shape":match piece.vertices.len(){3=>"triangle",4=>"quad",5=>"pentagon",_=>unreachable!()},"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
             }).collect::<Vec<_>>()})
     }
 }
@@ -968,18 +968,6 @@ impl Session {
     ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
         let requests = self.crease_requests(pairs)?;
-        for request in &requests {
-            let (_, source) = subobject::solid(&self.document, request.solid)
-                .map_err(|error| error.to_string())?;
-            let choices =
-                subobject::crease_pairs(source, request.side).map_err(|error| error.to_string())?;
-            if !choices.iter().any(|pair| pair.edges == request.edges) {
-                return Err(
-                    "Choose opposing edges until adjacent-cut storage and controls are available"
-                        .into(),
-                );
-            }
-        }
         let mut partitions = subobject::plan_partitions(&self.document, &requests)
             .map_err(|error| error.to_string())?;
         let materials = if let Ok(metadata) =

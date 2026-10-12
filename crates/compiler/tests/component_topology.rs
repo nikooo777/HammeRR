@@ -74,7 +74,7 @@ fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
                         }],
                     )
                     .unwrap();
-                    if direction < 2 {
+                    {
                         document
                             .edit("keep", |tx| {
                                 map_core::partition_metadata::store_partition(tx, &partitions[0])

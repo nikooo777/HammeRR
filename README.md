@@ -363,7 +363,8 @@ changing it requires a new preview before Apply.
 through saved-map native compilation; CS:S runtime coverage remains separate.
 
 Choose **Flat partition** to stage two pieces before raising them. Select one
-quad face per brush and choose the direction, then **Stage flat partition**.
+quad face per brush. Choose an across-face direction for two quads, or
+**Trim corner** for a triangle and pentagon, then **Stage flat partition**.
 The viewport shows the dividing edge while the original brush stays unchanged.
 Use **Highlight pieces** and **Frame highlighted pieces** to inspect either
 piece. You can also click a visible piece in the viewport; Ctrl toggles its
@@ -406,8 +407,8 @@ Enable **Adjust dividing edge** to move the two cut endpoints with percentage
 inputs or sliders. **Preview cut** creates unequal or diagonal pieces while
 retaining the original face. Keep these positions for later or extrude the
 pieces. Saved positions and piece identity survive reflection and reopening.
-Shared ridges can use adjusted endpoints when both raised roof pieces remain
-planar and convex. A diagonal cut that would bend a roof is rejected while
+Shared ridges can use adjusted endpoints when both raised quad pieces remain
+planar and convex. Triangle/pentagon cuts offer Keep and Extrude in the menu. A diagonal cut that would bend a roof is rejected while
 retaining the flat preview. Adjust the positions, extrude the pieces, or use
 **Reset cut to midpoint**. The bottom footer keeps Apply, Discard and Cancel
 accessible when the settings scroll.
@@ -415,6 +416,10 @@ accessible when the settings scroll.
 | Planned top material controls | Flat planned surfaces |
 | --- | --- |
 | ![Highlighted-piece material choices with preview, browsing and inheritance](docs/images/partition-material-controls.png) | ![Two real materials on a flat checked face without adding brush sides](docs/images/partition-material-preview.png) |
+
+| Boundary-cut controls | Triangle and pentagon prisms |
+| --- | --- |
+| ![Trim-corner direction and bounded flat piece controls](docs/images/partition-boundary-controls.png) | ![Independently styled triangle and pentagon pieces extruded above their source](docs/images/partition-boundary-preview.png) |
 
 | Adjusted ridge controls | Unequal roof widths |
 | --- | --- |
@@ -443,10 +448,6 @@ brush is hidden by the tool-material filter.
 | Ridge controls | Shared ridge preview |
 | --- | --- |
 | ![Roof ridge direction, height and Apply/Discard/Cancel controls](docs/images/brush-roof-ridge.png) | ![Two roof planes joined at the raised opposing edge midpoints](docs/images/component-roof-ridge.png) |
-
-Adjacent-edge triangle/pentagon geometry and extrusion are checked in the core
-and native fixtures. Saved authoring and its shared UI/MCP controls are the next
-step; the current partition controls offer the two opposing directions.
 
 Movement and welding support 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
@@ -1095,6 +1096,7 @@ python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-parti
 python -B scripts/validate_partition_material_metadata.py --output /tmp/hammerr-partition-material-metadata
 python -B scripts/validate_partition_materials.py --output /tmp/hammerr-partition-materials
 python -B scripts/validate_adjusted_partition_ridges.py --output /tmp/hammerr-adjusted-ridges
+python -B scripts/validate_boundary_partitions.py --output /tmp/hammerr-boundary-partitions
 python -B scripts/validate_partition_extrusion.py --output /tmp/hammerr-extrusion-check
 python -B scripts/validate_partition_extrusion.py --adjusted --output /tmp/hammerr-adjusted-cut-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
@@ -1217,11 +1219,17 @@ when the field is omitted, including after returning to flat.
 `preview.crease.roof_texture_lock` and `preview.partition.roof_texture_lock`
 report the setting; raised attached drafts report `texture_mode: "roof_attached"`.
 
-`preview_component_partition` accepts the same opposing `pairs` and latest
-`snapshot`, then returns flat draft topology under `preview.partition`.
+`preview_component_partition` accepts `pairs` and the latest `snapshot`.
+`get_brush_components.partition_choices` lists the two opposing pairs first,
+followed by four adjacent pairs. Opposing cuts make two quads; adjacent cuts make
+a triangle and pentagon. Flat draft topology is returned under `preview.partition`.
 Vertices retain source corner/edge incidence and exact source positions;
 `preview_position` includes the current ridge height. Loops have independent
-IDs **0** and **1** within each brush and inherit `source_side`.
+IDs **0** and **1** within each brush and inherit `source_side`. Each loop reports
+its `shape` and three to five vertex refs. `preview.partition.ridge_supported`
+reports the two-quad shape requirement; positive heights still validate planarity
+and convexity. Adjacent cuts keep the trimmed corner
+as triangle **0**, including after reflection and saved reopening.
 `select_component_partitions` takes `partitions: [{solid, partition}]`, a token
 and optional replace/add/remove/toggle mode for highlighting and framing.
 `frame_component_partitions` accepts that token and optional `aspect`.
@@ -1255,7 +1263,8 @@ neighboring side IDs; each endpoint runs between the sorted corner incidence
 lists reported in vertex provenance. Invalid or collapsed cuts retain the draft.
 Return to flat before adjusting a raised/extruded preview. Save positions with
 Keep, extrude, or raise the adjusted pieces. Positive ridge heights use the
-actual endpoints and require two planar, convex roofs. Nonplanar cuts are
+actual endpoints and require two planar, convex quad roofs. Triangle/pentagon
+pieces can be kept and extruded. Nonplanar cuts are
 rejected atomically; `rise: 0` retains their flat topology.
 `preview.partition.edge_parameters` reports shared values or null for mixed
 sources; saved inspection lists each source's positions. Existing midpoint

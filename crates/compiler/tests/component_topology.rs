@@ -368,3 +368,80 @@ fn multi_cutter_room_compiles_after_retaining_then_removing_both_cutters() {
     assert!(output.leak.is_none());
     assert!(output.stats.brushes >= 6);
 }
+
+#[test]
+fn opposing_edge_ridges_compile_inside_a_sealed_room_after_vmf_round_trip() {
+    for index in 0..2 {
+        let mut document = Document::new(common::room());
+        let ObjectId::Solid(id) = document
+            .edit("block", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::ZERO,
+                    DVec3::splat(64.0),
+                    "dev/dev_measuregeneric01",
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let solid = document.solid(id).unwrap();
+        let side = solid
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let pair = subobject::crease_pairs(solid, side).unwrap()[index].edges;
+        document
+            .edit("crease", |tx| {
+                subobject::crease(
+                    tx,
+                    &[subobject::Crease {
+                        solid: id,
+                        side,
+                        edges: pair,
+                    }],
+                    16.125,
+                )
+            })
+            .unwrap();
+        let vmf =
+            source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+        vmf.validate_ids().unwrap();
+        assert_eq!(
+            subobject::topology(
+                vmf.world
+                    .solids
+                    .iter()
+                    .find(|solid| solid.id == id)
+                    .unwrap()
+            )
+            .unwrap()
+            .vertices
+            .len(),
+            10
+        );
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.leak.is_none());
+        assert_eq!(output.stats.brushes, 7);
+        let bsp = output.bsp.unwrap();
+        assert!(
+            bsp.records::<Brush>()
+                .unwrap()
+                .iter()
+                .any(|brush| brush.side_count >= 7)
+        );
+        assert!(!bsp.records::<Face>().unwrap().is_empty());
+        assert_eq!(
+            bsp.records::<Plane>()
+                .unwrap()
+                .iter()
+                .filter(|plane| plane.normal[2] > 0.1 && plane.normal[2] < 0.99)
+                .count(),
+            2
+        );
+    }
+}

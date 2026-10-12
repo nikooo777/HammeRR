@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
 use map_core::subobject::{
-    self, Component, ComponentTransform, Replacement, SplitChange, Topology, WeldChange, WeldTarget,
+    self, Component, ComponentTransform, Crease, CreaseChange, CreasePair, Replacement,
+    SplitChange, Topology, WeldChange, WeldTarget,
 };
 use map_core::{Document, EditError, ObjectId};
 use serde_json::{Value, json};
@@ -31,6 +32,7 @@ pub struct Preview {
     pub(super) weld: Option<Vec<WeldChange>>,
     weld_target: Option<WeldTarget>,
     split: Option<SplitDraft>,
+    crease: Option<CreaseDraft>,
     pub(super) transform: Option<TransformDraft>,
     selection: BTreeSet<Component>,
 }
@@ -44,6 +46,18 @@ pub(super) struct TransformDraft {
 struct SplitDraft {
     rise: f64,
     changes: Vec<SplitChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreaseEdges {
+    pub solid: u32,
+    pub edges: [u32; 2],
+}
+
+struct CreaseDraft {
+    rise: f64,
+    requests: Vec<Crease>,
+    changes: Vec<CreaseChange>,
 }
 
 #[derive(Default)]
@@ -113,10 +127,9 @@ impl Session {
     }
 
     pub fn component_topology_preview(&self) -> bool {
-        self.components
-            .preview
-            .as_ref()
-            .is_some_and(|preview| preview.weld.is_some() || preview.split.is_some())
+        self.components.preview.as_ref().is_some_and(|preview| {
+            preview.weld.is_some() || preview.split.is_some() || preview.crease.is_some()
+        })
     }
 
     pub fn clear_component_edit(&mut self) {
@@ -249,13 +262,15 @@ impl Session {
             "source_selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
             "component_center":self.component_center()?.map(|point|point.to_array()),
             "weld_center":self.component_weld_center()?.map(|center|center.to_array()),
+            "crease_choices":self.component_crease_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "weld_targets":self.component_weld_targets()?.iter().map(|(component,position)|json!({"component":component_json(component),"position":position.to_array()})).collect::<Vec<_>>(),
-            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len(),
+            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len(),
                 "weld_target":preview.weld_target.as_ref().map(weld_target_json),
                 "transform":preview.transform.as_ref().map(|transform|transform_json(&transform.spec,transform.pivot,transform.resolved_pivot)),
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
+                "crease":preview.crease.as_ref().map(|crease|json!({"rise":crease.rise,"pairs":crease.requests.iter().map(|request|json!({"solid":request.solid,"edges":request.edges})).collect::<Vec<_>>(),"changes":crease.changes.iter().map(|change|json!({"solid":change.source.solid,"source_side":change.source.side,"edges":change.source.edges,"positions":change.positions.map(|point|point.to_array()),"new_side":change.new_side,"selection":change.selection.iter().map(component_json).collect::<Vec<_>>()})).collect::<Vec<_>>()})),
                 "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
-            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
+            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
         }))
     }
 
@@ -405,6 +420,7 @@ impl Session {
             weld: None,
             weld_target: None,
             split: None,
+            crease: None,
             transform: None,
             selection: self.components.selection.clone(),
         });
@@ -468,6 +484,7 @@ impl Session {
             weld: None,
             weld_target: None,
             split: None,
+            crease: None,
             transform: Some(TransformDraft {
                 spec,
                 pivot,
@@ -561,6 +578,7 @@ impl Session {
             weld: Some(plan.changes),
             weld_target: Some(target),
             split: None,
+            crease: None,
             transform: None,
         });
         self.scene_serial += 1;
@@ -601,8 +619,108 @@ impl Session {
                 .map(|change| change.selection.clone())
                 .collect(),
             transform: None,
+            crease: None,
             split: Some(SplitDraft {
                 rise,
+                changes: plan.changes,
+            }),
+        });
+        self.scene_serial += 1;
+        self.view_serial += 1;
+        Ok(token)
+    }
+
+    pub fn component_crease_choices(&self) -> Result<Vec<(Component, Vec<CreasePair>)>, String> {
+        let mut choices = Vec::new();
+        let mut shapes = BTreeMap::new();
+        for component in &self.components.selection {
+            if component.sides.len() != 1 {
+                continue;
+            }
+            if let std::collections::btree_map::Entry::Vacant(entry) = shapes.entry(component.solid)
+            {
+                let (_, source) = subobject::solid(&self.document, component.solid)
+                    .map_err(|error| error.to_string())?;
+                entry.insert(subobject::topology(source).map_err(|error| error.to_string())?);
+            }
+            let shape = &shapes[&component.solid];
+            if shape
+                .faces
+                .iter()
+                .any(|face| face.side == component.sides[0] && face.vertices.len() == 4)
+            {
+                choices.push((
+                    component.clone(),
+                    shape
+                        .crease_pairs(component.sides[0])
+                        .map_err(|error| error.to_string())?,
+                ));
+            }
+        }
+        Ok(choices)
+    }
+
+    pub fn preview_component_crease(
+        &mut self,
+        pairs: &[CreaseEdges],
+        rise: f64,
+        stamp: &str,
+    ) -> Result<u64, String> {
+        self.check_component_stamp(stamp)?;
+        let mut inputs = BTreeMap::new();
+        for pair in pairs {
+            let mut edges = pair.edges;
+            edges.sort_unstable();
+            if inputs.insert(pair.solid, edges).is_some() {
+                return Err("Choose exactly one opposing edge pair per brush".into());
+            }
+        }
+        let mut requests = Vec::new();
+        for component in &self.components.selection {
+            if component.sides.len() != 1 {
+                return Err("Select one quad face per brush to crease".into());
+            }
+            let edges = inputs
+                .remove(&component.solid)
+                .ok_or("Choose one opposing edge pair for every selected face")?;
+            requests.push(Crease {
+                solid: component.solid,
+                side: component.sides[0],
+                edges,
+            });
+        }
+        if !inputs.is_empty() {
+            return Err("Crease pairs must belong to the selected faces".into());
+        }
+        let mut document = self.document.preview_snapshot();
+        let plan = document
+            .edit("preview opposing-edge crease", |tx| {
+                subobject::crease(tx, &requests, rise)
+            })
+            .map_err(|error| error.to_string())?;
+        self.components.serial += 1;
+        let token = self.components.serial;
+        self.components.drag = None;
+        self.components.preview = Some(Preview {
+            document,
+            token,
+            delta: DVec3::ZERO,
+            texture_lock: false,
+            replacements: plan.replacements,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+            weld: None,
+            weld_target: None,
+            split: None,
+            transform: None,
+            selection: plan
+                .changes
+                .iter()
+                .flat_map(|change| change.selection.iter().cloned())
+                .collect(),
+            crease: Some(CreaseDraft {
+                rise,
+                requests,
                 changes: plan.changes,
             }),
         });
@@ -629,6 +747,7 @@ impl Session {
     pub fn commit_component_move(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
         if self.checked_component_preview(token)?.weld.is_some()
             || self.checked_component_preview(token)?.split.is_some()
+            || self.checked_component_preview(token)?.crease.is_some()
             || self.checked_component_preview(token)?.transform.is_some()
         {
             return Err("Use Apply component edit for this operation".into());
@@ -650,6 +769,8 @@ impl Session {
         let preview = self.checked_component_preview(token)?;
         let label = if preview.weld.is_some() {
             "weld brush corners"
+        } else if preview.crease.is_some() {
+            "crease opposing edges"
         } else if preview.split.is_some() {
             "split brush component"
         } else if let Some(transform) = &preview.transform {
@@ -663,6 +784,10 @@ impl Session {
         let replacements = preview.replacements.clone();
         let selection = preview.selection.clone();
         let rise = preview.split.as_ref().map(|split| split.rise);
+        let crease = preview
+            .crease
+            .as_ref()
+            .map(|crease| (crease.requests.clone(), crease.rise));
         let components = self
             .components
             .selection
@@ -670,13 +795,21 @@ impl Session {
             .cloned()
             .collect::<Vec<_>>();
         let picking = self.components.picking.clone().map(|mut picking| {
-            if rise.is_some() {
+            if rise.is_some() || crease.is_some() {
                 picking.kind = super::component_picking::Kind::Vertex;
             }
             picking
         });
         let result = self.edit(actor, label, |tx| {
-            if let Some(rise) = rise {
+            if let Some((requests, rise)) = &crease {
+                let actual = subobject::crease(tx, requests, *rise)?;
+                if actual.replacements != replacements {
+                    return Err(EditError::Invalid(
+                        "Face allocation changed; preview the crease again".into(),
+                    ));
+                }
+                Ok(actual.replacements.len())
+            } else if let Some(rise) = rise {
                 let actual = subobject::split(tx, &components, rise)?;
                 if actual.replacements != replacements {
                     return Err(EditError::Invalid(
@@ -1259,6 +1392,128 @@ mod tests {
             assert_eq!(session.document.vmf(), &source);
             session.redo(actor).unwrap();
             assert_eq!(session.document.vmf(), &draft);
+        }
+    }
+
+    #[test]
+    fn crease_shares_source_choices_tokens_corner_selection_actor_history_and_id_replay() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, id, _) = fixture();
+            let side = session
+                .document
+                .solid(id)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let component = Component {
+                solid: id,
+                sides: vec![side],
+            };
+            session
+                .set_component_picking(
+                    Some(super::super::component_picking::Kind::Face),
+                    &[id],
+                    &session.component_stamp(),
+                )
+                .unwrap();
+            session
+                .select_components(
+                    std::slice::from_ref(&component),
+                    SelectMode::Replace,
+                    &session.component_stamp(),
+                )
+                .unwrap();
+            let choices = session.component_crease_choices().unwrap();
+            let pairs = vec![CreaseEdges {
+                solid: id,
+                edges: choices[0].1[0].edges,
+            }];
+            let source = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let stamp = session.component_stamp();
+            let token = session
+                .preview_component_crease(&pairs, 16.0, &stamp)
+                .unwrap();
+            let draft = session.render_document().vmf().clone();
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert_eq!(session.component_crease_choices().unwrap(), choices);
+            assert!(session.component_topology_preview());
+            assert!(session.component_guide().is_none());
+            let report = session.component_report(&[id]).unwrap();
+            assert_eq!(report["preview"]["operation"], "crease");
+            assert_eq!(report["selection"].as_array().unwrap().len(), 2);
+            assert_eq!(
+                report["source_selection"],
+                json!([component_json(&component)])
+            );
+            assert!(
+                session
+                    .select_components(&[], SelectMode::Replace, &session.component_stamp())
+                    .is_err()
+            );
+            assert!(session.commit_component_move(actor, token).is_err());
+            assert!(
+                session
+                    .preview_component_crease(&pairs, 16.0, &stamp)
+                    .is_err()
+            );
+            assert!(
+                session
+                    .preview_component_crease(&pairs, 0.0, &session.component_stamp())
+                    .is_err()
+            );
+            assert!(
+                session
+                    .preview_component_crease(&[], 16.0, &session.component_stamp())
+                    .is_err()
+            );
+            assert_eq!(session.render_document().vmf(), &draft);
+            session.cancel_component_move(token).unwrap();
+            assert_eq!(session.component_selection(), &BTreeSet::from([component]));
+            assert_eq!(session.render_document().vmf(), &source);
+            let replacement = session
+                .preview_component_crease(&pairs, 16.0, &session.component_stamp())
+                .unwrap();
+            assert_eq!(session.render_document().vmf(), &draft);
+            assert!(session.cancel_component_move(token).is_err());
+            assert!(session.commit_component_edit(actor, token).is_err());
+            session
+                .document
+                .edit("reserve", |tx| tx.new_side_id())
+                .unwrap();
+            assert!(
+                session
+                    .commit_component_edit(actor, replacement)
+                    .unwrap_err()
+                    .contains("allocation")
+            );
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert_eq!(
+                session.components.preview.as_ref().unwrap().token,
+                replacement
+            );
+            let replacement = session
+                .preview_component_crease(&pairs, 16.0, &session.component_stamp())
+                .unwrap();
+            let applied = session.render_document().vmf().clone();
+            session.commit_component_edit(actor, replacement).unwrap();
+            assert_eq!(session.document.vmf(), &applied);
+            assert_eq!(session.component_selection().len(), 2);
+            assert_eq!(
+                session.component_picking().unwrap().kind,
+                super::super::component_picking::Kind::Vertex
+            );
+            assert_eq!(session.component_solids(), vec![id]);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &source);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &applied);
         }
     }
 

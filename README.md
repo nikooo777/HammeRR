@@ -302,10 +302,26 @@ exceeding 64 faces or selecting multiple components in one brush is rejected.
 | --- | --- |
 | ![Edge split controls and inserted-corner selection](docs/images/brush-edge-split.png) | ![A raised edge midpoint shared by six new triangles](docs/images/component-edge-split.png) |
 
+Choose **Roof ridge** and select one face with four corners per brush. Pick its
+ridge direction, enter the height above the face or use the slider, then
+**Preview ridge**. The two opposing edge midpoints rise together, forming two
+roof faces while all old corners stay fixed. Each brush has its own direction
+picker. New faces inherit the source material, precise world texture projection
+and metadata. Incompatible shapes are rejected before allocation.
+
+**Apply ridge** selects both new corners and records one undo step.
+**Discard preview** restores the original face selection without consuming IDs;
+**Cancel** closes the tool and drops its draft. Both directions have been checked
+through saved-map native compilation; CS:S runtime coverage remains separate.
+
+| Ridge controls | Shared ridge preview |
+| --- | --- |
+| ![Roof ridge direction, height and Apply/Discard/Cancel controls](docs/images/brush-roof-ridge.png) | ![Two roof planes joined at the raised opposing edge midpoints](docs/images/component-roof-ridge.png) |
+
 Movement and welding support 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
 collapse edges are rejected before the map is changed. Movement preserves
-topology; welding and splitting require a closed, convex result with the planned corners.
+topology; welding, splitting and ridges require a closed, convex result with the planned corners.
 
 | Component controls | Shared shape preview |
 | --- | --- |
@@ -812,7 +828,7 @@ For example, place a warm light:
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
-| Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
+| Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -958,6 +974,16 @@ inherit world texture projections. Apply verifies allocation and switches
 active picking to vertices in the same captured brush scope. Discard preserves
 the original picking kind and selection. Both use the generic component
 commit/cancel calls.
+
+`preview_component_crease` accepts `pairs: [{solid, edges: [neighbor_side,
+neighbor_side]}]`, `rise` and the latest `snapshot`. Select one quad face per
+brush first; `get_brush_components.crease_choices` lists the two opposing pairs
+and source midpoints for each selected face. Every face needs one pair, with
+independent directions supported in a batch. `preview.crease` reports source/new
+side IDs, raised positions and resulting corner selections. Both old corners
+and world projections stay fixed. Nonplanar or concave results reject before
+allocation. Apply replays and verifies generated IDs through
+`commit_component_edit`; discard uses `cancel_component_edit`.
 
 `get_carve_preview` exposes candidates, limits and the latest `stamp`.
 `preview_carve` takes numeric `cutter` and `targets` brush IDs, including children
@@ -1179,7 +1205,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes staged component partitions and creases, displacement
+Editor work ahead includes staged component partitions, displacement
 clipping and authoring, model rendering and broader map checks.
 
 ## Project layout

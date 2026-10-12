@@ -7,7 +7,7 @@ use slint::{ComponentHandle, Model, VecModel};
 use crate::mcp::{SharedSession, lock};
 use crate::session::component_picking::Kind;
 use crate::session::{Actor, SelectMode, Session};
-use crate::{ComponentRow, ComponentsWindow};
+use crate::{ComponentCreaseRow, ComponentRow, ComponentsWindow};
 
 fn key(component: &Component) -> String {
     format!(
@@ -121,6 +121,92 @@ fn transform_inputs(
     Ok((spec, pivot))
 }
 
+fn crease_inputs(
+    window: &ComponentsWindow,
+    session: &Session,
+) -> Result<Vec<crate::session::components::CreaseEdges>, String> {
+    let choices = session.component_crease_choices()?;
+    if choices.len() != session.component_selection().len() {
+        return Err("Select one face with four corners per brush".into());
+    }
+    choices
+        .iter()
+        .map(|(component, pairs)| {
+            let row = window
+                .get_crease_rows()
+                .iter()
+                .find(|row| row.key == key(component))
+                .ok_or("Choose opposing edges for each face")?;
+            let pair = pairs
+                .get(row.choice as usize)
+                .ok_or("Choose a ridge direction")?;
+            Ok(crate::session::components::CreaseEdges {
+                solid: component.solid,
+                edges: pair.edges,
+            })
+        })
+        .collect()
+}
+
+fn ridge_direction(pair: &map_core::subobject::CreasePair) -> String {
+    let delta = pair.midpoints[1] - pair.midpoints[0];
+    let unit = delta.normalize().abs();
+    let axis = if unit.x > 0.999 {
+        "X direction"
+    } else if unit.y > 0.999 {
+        "Y direction"
+    } else if unit.z > 0.999 {
+        "Z direction"
+    } else {
+        "Sloped direction"
+    };
+    if axis == "Sloped direction" {
+        format!("{axis} · {}", position(delta))
+    } else {
+        format!("{axis} · {} units", number(delta.length()))
+    }
+}
+
+fn refresh_crease_choices(
+    window: &ComponentsWindow,
+    report: &serde_json::Value,
+    session: &Session,
+) {
+    let previous = window.get_crease_rows().iter().collect::<Vec<_>>();
+    let preview = &report["preview"];
+    let changed = !preview.is_null() && window.get_token() != preview["token"].as_str().unwrap();
+    let choices = session.component_crease_choices().unwrap_or_default();
+    let rows = choices
+        .iter()
+        .map(|(component, pairs)| {
+            let key = key(component);
+            let mut choice = previous
+                .iter()
+                .find(|row| row.key == key)
+                .map_or(0, |row| row.choice);
+            if changed
+                && let Some(requests) = preview["crease"]["pairs"].as_array()
+                && let Some(request) = requests
+                    .iter()
+                    .find(|request| request["solid"] == component.solid)
+            {
+                choice = pairs
+                    .iter()
+                    .position(|pair| serde_json::json!(pair.edges) == request["edges"])
+                    .unwrap() as i32;
+            }
+            ComponentCreaseRow {
+                key: key.into(),
+                label: format!("Brush {} · ridge direction", component.solid).into(),
+                first: ridge_direction(&pairs[0]).into(),
+                second: ridge_direction(&pairs[1]).into(),
+                choice,
+            }
+        })
+        .collect::<Vec<_>>();
+    window.set_crease_rows(Rc::new(VecModel::from(rows)).into());
+}
+
 fn refresh_sources(window: &ComponentsWindow, session: &Session) {
     if session.component_picking().is_none() {
         window.set_source_mode(0);
@@ -195,6 +281,8 @@ fn capture_sources(window: &ComponentsWindow, shared: &SharedSession, ids: Vec<u
 pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let was_topology_preview = window.get_topology_preview();
     refresh_sources(window, session);
+    let report = session.component_report(&[]).unwrap();
+    refresh_crease_choices(window, &report, session);
     let center = session.component_center().ok().flatten();
     window.set_transform_center(
         center
@@ -368,13 +456,15 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         .into()
     });
     window.set_rows(Rc::new(VecModel::from(rows)).into());
-    let report = session.component_report(&[]).unwrap();
     let preview = &report["preview"];
     let token = preview["token"].as_str().unwrap_or_default();
     let weld = preview["operation"] == "weld";
     let split = preview["operation"] == "split";
+    let crease = preview["operation"] == "crease";
     let transform = preview["operation"] == "scale" || preview["operation"] == "rotate";
-    let operation = if transform {
+    let operation = if crease {
+        5
+    } else if transform {
         if preview["operation"] == "scale" {
             3
         } else {
@@ -425,8 +515,10 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 window.set_pivot_z(pivot[2].as_f64().unwrap().to_string().into());
             }
         }
-        if split {
-            let rise = preview["split"]["rise"].as_f64().unwrap();
+        if split || crease {
+            let rise = preview[if crease { "crease" } else { "split" }]["rise"]
+                .as_f64()
+                .unwrap();
             window.set_split_rise(rise.to_string().into());
             window.set_split_rise_value(rise as f32);
         }
@@ -449,6 +541,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                         crate::session::components::transform_json(&spec, pivot, resolved)
                             == preview["transform"]
                     })
+            } else if crease {
+                window.get_split_rise().parse::<f64>().ok() == preview["crease"]["rise"].as_f64()
+                    && crease_inputs(window, session).is_ok_and(|inputs| serde_json::json!(inputs.iter().map(|pair|serde_json::json!({"solid":pair.solid,"edges":pair.edges})).collect::<Vec<_>>()) == preview["crease"]["pairs"])
             } else if split {
                 window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
             } else if weld {
@@ -476,6 +571,10 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         let pivot = &preview["transform"]["resolved_pivot"];
         let point = DVec3::new(pivot[0].as_f64().unwrap(),pivot[1].as_f64().unwrap(),pivot[2].as_f64().unwrap());
         format!("{}: {}, {}, {}{}\nPivot: {}\nThe map is unchanged until Apply.",if operation == 3 {"Scale factors"} else {"Angles"},values[0],values[1],values[2],if operation == 3 {""} else {" degrees"},position(point)).into()
+    } else if crease {
+        let count = preview["crease"]["changes"].as_array().unwrap().len();
+        let rise = number(preview["crease"]["rise"].as_f64().unwrap());
+        format!("Raise {count} {} by {rise} units. Add {} corners and {count} {}.\nThe map is unchanged until Apply.", if count == 1 {"ridge"} else {"ridges"}, count * 2, if count == 1 {"face"} else {"faces"}).into()
     } else if split {
         let changes = preview["split"]["changes"].as_array().unwrap();
         let added: usize = changes.iter().map(|change| change["new_sides"].as_array().unwrap().len()).sum();
@@ -538,6 +637,24 @@ fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
 }
 
 pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    window.on_choose_crease_pair({
+        let window = window.as_weak();
+        move |key, choice| {
+            let window = window.unwrap();
+            let rows = window
+                .get_crease_rows()
+                .iter()
+                .map(|mut row| {
+                    if row.key == key {
+                        row.choice = choice;
+                    }
+                    row
+                })
+                .collect::<Vec<_>>();
+            window.set_crease_rows(Rc::new(VecModel::from(rows)).into());
+            window.invoke_edited();
+        }
+    });
     window.on_choose_source({
         let (window, shared) = (window.as_weak(), shared.clone());
         move || {
@@ -746,7 +863,17 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             })
             .collect::<Result<Vec<_>, _>>();
             let mut session = lock(&shared);
-            let result = if window.get_operation() >= 3 {
+            let result = if window.get_operation() == 5 {
+                window
+                    .get_split_rise()
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a numeric ridge height".to_string())
+                    .and_then(|rise| {
+                        let inputs = crease_inputs(&window, &session)?;
+                        session.preview_component_crease(&inputs, rise, window.get_stamp().as_str())
+                    })
+            } else if window.get_operation() == 3 || window.get_operation() == 4 {
                 transform_inputs(&window).and_then(|(spec, pivot)| {
                     session.preview_component_transform(
                         spec,

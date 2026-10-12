@@ -24,6 +24,14 @@ export component ComponentsWindow inherits Window {
     in property <[ComponentRow]> partition-rows;
     in property <bool> has-partition-preview;
     in property <bool> partition-flat;
+    in property <bool> cut-is-midpoint;
+    in-out property <bool> show-cut-settings;
+    in-out property <string> cut-first: "50";
+    in-out property <string> cut-second: "50";
+    in property <float> cut-first-value: 50;
+    in property <float> cut-second-value: 50;
+    callback choose-cut-position(int,float);
+    callback preview-cut();
     in property <bool> has-extrusion-preview;
     in-out property <int> partition-mode;
     in-out property <string> extrusion-height: "32";
@@ -257,13 +265,41 @@ export component ComponentsWindow inherits Window {
                                 for row in root.partition-rows: CheckBox { text: row.label; checked: row.selected; toggled => { root.choose-partition(row.key); } }
                             }
                             Button { text: "Frame highlighted pieces"; clicked => { root.frame-partitions(); } }
+                            CheckBox { text: "Adjust dividing edge"; checked <=> root.show-cut-settings; }
+                            if root.show-cut-settings: VerticalLayout {
+                                spacing: 6px;
+                                Text { text: "Cut positions · % along each opposing edge"; wrap: word-wrap; color: #aeb9c8; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        Text { text: "Edge A · %"; color: #aeb9c8; }
+                                        LineEdit { min-width: 0px; preferred-width: 140px; horizontal-stretch: 1; enabled: root.partition-flat && !root.has-extrusion-preview; text <=> root.cut-first; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Partition edge A position"; edited => { root.edited(); } }
+                                        Slider { enabled: root.partition-flat && !root.has-extrusion-preview; minimum: 1; maximum: 99; value: root.cut-first-value; released(value) => { root.choose-cut-position(0,value); } }
+                                    }
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        Text { text: "Edge B · %"; color: #aeb9c8; }
+                                        LineEdit { min-width: 0px; preferred-width: 140px; horizontal-stretch: 1; enabled: root.partition-flat && !root.has-extrusion-preview; text <=> root.cut-second; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Partition edge B position"; edited => { root.edited(); } }
+                                        Slider { enabled: root.partition-flat && !root.has-extrusion-preview; minimum: 1; maximum: 99; value: root.cut-second-value; released(value) => { root.choose-cut-position(1,value); } }
+                                    }
+                                }
+                                if root.cut-first == "" || root.cut-second == "": Text { text: "Saved sources have different positions. Enter both values to adjust them together."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Text { text: "Applies to every source brush. Unequal positions can make a diagonal cut. Return to flat before adjusting."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Button { text: "Preview cut"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.preview-cut(); } }
+                            }
                             ComboBox { model: ["Raise shared ridge", "Extrude highlighted pieces"]; current-index <=> root.partition-mode; selected => { root.edited(); } }
-                            if root.partition-mode == 0: VerticalLayout {
+                            if root.partition-mode == 0 && root.cut-is-midpoint: VerticalLayout {
                                 spacing: 6px;
                                 Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: #aeb9c8; }
                                 LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Partition ridge height"; edited => { root.edited(); } }
                                 Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                                 CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
+                            }
+                            if root.partition-mode == 0 && !root.cut-is-midpoint: VerticalLayout {
+                                spacing: 6px;
+                                Text { text: "A shared ridge needs midpoint cuts. Reset both edges to 50%, or switch to extrusion."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Button { text: "Reset cut to midpoint"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.choose-cut-position(0,50); root.choose-cut-position(1,50); root.preview-cut(); } }
                             }
                             if root.partition-mode == 1: VerticalLayout {
                                 spacing: 6px;
@@ -282,7 +318,7 @@ export component ComponentsWindow inherits Window {
                             }
                             Button { text: "Return to flat"; enabled: !root.partition-flat || root.has-extrusion-preview; clicked => { root.flatten-partitions(); } }
                         }
-                        if root.partition-mode == 0: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        if root.partition-mode == 0 && root.cut-is-midpoint: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         Text { text: "Preview before Apply. Keep flat pieces to resume them later."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         if !root.has-partition-preview && root.saved-partitions.length > 0: VerticalLayout {
                             spacing: 6px;

@@ -376,6 +376,98 @@ mod tests {
     }
 
     #[test]
+    fn adjustable_partition_cut_shares_saved_identity_extrusion_and_exact_history() {
+        for actor in [Actor::User, Actor::Agent] {
+            for direction in 0..2 {
+                let (mut session, id, pairs) = fixture(actor, direction);
+                let source = session.document().vmf().clone();
+                let token = session
+                    .preview_component_partition(&pairs, &session.component_stamp())
+                    .unwrap();
+                let token = session
+                    .update_component_partition_cut(token, [0.2, 0.8])
+                    .unwrap();
+                let draft = session
+                    .components
+                    .preview
+                    .as_ref()
+                    .unwrap()
+                    .partition
+                    .as_ref()
+                    .unwrap()
+                    .clone();
+                assert_eq!(
+                    draft.partitions[0].cut().unwrap().edge_parameters,
+                    [0.2, 0.8]
+                );
+                assert_eq!(session.render_document().vmf(), &source);
+                assert!(
+                    session
+                        .raise_component_partition(token, 16.0)
+                        .unwrap_err()
+                        .contains("midpoint")
+                );
+                assert_eq!(session.partition_preview_token(), Some(token));
+                for parameters in [[0.0, 0.8], [0.2, 1.0], [f64::NAN, 0.8]] {
+                    assert!(
+                        session
+                            .update_component_partition_cut(token, parameters)
+                            .is_err()
+                    );
+                    assert_eq!(session.partition_preview_token(), Some(token));
+                }
+                session.store_component_partition(actor, token).unwrap();
+                let stored = session.document().vmf().clone();
+                assert_eq!(stored.world, source.world);
+                let side = draft.partitions[0].source.side;
+                let token = session
+                    .resume_component_partitions(&[(id, side)], &session.component_stamp())
+                    .unwrap();
+                assert_eq!(
+                    session
+                        .components
+                        .preview
+                        .as_ref()
+                        .unwrap()
+                        .partition
+                        .as_ref()
+                        .unwrap()
+                        .partitions,
+                    draft.partitions
+                );
+                let token = session
+                    .preview_partition_extrusion(
+                        token,
+                        subobject::ExtrusionSpec {
+                            height: 32.125,
+                            wall_material: None,
+                            texture_lock: true,
+                        },
+                    )
+                    .unwrap();
+                assert!(
+                    session
+                        .update_component_partition_cut(token, [0.4, 0.6])
+                        .is_err()
+                );
+                session.cancel_component_move(token).unwrap();
+                assert_eq!(session.document().vmf(), &stored);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document().vmf(), &source);
+                session.redo(actor).unwrap();
+                assert_eq!(session.document().vmf(), &stored);
+                let token = session
+                    .resume_component_partitions(&[(id, side)], &session.component_stamp())
+                    .unwrap();
+                let token = session
+                    .update_component_partition_cut(token, [0.5; 2])
+                    .unwrap();
+                session.raise_component_partition(token, 16.0).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn partition_drafts_share_actor_history_selection_flattening_save_guards_and_id_replay() {
         for actor in [Actor::User, Actor::Agent] {
             for direction in 0..2 {
@@ -629,7 +721,22 @@ impl Draft {
     }
 
     pub fn report(&self) -> Value {
-        json!({"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
+        let parameters = self
+            .partitions
+            .iter()
+            .map(|partition| partition.cut().unwrap().edge_parameters)
+            .collect::<Vec<_>>();
+        let edge_parameters: [Option<f64>; 2] = std::array::from_fn(|index| {
+            parameters
+                .first()
+                .map(|first| first[index])
+                .filter(|value| {
+                    parameters
+                        .iter()
+                        .all(|parameters| parameters[index] == *value)
+                })
+        });
+        json!({"edge_parameters":edge_parameters,"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
             "partitions":self.partitions.iter().map(|part| {
                 let positions = part.positions(self.rise);
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
@@ -646,7 +753,7 @@ impl Session {
         let (entries, error) = match metadata {
             Ok(metadata) => (metadata.resolve(&self.document).into_iter().map(|entry| {
                 json!({"solid":entry.source.solid,"side":entry.source.side,"edges":entry.source.edges,
-                    "valid":entry.result.is_ok(),"error":entry.result.err()})
+                    "valid":entry.result.is_ok(),"edge_parameters":entry.result.as_ref().ok().map(|part|part.cut().unwrap().edge_parameters),"error":entry.result.err()})
             }).collect::<Vec<_>>(), None),
             Err(error) => (Vec::new(), Some(error)),
         };
@@ -664,14 +771,14 @@ impl Session {
                 "Return to flat before keeping a partition; Apply commits raised geometry".into(),
             );
         }
-        let requests = draft.requests();
+        let partitions = draft.partitions.clone();
         let selection = self.components.selection.clone();
         let picking = self.components.picking.clone();
         let count = self.edit(actor, "keep flat face partitions", |tx| {
-            for request in &requests {
-                map_core::partition_metadata::store(tx, request)?;
+            for partition in &partitions {
+                map_core::partition_metadata::store_partition(tx, partition)?;
             }
-            Ok(requests.len())
+            Ok(partitions.len())
         })?;
         if self.partition_preview_token() == Some(token) {
             self.cancel_component_move(token)?;
@@ -877,6 +984,32 @@ impl Session {
         Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
     }
 
+    pub fn update_component_partition_cut(
+        &mut self,
+        token: u64,
+        edge_parameters: [f64; 2],
+    ) -> Result<u64, String> {
+        let mut draft = self.checked_partition(token)?.clone();
+        if draft.rise != 0.0 || self.checked_component_preview(token)?.extrusion.is_some() {
+            return Err("Return to flat before adjusting the dividing edge".into());
+        }
+        let requests = draft
+            .partitions
+            .iter()
+            .map(|part| subobject::PartitionCut {
+                source: part.source.clone(),
+                edge_parameters,
+            })
+            .collect::<Vec<_>>();
+        let mut partitions = subobject::plan_partitions_at(&self.document, &requests)
+            .map_err(|error| error.to_string())?;
+        for (part, previous) in partitions.iter_mut().zip(&draft.partitions) {
+            part.loops = previous.loops.clone();
+        }
+        draft.partitions = partitions;
+        Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
+    }
+
     pub fn raise_component_partition(&mut self, token: u64, rise: f64) -> Result<u64, String> {
         self.raise_component_partition_with_texture(token, rise, None)
     }
@@ -895,8 +1028,22 @@ impl Session {
         {
             return Err("Partition ridge height must be zero (flat) or 0.125–4096 units".into());
         }
+        if rise != 0.0
+            && draft
+                .partitions
+                .iter()
+                .any(|part| part.cut().unwrap().edge_parameters != [0.5; 2])
+        {
+            return Err("Shared ridges require midpoint cuts. Restore both edge positions to 50%, or extrude the pieces.".into());
+        }
         let requests = draft.requests();
-        let current = subobject::plan_partitions(&self.document, &requests)
+        let cuts = draft
+            .partitions
+            .iter()
+            .map(|part| part.cut())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let current = subobject::plan_partitions_at(&self.document, &cuts)
             .map_err(|error| error.to_string())?;
         if current
             .iter()

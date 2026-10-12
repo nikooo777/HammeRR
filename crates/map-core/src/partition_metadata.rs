@@ -12,12 +12,15 @@ pub const MAX_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_NODES: usize = 4096;
 pub const MAX_DEPTH: usize = 64;
 const KIND: &str = "opposing_midpoints";
+const EDGE_KIND: &str = "opposing_edges";
+const PARAMETERS_FIELD: &str = "edge_parameters";
 const VERSION: &str = "1";
 const RECORD_FIELDS: [&str; 5] = ["kind", "solid", "side", "edges", "corner"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Intent {
     pub source: Crease,
+    pub edge_parameters: [f64; 2],
     pub corners: [Vec<u32>; 4],
     pub extra: Vec<Node>,
 }
@@ -116,6 +119,7 @@ impl Intent {
     fn from_partition(partition: &Partition) -> Self {
         Self {
             source: partition.source.clone(),
+            edge_parameters: partition.cut().unwrap().edge_parameters,
             corners: std::array::from_fn(|index| match &partition.vertices[index].source {
                 VertexSource::Corner(sides) => sides.clone(),
                 _ => unreachable!(),
@@ -125,6 +129,15 @@ impl Intent {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self
+            .edge_parameters
+            .iter()
+            .any(|parameter| !parameter.is_finite() || *parameter <= 0.0 || *parameter >= 1.0)
+        {
+            return Err(
+                "Partition edge positions must be finite and strictly between 0 and 1".into(),
+            );
+        }
         if self.source.solid == 0
             || self.source.side == 0
             || self.source.edges[0] == 0
@@ -147,11 +160,10 @@ impl Intent {
         if self.corners.iter().collect::<BTreeSet<_>>().len() != 4 {
             return Err("Partition needs four distinct source corners".into());
         }
-        if self
-            .extra
-            .iter()
-            .any(|node| RECORD_FIELDS.contains(&node.key.as_str()))
-        {
+        if self.extra.iter().any(|node| {
+            RECORD_FIELDS.contains(&node.key.as_str())
+                || (self.edge_parameters != [0.5; 2] && node.key == PARAMETERS_FIELD)
+        }) {
             return Err("Partition extra metadata repeats a reserved field".into());
         }
         Ok(())
@@ -159,11 +171,24 @@ impl Intent {
 
     fn node(&self, include_extra: bool) -> Node {
         let mut fields = vec![
-            Node::string("kind", KIND),
+            Node::string(
+                "kind",
+                if self.edge_parameters == [0.5; 2] {
+                    KIND
+                } else {
+                    EDGE_KIND
+                },
+            ),
             Node::string("solid", self.source.solid.to_string()),
             Node::string("side", self.source.side.to_string()),
             Node::string("edges", encoded(&self.source.edges)),
         ];
+        if self.edge_parameters != [0.5; 2] {
+            fields.push(Node::string(
+                PARAMETERS_FIELD,
+                format!("{} {}", self.edge_parameters[0], self.edge_parameters[1]),
+            ));
+        }
         fields.extend(
             self.corners
                 .iter()
@@ -176,10 +201,15 @@ impl Intent {
     }
 
     fn resolve(&self, document: &Document) -> Result<Partition, String> {
-        let mut partition =
-            subobject::plan_partitions(document, std::slice::from_ref(&self.source))
-                .map_err(|error| error.to_string())?
-                .remove(0);
+        let mut partition = subobject::plan_partitions_at(
+            document,
+            &[subobject::PartitionCut {
+                source: self.source.clone(),
+                edge_parameters: self.edge_parameters,
+            }],
+        )
+        .map_err(|error| error.to_string())?
+        .remove(0);
         let current = Self::from_partition(&partition);
         if current.corners.iter().collect::<BTreeSet<_>>()
             != self.corners.iter().collect::<BTreeSet<_>>()
@@ -249,11 +279,25 @@ impl Metadata {
                 return Err("Map supports at most 64 saved flat partitions".into());
             }
             let fields = node.children().ok_or("Partition entry must be a block")?;
-            if field(fields, "kind")? != KIND {
+            let kind = field(fields, "kind")?;
+            if kind != KIND && kind != EDGE_KIND {
                 return Err(
                     "Unsupported partition intent kind; raw metadata has been preserved".into(),
                 );
             }
+            let edge_parameters = if kind == EDGE_KIND {
+                let values = field(fields, PARAMETERS_FIELD)?
+                    .split_whitespace()
+                    .take(3)
+                    .map(str::parse::<f64>)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| "Partition edge positions must be numeric")?;
+                values
+                    .try_into()
+                    .map_err(|_| "Partition needs exactly two edge positions")?
+            } else {
+                [0.5; 2]
+            };
             let edges = ids(field(fields, "edges")?, 2, 2)?.try_into().unwrap();
             let mut corners = Vec::new();
             for corner in fields.iter().filter(|field| field.key == "corner") {
@@ -278,10 +322,14 @@ impl Metadata {
             };
             let intent = Intent {
                 source,
+                edge_parameters,
                 corners,
                 extra: fields
                     .iter()
-                    .filter(|field| !RECORD_FIELDS.contains(&field.key.as_str()))
+                    .filter(|field| {
+                        !RECORD_FIELDS.contains(&field.key.as_str())
+                            && !(kind == EDGE_KIND && field.key == PARAMETERS_FIELD)
+                    })
                     .cloned()
                     .collect(),
             };
@@ -359,11 +407,16 @@ impl Metadata {
 }
 
 pub fn store(tx: &mut Transaction, request: &Crease) -> Result<(), EditError> {
-    let mut metadata = Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
     let partition =
         subobject::plan_partitions(tx.document(), std::slice::from_ref(request))?.remove(0);
-    let mut intent = Intent::from_partition(&partition);
-    let key = (request.solid, request.side);
+    store_partition(tx, &partition)
+}
+
+pub fn store_partition(tx: &mut Transaction, partition: &Partition) -> Result<(), EditError> {
+    let mut metadata = Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
+    subobject::checked_partition(tx.document(), partition)?;
+    let mut intent = Intent::from_partition(partition);
+    let key = (partition.source.solid, partition.source.side);
     if let Some(previous) = metadata.entries.get(&key) {
         intent.extra = previous.extra.clone();
         if previous.source == intent.source && previous.resolve(tx.document()).is_ok() {
@@ -522,6 +575,153 @@ mod tests {
             .edit("remove", |tx| remove(tx, request.solid, request.side))
             .unwrap();
         assert!(!clean.vmf().extra.iter().any(|node| node.key == KEY));
+    }
+
+    #[test]
+    fn adjusted_metadata_rejects_malformed_parameters_and_preserves_conflicting_extras() {
+        let (mut document, source) = fixture();
+        let cut = subobject::PartitionCut {
+            source: source.clone(),
+            edge_parameters: [0.2, 0.8],
+        };
+        let partition = subobject::plan_partitions_at(&document, &[cut])
+            .unwrap()
+            .remove(0);
+        document
+            .edit("keep", |tx| store_partition(tx, &partition))
+            .unwrap();
+        for value in ["NaN 0.8", "0 0.8", "1 0.8", "0.2", "0.2 0.8 0.5", "bad 0.8"] {
+            let mut vmf = document.vmf().clone();
+            let root = vmf.extra.iter_mut().find(|node| node.key == KEY).unwrap();
+            let source_formats::keyvalues::Value::Block(children) = &mut root.value else {
+                unreachable!()
+            };
+            let entry = children
+                .iter_mut()
+                .find(|node| node.key == "partition")
+                .unwrap();
+            let source_formats::keyvalues::Value::Block(fields) = &mut entry.value else {
+                unreachable!()
+            };
+            fields
+                .iter_mut()
+                .find(|node| node.key == PARAMETERS_FIELD)
+                .unwrap()
+                .value = source_formats::keyvalues::Value::String(value.into());
+            assert!(Metadata::parse(&vmf).is_err());
+        }
+        document.undo().unwrap();
+        document.edit("midpoint", |tx| store(tx, &source)).unwrap();
+        let mut metadata = Metadata::parse(document.vmf()).unwrap();
+        metadata
+            .entries
+            .get_mut(&(source.solid, source.side))
+            .unwrap()
+            .extra
+            .push(Node::string(PARAMETERS_FIELD, "vendor data"));
+        document.edit("unknown", |tx| metadata.write(tx)).unwrap();
+        let before = document.vmf().clone();
+        assert!(
+            document
+                .edit("adjusted", |tx| store_partition(tx, &partition))
+                .unwrap_err()
+                .to_string()
+                .contains("reserved field")
+        );
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(
+            Metadata::parse(document.vmf()).unwrap().entries[&(source.solid, source.side)].extra[0],
+            Node::string(PARAMETERS_FIELD, "vendor data")
+        );
+    }
+
+    #[test]
+    fn adjusted_intents_roundtrip_reflect_extrude_and_preserve_piece_identity() {
+        for direction in 0..2 {
+            let (mut document, mut source) = fixture();
+            source.edges =
+                subobject::crease_pairs(document.solid(source.solid).unwrap(), source.side)
+                    .unwrap()[direction]
+                    .edges;
+            let cut = subobject::PartitionCut {
+                source: source.clone(),
+                edge_parameters: [0.2, 0.8],
+            };
+            let partition = subobject::plan_partitions_at(&document, &[cut])
+                .unwrap()
+                .remove(0);
+            let before = document.vmf().clone();
+            document
+                .edit("keep adjusted", |tx| store_partition(tx, &partition))
+                .unwrap();
+            let stored = document.vmf().clone();
+            assert_eq!(stored.world, before.world);
+            let parsed = Vmf::parse(&stored.write(&Default::default())).unwrap();
+            let mut changed = Document::new(parsed);
+            changed
+                .edit("mirror", |tx| {
+                    edit::transform(
+                        tx,
+                        &[ObjectId::Solid(source.solid)],
+                        Transform {
+                            reflection: [true, false, false],
+                            rotation: DVec3::new(17.0, -23.0, 31.0),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .unwrap();
+            changed
+                .edit("owner", |tx| {
+                    edit::tie_to_entity(tx, &[source.solid], "func_detail", &[])
+                })
+                .unwrap();
+            let resolved = Metadata::parse(changed.vmf())
+                .unwrap()
+                .resolve(&changed)
+                .remove(0)
+                .result
+                .unwrap();
+            assert_eq!(resolved.cut().unwrap().edge_parameters, [0.2, 0.8]);
+            let membership = |part: &Partition, piece: usize| {
+                part.loops[piece]
+                    .vertices
+                    .iter()
+                    .filter_map(|index| match &part.vertices[*index as usize].source {
+                        VertexSource::Corner(sides) => Some(sides.clone()),
+                        _ => None,
+                    })
+                    .collect::<BTreeSet<_>>()
+            };
+            assert_eq!(membership(&partition, 0), membership(&resolved, 0));
+            assert_eq!(membership(&partition, 1), membership(&resolved, 1));
+            let original = changed.vmf().clone();
+            changed
+                .edit("keep again", |tx| store_partition(tx, &resolved))
+                .unwrap();
+            assert_eq!(changed.vmf(), &original);
+            changed
+                .edit("extrude", |tx| {
+                    subobject::extrude_partitions(
+                        tx,
+                        std::slice::from_ref(&resolved),
+                        &[(source.solid, 0), (source.solid, 1)],
+                        &subobject::ExtrusionSpec {
+                            height: 32.125,
+                            wall_material: None,
+                            texture_lock: true,
+                        },
+                    )
+                })
+                .unwrap();
+            assert_eq!(changed.vmf().extra, original.extra);
+            changed.undo().unwrap();
+            assert_eq!(changed.vmf(), &original);
+            document.undo().unwrap();
+            assert_eq!(document.vmf(), &before);
+            document.redo().unwrap();
+            assert_eq!(document.vmf(), &stored);
+        }
     }
 
     #[test]

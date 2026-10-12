@@ -1,6 +1,12 @@
 use super::*;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct PartitionCut {
+    pub source: Crease,
+    pub edge_parameters: [f64; 2],
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum VertexSource {
     Corner(Vec<u32>),
     Edge {
@@ -45,6 +51,27 @@ fn area(points: &[DVec3], normal: DVec3) -> f64 {
 }
 
 impl Partition {
+    pub fn cut(&self) -> Result<PartitionCut, EditError> {
+        let mut edge_parameters = [0.0; 2];
+        for (index, parameter) in edge_parameters.iter_mut().enumerate() {
+            let Some(PartitionVertex {
+                source:
+                    VertexSource::Edge {
+                        parameter: value, ..
+                    },
+                ..
+            }) = self.vertices.get(index + 4)
+            else {
+                return Err(invalid("Partition edge provenance is invalid"));
+            };
+            *parameter = *value;
+        }
+        Ok(PartitionCut {
+            source: self.source.clone(),
+            edge_parameters,
+        })
+    }
+
     pub fn normal(&self) -> DVec3 {
         Plane::from_points(self.plane).unwrap().normal
     }
@@ -128,6 +155,46 @@ pub fn plan_partitions(
     document: &Document,
     requests: &[Crease],
 ) -> Result<Vec<Partition>, EditError> {
+    if requests.len() > MAX_SOLIDS {
+        return Err(invalid(
+            "Select one quad face in each of 1–16 brushes to partition",
+        ));
+    }
+    plan_partitions_at(
+        document,
+        &requests
+            .iter()
+            .map(|source| PartitionCut {
+                source: source.clone(),
+                edge_parameters: [0.5; 2],
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+pub(crate) fn checked_partition(
+    document: &Document,
+    part: &Partition,
+) -> Result<Partition, EditError> {
+    let canonical = plan_partitions_at(document, &[part.cut()?])?.remove(0);
+    let mut checked = part.clone();
+    checked.loops = canonical.loops.clone();
+    let mut reversed = canonical.loops.clone();
+    reversed.swap(0, 1);
+    reversed[0].id = 0;
+    reversed[1].id = 1;
+    if checked != canonical || (part.loops != canonical.loops && part.loops != reversed) {
+        return Err(invalid(
+            "Partition source geometry, ownership or loop incidence changed",
+        ));
+    }
+    Ok(canonical)
+}
+
+pub fn plan_partitions_at(
+    document: &Document,
+    requests: &[PartitionCut],
+) -> Result<Vec<Partition>, EditError> {
     if requests.is_empty() || requests.len() > MAX_SOLIDS {
         return Err(invalid(
             "Select one quad face in each of 1–16 brushes to partition",
@@ -135,7 +202,16 @@ pub fn plan_partitions(
     }
     let mut sorted = BTreeMap::new();
     for request in requests {
-        if sorted.insert(request.solid, request).is_some() {
+        if request
+            .edge_parameters
+            .iter()
+            .any(|parameter| !parameter.is_finite() || *parameter <= 0.0 || *parameter >= 1.0)
+        {
+            return Err(invalid(
+                "Partition edge positions must be finite and strictly between 0 and 1",
+            ));
+        }
+        if sorted.insert(request.source.solid, request).is_some() {
             return Err(invalid(
                 "Select exactly one quad face per brush to partition",
             ));
@@ -150,7 +226,8 @@ pub fn plan_partitions(
             )));
         }
         let shape = topology(source)?;
-        let mut request = request.clone();
+        let parameters = request.edge_parameters;
+        let mut request = request.source.clone();
         request.edges.sort_unstable();
         let pair = shape
             .crease_pairs(request.side)?
@@ -193,10 +270,24 @@ pub fn plan_partitions(
             corners.sort();
             vertices.push(PartitionVertex {
                 id: (index + 4) as u32,
-                position: pair.midpoints[index],
+                position: {
+                    let endpoints = corners.each_ref().map(|corner| {
+                        shape
+                            .vertices
+                            .iter()
+                            .find(|vertex| &vertex.sides == corner)
+                            .unwrap()
+                            .position
+                    });
+                    if parameters[index] == 0.5 {
+                        pair.midpoints[index]
+                    } else {
+                        endpoints[0].lerp(endpoints[1], parameters[index])
+                    }
+                },
                 source: VertexSource::Edge {
                     corners,
-                    parameter: 0.5,
+                    parameter: parameters[index],
                 },
             });
         }
@@ -271,6 +362,89 @@ mod tests {
                 .unwrap();
         }
         (document, id)
+    }
+
+    #[test]
+    fn adjustable_cuts_cover_quads_and_keep_canonical_edge_provenance() {
+        for oblique in [false, true] {
+            let (document, id) = fixture(oblique);
+            let before = document.vmf().clone();
+            let shape = topology(document.solid(id).unwrap()).unwrap();
+            for face in &shape.faces {
+                for pair in crease_pairs(document.solid(id).unwrap(), face.side).unwrap() {
+                    let source = Crease {
+                        solid: id,
+                        side: face.side,
+                        edges: pair.edges,
+                    };
+                    let midpoint =
+                        plan_partitions(&document, std::slice::from_ref(&source)).unwrap();
+                    for parameters in [[0.5, 0.5], [0.2, 0.8], [0.7, 0.3], [0.1, 0.1]] {
+                        let cut = PartitionCut {
+                            source: source.clone(),
+                            edge_parameters: parameters,
+                        };
+                        let partition = plan_partitions_at(&document, std::slice::from_ref(&cut))
+                            .unwrap()
+                            .remove(0);
+                        assert_eq!(partition.cut().unwrap(), cut);
+                        assert_eq!(partition.vertices[..4], midpoint[0].vertices[..4]);
+                        assert_eq!(partition.loops, midpoint[0].loops);
+                        checked_partition(&document, &partition).unwrap();
+                        for (index, parameter) in parameters.iter().enumerate() {
+                            let VertexSource::Edge { corners, .. } =
+                                &partition.vertices[index + 4].source
+                            else {
+                                unreachable!()
+                            };
+                            let endpoints = corners.each_ref().map(|corner| {
+                                shape
+                                    .vertices
+                                    .iter()
+                                    .find(|vertex| &vertex.sides == corner)
+                                    .unwrap()
+                                    .position
+                            });
+                            assert!(
+                                partition.vertices[index + 4]
+                                    .position
+                                    .distance(endpoints[0].lerp(endpoints[1], *parameter))
+                                    < EPSILON
+                            );
+                        }
+                        if parameters == [0.5; 2] {
+                            assert_eq!(partition, midpoint[0]);
+                        }
+                    }
+                }
+            }
+            assert_eq!(document.vmf(), &before);
+        }
+    }
+
+    #[test]
+    fn adjustable_cut_bounds_reject_before_any_document_mutation() {
+        let (document, id) = fixture(false);
+        let shape = topology(document.solid(id).unwrap()).unwrap();
+        let side = shape.faces[0].side;
+        let cut = PartitionCut {
+            source: Crease {
+                solid: id,
+                side,
+                edges: crease_pairs(document.solid(id).unwrap(), side).unwrap()[0].edges,
+            },
+            edge_parameters: [0.2, 0.8],
+        };
+        let before = document.vmf().clone();
+        for parameter in [f64::NAN, f64::INFINITY, -0.1, 0.0, 1.0, 1.1, 1e-12] {
+            let mut invalid = cut.clone();
+            invalid.edge_parameters[0] = parameter;
+            assert!(plan_partitions_at(&document, &[invalid]).is_err());
+        }
+        assert!(plan_partitions_at(&document, &[]).is_err());
+        assert!(plan_partitions_at(&document, &vec![cut.clone(); MAX_SOLIDS + 1]).is_err());
+        assert!(plan_partitions_at(&document, &[cut.clone(), cut]).is_err());
+        assert_eq!(document.vmf(), &before);
     }
 
     #[test]

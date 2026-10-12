@@ -83,29 +83,12 @@ pub fn plan_partition_extrusion(
     if selection.is_empty() || selection.len() > MAX_EXTRUSION_PIECES {
         return Err(invalid("Select 1–32 flat pieces to extrude"));
     }
-    let requests = partitions
-        .iter()
-        .map(|part| part.source.clone())
-        .collect::<Vec<_>>();
-    let current = plan_partitions(document, &requests)?;
     let mut sources = BTreeMap::new();
     for part in partitions {
-        let canonical = current
-            .iter()
-            .find(|current| current.source.solid == part.source.solid)
-            .unwrap();
-        let mut checked = part.clone();
-        checked.loops = canonical.loops.clone();
-        let mut reversed = canonical.loops.clone();
-        reversed.swap(0, 1);
-        reversed[0].id = 0;
-        reversed[1].id = 1;
-        if checked != *canonical || (part.loops != canonical.loops && part.loops != reversed) {
-            return Err(invalid(
-                "Partition source geometry, ownership or loop incidence changed",
-            ));
+        checked_partition(document, part)?;
+        if sources.insert(part.source.solid, part).is_some() {
+            return Err(invalid("Select one partition per source brush"));
         }
-        sources.insert(part.source.solid, part);
     }
     let mut pieces = Vec::new();
     for (solid_id, partition_id) in selection.iter().copied().collect::<BTreeSet<_>>() {

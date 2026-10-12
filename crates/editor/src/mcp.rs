@@ -610,6 +610,12 @@ struct RaisePartitionArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PartitionCutArgs {
+    token: String,
+    edge_parameters: [f64; 2],
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ExtrudePartitionArgs {
     token: String,
     height: f64,
@@ -3363,6 +3369,21 @@ impl EditorServer {
                 args.rise,
                 args.roof_texture_lock,
             )?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Adjust a flat partition's two cut endpoints along its existing opposing source edges. Requires the current token, zero ridge height and no extrusion draft; Return to flat first. edge_parameters are two finite values strictly between zero and one, applied to every source brush. Edges follow sorted neighboring side IDs; each parameter runs between the edge's sorted corner incidence lists, reported in preview.partition.vertices[].source.corners. Defaults are [0.5,0.5]. Produces unequal/diagonal convex quad pieces while retaining source planes, owners, saved piece identity, highlights and history. Invalid, collapsed or unsupported results retain the last valid draft. Returns a replacement token. preview.partition.edge_parameters contains shared values or null for mixed saved sources; vertex provenance reports each exact value. Keep with store_component_partition, extrude with preview_partition_extrusion, frame/pick with the existing partition tools or Cancel. Saved parameters survive affine edits, reflection and reopening. Shared ridge raising currently requires midpoint cuts; it rejects adjusted cuts without snapping them."
+    )]
+    fn update_component_partition_cut(
+        &self,
+        Parameters(args): Parameters<PartitionCutArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session
+                .update_component_partition_cut(parse_token(&args.token)?, args.edge_parameters)?;
             selected_component_report(&session)
         })
     }

@@ -6,91 +6,112 @@ use source_formats::bsp::{Brush, Face, Plane};
 
 #[test]
 fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
-    for owned in [false, true] {
-        for oblique in [false, true] {
-            for direction in 0..2 {
-                let mut document = Document::new(common::room());
-                let object = document
-                    .edit("block", |tx| {
-                        edit::create_block(
-                            tx,
-                            DVec3::new(0.125, -7.25, 16.5),
-                            DVec3::new(64.875, 48.125, 80.25),
-                            "dev/dev_measuregeneric01",
-                        )
-                    })
-                    .unwrap();
-                let ObjectId::Solid(id) = object else {
-                    unreachable!()
-                };
-                if oblique {
-                    document
-                        .edit("rotate", |tx| {
-                            edit::transform(
+    for edge_parameters in [[0.5; 2], [0.2, 0.8]] {
+        for owned in [false, true] {
+            for oblique in [false, true] {
+                for direction in 0..2 {
+                    let mut document = Document::new(common::room());
+                    let object = document
+                        .edit("block", |tx| {
+                            edit::create_block(
                                 tx,
-                                &[object],
-                                map_core::transform::Transform {
-                                    rotation: DVec3::new(17.0, -23.0, 31.0),
-                                    pivot: DVec3::new(32.5, 20.4375, 48.375),
-                                    ..Default::default()
-                                },
+                                DVec3::new(0.125, -7.25, 16.5),
+                                DVec3::new(64.875, 48.125, 80.25),
+                                "dev/dev_measuregeneric01",
                             )
                         })
                         .unwrap();
-                }
-                if owned {
+                    let ObjectId::Solid(id) = object else {
+                        unreachable!()
+                    };
+                    if oblique {
+                        document
+                            .edit("rotate", |tx| {
+                                edit::transform(
+                                    tx,
+                                    &[object],
+                                    map_core::transform::Transform {
+                                        rotation: DVec3::new(17.0, -23.0, 31.0),
+                                        pivot: DVec3::new(32.5, 20.4375, 48.375),
+                                        ..Default::default()
+                                    },
+                                )
+                            })
+                            .unwrap();
+                    }
+                    if owned {
+                        document
+                            .edit("detail", |tx| {
+                                edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                            })
+                            .unwrap();
+                    }
+                    let (_, source) = subobject::solid(&document, id).unwrap();
+                    let side = source
+                        .sides
+                        .iter()
+                        .max_by(|a, b| {
+                            map_core::Plane::from_points(a.plane.0)
+                                .unwrap()
+                                .normal
+                                .z
+                                .total_cmp(
+                                    &map_core::Plane::from_points(b.plane.0).unwrap().normal.z,
+                                )
+                        })
+                        .unwrap()
+                        .id;
+                    let request = subobject::Crease {
+                        solid: id,
+                        side,
+                        edges: subobject::crease_pairs(source, side).unwrap()[direction].edges,
+                    };
+                    let partitions = subobject::plan_partitions_at(
+                        &document,
+                        &[subobject::PartitionCut {
+                            source: request,
+                            edge_parameters,
+                        }],
+                    )
+                    .unwrap();
                     document
-                        .edit("detail", |tx| {
-                            edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                        .edit("keep", |tx| {
+                            map_core::partition_metadata::store_partition(tx, &partitions[0])
                         })
                         .unwrap();
-                }
-                let (_, source) = subobject::solid(&document, id).unwrap();
-                let side = source
-                    .sides
-                    .iter()
-                    .max_by(|a, b| {
-                        map_core::Plane::from_points(a.plane.0)
-                            .unwrap()
-                            .normal
-                            .z
-                            .total_cmp(&map_core::Plane::from_points(b.plane.0).unwrap().normal.z)
-                    })
-                    .unwrap()
-                    .id;
-                let request = subobject::Crease {
-                    solid: id,
-                    side,
-                    edges: subobject::crease_pairs(source, side).unwrap()[direction].edges,
-                };
-                let partitions = subobject::plan_partitions(&document, &[request]).unwrap();
-                let spec = subobject::ExtrusionSpec {
-                    height: 16.125,
-                    wall_material: Some("dev/dev_measurewall01a".into()),
-                    texture_lock: true,
-                };
-                document
-                    .edit("extrude", |tx| {
-                        subobject::extrude_partitions(tx, &partitions, &[(id, 0), (id, 1)], &spec)
-                    })
-                    .unwrap();
-                let reopened =
-                    source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
+                    let spec = subobject::ExtrusionSpec {
+                        height: 16.125,
+                        wall_material: Some("dev/dev_measurewall01a".into()),
+                        texture_lock: true,
+                    };
+                    document
+                        .edit("extrude", |tx| {
+                            subobject::extrude_partitions(
+                                tx,
+                                &partitions,
+                                &[(id, 0), (id, 1)],
+                                &spec,
+                            )
+                        })
                         .unwrap();
-                reopened.validate_ids().unwrap();
-                let output = compiler::compile(&reopened, &common::empty_game());
-                assert!(!output.report.has_errors(), "{:?}", output.report);
-                assert!(output.leak.is_none());
-                assert_eq!(output.stats.brushes, 9);
-                assert!(
-                    output
-                        .bsp
-                        .unwrap()
-                        .records::<Brush>()
-                        .unwrap()
-                        .iter()
-                        .all(|brush| brush.side_count >= 6)
-                );
+                    let reopened =
+                        source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
+                            .unwrap();
+                    reopened.validate_ids().unwrap();
+                    let output = compiler::compile(&reopened, &common::empty_game());
+                    assert!(!output.report.has_errors(), "{:?}", output.report);
+                    assert!(output.leak.is_none());
+                    assert_eq!(output.stats.brushes, 9);
+                    assert!(
+                        output
+                            .bsp
+                            .unwrap()
+                            .records::<Brush>()
+                            .unwrap()
+                            .iter()
+                            .all(|brush| brush.side_count >= 6)
+                    );
+                }
             }
         }
     }
@@ -128,24 +149,35 @@ fn saved_flat_partition_intents_leave_native_bsp_bytes_unchanged() {
     assert!(!before.report.has_errors());
     assert!(before.leak.is_none());
     let bytes = before.bsp.unwrap().to_bytes();
-    document
-        .edit("store flat intent", |tx| {
-            map_core::partition_metadata::store(tx, &request)
-        })
-        .unwrap();
-    let reopened =
-        source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
-    assert_eq!(
-        map_core::partition_metadata::Metadata::parse(&reopened)
-            .unwrap()
-            .entries
-            .len(),
-        1
-    );
-    let after = compiler::compile(&reopened, &common::empty_game());
-    assert!(!after.report.has_errors());
-    assert!(after.leak.is_none());
-    assert_eq!(after.bsp.unwrap().to_bytes(), bytes);
+    for edge_parameters in [[0.5; 2], [0.2, 0.8]] {
+        let partition = subobject::plan_partitions_at(
+            &document,
+            &[subobject::PartitionCut {
+                source: request.clone(),
+                edge_parameters,
+            }],
+        )
+        .unwrap()
+        .remove(0);
+        document
+            .edit("store flat intent", |tx| {
+                map_core::partition_metadata::store_partition(tx, &partition)
+            })
+            .unwrap();
+        let reopened =
+            source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+        assert_eq!(
+            map_core::partition_metadata::Metadata::parse(&reopened)
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+        let after = compiler::compile(&reopened, &common::empty_game());
+        assert!(!after.report.has_errors());
+        assert!(after.leak.is_none());
+        assert_eq!(after.bsp.unwrap().to_bytes(), bytes);
+    }
 }
 
 #[test]

@@ -5634,6 +5634,48 @@ mod tests {
         window.invoke_frame_partitions();
         assert!(window.get_message().is_empty());
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        window.set_show_cut_settings(true);
+        window.invoke_choose_cut_position(0, 20.0);
+        window.invoke_choose_cut_position(1, 80.0);
+        assert!(!window.get_ready());
+        window.invoke_preview_edit();
+        assert!(window.get_message().contains("Preview the cut positions"));
+        window.invoke_preview_cut();
+        assert!(window.get_ready());
+        assert_eq!(
+            lock(&shared).component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"],
+            serde_json::json!([0.2, 0.8])
+        );
+        save_ui_snapshot(window.window(), "adjusted-flat-partition");
+        for label in [
+            "Partition edge A position",
+            "Partition edge B position",
+            "Preview cut",
+            "Keep flat pieces",
+            "Cancel",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        let cut_token = lock(&shared).partition_preview_token();
+        window.invoke_choose_cut_position(0, 0.0);
+        window.invoke_preview_cut();
+        assert!(!window.get_ready());
+        assert_eq!(lock(&shared).partition_preview_token(), cut_token);
+        window.invoke_choose_cut_position(0, 13.7);
+        window.invoke_choose_cut_position(1, 68.3);
+        window.invoke_preview_cut();
+        assert!(window.get_ready());
+        assert!((window.get_cut_first_value() - 13.7).abs() < 0.001);
+        assert!((window.get_cut_second_value() - 68.3).abs() < 0.001);
+        assert_dialog_button_visible(&window, "Reset cut to midpoint");
+        window.invoke_choose_rise(16.0);
+        window.invoke_preview_edit();
+        assert!(window.get_message().contains("midpoint"));
+        window.invoke_choose_cut_position(0, 50.0);
+        window.invoke_choose_cut_position(1, 50.0);
+        window.invoke_preview_cut();
+        assert!(window.get_ready());
+        window.set_show_cut_settings(false);
         window.set_roof_texture_lock(true);
         window.invoke_choose_rise(16.125);
         window.invoke_preview_edit();

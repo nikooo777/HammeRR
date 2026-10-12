@@ -163,7 +163,8 @@ enable it to preserve corner UVs, or disable it to keep the texture's size and
 add repetitions as the brush grows. Both off keeps the original world
 projection. The same choices are available in the scale-handle toolbar.
 Numeric transforms remain exact, independent of grid snapping. During a shared
-preview the inspector shows its actual values; use **Apply transform** or
+preview the inspector shows its actual values and a read-only summary of every
+active operation, including combined transforms. Use **Apply transform** or
 **Cancel** before applying another numeric operation.
 
 | Texture keeps its size | Texture stretches with the brush |
@@ -940,6 +941,10 @@ Single-axis shear uses the same tool and shared draft:
 operations, scale/reflection precedes shear, rotation follows it, then
 translation. Texture scale locking controls shear attachment separately from
 movement/rotation locking.
+
+`get_transform_handles.state.preview.display` exposes the same operation
+classification and summary as the inspector. Zero shear and whole-turn-only
+rotation report `identity`; compound drafts list all active operations.
 
 `edit_faces` supports material, UV offsets/scales, rotation, fitting, lightmap
 scale, smoothing groups and non-destructive previews. Commit or cancel the

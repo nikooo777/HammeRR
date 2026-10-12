@@ -317,11 +317,10 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
     });
     if let Some(preview) = session.transform_preview() {
         let spec = preview.transform;
-        if spec.reflection.into_iter().any(|axis| axis) {
-            app.set_transform_mode(3);
-        }
+        let presentation = preview.presentation();
+        app.set_transform_mode(presentation.primary.index());
+        app.set_transform_preview_summary(presentation.summary.into());
         if let Some(shear) = spec.shear {
-            app.set_transform_mode(4);
             app.set_transform_shear_axis(shear.axis as i32);
             app.set_transform_shear_reference(shear.reference as i32);
             app.set_transform_shear_factor(shear.factor.to_string().into());
@@ -350,6 +349,8 @@ fn refresh_interaction(app: &AppWindow, session: &Session) {
         app.set_pivot_x(spec.pivot.x.to_string().into());
         app.set_pivot_y(spec.pivot.y.to_string().into());
         app.set_pivot_z(spec.pivot.z.to_string().into());
+    } else {
+        app.set_transform_preview_summary("".into());
     }
     app.set_has_transform_preview(session.transform_preview().is_some());
     app.set_has_area_preview(session.area_preview().is_some());
@@ -7881,6 +7882,177 @@ mod tests {
 
     use slint::Model;
     use source_formats::vmf::Entity;
+
+    #[test]
+    fn replacement_transform_drafts_display_shared_operations_without_editing_source() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let app = AppWindow::new().unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let id = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        state
+            .set_transform_tool(Actor::User, Default::default())
+            .unwrap();
+        let before = state.document().vmf().clone();
+        let history = state.document().undo_labels().count();
+        app.set_has_selection(true);
+        app.set_can_apply_material(true);
+        app.set_show_transform(true);
+        app.show().unwrap();
+        app.window().set_size(slint::PhysicalSize::new(1600, 960));
+        let shear = map_core::transform::Shear {
+            axis: 0,
+            reference: 1,
+            factor: 0.5,
+        };
+        for previous in [3, 4] {
+            for (mode, spec, values) in [
+                (
+                    0,
+                    edit::Transform {
+                        translation: DVec3::new(12.125, -7.25, 3.5),
+                        ..Default::default()
+                    },
+                    ["12.125", "-7.25", "3.5"],
+                ),
+                (
+                    1,
+                    edit::Transform {
+                        rotation: DVec3::new(17.0, -23.0, 31.0),
+                        ..Default::default()
+                    },
+                    ["17", "-23", "31"],
+                ),
+                (
+                    2,
+                    edit::Transform {
+                        scale: DVec3::new(1.25, 0.75, 1.5),
+                        ..Default::default()
+                    },
+                    ["1.25", "0.75", "1.5"],
+                ),
+                (
+                    0,
+                    edit::Transform {
+                        shear: Some(map_core::transform::Shear {
+                            factor: 0.0,
+                            ..shear
+                        }),
+                        ..Default::default()
+                    },
+                    ["0", "0", "0"],
+                ),
+            ] {
+                state
+                    .preview_transform(
+                        Actor::Agent,
+                        &[id],
+                        edit::Transform {
+                            reflection: [previous == 3, false, false],
+                            shear: (previous == 4).then_some(shear),
+                            ..Default::default()
+                        },
+                        None,
+                    )
+                    .unwrap();
+                refresh_interaction(&app, &state);
+                save_ui_snapshot(app.window(), "transform-before-replacement");
+                assert_eq!(app.get_transform_mode(), previous);
+                state
+                    .preview_transform(Actor::Agent, &[id], spec, None)
+                    .unwrap();
+                let expected = state.transform_preview().unwrap().document.vmf().clone();
+                let summary = state.transform_preview().unwrap().presentation().summary;
+                refresh_interaction(&app, &state);
+                save_ui_snapshot(
+                    app.window(),
+                    &format!("transform-replacement-{previous}-{mode}"),
+                );
+                assert_eq!(app.get_transform_mode(), mode);
+                assert_eq!(
+                    [
+                        app.get_transform_x(),
+                        app.get_transform_y(),
+                        app.get_transform_z()
+                    ],
+                    values.map(SharedString::from)
+                );
+                assert_eq!(app.get_transform_preview_summary(), summary);
+                assert_eq!(state.transform_tool().mode, None);
+                assert_eq!(state.document().vmf(), &before);
+                assert_eq!(state.document().undo_labels().count(), history);
+                state.cancel_transform_preview();
+                refresh_interaction(&app, &state);
+                assert_eq!(state.document().vmf(), &before);
+                assert_eq!(app.get_transform_preview_summary(), "");
+                state
+                    .preview_transform(Actor::Agent, &[id], spec, None)
+                    .unwrap();
+                state.commit_transform_preview(Actor::User).unwrap();
+                assert_eq!(state.document().vmf(), &expected);
+                if expected != before {
+                    assert_eq!(state.document().undo_labels().count(), history + 1);
+                    state.undo(Actor::Agent).unwrap();
+                }
+                assert_eq!(state.document().vmf(), &before);
+            }
+        }
+        state
+            .preview_transform(
+                Actor::Agent,
+                &[id],
+                edit::Transform {
+                    translation: DVec3::new(8.0, 0.0, 0.0),
+                    rotation: DVec3::new(0.0, 0.0, 15.0),
+                    scale: DVec3::new(1.25, 1.0, 1.0),
+                    reflection: [true, false, false],
+                    shear: Some(shear),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let presentation = state.transform_preview().unwrap().presentation();
+        assert_eq!(
+            presentation
+                .operations
+                .iter()
+                .map(|op| op.name())
+                .collect::<Vec<_>>(),
+            ["move", "rotate", "scale", "mirror", "shear"]
+        );
+        refresh_interaction(&app, &state);
+        save_ui_snapshot(app.window(), "transform-compound-summary");
+        assert_eq!(app.get_transform_mode(), 4);
+        assert_eq!(app.get_transform_preview_summary(), presentation.summary);
+        for label in [
+            "Move: 8, 0, 0 units",
+            "Rotate: 0, 0, 15 degrees",
+            "Scale: 1.25, 1, 1 factors",
+            "Mirror: X",
+            "Shear: X by Y × 0.5",
+        ] {
+            assert!(app.get_transform_preview_summary().contains(label));
+        }
+        assert_dialog_button_visible(&app, "Apply transform");
+        assert_dialog_button_visible(&app, "Cancel");
+        assert_eq!(state.document().vmf(), &before);
+        assert_eq!(state.document().undo_labels().count(), history);
+    }
 
     #[test]
     fn shear_controls_share_numeric_apply_and_agent_draft_values() {

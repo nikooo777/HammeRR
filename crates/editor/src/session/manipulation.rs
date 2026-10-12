@@ -66,6 +66,109 @@ pub struct TransformPreview {
     revision: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransformOperation {
+    Move,
+    Rotate,
+    Scale,
+    Mirror,
+    Shear,
+}
+
+impl TransformOperation {
+    pub fn index(self) -> i32 {
+        self as i32
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Move => "move",
+            Self::Rotate => "rotate",
+            Self::Scale => "scale",
+            Self::Mirror => "mirror",
+            Self::Shear => "shear",
+        }
+    }
+}
+
+pub struct TransformPresentation {
+    pub primary: TransformOperation,
+    pub operations: Vec<TransformOperation>,
+    pub summary: String,
+}
+
+impl TransformPreview {
+    pub fn presentation(&self) -> TransformPresentation {
+        let spec = self.transform;
+        let mut operations = Vec::new();
+        let mut lines = Vec::new();
+        for (operation, value, active, unit) in [
+            (
+                TransformOperation::Move,
+                spec.basis.transpose() * spec.translation,
+                spec.translation != DVec3::ZERO,
+                "units",
+            ),
+            (
+                TransformOperation::Rotate,
+                spec.rotation,
+                spec.rotation.map(|angle| angle.rem_euclid(360.0)) != DVec3::ZERO,
+                "degrees",
+            ),
+            (
+                TransformOperation::Scale,
+                spec.scale,
+                spec.scale != DVec3::ONE,
+                "factors",
+            ),
+        ] {
+            if active {
+                operations.push(operation);
+                lines.push(format!(
+                    "{}: {}, {}, {} {unit}",
+                    match operation {
+                        TransformOperation::Move => "Move",
+                        TransformOperation::Rotate => "Rotate",
+                        _ => "Scale",
+                    },
+                    value.x,
+                    value.y,
+                    value.z
+                ));
+            }
+        }
+        let axes = ["X", "Y", "Z"];
+        let reflected = axes
+            .into_iter()
+            .zip(spec.reflection)
+            .filter_map(|(axis, reflected)| reflected.then_some(axis))
+            .collect::<Vec<_>>();
+        if !reflected.is_empty() {
+            operations.push(TransformOperation::Mirror);
+            lines.push(format!("Mirror: {}", reflected.join(", ")));
+        }
+        if let Some(shear) = spec.shear.filter(|shear| shear.factor != 0.0) {
+            operations.push(TransformOperation::Shear);
+            lines.push(format!(
+                "Shear: {} by {} × {}",
+                axes[shear.axis], axes[shear.reference], shear.factor
+            ));
+        }
+        TransformPresentation {
+            primary: operations
+                .last()
+                .copied()
+                .unwrap_or(TransformOperation::Move),
+            operations,
+            summary: if lines.is_empty() {
+                "No geometry change".into()
+            } else {
+                lines.join("\n")
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pointer {
     pub position: DVec2,

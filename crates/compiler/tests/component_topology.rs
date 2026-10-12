@@ -5,6 +5,58 @@ use map_core::{Document, ObjectId, edit, subobject};
 use source_formats::bsp::{Brush, Face, Plane};
 
 #[test]
+fn saved_flat_partition_intents_leave_native_bsp_bytes_unchanged() {
+    let mut document = Document::new(common::room());
+    let ObjectId::Solid(id) = document
+        .edit("block", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(0.125, -7.25, 16.5),
+                DVec3::new(64.875, 48.125, 80.25),
+                "dev/dev_measuregeneric01",
+            )
+        })
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let source = document.solid(id).unwrap();
+    let side = source
+        .sides
+        .iter()
+        .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+        .unwrap()
+        .id;
+    let request = subobject::Crease {
+        solid: id,
+        side,
+        edges: subobject::crease_pairs(source, side).unwrap()[0].edges,
+    };
+    let before = compiler::compile(document.vmf(), &common::empty_game());
+    assert!(!before.report.has_errors());
+    assert!(before.leak.is_none());
+    let bytes = before.bsp.unwrap().to_bytes();
+    document
+        .edit("store flat intent", |tx| {
+            map_core::partition_metadata::store(tx, &request)
+        })
+        .unwrap();
+    let reopened =
+        source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+    assert_eq!(
+        map_core::partition_metadata::Metadata::parse(&reopened)
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+    let after = compiler::compile(&reopened, &common::empty_game());
+    assert!(!after.report.has_errors());
+    assert!(after.leak.is_none());
+    assert_eq!(after.bsp.unwrap().to_bytes(), bytes);
+}
+
+#[test]
 fn sheared_oblique_brushes_compile_after_vmf_round_trip() {
     for factor in [-1.25, 0.75] {
         let mut document = Document::new(common::room());

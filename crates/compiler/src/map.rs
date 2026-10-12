@@ -17,6 +17,9 @@ use crate::{Control, Diagnostic, Report};
 #[path = "bevels.rs"]
 mod bevels;
 
+#[path = "support.rs"]
+mod support;
+
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
@@ -346,7 +349,15 @@ impl<'a> Map<'a> {
                 ));
             }
             let visible = info.draws;
-            let plane = self.planes.find(face.plane.normal, face.plane.dist);
+            let Some(plane) = support::find_authored(&mut self.planes, &geometry, face, control)?
+            else {
+                report.diagnostics.push(Diagnostic::error(
+                    "cannot preserve authored BSP plane support; simplify this brush",
+                    Some(object),
+                    Some(geometry.center()),
+                ));
+                return Ok(());
+            };
             if self.planes.len() > bevels::MAX_PLANES {
                 report.diagnostics.push(Diagnostic::error(
                     "BSP collision plane limit exceeded; reduce map geometry",
@@ -416,7 +427,7 @@ impl<'a> Map<'a> {
         ) {
             match error {
                 bevels::Error::Cancelled(message) => return Err(message),
-                bevels::Error::Limit(message) => {
+                bevels::Error::Limit(message) | bevels::Error::Invalid(message) => {
                     report.diagnostics.push(Diagnostic::error(
                         message,
                         Some(object),

@@ -2,18 +2,20 @@ use glam::DVec3;
 use map_core::brush::BrushGeometry;
 
 use super::MapSide;
+use super::support;
+use super::support::{distance as support_distance, emitted_distance};
 use crate::Control;
-use crate::planes::PlaneSet;
+use crate::planes::{NORMAL_EPSILON, PlaneSet};
 use crate::winding::ON_EPSILON;
 
 pub(super) const MAX_PLANES: usize = u16::MAX as usize + 1;
 pub(super) const MAX_BRUSH_SIDES: usize = i32::MAX as usize;
-const CHECKPOINT_POINT_INTERVAL: usize = 256;
 
 #[derive(Debug)]
 pub(super) enum Error {
     Cancelled(String),
     Limit(&'static str),
+    Invalid(&'static str),
 }
 
 impl From<String> for Error {
@@ -22,19 +24,13 @@ impl From<String> for Error {
     }
 }
 
-fn find_plane(planes: &mut PlaneSet, normal: DVec3, dist: f64) -> Result<usize, Error> {
+fn check_plane_limit(planes: &PlaneSet) -> Result<(), Error> {
     if planes.len() > MAX_PLANES {
         return Err(Error::Limit(
             "BSP collision plane limit exceeded; reduce map geometry",
         ));
     }
-    let plane = planes.find(normal, dist);
-    if planes.len() > MAX_PLANES {
-        return Err(Error::Limit(
-            "BSP collision plane limit exceeded; reduce map geometry",
-        ));
-    }
-    Ok(plane)
+    Ok(())
 }
 
 fn append_side(sides: &mut Vec<MapSide>, plane: usize, side_budget: usize) -> Result<(), Error> {
@@ -54,42 +50,6 @@ fn append_side(sides: &mut Vec<MapSide>, plane: usize, side_budget: usize) -> Re
         visible: false,
     });
     Ok(())
-}
-
-fn support_distance(
-    geometry: &BrushGeometry,
-    normal: DVec3,
-    control: &Control,
-) -> Result<f64, Error> {
-    let mut dist = f64::MIN;
-    for face in &geometry.faces {
-        control.checkpoint()?;
-        for (index, &point) in face.vertices.iter().enumerate() {
-            if index % CHECKPOINT_POINT_INTERVAL == 0 {
-                control.checkpoint()?;
-            }
-            dist = dist.max(normal.dot(point));
-        }
-    }
-    Ok(dist)
-}
-
-fn emitted_distance(
-    normal: DVec3,
-    support: f64,
-    geometry: &BrushGeometry,
-    control: &Control,
-) -> Result<f64, Error> {
-    let emitted_normal = normal.as_vec3().as_dvec3();
-    let emitted_support = support_distance(geometry, emitted_normal, control)?;
-    let boundary = support.max(emitted_support);
-    let rounded = boundary as f32;
-    let rounded = if f64::from(rounded) < boundary {
-        rounded.next_up()
-    } else {
-        rounded
-    };
-    Ok(f64::from(rounded))
 }
 
 pub(super) fn add(
@@ -112,7 +72,13 @@ pub(super) fn add(
             } else {
                 -geometry.mins[axis]
             };
-            let plane = find_plane(planes, normal, dist)?;
+            check_plane_limit(planes)?;
+            let Some(plane) = support::find_axial(planes, geometry, normal, dist, control)? else {
+                return Err(Error::Invalid(
+                    "cannot preserve axial BSP plane support; simplify this brush",
+                ));
+            };
+            check_plane_limit(planes)?;
             append_side(sides, plane, side_budget)?;
         }
     }
@@ -120,7 +86,7 @@ pub(super) fn add(
         && geometry
             .faces
             .iter()
-            .all(|face| face.plane.normal.abs().max_element() == 1.0)
+            .all(|face| [DVec3::X, DVec3::Y, DVec3::Z].contains(&face.plane.normal.abs()))
     {
         return Ok(());
     }
@@ -137,6 +103,15 @@ pub(super) fn add(
                     continue;
                 };
                 for normal in [normal, -normal] {
+                    if sides.iter().any(|side| {
+                        let plane = planes.get(side.plane);
+                        plane.kind < 3
+                            && (plane.normal - normal).abs().max_element() < NORMAL_EPSILON
+                            && plane.distance(point).abs() <= ON_EPSILON
+                            && plane.distance(next).abs() <= ON_EPSILON
+                    }) {
+                        continue;
+                    }
                     let dist = normal.dot(point);
                     if !normal.is_finite() || !dist.is_finite() {
                         continue;
@@ -150,26 +125,12 @@ pub(super) fn add(
                         if candidate.kind < 3 {
                             return Ok(false);
                         }
-                        let support = support_distance(geometry, candidate.normal, control)?;
-                        let emitted_support = support_distance(
-                            geometry,
-                            candidate.normal.as_vec3().as_dvec3(),
-                            control,
-                        )?;
-                        Ok::<_, Error>(
-                            (support - candidate.dist).abs() <= ON_EPSILON
-                                && (emitted_support - f64::from(candidate.dist as f32)).abs()
-                                    <= ON_EPSILON,
-                        )
+                        Ok::<_, Error>(support::accepts(geometry, candidate, control)?)
                     })?;
                     let Some(plane) = plane else {
                         continue;
                     };
-                    if planes.len() > MAX_PLANES {
-                        return Err(Error::Limit(
-                            "BSP collision plane limit exceeded; reduce map geometry",
-                        ));
-                    }
+                    check_plane_limit(planes)?;
                     if sides.iter().any(|side| side.plane == plane) {
                         continue;
                     }
@@ -287,10 +248,16 @@ mod tests {
             planes.find(DVec3::X, dist as f64);
         }
         assert_eq!(planes.len(), MAX_PLANES);
-        assert!(find_plane(&mut planes, DVec3::X, 32.0).is_ok());
-        assert!(matches!(
-            find_plane(&mut planes, DVec3::Y, 32.0),
-            Err(Error::Limit(_))
-        ));
+        let (geometry, _, _) = tetrahedron(32.0);
+        assert!(
+            support::find_axial(&mut planes, &geometry, DVec3::X, 32.0, &Control::default())
+                .unwrap()
+                .is_some()
+        );
+        assert!(check_plane_limit(&planes).is_ok());
+        support::find_axial(&mut planes, &geometry, DVec3::Y, 32.0, &Control::default())
+            .unwrap()
+            .unwrap();
+        assert!(matches!(check_plane_limit(&planes), Err(Error::Limit(_))));
     }
 }

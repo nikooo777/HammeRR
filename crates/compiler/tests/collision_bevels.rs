@@ -223,6 +223,38 @@ fn assert_trace(actual: Option<f64>, expected: Option<f64>, context: &str) {
     }
 }
 
+fn assert_authored_planes(map: &Map<'_>, brush: &MapBrush, geometry: &BrushGeometry) {
+    assert_eq!(brush.mins, geometry.mins);
+    assert_eq!(brush.maxs, geometry.maxs);
+    assert_eq!(
+        brush.sides.iter().filter(|side| !side.bevel).count(),
+        geometry.faces.len()
+    );
+    for (side, face) in brush.sides.iter().zip(&geometry.faces) {
+        assert!(!side.bevel);
+        assert_eq!(side.winding.as_ref().unwrap().0, face.vertices);
+        let plane = map.planes.get(side.plane);
+        for emitted in [false, true] {
+            let (normal, dist) = if emitted {
+                (
+                    plane.normal.as_vec3().as_dvec3(),
+                    f64::from(plane.dist as f32),
+                )
+            } else {
+                (plane.normal, plane.dist)
+            };
+            for &point in &face.vertices {
+                assert!((normal.dot(point) - dist).abs() <= compiler::winding::ON_EPSILON);
+            }
+            let support = brush
+                .points()
+                .map(|point| normal.dot(point))
+                .fold(f64::MIN, f64::max);
+            assert!((support - dist).abs() <= compiler::winding::ON_EPSILON);
+        }
+    }
+}
+
 #[test]
 fn axial_boxes_and_unrotated_ramps_retain_their_existing_axial_sides() {
     let fs = common::empty_game();
@@ -232,7 +264,16 @@ fn axial_boxes_and_unrotated_ramps_retain_their_existing_axial_sides() {
         let map = Map::load(document.vmf(), &fs, &mut report);
         assert!(!report.has_errors(), "{report:?}");
         let brush = &map.brushes[0];
-        assert_eq!(brush.sides.len(), expected_sides);
+        assert_eq!(
+            brush.sides.len(),
+            expected_sides,
+            "{:?}",
+            brush
+                .sides
+                .iter()
+                .map(|side| (side.bevel, map.planes.get(side.plane)))
+                .collect::<Vec<_>>()
+        );
         assert!(
             brush
                 .sides
@@ -320,6 +361,21 @@ fn rotated_reflected_thin_and_sloped_hull_sweeps_match_separating_axes() {
             [false, true, true],
         ),
         (Shape::Ramp, DVec3::new(21.0, -13.0, 37.0), [false; 3]),
+        (
+            Shape::Box(DVec3::splat(64.0)),
+            DVec3::new(0.0, 0.0, 0.1),
+            [false; 3],
+        ),
+        (
+            Shape::Box(DVec3::splat(64.0)),
+            DVec3::new(-0.1, 0.0, 0.0),
+            [true, false, false],
+        ),
+        (
+            Shape::Box(DVec3::new(0.25, 31.0, 48.0)),
+            DVec3::new(0.2, 0.1, -0.2),
+            [false, true, false],
+        ),
     ];
     let hulls = [
         (DVec3::ZERO, DVec3::ZERO),
@@ -564,7 +620,7 @@ fn near_axial_edge_bevels_preserve_required_hull_facets() {
 }
 
 #[test]
-fn slightly_rotated_boxes_keep_edge_bevels_when_authored_planes_snap_to_axes() {
+fn slightly_rotated_boxes_keep_authored_planes_on_their_faces() {
     let (document, _) = fixture(
         Shape::Box(DVec3::splat(64.0)),
         DVec3::new(0.0, 0.0, 0.1),
@@ -576,19 +632,195 @@ fn slightly_rotated_boxes_keep_edge_bevels_when_authored_planes_snap_to_axes() {
     let map = Map::load(document.vmf(), &fs, &mut report);
     assert!(!report.has_errors(), "{report:?}");
     let brush = &map.brushes[0];
-    assert!(
-        brush.sides[..6]
-            .iter()
-            .all(|side| !side.bevel && map.planes.get(side.plane).kind < 3)
+    let geometry = BrushGeometry::from_solid(&document.vmf().world.solids[0]).unwrap();
+    assert_authored_planes(&map, brush, &geometry);
+    for (side, face) in brush.sides.iter().zip(&geometry.faces) {
+        assert!(!side.bevel && side.visible);
+        let plane = map.planes.get(side.plane);
+        for &point in &face.vertices {
+            assert!(
+                plane.distance(point).abs() <= compiler::winding::ON_EPSILON,
+                "authored plane clips its face by {} units",
+                plane.distance(point)
+            );
+        }
+        let center = face.vertices.iter().copied().sum::<DVec3>() / face.vertices.len() as f64;
+        let start = center - face.plane.normal * 0.02;
+        let end = center + face.plane.normal * 0.02;
+        assert_trace(
+            plane_trace(
+                &brush_planes(brush, &map.planes, false),
+                start,
+                end,
+                DVec3::ZERO,
+                DVec3::ZERO,
+            ),
+            sat_trace(&geometry, start, end, DVec3::ZERO, DVec3::ZERO),
+            "near-axis face crossing",
+        );
+    }
+}
+
+#[test]
+fn authored_plane_checks_the_whole_face_when_snapped_support_is_safe() {
+    let (document, _) = fixture(
+        Shape::Box(DVec3::splat(64.0)),
+        DVec3::ZERO,
+        [false; 3],
+        false,
     );
-    let normal = DQuat::from_rotation_z(0.1f64.to_radians()) * DVec3::X;
-    let side = brush
-        .sides
+    let mut vmf = document.vmf().clone();
+    for side in &mut vmf.world.solids[0].sides {
+        for point in &mut side.plane.0 {
+            point.x -= point.y * 0.001;
+        }
+    }
+    let geometry = BrushGeometry::from_solid(&vmf.world.solids[0]).unwrap();
+    let normal = DVec3::new(1.0, 0.001, 0.0).normalize();
+    let face_index = geometry
+        .faces
         .iter()
-        .find(|side| side.bevel && map.planes.get(side.plane).normal.abs_diff_eq(normal, 1e-10))
+        .position(|face| face.plane.normal.abs_diff_eq(normal, 1e-10))
         .unwrap();
-    assert_eq!(map.planes.get(side.plane).kind, 3);
-    assert!(!side.visible && side.winding.is_none());
+    let dist = geometry.faces[face_index].plane.dist.round();
+    assert!((geometry.maxs.x - dist).abs() <= compiler::winding::ON_EPSILON);
+    assert!(
+        geometry.faces[face_index]
+            .vertices
+            .iter()
+            .any(|point| (point.x - dist).abs() > 0.06)
+    );
+    let fs = common::empty_game();
+    let mut report = compiler::Report::default();
+    let map = Map::load(&vmf, &fs, &mut report);
+    assert!(!report.has_errors(), "{report:?}");
+    assert_authored_planes(&map, &map.brushes[0], &geometry);
+    assert_eq!(
+        map.planes.get(map.brushes[0].sides[face_index].plane).kind,
+        3
+    );
+}
+
+#[test]
+fn distant_authored_faces_reject_unsafe_near_normal_reuse() {
+    let (first, _) = fixture(Shape::Tetrahedron, DVec3::ZERO, [false; 3], false);
+    let angle = 8e-6f64;
+    let (second, _) = fixture(
+        Shape::Tetrahedron,
+        DVec3::new(0.0, 0.0, angle.to_degrees()),
+        [false; 3],
+        false,
+    );
+    let first_geometry = BrushGeometry::from_solid(&first.vmf().world.solids[0]).unwrap();
+    let second_geometry = BrushGeometry::from_solid(&second.vmf().world.solids[0]).unwrap();
+    let first_face = first_geometry
+        .faces
+        .iter()
+        .find(|face| face.plane.normal.min_element() > 0.0)
+        .unwrap();
+    let second_face = second_geometry
+        .faces
+        .iter()
+        .find(|face| face.plane.normal.min_element() > 0.0)
+        .unwrap();
+    for sign in [1.0, -1.0] {
+        let distant = DVec3::new(16_000.0, -16_000.0, 0.0) * sign;
+        let translation = distant
+            + second_face.plane.normal
+                * (first_face.plane.dist
+                    - second_face.plane.dist
+                    - second_face.plane.normal.dot(distant));
+        let mut vmf = first.vmf().clone();
+        let mut solid = second.vmf().world.solids[0].clone();
+        solid.id = 1_000;
+        for (index, side) in solid.sides.iter_mut().enumerate() {
+            side.id = 1_001 + index as u32;
+            for point in &mut side.plane.0 {
+                *point += translation;
+            }
+        }
+        let geometry = BrushGeometry::from_solid(&solid).unwrap();
+        vmf.world.solids.push(solid);
+        let fs = common::empty_game();
+        let mut report = compiler::Report::default();
+        let map = Map::load(&vmf, &fs, &mut report);
+        assert!(!report.has_errors(), "{report:?}");
+        assert_eq!(map.brushes.len(), 2);
+        assert_authored_planes(&map, &map.brushes[1], &geometry);
+        let first_index = map.brushes[0].sides[3].plane;
+        let second_index = map.brushes[1].sides[3].plane;
+        assert_ne!(first_index, second_index);
+        assert!(
+            geometry
+                .faces
+                .iter()
+                .flat_map(|face| &face.vertices)
+                .map(|&point| map.planes.get(first_index).distance(point))
+                .fold(f64::MIN, f64::max)
+                .abs()
+                > 0.1
+        );
+    }
+}
+
+#[test]
+fn authored_distance_snapping_checks_native_f32_support() {
+    let (document, id) = fixture(Shape::Tetrahedron, DVec3::ZERO, [false; 3], true);
+    let mut vmf = document.vmf().clone();
+    let solid = vmf
+        .entities
+        .iter_mut()
+        .flat_map(|entity| &mut entity.solids)
+        .find(|solid| solid.id == id)
+        .unwrap();
+    let geometry = BrushGeometry::from_solid(solid).unwrap();
+    let face = geometry
+        .faces
+        .iter()
+        .find(|face| face.plane.normal.min_element() > 0.0)
+        .unwrap();
+    let translation = face.plane.normal * (-22_581.990_1 - face.plane.dist);
+    for side in &mut solid.sides {
+        for point in &mut side.plane.0 {
+            *point += translation;
+        }
+    }
+    let geometry = BrushGeometry::from_solid(solid).unwrap();
+    let face = &geometry.faces[3];
+    let unsafe_dist = face.plane.dist.round();
+    assert!((face.plane.dist - unsafe_dist).abs() <= compiler::winding::ON_EPSILON);
+    let emitted_normal = face.plane.normal.as_vec3().as_dvec3();
+    assert!(
+        face.vertices
+            .iter()
+            .map(|&point| emitted_normal.dot(point) - unsafe_dist)
+            .fold(f64::MIN, f64::max)
+            > compiler::winding::ON_EPSILON
+    );
+    let fs = common::empty_game();
+    let mut report = compiler::Report::default();
+    let map = Map::load(&vmf, &fs, &mut report);
+    assert!(!report.has_errors(), "{report:?}");
+    let brush_index = map.brushes.iter().position(|brush| brush.id == id).unwrap();
+    let brush = &map.brushes[brush_index];
+    assert_authored_planes(&map, brush, &geometry);
+    assert_ne!(map.planes.get(brush.sides[3].plane).dist, unsafe_dist);
+    let output = compiler::compile(&vmf, &fs);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.leak.is_none());
+    let original = output.bsp.unwrap();
+    let bsp = Bsp::parse(&original.to_bytes()).unwrap();
+    assert_eq!(bsp, original);
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    for (side, face) in brush.sides.iter().zip(&geometry.faces) {
+        let native = &planes[side.plane];
+        let normal = DVec3::from_array(native.normal.map(f64::from));
+        for &point in &face.vertices {
+            assert!(
+                (normal.dot(point) - f64::from(native.dist)).abs() <= compiler::winding::ON_EPSILON
+            );
+        }
+    }
 }
 
 #[test]
@@ -749,17 +981,22 @@ fn native_bsp_edge_bevels_round_trip_without_visible_faces() {
 #[test]
 fn rotated_native_brush_models_keep_authored_surface_geometry_and_supporting_bevels() {
     let fs = common::empty_game();
-    for shape in [
-        Shape::Box(DVec3::new(64.0, 48.0, 32.0)),
-        Shape::Tetrahedron,
-        Shape::Ramp,
-    ] {
-        let (document, id) = fixture(
-            shape,
+    for (shape, rotation) in [
+        (
+            Shape::Box(DVec3::new(64.0, 48.0, 32.0)),
             DVec3::new(17.0, -23.0, 31.0),
-            [true, false, false],
-            true,
-        );
+        ),
+        (Shape::Tetrahedron, DVec3::new(17.0, -23.0, 31.0)),
+        (Shape::Ramp, DVec3::new(17.0, -23.0, 31.0)),
+        (Shape::Box(DVec3::splat(64.0)), DVec3::new(0.0, 0.0, 0.1)),
+        (Shape::Box(DVec3::splat(64.0)), DVec3::new(0.1, 0.0, 0.0)),
+        (Shape::Box(DVec3::splat(64.0)), DVec3::new(0.0, -0.1, 0.0)),
+        (
+            Shape::Box(DVec3::new(0.25, 31.0, 48.0)),
+            DVec3::new(0.2, 0.1, -0.2),
+        ),
+    ] {
+        let (document, id) = fixture(shape, rotation, [true, false, false], true);
         let geometry = BrushGeometry::from_solid(source_solid(&document, id)).unwrap();
         let mut report = compiler::Report::default();
         let map = Map::load(document.vmf(), &fs, &mut report);
@@ -812,11 +1049,13 @@ fn rotated_native_brush_models_keep_authored_surface_geometry_and_supporting_bev
         assert!(
             emitted
                 .iter()
-                .any(|side| side.bevel != 0 && planes[side.plane as usize].kind >= 3)
+                .any(|side| planes[side.plane as usize].kind >= 3)
         );
         assert_eq!(emitted.len(), map.brushes[brush_index].sides.len());
-        for side in emitted.iter().filter(|side| side.bevel != 0) {
-            assert!(!faces.iter().any(|face| face.plane == side.plane));
+        for side in emitted {
+            if side.bevel != 0 {
+                assert!(!faces.iter().any(|face| face.plane == side.plane));
+            }
             let plane = &planes[side.plane as usize];
             let normal = DVec3::from_array(plane.normal.map(f64::from));
             assert!(

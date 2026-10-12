@@ -11,6 +11,18 @@ use crate::tree::Tree;
 const VERTEX_PRECISION: f64 = 10_000.0;
 const OPEN_LEAF_FLAGS: i16 = 3;
 
+fn vertex_key(point: DVec3) -> [i64; 3] {
+    (point * VERTEX_PRECISION).round().as_i64vec3().to_array()
+}
+
+fn vertex_position(key: [i64; 3]) -> [f32; 3] {
+    key.map(|v| (v as f64 / VERTEX_PRECISION) as f32)
+}
+
+pub(crate) fn stored_vertex(point: DVec3) -> DVec3 {
+    DVec3::from_array(vertex_position(vertex_key(point)).map(f64::from))
+}
+
 pub struct Model {
     pub entity: usize,
     pub tree: Tree,
@@ -48,13 +60,12 @@ struct Geometry {
 
 impl Geometry {
     fn vertex(&mut self, point: DVec3) -> Result<u16, String> {
-        let key = (point * VERTEX_PRECISION).round().as_i64vec3().to_array();
+        let key = vertex_key(point);
         if let Some(&id) = self.by_vertex.get(&key) {
             return Ok(id);
         }
         let id = index(self.vertices.len(), "vertex")?;
-        self.vertices
-            .push(key.map(|v| (v as f64 / VERTEX_PRECISION) as f32));
+        self.vertices.push(vertex_position(key));
         self.by_vertex.insert(key, id);
         Ok(id)
     }

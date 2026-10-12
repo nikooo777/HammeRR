@@ -5892,6 +5892,122 @@ mod tests {
     }
 
     #[test]
+    fn ridge_controls_share_edge_choices_valid_drafts_cancel_apply_and_undo() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        window.set_kind(2);
+        window.set_operation(5);
+        components_ui::refresh(&window, &lock(&shared));
+        let top = window
+            .get_rows()
+            .iter()
+            .find(|row| row.label.starts_with("Top"))
+            .unwrap();
+        window.invoke_choose(top.key);
+        assert_eq!(window.get_crease_rows().row_count(), 1);
+        let row = window.get_crease_rows().row_data(0).unwrap();
+        assert!(row.first.contains("direction"));
+        assert!(row.second.contains("direction"));
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert!(window.get_topology_preview());
+        assert_eq!(window.get_kind(), 1);
+        assert_eq!(window.get_rows().row_count(), 10);
+        assert!(
+            window
+                .get_preview_summary()
+                .contains("Add 2 corners and 1 face")
+        );
+        let draft = lock(&shared).render_document().vmf().clone();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-roof-ridge");
+        for label in ["Apply ridge", "Discard preview", "Cancel", "Ridge rise"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.set_split_rise("0".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert_eq!(lock(&shared).render_document().vmf(), &draft);
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_choose_rise(24.0);
+        window.invoke_choose_crease_pair(row.key.clone(), 1);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_ne!(lock(&shared).render_document().vmf(), &draft);
+        window.invoke_discard_preview();
+        assert_eq!(window.get_kind(), 2);
+        assert_eq!(lock(&shared).component_selection().len(), 1);
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).component_selection().len(), 2);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.set_kind(2);
+        window.invoke_refresh();
+        let top = window
+            .get_rows()
+            .iter()
+            .find(|row| row.label.starts_with("Top"))
+            .unwrap();
+        window.invoke_choose(top.key);
+        let report = lock(&shared).component_report(&[]).unwrap();
+        let edges = report["crease_choices"][0]["pairs"][0]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_u64().unwrap() as u32)
+            .collect::<Vec<_>>();
+        let id = report["crease_choices"][0]["component"]["solid"]
+            .as_u64()
+            .unwrap() as u32;
+        {
+            let mut session = lock(&shared);
+            let stamp = session.component_stamp();
+            session
+                .preview_component_crease(
+                    &[session::components::CreaseEdges {
+                        solid: id,
+                        edges: [edges[0], edges[1]],
+                    }],
+                    12.5,
+                    &stamp,
+                )
+                .unwrap();
+        }
+        components_ui::refresh(&window, &lock(&shared));
+        assert_eq!(window.get_split_rise(), "12.5");
+        assert_eq!(window.get_crease_rows().row_data(0).unwrap().choice, 0);
+        assert!(window.get_ready());
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        assert!(lock(&shared).component_report(&[]).unwrap()["preview"].is_null());
+    }
+
+    #[test]
     fn component_weld_controls_preview_discard_apply_and_undo() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -7,11 +7,21 @@ export struct ComponentRow {
     selected: bool,
 }
 
+export struct ComponentCreaseRow {
+    key: string,
+    label: string,
+    first: string,
+    second: string,
+    choice: int,
+}
+
 export component ComponentsWindow inherits Window {
     title: "Brush components - HammeRR";
     preferred-width: 880px;
     preferred-height: 720px;
     in property <[ComponentRow]> rows;
+    in property <[ComponentCreaseRow]> crease-rows;
+    callback choose-crease-pair(string, int);
     in property <[string]> source-labels;
     in property <[string]> source-ids;
     in property <string> source-summary;
@@ -83,7 +93,7 @@ export component ComponentsWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Move, scale or rotate components. Weld corners, or split a face or edge to raise a new corner."; color: #aeb9c8; }
+            Text { text: "Move, scale or rotate components. Weld corners, split edges, or raise a roof ridge."; color: #aeb9c8; }
             HorizontalLayout {
                 spacing: 20px;
                 VerticalLayout {
@@ -128,7 +138,7 @@ export component ComponentsWindow inherits Window {
                 }
                 VerticalLayout {
                     width: 290px; spacing: 12px;
-                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection"]; current-index <=> root.operation; selected => { root.edited(); } }
+                    ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection", "Roof ridge"]; current-index <=> root.operation; selected => { root.edited(); } }
                     if root.operation == 0: VerticalLayout {
                     spacing: 12px;
                     CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
@@ -180,7 +190,24 @@ export component ComponentsWindow inherits Window {
                         Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                         Text { text: "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
-                    if root.operation >= 3: VerticalLayout {
+                    if root.operation == 5: VerticalLayout {
+                        spacing: 10px;
+                        Text { text: "Select one face with four corners per brush. Raise two opposing edge midpoints to form a ridge."; wrap: word-wrap; color: #aeb9c8; }
+                        ListView {
+                            preferred-height: 100px;
+                            for row in root.crease-rows: VerticalLayout {
+                                spacing: 6px;
+                                Text { text: row.label; font-weight: 600; }
+                                ComboBox { model: [row.first, row.second]; current-index: row.choice; selected => { root.choose-crease-pair(row.key, self.current-index); } }
+                            }
+                        }
+                        Text { text: "Ridge height above the face · world units"; wrap: word-wrap; color: #aeb9c8; }
+                        LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Ridge rise"; edited => { root.edited(); } }
+                        Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
+                        Text { text: "Old corners stay fixed. The two roof faces keep the source material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    }
+                    if root.operation == 3 || root.operation == 4: VerticalLayout {
                         spacing: 10px;
                         Text { text: root.operation == 3 ? "Scale factors · 1 = original size" : "Angles · degrees around world axes"; wrap: word-wrap; font-weight: 600; }
                         HorizontalLayout {
@@ -202,7 +229,7 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Unselected corners stay in place. Faces must remain flat and the brush convex."; wrap: word-wrap; color: #aeb9c8; }
                         Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
-                    Button { text: root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
+                    Button { text: root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
                     if root.token != "": Button { text: "Discard preview"; clicked => { root.discard-preview(); } }
                     Rectangle { vertical-stretch: 1; }
@@ -215,7 +242,7 @@ export component ComponentsWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.operation == 5 ? "Apply ridge" : root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

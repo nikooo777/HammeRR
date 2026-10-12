@@ -15,6 +15,8 @@ pub use split::{
     MAX_RISE as MAX_SPLIT_RISE, MIN_RISE as MIN_SPLIT_RISE, SplitChange, SplitFace, SplitPlan,
     split,
 };
+mod crease;
+pub use crease::{Crease, CreaseChange, CreasePair, CreasePlan, crease, crease_pairs};
 
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;

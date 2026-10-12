@@ -170,6 +170,7 @@ Use its token with commit_paint_selection or cancel_paint_selection; render_view
 For sampled material/projection strokes, sample_face_texture then begin_texture_stroke, update_texture_stroke, \
 get_texture_stroke and commit_texture_stroke or cancel_texture_stroke share one undoable preview with the UI. \
 get_brush_components exposes precise faces/vertices/edges with stable incident-face IDs and current viewport picking scope. set_component_picking captures a brush scope; pick_brush_components queries the same screen candidates as the UI before guarded selection. select_brush_components, preview_component_move, commit_component_move and cancel_component_move share convex topology-preserving edits with the UI. Use the latest snapshot and preview token; textures default to world anchoring, with optional texture_lock to preserve corresponding corner UVs. \
+For a roof ridge, select one quad face per brush, inspect crease_choices, then preview_component_crease with opposing edge pairs and rise; apply/discard through commit_component_edit/cancel_component_edit. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
@@ -573,6 +574,13 @@ struct ComponentRotateArgs {
     degrees: [f64; 3],
     pivot: Option<[f64; 3]>,
     texture_lock: Option<bool>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentCreaseArgs {
+    pairs: Vec<crate::session::components::CreaseEdges>,
+    rise: f64,
     snapshot: String,
 }
 
@@ -3010,7 +3018,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the currently rendered geometry preview when present, including generated hollow/carve brushes; applying or selecting draft-only components still requires committing that geometry first. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections default to world anchoring; texture_mode describes the current component preview.",
+        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the currently rendered geometry preview when present, including generated hollow/carve brushes; applying or selecting draft-only components still requires committing that geometry first. Component identity is solid + incident face IDs; array indices are for this response only. Selected quad faces expose crease_choices with opposing neighboring-side IDs and original midpoints; source choices remain committed during topology previews. Texture projections default to world anchoring; texture_mode describes the current component preview.",
         annotations(read_only_hint = true)
     )]
     fn get_brush_components(&self, Parameters(args): Parameters<ComponentQueryArgs>) -> ToolResult {
@@ -3200,6 +3208,20 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             session.preview_component_split(args.rise, &args.snapshot)?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Preview a roof/ridge crease on one selected quad face per brush, across 1–16 brushes. First select faces and inspect get_brush_components.crease_choices: each pair identifies the two neighboring face IDs at opposing source edges and their midpoints. pairs supplies {solid, edges:[neighbor_side,neighbor_side]} for every selected face; order is irrelevant. Raise both edge midpoints by rise (0.125–4096 units) along the source face normal, making two flat roof planes. Preserve all old corners, original side/solid IDs, entity ownership, lighting, unknown metadata and precise world UV projections; the additional roof side inherits the source face. Reject nonquad, nonplanar, concave, neighboring-plane crossing, displacement, 64-face overflow and out-of-bounds results atomically before allocating IDs. Latest snapshot required. preview.crease reports new side IDs, ridge positions and the two resulting corner selections; source_selection and crease_choices remain original. Invalid updates retain the preceding draft. Apply/cancel with commit_component_edit/cancel_component_edit. Apply verifies generated IDs and records one undo step. Picking and movement of draft topology are blocked."
+    )]
+    fn preview_component_crease(
+        &self,
+        Parameters(args): Parameters<ComponentCreaseArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_component_crease(&args.pairs, args.rise, &args.snapshot)?;
             selected_component_report(&session)
         })
     }

@@ -1067,6 +1067,7 @@ python -B scripts/validate_split_texture_attachment.py --output /tmp/hammerr-spl
 python -B scripts/validate_weld_texture_attachment.py --output /tmp/hammerr-weld-texture-check
 python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-picking-check
 python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-partitions-check
+python -B scripts/validate_partition_material_metadata.py --output /tmp/hammerr-partition-material-metadata
 python -B scripts/validate_partition_extrusion.py --output /tmp/hammerr-extrusion-check
 python -B scripts/validate_partition_extrusion.py --adjusted --output /tmp/hammerr-adjusted-cut-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
@@ -1092,7 +1093,7 @@ to check an idle GUI session with a clean map and empty undo/redo history.
 Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
-The audit, component source/topology/transform, precision and carving validators
+The audit, component source/topology/transform, partition, precision and carving validators
 use private headless sessions and do not accept a GUI URL. Add `--render` to the topology
 validator for offscreen GPU pixel checks without opening a desktop window.
 
@@ -1473,6 +1474,10 @@ reader/writer is verified against stock CS:S maps.
 Editor work ahead includes arbitrary flat partitions, inward extrusion,
 saved per-piece surfaces, displacement clipping and authoring, model rendering and broader
 map checks.
+
+Saved partition metadata can retain optional top material plans for each piece.
+Their editor/MCP authoring, flat previews and application to output faces remain
+unfinished; current extrusion inherits the source top material.
 
 ## Project layout
 

@@ -513,19 +513,33 @@ fn opposing_edge_ridges_compile_inside_a_sealed_room_after_vmf_round_trip() {
             .unwrap()
             .id;
         let pair = subobject::crease_pairs(solid, side).unwrap()[index].edges;
+        let before = document.vmf().clone();
+        let partitions = subobject::plan_partitions(
+            &document,
+            &[subobject::Crease {
+                solid: id,
+                side,
+                edges: pair,
+            }],
+        )
+        .unwrap();
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(partitions[0].loops.len(), 2);
+        let raised = partitions[0].positions(16.125);
         document
             .edit("crease", |tx| {
-                subobject::crease(
-                    tx,
-                    &[subobject::Crease {
-                        solid: id,
-                        side,
-                        edges: pair,
-                    }],
-                    16.125,
-                )
+                subobject::crease(tx, &[partitions[0].source.clone()], 16.125)
             })
             .unwrap();
+        let topology = subobject::topology(document.solid(id).unwrap()).unwrap();
+        for position in raised {
+            assert!(
+                topology
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.position.abs_diff_eq(position, 1e-8))
+            );
+        }
         let vmf =
             source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
         vmf.validate_ids().unwrap();

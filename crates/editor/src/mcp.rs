@@ -585,6 +585,33 @@ struct ComponentCreaseArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentPartitionArgs {
+    pairs: Vec<crate::session::components::CreaseEdges>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct RaisePartitionArgs {
+    token: String,
+    /// Zero restores the flat draft; otherwise 0.125–4096 world units.
+    rise: f64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SelectPartitionsArgs {
+    token: String,
+    partitions: Vec<crate::session::components::PartitionRef>,
+    /// replace (default), add, remove or toggle. Selection highlights and frames loops.
+    mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct FramePartitionsArgs {
+    token: String,
+    aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentSplitArgs {
     rise: f64,
     snapshot: String,
@@ -3258,6 +3285,72 @@ impl EditorServer {
             let mut session = self.session();
             session.preview_component_crease(&args.pairs, args.rise, &args.snapshot)?;
             selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Stage two flat quad loops across opposing source-edge midpoints, one selected quad per brush across 1–16 ordinary brushes. pairs uses get_brush_components.crease_choices and the latest snapshot. Keeps independent draft vertex/loop IDs, exact authored planes, corner and edge incidence, ownership and source-side inheritance; never adds duplicate VMF sides or changes source history/allocators. Inspect preview.partition through get_brush_components, select loops with select_component_partitions and frame them with frame_component_partitions. Raise the shared ridge of both pieces with raise_component_partition. Flat Apply is rejected while retaining the draft. Save/compile/play and map replacement without explicit discard are blocked until Apply or Cancel; this temporary topology is not persistent metadata. Apply raised geometry with commit_component_edit; cancel with cancel_component_edit."
+    )]
+    fn preview_component_partition(
+        &self,
+        Parameters(args): Parameters<ComponentPartitionArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_component_partition(&args.pairs, &args.snapshot)?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Update a staged flat partition's shared ridge height from its immutable source. Zero returns to the flat draft without allocating VMF IDs; positive 0.125–4096 raises both edge midpoints along the face normal through checked convex crease geometry. Both adjacent loops share the ridge regardless of highlight selection. Source corners, side/solid IDs, owners, materials and world UVs remain. Invalid updates retain the last valid draft; returns a replacement token. Apply with commit_component_edit (positive rise only), or cancel_component_edit. Rejects stale tokens, unsupported sources, nonplanar roofs, neighboring-plane crossings and bounds/face limits atomically."
+    )]
+    fn raise_component_partition(
+        &self,
+        Parameters(args): Parameters<RaisePartitionArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.raise_component_partition(parse_token(&args.token)?, args.rise)?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Select draft loops by {solid,partition} from preview.partition.partitions[].loops[].id using replace/add/remove/toggle. Highlight and framing selection only: ridge raising affects both pieces. Does not alter source component selection, VMF geometry or history. Requires the current component preview token."
+    )]
+    fn select_component_partitions(
+        &self,
+        Parameters(args): Parameters<SelectPartitionsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.select_component_partitions(
+                parse_token(&args.token)?,
+                &args.partitions,
+                parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?,
+            )?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Frame highlighted flat or raised partition loops through the shared viewport camera operation. Requires the current component preview token and at least one highlighted loop. aspect defaults to 1.6. Leaves source geometry and history unchanged."
+    )]
+    fn frame_component_partitions(
+        &self,
+        Parameters(args): Parameters<FramePartitionsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.frame_component_partitions(
+                Actor::Agent,
+                parse_token(&args.token)?,
+                args.aspect.unwrap_or(1.6),
+            )?;
+            Ok(
+                json!({"camera":camera_json(&session.camera()),"components":selected_component_report(&session)?}),
+            )
         })
     }
 

@@ -1006,6 +1006,9 @@ impl Session {
     }
 
     fn ensure_discardable(&self, discard_changes: bool) -> Result<(), String> {
+        if !discard_changes {
+            self.ensure_partitions_resolved()?;
+        }
         if self.document.is_dirty() && !discard_changes {
             return Err(format!(
                 "{} has unsaved changes; save first or pass discard_changes",
@@ -1088,6 +1091,7 @@ impl Session {
     /// Saves to `path`, or to the current file. Writes a temporary file
     /// first so a failed write never truncates the map.
     pub fn save(&mut self, actor: Actor, path: Option<&Path>) -> Result<PathBuf, String> {
+        self.ensure_partitions_resolved()?;
         let path = path
             .map(Path::to_owned)
             .or_else(|| self.path.clone())
@@ -1535,6 +1539,7 @@ impl Session {
     }
 
     pub fn launch_readiness(&self) -> Result<&Path, String> {
+        self.ensure_partitions_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }

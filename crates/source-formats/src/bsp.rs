@@ -212,6 +212,12 @@ pub struct Face {
 }
 
 /// A leaf as stored in version 1 leaf lumps.
+pub mod leaf_flags {
+    pub const SKY: i16 = 1;
+    pub const RADIAL: i16 = 2;
+    pub const SKY2D: i16 = 4;
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
 pub struct Leaf {

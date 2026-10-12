@@ -7397,6 +7397,13 @@ mod tests {
             "UnlitGeneric { %compilenodraw 1 }",
         )
         .unwrap();
+        std::fs::write(materials.join("sky.vmt"), "UnlitGeneric { %compilesky 1 }").unwrap();
+        std::fs::create_dir(materials.join("dev")).unwrap();
+        std::fs::write(
+            materials.join("dev/dev_measuregeneric01.vmt"),
+            "LightmappedGeneric {}",
+        )
+        .unwrap();
         game.mounts.push(source_formats::gamefs::MountedPath {
             ids: vec!["game".into()],
             mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
@@ -7462,6 +7469,23 @@ mod tests {
             Ok(())
         })
         .unwrap();
+        room.edit("sky ceiling", |tx| {
+            let id = tx
+                .vmf()
+                .world
+                .solids
+                .iter()
+                .find(|solid| solid.sides.iter().all(|side| side.plane.0[0].z >= 256.0))
+                .unwrap()
+                .id;
+            for side in &mut tx.solid_mut(id)?.sides {
+                if map_core::Plane::from_points(side.plane.0).unwrap().normal.z < -0.99 {
+                    side.material = "sky".into();
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
         std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
         let request = lock(&shared)
@@ -7498,6 +7522,14 @@ mod tests {
                 .window
                 .get_diagnostics()
                 .contains("physics fluid volumes")
+        );
+        let sky = stats["sky_clusters"].as_u64().unwrap();
+        assert!(sky > 0);
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains(&format!("Sky visible from: {sky} clusters"))
         );
         assert!(controller.window.get_launch_ready());
         assert!(controller.window.get_launch_details().contains("room.bsp"));

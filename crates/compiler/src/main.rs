@@ -52,7 +52,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let stats = &output.stats;
     println!(
-        "{}: {} brushes, {} nodes, {} leaves, {} faces, {} models, {} cubemap samples, {} visibility clusters, {} water regions in {:.1?}",
+        "{}: {} brushes, {} nodes, {} leaves, {} faces, {} models, {} cubemap samples, {} visibility clusters, {} water regions, {} sky-visible clusters in {:.1?}",
         path.display(),
         stats.brushes,
         stats.nodes,
@@ -62,6 +62,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.cubemap_samples,
         stats.clusters,
         stats.water_regions,
+        stats.sky_clusters,
         stats.elapsed
     );
     Ok(())

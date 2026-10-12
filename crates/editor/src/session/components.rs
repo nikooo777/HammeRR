@@ -303,7 +303,7 @@ impl Session {
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
                 "crease":preview.crease.as_ref().map(|crease|json!({"rise":crease.rise,"roof_texture_lock":crease.roof_texture_lock,"pairs":crease.requests.iter().map(|request|json!({"solid":request.solid,"edges":request.edges})).collect::<Vec<_>>(),"changes":crease.changes.iter().map(|change|json!({"solid":change.source.solid,"source_side":change.source.side,"edges":change.source.edges,"positions":change.positions.map(|point|point.to_array()),"new_side":change.new_side,"selection":change.selection.iter().map(component_json).collect::<Vec<_>>()})).collect::<Vec<_>>()})),
                 "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
-            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.extrusion.as_ref().is_some_and(|draft|draft.spec.texture_lock)) {"top_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock && preview.weld.is_some()) {"weld_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
+            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.extrusion.as_ref().is_some_and(|draft|draft.spec.texture_lock)) {"top_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock && preview.weld.is_some()) {"weld_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"partition_source_corners":subobject::MAX_BOUNDARY_SOURCE_CORNERS,"partition_vertices":subobject::MAX_PARTITION_VERTICES,"partition_loop_vertices":subobject::MAX_PARTITION_LOOP_VERTICES,"extrusion_source_vertices":subobject::MAX_EXTRUSION_SOURCE_VERTICES,"extrusion_pieces":subobject::MAX_EXTRUSION_PIECES,"extrusion_planes":subobject::MAX_EXTRUSION_PLANES},
         }))
     }
 
@@ -650,11 +650,14 @@ impl Session {
                 entry.insert(subobject::topology(source).map_err(|error| error.to_string())?);
             }
             let shape = &shapes[&component.solid];
-            if shape
-                .faces
-                .iter()
-                .any(|face| face.side == component.sides[0] && face.vertices.len() == 4)
-            {
+            if shape.faces.iter().any(|face| {
+                face.side == component.sides[0]
+                    && if boundary {
+                        (3..=subobject::MAX_BOUNDARY_SOURCE_CORNERS).contains(&face.vertices.len())
+                    } else {
+                        face.vertices.len() == 4
+                    }
+            }) {
                 choices.push((
                     component.clone(),
                     if boundary {
@@ -691,22 +694,25 @@ impl Session {
     }
 
     fn crease_requests(&self, pairs: &[CreaseEdges]) -> Result<Vec<Crease>, String> {
+        if pairs.is_empty() || pairs.len() > subobject::MAX_SOLIDS {
+            return Err("Choose boundary edge pairs for 1–16 source brushes".into());
+        }
         let mut inputs = BTreeMap::new();
         for pair in pairs {
             let mut edges = pair.edges;
             edges.sort_unstable();
             if inputs.insert(pair.solid, edges).is_some() {
-                return Err("Choose exactly one opposing edge pair per brush".into());
+                return Err("Choose exactly one boundary edge pair per brush".into());
             }
         }
         let mut requests = Vec::new();
         for component in &self.components.selection {
             if component.sides.len() != 1 {
-                return Err("Select one quad face per brush".into());
+                return Err("Select one face per brush".into());
             }
             let edges = inputs
                 .remove(&component.solid)
-                .ok_or("Choose one opposing edge pair for every selected face")?;
+                .ok_or("Choose one boundary edge pair for every selected face")?;
             requests.push(Crease {
                 solid: component.solid,
                 side: component.sides[0],
@@ -714,7 +720,7 @@ impl Session {
             });
         }
         if !inputs.is_empty() {
-            return Err("Opposing edge pairs must belong to the selected faces".into());
+            return Err("Boundary edge pairs must belong to the selected faces".into());
         }
         Ok(requests)
     }

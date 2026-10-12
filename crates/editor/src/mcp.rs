@@ -3125,7 +3125,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the currently rendered geometry preview when present, including generated hollow/carve brushes; applying or selecting draft-only components still requires committing that geometry first. Component identity is solid + incident face IDs; array indices are for this response only. Selected quad faces expose crease_choices with opposing neighboring-side IDs and original midpoints, plus partition_choices with those two choices followed by four adjacent pairs; source choices remain committed during topology previews. Texture projections default to world anchoring; texture_mode describes the current component preview.",
+        description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the currently rendered geometry preview when present, including generated hollow/carve brushes; applying or selecting draft-only components still requires committing that geometry first. Component identity is solid + incident face IDs; array indices are for this response only. Selected quad faces expose crease_choices with opposing neighboring-side IDs and original midpoints. Selected convex faces with 3–8 corners expose every distinct boundary edge pair in partition_choices; quads retain two opposing choices followed by four adjacent pairs; source choices remain committed during topology previews. Texture projections default to world anchoring; texture_mode describes the current component preview.",
         annotations(read_only_hint = true)
     )]
     fn get_brush_components(&self, Parameters(args): Parameters<ComponentQueryArgs>) -> ToolResult {
@@ -3349,7 +3349,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Stage two flat loops between any two distinct boundary-edge midpoints on a quad face, one selected quad per brush across 1–16 ordinary brushes. pairs uses get_brush_components.partition_choices (two opposing and four adjacent choices) and the latest snapshot. Opposing cuts produce two quads; adjacent cuts produce a triangle and pentagon. Keeps independent draft vertex/loop IDs, exact authored planes, corner and edge incidence, ownership and source-side inheritance; never adds duplicate VMF sides or changes source history/allocators. Inspect preview.partition through get_brush_components, select loops with select_component_partitions and frame them with frame_component_partitions. Keep flat pieces with store_component_partition, or raise a shared ridge for two quad pieces with raise_component_partition and Apply through commit_component_edit. Generic flat commit is rejected while retaining the draft. Save/compile/play and map replacement without explicit discard are blocked until Keep, Apply or Cancel. Inspect/resume/remove kept pieces through the saved-partition tools. Cancel with cancel_component_edit."
+        description = "Stage two flat loops between any two distinct boundary-edge midpoints on a convex face with 3–8 corners, one selected face per brush across 1–16 ordinary brushes. pairs uses the complete get_brush_components.partition_choices and the latest snapshot. Quads retain two opposing and four adjacent choices with their original ordering; opposing quad cuts produce two quads and adjacent quad cuts produce a triangle and pentagon. Polygon cuts produce two checked convex loops with 3–9 vertices. Keeps independent draft vertex/loop IDs, exact authored planes, corner and edge incidence, ownership and source-side inheritance; never adds duplicate VMF sides or changes source history/allocators. Inspect preview.partition through get_brush_components, select loops with select_component_partitions and frame them with frame_component_partitions. Keep flat pieces with store_component_partition, or raise a shared ridge for two quad pieces with raise_component_partition and Apply through commit_component_edit. Generic flat commit is rejected while retaining the draft. Save/compile/play and map replacement without explicit discard are blocked until Keep, Apply or Cancel. Inspect/resume/remove kept pieces through the saved-partition tools. Cancel with cancel_component_edit."
     )]
     fn preview_component_partition(
         &self,
@@ -3363,7 +3363,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Update a staged flat partition's shared ridge height from its immutable source. Zero returns to the flat draft without allocating VMF IDs; positive 0.125–4096 raises both captured cut endpoints along the face normal through checked planar, convex crease geometry. Unequal widths are supported when both roofs remain planar; nonplanar cuts reject without resetting the parameters. Two quad pieces share the ridge regardless of highlight selection. Adjacent boundary cuts produce triangle/pentagon pieces and reject positive ridge heights; keep or extrude them. preview.partition.ridge_supported reports this shape restriction. Source corners, side/solid IDs, owners and neighboring materials/world UVs remain. Planned top materials apply to corresponding roofs. Invalid updates retain the last valid draft; returns a replacement token. Apply with commit_component_edit (positive rise only), or cancel_component_edit. Rejects stale tokens, unsupported sources, nonplanar roofs, neighboring-plane crossings and bounds/face limits atomically."
+        description = "Update a staged flat partition's shared ridge height from its immutable source. Zero returns to the flat draft without allocating VMF IDs; positive 0.125–4096 raises both captured cut endpoints along the face normal through checked planar, convex crease geometry. Unequal widths are supported when both roofs remain planar; nonplanar cuts reject without resetting the parameters. Two quad pieces share the ridge regardless of highlight selection. Cuts whose pieces are not both quads reject positive ridge heights; keep or extrude them. preview.partition.ridge_supported reports this shape restriction. Source corners, side/solid IDs, owners and neighboring materials/world UVs remain. Planned top materials apply to corresponding roofs. Invalid updates retain the last valid draft; returns a replacement token. Apply with commit_component_edit (positive rise only), or cancel_component_edit. Rejects stale tokens, unsupported sources, nonplanar roofs, neighboring-plane crossings and bounds/face limits atomically."
     )]
     fn raise_component_partition(
         &self,
@@ -3435,7 +3435,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect saved flat face partitions, current validity and bounded metadata limits. Missing or changed sources remain listed with errors. Read-only; snapshot guards resume and remove operations.",
+        description = "Inspect saved flat face partitions, current validity, source corner counts, explicit polygon original-corner membership and bounded metadata limits. Missing or changed sources remain listed with errors. Read-only; snapshot guards resume and remove operations.",
         annotations(read_only_hint = true)
     )]
     fn get_saved_component_partitions(&self) -> ToolResult {
@@ -3443,7 +3443,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Keep a flat partition draft as bounded VMF editor metadata in one undoable edit. Requires its current token and zero rise. Closes the draft, permits save/compile/play, and leaves brush planes and compiler geometry unchanged. Resume later to inspect, highlight, frame or raise its pieces."
+        description = "Keep a flat partition draft as bounded VMF editor metadata in one undoable edit. Requires its current token and zero rise. Closes the draft, permits save/compile/play, and leaves brush planes and compiler geometry unchanged. Resume later to inspect, highlight, frame, extrude or raise supported two-quad pieces. Polygon sources retain explicit original corner membership for both pieces; legacy quad kinds retain their format."
     )]
     fn store_component_partition(
         &self,
@@ -3458,7 +3458,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Resume valid saved flat partitions identified by sources [{solid,side}] and the latest saved-partition snapshot. One source per brush across 1–16 brushes. Restores a shared flat draft for viewport/list inspection, picking, highlighting, framing, raising, keeping or cancellation. No geometry/history mutation; reject pending previews and stale or missing source records atomically."
+        description = "Resume valid saved flat partitions identified by sources [{solid,side}] and the latest saved-partition snapshot. One source per brush across 1–16 brushes. Restores a shared flat draft for viewport/list inspection, picking, highlighting, framing, independent extrusion, supported two-quad raising, keeping or cancellation. No geometry/history mutation; reject pending previews and stale or missing source records atomically."
     )]
     fn resume_component_partitions(
         &self,

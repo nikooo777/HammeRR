@@ -39,8 +39,35 @@ impl Session {
         {
             return Err("Partition picking needs a valid camera".into());
         }
-        self.checked_partition(token)?;
-        let hidden = self.hidden_tool_brushes();
+        let draft = self.checked_partition(token)?.clone();
+        let visible = self.partition_top_visibility(&draft);
+        let mut hidden = self.hidden_tool_brushes();
+        for (piece, shown) in &visible {
+            if *shown {
+                hidden.remove(&piece.solid);
+            }
+        }
+        let faces = if self.view.tool_textures {
+            Vec::new()
+        } else {
+            self.render_document()
+                .vmf()
+                .solids()
+                .flat_map(|solid| {
+                    solid
+                        .sides
+                        .iter()
+                        .map(move |side| (solid.id, side.id, side.material.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        let hidden_faces = faces
+            .into_iter()
+            .filter_map(|(solid, side, name)| {
+                let material = self.materials.load(&self.game, &name);
+                self.materials.get(material).tool.then_some((solid, side))
+            })
+            .collect::<BTreeSet<_>>();
         let ndc = pointer.ndc();
         let (origin, direction) = camera.ray(
             ndc.x as f32,
@@ -51,9 +78,41 @@ impl Session {
             origin: origin.as_dvec3(),
             direction: direction.as_dvec3(),
         };
-        let Some(hit) = query::pick_face(self.render_document(), &ray, |solid| {
-            !hidden.contains(&solid.id)
-        }) else {
+        let Some(hit) = query::pick_face_filtered(
+            self.render_document(),
+            &ray,
+            |solid| !hidden.contains(&solid.id),
+            |solid, side, point| {
+                if let Some(part) = draft
+                    .partitions
+                    .iter()
+                    .find(|part| part.source.solid == solid.id && part.source.side == side.id)
+                {
+                    let positions = part.positions(draft.rise);
+                    let depth =
+                        (point - camera.position.as_dvec3()).dot(camera.forward().as_dvec3());
+                    let half = if camera.projection == Projection::Perspective {
+                        (f64::from(camera.fov_y_degrees).to_radians() * 0.5).tan() * depth
+                    } else {
+                        f64::from(camera.ortho_height) * 0.5
+                    };
+                    let tolerance = PICK_EPSILON.max(half / f64::from(pointer.size.1));
+                    part.loops.iter().any(|piece| {
+                        visible.get(&PartitionRef {
+                            solid: solid.id,
+                            partition: piece.id,
+                        }) == Some(&true)
+                            && contains(
+                                piece.vertices.map(|index| positions[index as usize]),
+                                point,
+                                tolerance,
+                            )
+                    })
+                } else {
+                    !hidden_faces.contains(&(solid.id, side.id))
+                }
+            },
+        ) else {
             return Ok(Vec::new());
         };
         let depth = (hit.point - camera.position.as_dvec3()).dot(camera.forward().as_dvec3());
@@ -92,7 +151,6 @@ impl Session {
             f64::from(camera.ortho_height) * 0.5
         };
         let tolerance = PICK_EPSILON.max(half / f64::from(pointer.size.1));
-        let draft = self.checked_partition(token)?;
         let mut candidates = Vec::new();
         for partition in &draft.partitions {
             if hit.solid != Some(partition.source.solid) {
@@ -101,13 +159,11 @@ impl Session {
             let positions = partition.positions(draft.rise);
             for piece in &partition.loops {
                 let points = piece.vertices.map(|index| positions[index as usize]);
-                let plane = Plane::from_points([points[0], points[1], points[2]]).unwrap();
-                if plane.distance_to(hit.point).abs() > tolerance
-                    || (0..4).any(|index| {
-                        let edge = points[(index + 1) % 4] - points[index];
-                        edge.cross(hit.point - points[index]).dot(plane.normal)
-                            > tolerance * edge.length()
-                    })
+                if visible.get(&PartitionRef {
+                    solid: partition.source.solid,
+                    partition: piece.id,
+                }) != Some(&true)
+                    || !contains(points, hit.point, tolerance)
                 {
                     continue;
                 }
@@ -128,4 +184,15 @@ impl Session {
         });
         Ok(candidates)
     }
+}
+
+fn contains(points: [DVec3; 4], point: DVec3, tolerance: f64) -> bool {
+    let Some(plane) = Plane::from_points([points[0], points[1], points[2]]) else {
+        return false;
+    };
+    plane.distance_to(point).abs() <= tolerance
+        && (0..4).all(|index| {
+            let edge = points[(index + 1) % 4] - points[index];
+            edge.cross(point - points[index]).dot(plane.normal) <= tolerance * edge.length()
+        })
 }

@@ -71,17 +71,27 @@ pub fn point_entity_bounds(origin: DVec3) -> (DVec3, DVec3) {
 /// The nearest visible object along the ray. `include_solid` filters brushes,
 /// e.g. to skip tool brushes while they're hidden.
 pub fn pick(doc: &Document, ray: &Ray, include_solid: impl Fn(&Solid) -> bool) -> Option<Hit> {
-    pick_with_points(doc, ray, include_solid, true)
+    pick_with_points(doc, ray, include_solid, |_, _, _| true, true)
 }
 
 pub fn pick_face(doc: &Document, ray: &Ray, include_solid: impl Fn(&Solid) -> bool) -> Option<Hit> {
-    pick_with_points(doc, ray, include_solid, false)
+    pick_with_points(doc, ray, include_solid, |_, _, _| true, false)
+}
+
+pub fn pick_face_filtered(
+    doc: &Document,
+    ray: &Ray,
+    include_solid: impl Fn(&Solid) -> bool,
+    include_face: impl Fn(&Solid, &source_formats::vmf::Side, DVec3) -> bool,
+) -> Option<Hit> {
+    pick_with_points(doc, ray, include_solid, include_face, false)
 }
 
 fn pick_with_points(
     doc: &Document,
     ray: &Ray,
     include_solid: impl Fn(&Solid) -> bool,
+    include_face: impl Fn(&Solid, &source_formats::vmf::Side, DVec3) -> bool,
     include_points: bool,
 ) -> Option<Hit> {
     let ray = Ray {
@@ -93,6 +103,9 @@ fn pick_with_points(
             return None;
         }
         let (t, side) = ray_solid(&ray, solid)?;
+        if !include_face(solid, &solid.sides[side], ray.origin + ray.direction * t) {
+            return None;
+        }
         Some(Hit {
             object,
             solid: Some(solid.id),
@@ -349,6 +362,15 @@ mod tests {
 
         let skip_near = pick(&doc, &along_x, |s| ObjectId::Solid(s.id) != near).unwrap();
         assert_eq!(skip_near.object, far);
+        let skip_entry = pick_face_filtered(
+            &doc,
+            &along_x,
+            |_| true,
+            |_, side, point| side.id != entered.id && point.x >= 0.0,
+        )
+        .unwrap();
+        assert_eq!(skip_entry.object, far);
+        assert!(pick_face_filtered(&doc, &along_x, |_| true, |_, _, _| false).is_none());
 
         let up = Ray {
             origin: DVec3::new(50.0, 0.0, 0.0),

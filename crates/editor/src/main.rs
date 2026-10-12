@@ -183,6 +183,8 @@ struct Ui {
     material_for_clip: bool,
     material_for_primitive: bool,
     material_for_extrusion: bool,
+    material_for_partition: bool,
+    partition_material_target: Option<components_ui::PartitionMaterialTarget>,
     extrusion_material_target: Option<(Option<u64>, u64)>,
     primitive_material_target: Option<(Option<u64>, u64)>,
     seen_definitions: u64,
@@ -2158,6 +2160,21 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                             return;
                         }
                     }
+                } else if ui.borrow().material_for_partition {
+                    if let Some(components) = &ui.borrow().components_window {
+                        let Some(target) = ui.borrow().partition_material_target.clone() else {
+                            return;
+                        };
+                        if let Err(error) = components_ui::choose_partition_material(
+                            components,
+                            &mut session,
+                            &target,
+                            Some(material.as_str()),
+                        ) {
+                            window.set_detail(error.into());
+                            return;
+                        }
+                    }
                 } else if ui.borrow().material_for_extrusion {
                     if let Some(components) = &ui.borrow().components_window {
                         let Some(target) = ui.borrow().extrusion_material_target else {
@@ -2210,6 +2227,9 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     ui.borrow_mut().material_for_clip = key == "@clip";
     ui.borrow_mut().material_for_primitive = key == "@primitive";
     ui.borrow_mut().material_for_extrusion = key == "@extrusion";
+    ui.borrow_mut().material_for_partition = key == "@partition";
+    ui.borrow_mut().partition_material_target =
+        (key == "@partition").then(|| components_ui::partition_material_target(&session));
     ui.borrow_mut().extrusion_material_target = (key == "@extrusion").then(|| {
         (
             session.partition_preview_token(),
@@ -2226,6 +2246,7 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         || key == "@faces"
         || key == "@clip"
         || key == "@primitive"
+        || key == "@partition"
         || key == "@extrusion"
         || key.starts_with("@replace-")
         || key == "@group"
@@ -2246,6 +2267,12 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     controller.window.get_source().to_string()
                 }
             })
+            .unwrap_or_default()
+    } else if key == "@partition" {
+        ui.borrow()
+            .components_window
+            .as_ref()
+            .map(|window| window.get_top_material().to_string())
             .unwrap_or_default()
     } else if key == "@extrusion" {
         ui.borrow()
@@ -2993,6 +3020,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         material_for_clip: false,
         material_for_primitive: false,
         material_for_extrusion: false,
+        material_for_partition: false,
+        partition_material_target: None,
         extrusion_material_target: None,
         primitive_material_target: None,
         seen_definitions: 0,
@@ -3234,6 +3263,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match ComponentsWindow::new() {
                     Ok(window) => {
                         components_ui::bind(&window, &session_of(&ui));
+                        window.on_browse_partition_material({
+                            let (app, ui) = (app.clone(), ui.clone());
+                            move || show_material_window(&app.unwrap(), &ui, "@partition")
+                        });
                         window.on_browse_extrusion_material({
                             let (app, ui) = (app.clone(), ui.clone());
                             move || show_material_window(&app.unwrap(), &ui, "@extrusion")
@@ -5552,7 +5585,11 @@ mod tests {
             },
         )))
         .unwrap();
-        let mut state = Session::new(Err("no assets needed".into()));
+        let mut state = Session::new(if std::env::var_os("HAMMERR_UI_SNAPSHOTS").is_some() {
+            mount_game(None)
+        } else {
+            Err("no assets needed".into())
+        });
         let ObjectId::Solid(id) = state
             .create_block(
                 Actor::Agent,
@@ -5610,6 +5647,60 @@ mod tests {
         assert!(window.get_has_partition_preview() && window.get_partition_flat());
         assert!(window.get_ready());
         assert_eq!(window.get_partition_rows().row_count(), 2);
+        window.set_show_top_material(true);
+        window.set_top_material("brick/brickwall003a".into());
+        window.invoke_edited();
+        assert!(!window.get_ready());
+        components_ui::refresh(&window, &lock(&shared));
+        assert!(!window.get_ready());
+        window.invoke_preview_edit();
+        assert!(window.get_message().contains("planned top material"));
+        assert!(!window.get_ready());
+        window.invoke_preview_partition_material();
+        assert!(window.get_ready());
+        assert_eq!(window.get_top_material(), "brick/brickwall003a");
+        assert!(
+            window
+                .get_partition_rows()
+                .iter()
+                .all(|row| row.detail.contains("planned"))
+        );
+        let picker_target = {
+            let state = lock(&shared);
+            components_ui::partition_material_target(&state)
+        };
+        let row = window.get_partition_rows().row_data(0).unwrap();
+        window.invoke_choose_partition(row.key.clone());
+        assert!(
+            components_ui::choose_partition_material(
+                &window,
+                &mut lock(&shared),
+                &picker_target,
+                Some("wood/stale")
+            )
+            .is_err()
+        );
+        window.invoke_choose_partition(row.key);
+        for label in [
+            "Preview material",
+            "Restore inheritance",
+            "Keep flat pieces",
+            "Cancel",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.window().set_size(slint::PhysicalSize::new(880, 540));
+        assert_dialog_button_visible(&window, "Keep flat pieces");
+        assert_dialog_button_visible(&window, "Cancel");
+        window
+            .window()
+            .set_size(slint::PhysicalSize::new(1100, 900));
+        save_ui_snapshot(window.window(), "partition-top-material");
+        window.invoke_inherit_partition_material();
+        assert!(window.get_ready());
+        assert_eq!(window.get_top_material(), "brick/test");
+        window.set_show_top_material(false);
+
         assert!(
             window
                 .get_preview_summary()

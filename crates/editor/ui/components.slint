@@ -24,6 +24,16 @@ export component ComponentsWindow inherits Window {
     in property <[ComponentRow]> partition-rows;
     in property <bool> has-partition-preview;
     in property <bool> partition-flat;
+    in-out property <bool> show-top-material;
+    in-out property <string> top-material;
+    in property <string> top-material-baseline;
+    in property <string> top-material-scope;
+    in property <string> top-material-summary;
+    in property <bool> has-material-targets;
+    in property <image> top-material-preview;
+    callback browse-partition-material();
+    callback preview-partition-material();
+    callback inherit-partition-material();
     in property <bool> cut-is-midpoint;
     in-out property <bool> show-cut-settings;
     in-out property <string> cut-first: "50";
@@ -261,10 +271,31 @@ export component ComponentsWindow inherits Window {
                             spacing: 8px;
                             Text { text: "Highlight pieces"; font-weight: 600; }
                             ListView {
-                                preferred-height: 95px;
-                                for row in root.partition-rows: CheckBox { text: row.label; checked: row.selected; toggled => { root.choose-partition(row.key); } }
+                                preferred-height: 116px;
+                                for row in root.partition-rows: VerticalLayout {
+                                    spacing: 2px;
+                                    CheckBox { text: row.label; checked: row.selected; toggled => { root.choose-partition(row.key); } }
+                                    Text { text: row.detail; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                }
                             }
                             Button { text: "Frame highlighted pieces"; clicked => { root.frame-partitions(); } }
+                            CheckBox { text: "Planned top material"; checked <=> root.show-top-material; }
+                            if root.show-top-material: VerticalLayout {
+                                spacing: 6px;
+                                Text { text: root.top-material-summary; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Image { source: root.top-material-preview; width: 40px; height: 40px; image-fit: contain; }
+                                    LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.top-material; placeholder-text: "Mixed materials"; accessible-label: "Planned top material for highlighted pieces"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
+                                    Button { text: "Browse…"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.browse-partition-material(); } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Button { text: "Preview material"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets && root.top-material != ""; clicked => { root.preview-partition-material(); } }
+                                    Button { text: "Restore inheritance"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.inherit-partition-material(); } }
+                                }
+                                Text { text: "Changes highlighted roofs or prism tops. Bases and walls keep their own materials. Return to flat to change the plan."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                            }
                             CheckBox { text: "Adjust dividing edge"; checked <=> root.show-cut-settings; }
                             if root.show-cut-settings: VerticalLayout {
                                 spacing: 6px;

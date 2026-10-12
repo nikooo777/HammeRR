@@ -392,12 +392,26 @@ saved pieces remain reusable. New volumes retain world or brush-entity ownership
 and Apply selects their faces in one undo step. **Return to flat** and **Cancel**
 discard the added draft geometry.
 
+Enable **Planned top material** to change the highlighted pieces' future roof
+or prism tops. Choose a material in the grouped browser, or enter its name and
+use **Preview material**. Each piece lists its effective material and whether
+it is inherited or planned. Mixed highlights show a mixed value;
+**Restore inheritance** returns them to the source face's material.
+Flat previews use the shared renderer without adding coplanar brush faces.
+Keep saves these choices; Cancel stores nothing. Extrusion bases retain the
+original source material, and wall choices remain independent. Return to flat
+before changing a material plan.
+
 Enable **Adjust dividing edge** to move the two cut endpoints with percentage
 inputs or sliders. **Preview cut** creates unequal or diagonal pieces while
 retaining the original face. Keep these positions for later or extrude the
 pieces. Saved positions and piece identity survive reflection and reopening.
 Shared ridges currently require midpoint cuts; **Reset cut to midpoint** restores
 that path explicitly.
+
+| Planned top material controls | Flat planned surfaces |
+| --- | --- |
+| ![Highlighted-piece material choices with preview, browsing and inheritance](docs/images/partition-material-controls.png) | ![Two real materials on a flat checked face without adding brush sides](docs/images/partition-material-preview.png) |
 
 | Cut controls | Adjusted pieces extruded to different heights |
 | --- | --- |
@@ -934,7 +948,7 @@ For example, place a warm light:
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
-| Staged flat partitions | `preview_component_partition`, `update_component_partition_cut`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
+| Staged flat partitions | `preview_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Partition extrusion | `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
 | Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
@@ -1068,6 +1082,7 @@ python -B scripts/validate_weld_texture_attachment.py --output /tmp/hammerr-weld
 python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-picking-check
 python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-partitions-check
 python -B scripts/validate_partition_material_metadata.py --output /tmp/hammerr-partition-material-metadata
+python -B scripts/validate_partition_materials.py --output /tmp/hammerr-partition-materials
 python -B scripts/validate_partition_extrusion.py --output /tmp/hammerr-extrusion-check
 python -B scripts/validate_partition_extrusion.py --adjusted --output /tmp/hammerr-adjusted-cut-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
@@ -1232,11 +1247,23 @@ Keep, or extrude the adjusted pieces. Positive ridge heights require `[0.5, 0.5]
 sources; saved inspection lists each source's positions. Existing midpoint
 records remain compatible, and adjusted metadata retains the same global budgets.
 
+`update_component_partition_material` takes the current flat draft `token`,
+`partitions: [{solid, partition}]` and an optional `material`. Set 1–32 distinct
+pieces across the captured source brushes; null or omission restores source
+inheritance. Names are normalized and share the saved metadata budget. Successful
+updates replace the token; invalid or stale updates retain the draft. Each loop
+reports `top_material`, `effective_material` and `inherited`; saved inspection
+reports both `top_materials` and `effective_materials`. Keep persists the plan,
+Cancel discards it, and geometry Apply replays the corresponding roof/top choices.
+Tool filters and picking follow each piece's effective material. Per-piece UVs
+remain source projections or the selected geometry attachment policy.
+
 `preview_partition_extrusion` takes the current flat draft `token`, positive
 `height` (0.125–4096), optional `wall_material` and optional `texture_lock`
 (default false). It extrudes the 1–32 highlighted pieces across up to 16 source
 brushes. Updates replace the token and rebuild from the original source; invalid
-updates retain the previous draft. Top and base inherit the source face. Outer
+updates retain the previous draft. Tops use their planned material or source
+inheritance; bases retain the original source face material. Outer
 walls inherit neighboring faces, and the divider inherits the source face;
 all four walls receive fresh world UVs and the optional material override.
 Attached top UVs preserve corresponding corners, reported as `top_attached`.
@@ -1472,13 +1499,13 @@ unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,
-saved per-piece surfaces, displacement clipping and authoring, model rendering and broader
+per-piece UV editing, displacement clipping and authoring, model rendering and broader
 map checks.
 
-Saved partition metadata can retain optional top material plans for each piece.
-Checked geometry operations can apply those plans to roof or prism tops.
-Shared editor/MCP authoring and flat previews remain unfinished; current
-editor/MCP extrusion inherits the source top material.
+Saved flat pieces support independent planned top materials through shared
+editor/MCP drafts, grouped material browsing and flat previews. Keep stores
+bounded editor intent; raising and extrusion apply the plan to real roof or
+top faces. Bases and walls retain their own material policies.
 
 ## Project layout
 

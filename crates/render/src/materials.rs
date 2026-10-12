@@ -130,6 +130,12 @@ impl MaterialLibrary {
         id
     }
 
+    pub fn find(&self, name: &str) -> Option<&MaterialInfo> {
+        self.by_name
+            .get(&name.to_ascii_lowercase())
+            .map(|id| &self.materials[*id])
+    }
+
     pub fn get(&self, id: MaterialId) -> &MaterialInfo {
         &self.materials[id]
     }

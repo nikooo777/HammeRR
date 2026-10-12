@@ -2,6 +2,7 @@ use map_core::subobject::{Partition, VertexSource};
 
 use super::*;
 
+mod materials;
 mod picking;
 
 pub(super) fn consume_saved(
@@ -331,7 +332,7 @@ mod tests {
         }
     }
 
-    fn fixture(actor: Actor, direction: usize) -> (Session, u32, Vec<CreaseEdges>) {
+    pub(super) fn fixture(actor: Actor, direction: usize) -> (Session, u32, Vec<CreaseEdges>) {
         let mut session = Session::new(Err("no assets needed".into()));
         let ObjectId::Solid(id) = session
             .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
@@ -710,6 +711,7 @@ pub(super) struct Draft {
     pub rise: f64,
     pub roof_texture_lock: bool,
     pub selection: BTreeSet<PartitionRef>,
+    pub materials: BTreeMap<PartitionRef, String>,
 }
 
 impl Draft {
@@ -720,7 +722,7 @@ impl Draft {
             .collect()
     }
 
-    pub fn report(&self) -> Value {
+    pub fn report(&self, document: &map_core::Document) -> Value {
         let parameters = self
             .partitions
             .iter()
@@ -742,7 +744,7 @@ impl Draft {
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
                 json!({"solid":part.source.solid,"source_side":part.source.side,"edges":part.source.edges,"owner":owner,"plane":part.plane.map(|point|point.to_array()),
                     "vertices":part.vertices.iter().map(|vertex|json!({"id":vertex.id,"position":vertex.position.to_array(),"preview_position":positions[vertex.id as usize].to_array(),"source":match &vertex.source {VertexSource::Corner(sides)=>json!({"kind":"corner","sides":sides}),VertexSource::Edge{corners,parameter}=>json!({"kind":"edge","corners":corners,"parameter":parameter})}})).collect::<Vec<_>>(),
-                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"source_side":piece.source_side,"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
+                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
             }).collect::<Vec<_>>()})
     }
 }
@@ -753,6 +755,8 @@ impl Session {
         let (entries, error) = match metadata {
             Ok(metadata) => (metadata.resolve(&self.document).into_iter().map(|entry| {
                 json!({"solid":entry.source.solid,"side":entry.source.side,"edges":entry.source.edges,
+                    "top_materials":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.top_materials.each_ref().map(|value|value.as_ref().map(|name|name.to_ascii_lowercase()))),
+                    "effective_materials":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent| std::array::from_fn::<_, 2, _>(|index| intent.top_materials[index].as_deref().or_else(||subobject::solid(&self.document, entry.source.solid).ok()?.1.sides.iter().find(|side|side.id==entry.source.side).map(|side|side.material.as_str())).map(str::to_ascii_lowercase))),
                     "valid":entry.result.is_ok(),"edge_parameters":entry.result.as_ref().ok().map(|part|part.cut().unwrap().edge_parameters),"error":entry.result.err()})
             }).collect::<Vec<_>>(), None),
             Err(error) => (Vec::new(), Some(error)),
@@ -771,14 +775,12 @@ impl Session {
                 "Return to flat before keeping a partition; Apply commits raised geometry".into(),
             );
         }
-        let partitions = draft.partitions.clone();
+        let draft = draft.clone();
         let selection = self.components.selection.clone();
         let picking = self.components.picking.clone();
         let count = self.edit(actor, "keep flat face partitions", |tx| {
-            for partition in &partitions {
-                map_core::partition_metadata::store_partition(tx, partition)?;
-            }
-            Ok(partitions.len())
+            draft.store(tx)?;
+            Ok(draft.partitions.len())
         })?;
         if self.partition_preview_token() == Some(token) {
             self.cancel_component_move(token)?;
@@ -829,6 +831,7 @@ impl Session {
                     .ok_or("Saved partition does not exist")??,
             );
         }
+        let materials = materials::saved_materials(&metadata, &partitions);
         let ids = solids.into_iter().collect::<Vec<_>>();
         self.set_component_picking(
             Some(super::super::component_picking::Kind::Face),
@@ -858,6 +861,7 @@ impl Session {
                 rise: 0.0,
                 roof_texture_lock: false,
                 selection,
+                materials,
             },
             self.document.preview_snapshot(),
             None,
@@ -964,8 +968,29 @@ impl Session {
     ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
         let requests = self.crease_requests(pairs)?;
-        let partitions = subobject::plan_partitions(&self.document, &requests)
+        let mut partitions = subobject::plan_partitions(&self.document, &requests)
             .map_err(|error| error.to_string())?;
+        let materials = if let Ok(metadata) =
+            map_core::partition_metadata::Metadata::parse(self.document.vmf())
+        {
+            let mut materials = BTreeMap::new();
+            for resolved in metadata.resolve(&self.document) {
+                if let Ok(saved) = resolved.result
+                    && let Some(current) = partitions
+                        .iter_mut()
+                        .find(|part| part.source == saved.source)
+                {
+                    materials.extend(materials::saved_materials(
+                        &metadata,
+                        std::slice::from_ref(&saved),
+                    ));
+                    current.loops = saved.loops;
+                }
+            }
+            materials
+        } else {
+            BTreeMap::new()
+        };
         let selection = partitions
             .iter()
             .flat_map(|part| {
@@ -980,6 +1005,7 @@ impl Session {
             rise: 0.0,
             roof_texture_lock: false,
             selection,
+            materials,
         };
         Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
     }
@@ -1065,11 +1091,12 @@ impl Session {
             Some(
                 document
                     .edit("preview raised partition", |tx| {
-                        let plan = subobject::crease_with_roof_textures(
+                        let plan = subobject::crease_partitions_with_materials(
                             tx,
-                            &requests,
+                            &draft.partitions,
                             rise,
                             draft.roof_texture_lock,
+                            &draft.material_plan(),
                         )?;
                         consume_saved(tx, &requests)?;
                         Ok(plan)
@@ -1177,47 +1204,10 @@ impl Session {
     }
 
     pub(super) fn append_partition_guides(&mut self, mesh: &mut render::SceneMesh) {
-        let hidden = self.hidden_tool_brushes();
-        let saved;
-        let draft = if let Some(draft) = self
-            .components
-            .preview
-            .as_ref()
-            .and_then(|preview| preview.partition.as_ref())
-        {
-            draft
-        } else {
-            let ids = if self.components.picking.is_some() {
-                self.component_solids().into_iter().collect::<BTreeSet<_>>()
-            } else {
-                self.components
-                    .selection
-                    .iter()
-                    .map(|component| component.solid)
-                    .collect()
-            };
-            if ids.is_empty() {
-                return;
-            }
-            let Ok(metadata) =
-                map_core::partition_metadata::Metadata::parse(self.render_document().vmf())
-            else {
-                return;
-            };
-            let partitions = metadata
-                .resolve(self.render_document())
-                .into_iter()
-                .filter(|entry| ids.contains(&entry.source.solid))
-                .filter_map(|entry| entry.result.ok())
-                .collect();
-            saved = Draft {
-                partitions,
-                rise: 0.0,
-                roof_texture_lock: false,
-                selection: BTreeSet::new(),
-            };
-            &saved
+        let Some(draft) = self.partition_surface_draft() else {
+            return;
         };
+        let visible = self.partition_piece_visibility(&draft);
         for part in &draft.partitions {
             let positions = part.positions(draft.rise);
             let mut pieces = part.loops.iter().collect::<Vec<_>>();
@@ -1228,18 +1218,14 @@ impl Session {
                 })
             });
             for piece in pieces {
-                let solid = self
-                    .components
-                    .preview
-                    .as_ref()
-                    .and_then(|preview| preview.extrusion.as_ref())
-                    .and_then(|draft| {
-                        draft.plan.pieces.iter().find(|result| {
-                            result.source.solid == part.source.solid && result.partition == piece.id
-                        })
+                if !visible
+                    .get(&PartitionRef {
+                        solid: part.source.solid,
+                        partition: piece.id,
                     })
-                    .map_or(part.source.solid, |result| result.solid.id);
-                if self.component_hidden(solid, &hidden) {
+                    .copied()
+                    .unwrap_or(false)
+                {
                     continue;
                 }
                 let selected = draft.selection.contains(&PartitionRef {

@@ -12,6 +12,14 @@ use super::{Actor, SelectMode, Session};
 pub const SOURCE_PAGE_SIZE: usize = 100;
 pub const MAX_SOURCE_PAGE_SIZE: usize = 256;
 
+#[derive(Debug, Clone, Copy, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeAction {
+    Replace,
+    Add,
+    Remove,
+}
+
 pub struct Preview {
     pub document: Document,
     pub token: u64,
@@ -145,6 +153,49 @@ impl Session {
                 }),
             })
             .collect()
+    }
+
+    pub fn update_component_scope(
+        &mut self,
+        kind: super::component_picking::Kind,
+        solid: u32,
+        action: ScopeAction,
+        stamp: &str,
+    ) -> Result<(), String> {
+        self.check_component_stamp(stamp)?;
+        if !self.selected_component_solids().contains(&solid) {
+            return Err("Choose a source brush belonging to the selected owners".into());
+        }
+        let mut ids = self
+            .components
+            .picking
+            .as_ref()
+            .map_or_else(BTreeSet::new, |picking| picking.solids.clone());
+        match action {
+            ScopeAction::Replace => ids = BTreeSet::from([solid]),
+            ScopeAction::Add => {
+                if ids.contains(&solid)
+                    && self
+                        .components
+                        .picking
+                        .as_ref()
+                        .is_some_and(|picking| picking.kind == kind)
+                {
+                    return Ok(());
+                }
+                ids.insert(solid);
+            }
+            ScopeAction::Remove => {
+                if !ids.remove(&solid) {
+                    return Err("That brush is not in the captured scope".into());
+                }
+            }
+        }
+        self.set_component_picking(
+            (!ids.is_empty()).then_some(kind),
+            &ids.into_iter().collect::<Vec<_>>(),
+            stamp,
+        )
     }
 
     pub fn component_sources(&self, offset: usize, limit: usize) -> Result<Value, String> {
@@ -868,6 +919,63 @@ mod tests {
                 .is_err()
         );
         assert_eq!(session.component_solids(), vec![ids[100]]);
+        assert_eq!(session.document().vmf(), &source);
+        let kind = super::super::component_picking::Kind::Face;
+        for id in &ids[..15] {
+            session
+                .update_component_scope(kind, *id, ScopeAction::Add, &session.component_stamp())
+                .unwrap();
+        }
+        let captured = session.component_solids();
+        let stamp = session.component_stamp();
+        assert_eq!(captured.len(), subobject::MAX_SOLIDS);
+        assert!(
+            session
+                .update_component_scope(kind, ids[15], ScopeAction::Add, &stamp)
+                .is_err()
+        );
+        assert!(
+            session
+                .update_component_scope(kind, u32::MAX, ScopeAction::Replace, &stamp)
+                .is_err()
+        );
+        assert!(
+            session
+                .update_component_scope(kind, ids[200], ScopeAction::Remove, &stamp)
+                .is_err()
+        );
+        assert_eq!(session.component_stamp(), stamp);
+        assert_eq!(session.component_solids(), captured);
+        let face = session.component_topology(&[ids[100]]).unwrap()[0].faces[0].side;
+        session
+            .select_components(
+                &[Component {
+                    solid: ids[100],
+                    sides: vec![face],
+                }],
+                SelectMode::Replace,
+                &stamp,
+            )
+            .unwrap();
+        session
+            .preview_component_move(DVec3::Z * 8.0, false, false, &session.component_stamp())
+            .unwrap();
+        let report = session.component_report(&[ids[100]]).unwrap();
+        let stamp = session.component_stamp();
+        session
+            .update_component_scope(kind, ids[100], ScopeAction::Add, &stamp)
+            .unwrap();
+        assert_eq!(session.component_stamp(), stamp);
+        assert_eq!(session.component_report(&[ids[100]]).unwrap(), report);
+        for id in captured {
+            session
+                .update_component_scope(kind, id, ScopeAction::Remove, &session.component_stamp())
+                .unwrap();
+        }
+        assert!(session.component_picking().is_none());
+        assert!(session.component_selection().is_empty());
+        assert_eq!(session.component_solids(), ids);
+        assert_eq!(session.selected_ids(), vec![owner]);
         assert_eq!(session.document().vmf(), &source);
     }
 

@@ -13,7 +13,10 @@ def validate(client, output):
         checks.append(label)
 
     tools = {tool["name"] for tool in client.rpc("tools/list", {})["tools"]}
-    check("get_component_sources" in tools, "Source brush pagination is discoverable")
+    check(
+        {"get_component_sources", "update_component_scope"} <= tools,
+        "Source pagination and shared scope actions are discoverable",
+    )
     ids = [
         client.call(
             "create_block",
@@ -148,6 +151,83 @@ def validate(client, output):
     check(
         len(client.call("get_component_sources")["active_solids"]) == 205,
         "Stopping picking returns to the original owner scope without changing the map",
+    )
+    stamp = client.call("get_component_sources")["snapshot"]
+
+    def scope(action, solid, snapshot=None, error=False):
+        return client.call(
+            "update_component_scope",
+            {
+                "action": action,
+                "solid": solid,
+                "kind": "face",
+                "snapshot": snapshot
+                or client.call("get_component_sources")["snapshot"],
+            },
+            error=error,
+        )
+
+    subset = [all_sources[index]["solid"] for index in [0, 100, 200]]
+    for solid in subset:
+        report = scope("add", solid)
+    check(
+        report["picking"]["solids"] == subset
+        and len(report["brushes"]) == 3
+        and client.call("get_component_sources")["total"] == 205,
+        "Adding children across three source pages captures only those brushes",
+    )
+    duplicate = scope("add", subset[0])
+    check(
+        duplicate == report, "Duplicate additions preserve snapshot and captured scope"
+    )
+    scope("add", all_sources[1]["solid"], snapshot=stamp, error=True)
+    scope("remove", all_sources[1]["solid"], error=True)
+    scope("replace", 4294967295, error=True)
+    check(
+        client.call("get_component_sources")["snapshot"] == report["snapshot"],
+        "Stale, nonmember and out-of-source choices leave scope unchanged",
+    )
+    for source in all_sources[1:14]:
+        report = scope("add", source["solid"])
+    captured = report["picking"]["solids"]
+    check(len(captured) == 16, "Page-spanning scopes allow sixteen distinct brushes")
+    scope("add", all_sources[14]["solid"], error=True)
+    check(
+        client.call("get_component_sources")["active_solids"] == captured,
+        "A seventeenth brush is rejected without changing the captured scope",
+    )
+    selection = client.call(
+        "select_brush_components",
+        {
+            "components": [{"solid": chosen, "sides": [face]}],
+            "snapshot": report["snapshot"],
+        },
+    )
+    draft = client.call(
+        "preview_component_move",
+        {"delta": [0, 0, 4], "snap": False, "snapshot": selection["snapshot"]},
+    )
+    duplicate = scope("add", chosen)
+    scope("add", all_sources[14]["solid"], error=True)
+    check(
+        duplicate["preview"] == draft["preview"]
+        and client.call("get_brush_components")["preview"] == draft["preview"],
+        "Duplicate and over-limit additions preserve the valid geometry draft",
+    )
+    for solid in captured:
+        report = scope("remove", solid)
+    check(
+        report["picking"] is None
+        and report["brushes"] == []
+        and report["selection"] == []
+        and report["preview"] is None,
+        "Removing the final member clears picking, component markers and the draft",
+    )
+    check(
+        detail(client, [owner])[0] == original
+        and client.call("get_map_info")["undo"] == history
+        and len(client.call("get_component_sources")["active_solids"]) == 205,
+        "Scope actions preserve the selected owner, all geometry and map history",
     )
     return checks
 

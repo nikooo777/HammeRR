@@ -122,6 +122,9 @@ fn transform_inputs(
 }
 
 fn refresh_sources(window: &ComponentsWindow, session: &Session) {
+    if session.component_picking().is_none() {
+        window.set_source_mode(0);
+    }
     let mut offset = window.get_source_offset().max(0) as usize;
     let mut report = session
         .component_sources(offset, crate::session::components::SOURCE_PAGE_SIZE)
@@ -333,7 +336,16 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 let center = points.iter().sum::<DVec3>() / points.len() as f64;
                 rows.push(ComponentRow {
                     key: key(&component).into(),
-                    label: format!("{direction} · face {}", face.side).into(),
+                    label: format!(
+                        "{}{direction} · face {}",
+                        if shapes.len() == 1 {
+                            String::new()
+                        } else {
+                            format!("Brush {} · ", shape.solid)
+                        },
+                        face.side
+                    )
+                    .into(),
                     detail: format!("{} corners · center {}", points.len(), position(center))
                         .into(),
                     selected: session.displayed_component_selection().contains(&component),
@@ -538,7 +550,21 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                 .row_data(window.get_source_index() as usize - 1)
                 .and_then(|id| id.parse::<u32>().ok())
             {
-                capture_sources(&window, &shared, vec![id]);
+                let action = match window.get_source_mode() {
+                    1 => crate::session::components::ScopeAction::Add,
+                    2 => crate::session::components::ScopeAction::Remove,
+                    _ => crate::session::components::ScopeAction::Replace,
+                };
+                let kind = match window.get_kind() {
+                    1 => Kind::Vertex,
+                    2 => Kind::Face,
+                    _ => Kind::Edge,
+                };
+                let mut session = lock(&shared);
+                let result =
+                    session.update_component_scope(kind, id, action, window.get_stamp().as_str());
+                refresh(&window, &session);
+                window.set_message(result.err().unwrap_or_default().into());
             }
         }
     });

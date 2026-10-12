@@ -28,7 +28,7 @@ and the shared entity inspector and activity panel.*
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush hollowing and carving | Wall shells and convex cutter subtraction, with inherited materials and lighting, cancellable previews and one-step undo. |
 | Brush clipping | Planar cuts, three-point surface picking, exact planes and 3D move/rotation handles; keep either side or both, cap materials and one-step undo. |
-| Brush components | Viewport/list selection, move handles, exact offsets, corner welding and edge/face splitting, with guarded previews and atomic undo. |
+| Brush components | Viewport/list selection, move handles, exact offsets, component scaling/rotation, corner welding and edge/face splitting, with guarded previews and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
@@ -225,6 +225,28 @@ default. Enable **Keep textures at corners** to stretch or rotate the texture
 with each reshaped face. Every corner must keep its original texture coordinates;
 moves that cannot do that with Source's projection are rejected. Disable the
 option or move the whole face when that happens.
+
+Choose **Scale selection** or **Rotate selection** to reshape the selected
+faces, edges or corners. Scale uses positive XYZ factors: **1** keeps that axis
+unchanged, **0.5** halves it and **2** doubles it. Rotation uses degrees around
+world axes in X, then Y, then Z order. **Pivot** uses the selected components'
+center or an exact world position; unselected corners stay fixed. For example,
+scaling a box's top face creates a frustum, while rotating that face can make a
+sloped roof. Twisted, collapsed or concave results are rejected.
+
+**Keep textures at corners** attaches every corner UV when Source's projection
+can represent it. **Preview scale/rotation**, **Apply**, **Discard preview** and
+**Cancel** share the same guarded workflow and one-step undo. Move handles pause
+during these previews. Scale factors and angles are measured from the committed
+map, so revising a preview does not accumulate transforms.
+
+| Component scaling | Component rotation |
+| --- | --- |
+| ![Scale factors and selected-center pivot with cancellable preview](docs/images/component-scale-controls.png) | ![Degree inputs and custom world pivot with Apply and Cancel](docs/images/component-rotate-controls.png) |
+
+| Shared frustum preview | Shared sloped-roof preview |
+| --- | --- |
+| ![Top-face scaling leaves the bottom corners fixed](docs/images/component-scale-preview.png) | ![Top-face rotation creates a sloped roof](docs/images/component-rotate-preview.png) |
 
 Choose **Weld corners**, select **Vertices**, and select at least two corners in
 each brush. **Preview weld** merges them at their average position. For example,
@@ -773,7 +795,7 @@ For example, place a warm light:
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush carving | `get_carve_preview`, `preview_carve`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
-| Component topology | `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
+| Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -832,6 +854,7 @@ python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-ch
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
+python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
 python -B scripts/validate_carving.py --output /tmp/hammerr-carving-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
 python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tools-check
@@ -846,7 +869,8 @@ to check an idle GUI session with a clean map and empty undo/redo history.
 Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
-`validate_audit_fixes.py`, `validate_component_topology.py` and `validate_carving.py` use a private
+`validate_audit_fixes.py`, `validate_component_topology.py`,
+`validate_component_transforms.py` and `validate_carving.py` use a private
 headless session and do not accept a GUI URL. Add `--render` to the topology
 validator for offscreen GPU pixel checks without opening a desktop window.
 
@@ -861,6 +885,13 @@ Set `texture_lock: true` in `preview_component_move` to keep texture coordinates
 at corresponding face corners. The default is world anchoring. The response
 reports `texture_mode` and the preview's `texture_lock` setting; incompatible
 deformations leave the previous valid draft intact.
+
+`preview_component_scale` accepts positive XYZ `factors`;
+`preview_component_rotate` accepts XYZ `degrees`. Both require the latest
+component `snapshot` and accept optional world `pivot` and `texture_lock`.
+`get_brush_components.component_center` reports the source selection's default
+pivot; `preview.transform` reports exact parameters and the resolved pivot.
+Use `commit_component_edit` or `cancel_component_edit` with the returned token.
 
 `preview_component_weld` uses the current selected vertices and `snapshot`.
 Omit target inputs for a per-brush mean, pass `target: [x, y, z]` for a fixed

@@ -5418,6 +5418,135 @@ mod tests {
     }
 
     #[test]
+    fn component_scale_rotate_controls_share_pivots_and_preserve_valid_drafts() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let shape = state.component_topology(&[id]).unwrap().remove(0);
+        let side = shape
+            .faces
+            .iter()
+            .find(|face| {
+                face.vertices
+                    .iter()
+                    .all(|index| shape.vertices[*index].position.z == 64.0)
+            })
+            .unwrap()
+            .side;
+        state
+            .select_components(
+                &[map_core::subobject::Component {
+                    solid: id,
+                    sides: vec![side],
+                }],
+                SelectMode::Replace,
+                &state.component_stamp(),
+            )
+            .unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        window.set_kind(2);
+        window.set_operation(3);
+        components_ui::refresh(&window, &lock(&shared));
+        assert!(window.get_transform_center().contains("(32, 32, 64)"));
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        let draft = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "component-scale");
+        for label in [
+            "Cancel",
+            "Apply scale",
+            "Discard preview",
+            "Preview scale",
+            "Component transform X",
+            "Component transform Y",
+            "Component transform Z",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.set_scale_x("0".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        assert_eq!(lock(&shared).render_document().vmf(), &draft);
+        window.invoke_discard_preview();
+        window.set_operation(4);
+        window.set_pivot_mode(1);
+        window.invoke_choose_pivot();
+        assert_eq!(window.get_pivot_x(), "32");
+        assert_eq!(window.get_pivot_y(), "32");
+        assert_eq!(window.get_pivot_z(), "64");
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        save_ui_snapshot(window.window(), "component-rotate");
+        for label in [
+            "Apply rotation",
+            "Preview rotation",
+            "Component pivot X",
+            "Component pivot Y",
+            "Component pivot Z",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        let rotated = lock(&shared).render_document().vmf().clone();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &rotated);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        let mut session = lock(&shared);
+        let stamp = session.component_stamp();
+        session
+            .select_components(
+                &[map_core::subobject::Component {
+                    solid: id,
+                    sides: vec![side],
+                }],
+                SelectMode::Replace,
+                &stamp,
+            )
+            .unwrap();
+        let stamp = session.component_stamp();
+        session
+            .preview_component_transform(
+                map_core::subobject::ComponentTransform::Scale(DVec3::new(0.75, 0.5, 1.0)),
+                Some(DVec3::new(16.125, 24.25, 64.0)),
+                false,
+                &stamp,
+            )
+            .unwrap();
+        components_ui::refresh(&window, &session);
+        assert_eq!(window.get_operation(), 3);
+        assert_eq!(window.get_scale_x(), "0.75");
+        assert_eq!(window.get_pivot_x(), "16.125");
+        assert!(window.get_ready());
+        drop(session);
+        window.invoke_cancel();
+    }
+
+    #[test]
     fn component_weld_target_controls_preview_existing_corners_and_world_positions() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -1545,11 +1545,12 @@ player spawned inside and fullbright rendering enabled by the engine.
 a single visibility cluster. Lights are saved in VMF and carried into BSP
 entities; baked lighting is still pending.
 
-Brush collision includes axial and checked non-axial edge bevels. Native sloped,
-rotated, reflected and thin-brush fixtures verify supporting planes, emitted BSP
-brushsides and swept hulls against an independent geometric reference. CS:S
-collision runtime validation and physics output remain unfinished.
-Very small brush rotations can still expose authored-plane snapping errors.
+Authored brush planes and axial/non-axial collision bevels use checked support.
+Snapping and approximate plane reuse must preserve whole authored faces and
+supporting boundaries in working geometry and emitted BSP float records.
+Native sloped, near-axis, distant, reflected and thin-brush fixtures verify
+surface preservation and swept hulls against an independent geometric reference.
+CS:S collision runtime validation and physics output remain unfinished.
 
 VVIS, VRAD, physics collision, water volumes, compiled displacements,
 static props, areaportals, overlays, cubemaps and origin brushes remain

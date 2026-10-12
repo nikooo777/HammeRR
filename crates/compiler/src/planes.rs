@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use glam::DVec3;
 
-const NORMAL_EPSILON: f64 = 1e-5;
+pub(crate) const NORMAL_EPSILON: f64 = 1e-5;
 const DIST_EPSILON: f64 = 0.01;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,7 +31,10 @@ pub struct PlaneSet {
 }
 
 fn kind(normal: DVec3) -> i32 {
-    if let Some(axis) = (0..3).find(|&a| normal[a].abs() == 1.0) {
+    if let Some(axis) = [DVec3::X, DVec3::Y, DVec3::Z]
+        .iter()
+        .position(|&axis| normal.abs() == axis)
+    {
         return axis as i32;
     }
     let a = normal.abs();
@@ -82,6 +85,7 @@ impl PlaneSet {
                 let p = &self.planes[i];
                 if (p.normal - normal).abs().max_element() < NORMAL_EPSILON
                     && (p.dist - dist).abs() < DIST_EPSILON
+                    && (kind(normal) >= 3 || p.normal == normal)
                 {
                     return i;
                 }
@@ -95,6 +99,25 @@ impl PlaneSet {
         normal: DVec3,
         dist: f64,
         accept: impl Fn(&Plane) -> Result<bool, E>,
+    ) -> Result<Option<usize>, E> {
+        self.find_checked_in(normal, dist, accept, true)
+    }
+
+    pub(crate) fn find_surface_checked<E>(
+        &mut self,
+        normal: DVec3,
+        dist: f64,
+        accept: impl Fn(&Plane) -> Result<bool, E>,
+    ) -> Result<Option<usize>, E> {
+        self.find_checked_in(normal, dist, accept, false)
+    }
+
+    fn find_checked_in<E>(
+        &mut self,
+        normal: DVec3,
+        dist: f64,
+        accept: impl Fn(&Plane) -> Result<bool, E>,
+        collision: bool,
     ) -> Result<Option<usize>, E> {
         let (snapped_normal, snapped_dist) = snap(normal, dist);
         let mut candidate = Plane {
@@ -113,8 +136,10 @@ impl PlaneSet {
         let normal = candidate.normal;
         let dist = candidate.dist;
         let key = dist.floor() as i64;
+        let hashes = [&self.by_dist, &self.collision_by_dist];
+        let hashes = &hashes[..if collision { 2 } else { 1 }];
         for k in [key - 1, key, key + 1] {
-            for hash in [&self.by_dist, &self.collision_by_dist] {
+            for hash in hashes {
                 for &i in hash.get(&k).into_iter().flatten() {
                     let p = &self.planes[i];
                     if (p.normal - normal).abs().max_element() < NORMAL_EPSILON
@@ -126,7 +151,7 @@ impl PlaneSet {
                 }
             }
         }
-        Ok(Some(self.insert(normal, dist, true)))
+        Ok(Some(self.insert(normal, dist, collision)))
     }
 
     fn insert(&mut self, normal: DVec3, dist: f64, collision: bool) -> usize {
@@ -225,13 +250,19 @@ mod tests {
         let collision_normal = DVec3::new(1.0, 1.0, 0.0).normalize();
         let authored_normal = (collision_normal + DVec3::Z * 8e-6).normalize();
         let mut baseline = PlaneSet::default();
-        let baseline_authored = baseline.find(authored_normal, 64.0);
+        let baseline_authored = baseline
+            .find_surface_checked(authored_normal, 64.0, |_| Ok::<_, ()>(true))
+            .unwrap()
+            .unwrap();
         let mut set = PlaneSet::default();
         let collision = set
             .find_checked(collision_normal, 64.0, |_| Ok::<_, ()>(true))
             .unwrap()
             .unwrap();
-        let authored = set.find(authored_normal, 64.0);
+        let authored = set
+            .find_surface_checked(authored_normal, 64.0, |_| Ok::<_, ()>(true))
+            .unwrap()
+            .unwrap();
         assert_ne!(authored, collision);
         assert_eq!(set.get(authored), baseline.get(baseline_authored));
         assert_eq!(set.find(authored_normal, 64.0), authored);
@@ -272,5 +303,22 @@ mod tests {
         assert_eq!(set.get(axial).normal, DVec3::X);
         assert_eq!(set.get(axial).dist, 64.0);
         assert_ne!(index, axial);
+    }
+
+    #[test]
+    fn unsnapped_near_axial_planes_keep_a_nonaxial_kind() {
+        let mut set = PlaneSet::default();
+        let normal = DVec3::new(1.0, 1e-9, 0.0);
+        let index = set
+            .find_surface_checked(normal, 64.0, |plane| Ok::<_, ()>(plane.normal == normal))
+            .unwrap()
+            .unwrap();
+        assert_eq!(set.get(index).normal, normal);
+        assert_eq!(set.get(index).kind, 3);
+        assert_eq!(set.get(index ^ 1).kind, 3);
+        let axial = set.find(DVec3::X, 64.0);
+        assert_ne!(axial, index);
+        assert_eq!(set.get(axial).normal, DVec3::X);
+        assert_eq!(set.get(axial).kind, 0);
     }
 }

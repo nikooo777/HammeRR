@@ -380,6 +380,16 @@ fn detail(doc: &Document, id: ObjectId) -> Result<Value, String> {
     Ok(value)
 }
 
+fn selected_component_report(session: &Session) -> Result<Value, String> {
+    session.component_report(
+        &session
+            .component_selection()
+            .iter()
+            .map(|component| component.solid)
+            .collect::<Vec<_>>(),
+    )
+}
+
 fn hit_json(doc: &Document, hit: &Hit) -> Value {
     let material = hit.solid.zip(hit.side).and_then(|(solid, side)| {
         let owner = doc.owner_of_solid(solid)?;
@@ -512,6 +522,11 @@ struct ComponentMoveArgs {
     /// Preserve texture coordinates at corresponding corners; rejects incompatible face deformations.
     #[serde(default)]
     texture_lock: bool,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentWeldArgs {
     snapshot: String,
 }
 
@@ -3000,6 +3015,42 @@ impl EditorServer {
                     .map(|component| component.solid)
                     .collect::<Vec<_>>(),
             )
+        })
+    }
+
+    #[tool(
+        description = "Preview welding selected corners to their average position independently within each brush. Requires the latest component snapshot and at least two distinct vertices per brush; edges/faces are rejected. Surviving solid/side IDs, ownership, materials, world UV projections, lighting and unknown metadata remain. Collapsed faces are removed and their side IDs reported in preview.weld; redundant, self-touching, nonplanar, concave, empty or displacement results reject atomically and preserve the preceding draft. Limits: 512 selected corners, 16 brushes, 64 sides per brush. Topology and guides show the merged selection, while source_selection retains the original corners. Apply or Cancel before selecting preview components or dragging. No map/history changes until commit_component_edit; cancel_component_edit discards the draft."
+    )]
+    fn preview_component_weld(
+        &self,
+        Parameters(args): Parameters<ComponentWeldArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_component_weld(&args.snapshot)?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact shared component preview token, whether movement or corner welding, as one undo step. Stored geometry matches the draft. Retains the resulting component selection and picking scope; welding selects each merged corner using its new incident side IDs. Stale tokens and invalid handle updates reject without editing."
+    )]
+    fn commit_component_edit(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.commit_component_edit(Actor::Agent, parse_token(&args.token)?)?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact movement or corner-weld preview without changing map or history. Restores the original component selection and retains viewport picking scope. Stale tokens cannot discard a newer draft. Equivalent to Discard preview; stopping component picking clears the whole tool."
+    )]
+    fn cancel_component_edit(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_component_move(parse_token(&args.token)?)?;
+            selected_component_report(&session)
         })
     }
 
@@ -5656,6 +5707,67 @@ mod headless_tests {
         let result = result.unwrap();
         assert!(!result.is_error.unwrap_or(false));
         serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+    }
+
+    #[test]
+    fn component_weld_tools_report_only_edited_children_in_a_large_entity() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        let mut ids = Vec::new();
+        for index in 0..17 {
+            let origin = DVec3::X * (index as f64 * 128.0);
+            ids.push(
+                session
+                    .create_block(
+                        Actor::Agent,
+                        origin,
+                        origin + DVec3::splat(64.0),
+                        "brick/test",
+                        false,
+                    )
+                    .unwrap(),
+            );
+        }
+        let owner = session
+            .tie_to_entity(Actor::Agent, &ids, "func_detail", Default::default())
+            .unwrap();
+        let ObjectId::Solid(id) = ids[0] else {
+            unreachable!()
+        };
+        let shape = session.component_topology(&[id]).unwrap().remove(0);
+        let selected = shape
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position.z == 64.0)
+            .map(|vertex| map_core::subobject::Component {
+                solid: id,
+                sides: vertex.sides.clone(),
+            })
+            .collect::<Vec<_>>();
+        session
+            .select_components(&selected, SelectMode::Replace, &session.component_stamp())
+            .unwrap();
+        let original = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let server = EditorServer::new(shared.clone(), None);
+        for commit in [false, true] {
+            let snapshot = lock(&shared).component_stamp();
+            let preview =
+                value(server.preview_component_weld(Parameters(ComponentWeldArgs { snapshot })));
+            assert_eq!(preview["brushes"].as_array().unwrap().len(), 1);
+            let token = preview["preview"]["token"].as_str().unwrap().to_string();
+            let result = if commit {
+                server.commit_component_edit(Parameters(VolumeTokenArgs { token }))
+            } else {
+                server.cancel_component_edit(Parameters(VolumeTokenArgs { token }))
+            };
+            assert_eq!(value(result)["brushes"].as_array().unwrap().len(), 1);
+            assert_eq!(lock(&shared).document().owner_of_solid(id), Some(owner));
+            if commit {
+                lock(&shared).undo(Actor::Agent).unwrap();
+            }
+            assert_eq!(lock(&shared).document().vmf(), &original);
+        }
+        assert!(server.offscreen.lock().unwrap().renderer.is_none());
     }
 
     #[test]

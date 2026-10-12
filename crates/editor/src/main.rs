@@ -5388,6 +5388,85 @@ mod tests {
     }
 
     #[test]
+    fn component_weld_controls_preview_discard_apply_and_undo() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        window.set_kind(1);
+        window.set_operation(1);
+        components_ui::refresh(&window, &lock(&shared));
+        let shape = lock(&shared).component_topology(&[id]).unwrap().remove(0);
+        for vertex in shape
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position.z == 64.0)
+        {
+            let key = format!(
+                "{}:{}",
+                id,
+                vertex
+                    .sides
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            window.invoke_choose(key.into());
+        }
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert!(window.get_topology_preview());
+        assert!(window.get_summary().contains("1 selected"));
+        assert!(
+            window
+                .get_preview_summary()
+                .contains("Merge 4 corners into 1")
+        );
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        let draft = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-weld");
+        assert_dialog_button_visible(&window, "Cancel");
+        assert_dialog_button_visible(&window, "Apply weld");
+        assert_dialog_button_visible(&window, "Discard preview");
+        window.invoke_discard_preview();
+        assert!(!window.get_topology_preview());
+        assert!(!window.get_ready());
+        assert_eq!(lock(&shared).component_selection().len(), 4);
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &draft);
+        assert_eq!(lock(&shared).component_selection().len(), 1);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_refresh();
+        window.invoke_cancel();
+    }
+
+    #[test]
     fn hollow_controls_preview_validate_look_inside_apply_and_cancel() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

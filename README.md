@@ -28,7 +28,7 @@ and the shared entity inspector and activity panel.*
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
 | Brush hollowing | Inward/outward wall shells with inherited materials and lighting, cavity inspection, cancellable previews and one-step undo. |
 | Brush clipping | Planar cuts, three-point surface picking, exact planes and 3D move/rotation handles; keep either side or both, cap materials and one-step undo. |
-| Brush components | Viewport/list selection of faces, edges and corners; axis/plane move handles and exact offsets, with texture attachment, guarded previews and atomic undo. |
+| Brush components | Viewport/list selection of faces, edges and corners; move handles, exact offsets and corner welding, with guarded previews and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
 | Recovery | Periodic and manual snapshots, previous-save backups, safe recovery copies, persistent settings and matching MCP controls. |
 | Map statistics | Authored geometry, entities, material/model usage, terrain, lightmap scales and hidden-object counts with paginated breakdowns. |
@@ -218,7 +218,7 @@ measured from the committed map, so revising a preview does not accumulate moves
 Invalid offsets leave the last valid preview visible and block drag commit until
 the next valid update. Zero total displacement adds no history. Faces must remain flat
 and the brush convex: moving one corner of a box usually requires moving its
-connected edge or the whole face together. Splitting, welding and displacement
+connected edge or the whole face together. Splitting and displacement
 movement are not supported yet. Existing face IDs, materials, lighting fields
 and unknown metadata are retained. Textures stay anchored in world space by
 default. Enable **Keep textures at corners** to stretch or rotate the texture
@@ -226,9 +226,23 @@ with each reshaped face. Every corner must keep its original texture coordinates
 moves that cannot do that with Source's projection are rejected. Disable the
 option or move the whole face when that happens.
 
+Choose **Weld corners**, select **Vertices**, and select at least two corners in
+each brush. **Preview weld** merges them at their average position. For example,
+welding a box's four upper corners creates a pyramid. Collapsed faces are removed;
+the preview shows their count and highlights the resulting corner. Surviving
+faces keep their IDs, material, world texture projection and metadata.
+Nonplanar, concave, empty or redundant geometry is rejected. Movement handles
+and selection changes pause during the topology preview. **Apply weld** records
+one undo step; **Discard preview** restores the original corner selection.
+
+| Welding controls | Shared pyramid preview |
+| --- | --- |
+| ![Merged selection and Apply/Cancel controls](docs/images/brush-welding.png) | ![Four box corners welded into a pyramid apex](docs/images/component-weld-preview.png) |
+
 The first version supports 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
-collapse edges or alter topology are rejected before the map is changed.
+collapse edges are rejected before the map is changed. Movement preserves
+topology; welding accepts only a closed, convex result with the planned corners.
 
 | Component controls | Shared shape preview |
 | --- | --- |
@@ -703,6 +717,7 @@ For example, place a warm light:
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
+| Corner welding | `preview_component_weld`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -760,6 +775,7 @@ python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
 python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-check
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
+python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
 python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tools-check
 python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
@@ -773,6 +789,10 @@ to check an idle GUI session with a clean map and empty undo/redo history.
 Each script temporarily opens its fixture, then restores the original file,
 camera, selection and view.
 
+`validate_audit_fixes.py` and `validate_component_topology.py` use a private
+headless session and do not accept a GUI URL. Add `--render` to the topology
+validator for offscreen GPU pixel checks without opening a desktop window.
+
 Component queries return full stored precision. Use each response's `snapshot`
 when selecting components or previewing a move, and the preview's `token` for
 Apply/Cancel. One side ID selects a whole face, two incident side IDs identify an edge,
@@ -784,6 +804,14 @@ Set `texture_lock: true` in `preview_component_move` to keep texture coordinates
 at corresponding face corners. The default is world anchoring. The response
 reports `texture_mode` and the preview's `texture_lock` setting; incompatible
 deformations leave the previous valid draft intact.
+
+`preview_component_weld` uses the current selected vertices and `snapshot`.
+Each brush welds to its own average position, with world-anchored textures.
+The response reports `preview.operation`, merged positions and removed side IDs
+in `preview.weld`. `selection` identifies the resulting corners;
+`source_selection` retains the original inputs while the draft is open.
+Use `commit_component_edit` or `cancel_component_edit` with its exact token.
+Selection changes and handles remain unavailable until Apply or Cancel.
 
 For component picking, `set_component_picking` captures the brush IDs and kind;
 `get_brush_components` reports that shared mode. `pick_brush_components` accepts
@@ -993,7 +1021,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes component splitting/welding, displacement clipping,
+Editor work ahead includes component splitting, broader welding targets, displacement clipping,
 carving, displacement tools, model rendering and broader map checks.
 
 ## Project layout

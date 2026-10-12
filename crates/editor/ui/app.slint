@@ -1421,14 +1421,15 @@ component TransformVector inherits HorizontalLayout {
     in-out property <string> x-value: "0";
     in-out property <string> y-value: "0";
     in-out property <string> z-value: "0";
+    in property <bool> enabled: true;
     callback apply();
     spacing: 7px;
     Text { text: "X"; color: #dc858d; vertical-alignment: center; }
-    LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.x-value; input-type: decimal; accepted => { root.apply(); } }
+    LineEdit { enabled: root.enabled; min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.x-value; input-type: decimal; accepted => { root.apply(); } }
     Text { text: "Y"; color: #86c9a4; vertical-alignment: center; }
-    LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.y-value; input-type: decimal; accepted => { root.apply(); } }
+    LineEdit { enabled: root.enabled; min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.y-value; input-type: decimal; accepted => { root.apply(); } }
     Text { text: "Z"; color: #90b1e0; vertical-alignment: center; }
-    LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.z-value; input-type: decimal; accepted => { root.apply(); } }
+    LineEdit { enabled: root.enabled; min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.z-value; input-type: decimal; accepted => { root.apply(); } }
 }
 
 export component AppWindow inherits Window {
@@ -1499,12 +1500,14 @@ export component AppWindow inherits Window {
     in-out property <string> pivot-y: "0";
     in-out property <string> pivot-z: "0";
     in-out property <bool> transform-texture-lock: true;
+    in-out property <bool> transform-texture-scale-lock: true;
     in-out property <int> handles-mode-index;
     in-out property <int> transform-space-index;
     in-out property <string> rotation-step: "15";
     in-out property <int> area-rule-index;
     in-out property <int> area-mode-index;
     in property <bool> has-transform-preview;
+    in property <[string]> transform-preview-values: ["0", "0", "0", "0", "0", "0", "1", "1", "1"];
     in property <bool> has-area-preview;
     in property <bool> has-paint-preview;
     in property <bool> has-texture-stroke;
@@ -1515,11 +1518,14 @@ export component AppWindow inherits Window {
     in-out property <float> paint-radius: 12;
     callback paint-settings-changed();
     in property <string> interaction-summary;
-    changed transform-mode => {
-        root.transform-x = root.transform-mode == 2 ? "1" : "0";
-        root.transform-y = root.transform-mode == 2 ? "1" : "0";
-        root.transform-z = root.transform-mode == 2 ? "1" : "0";
+    function refresh-transform-values() {
+        root.transform-x = root.has-transform-preview ? root.transform-preview-values[root.transform-mode * 3] : root.transform-mode == 2 ? "1" : "0";
+        root.transform-y = root.has-transform-preview ? root.transform-preview-values[root.transform-mode * 3 + 1] : root.transform-mode == 2 ? "1" : "0";
+        root.transform-z = root.has-transform-preview ? root.transform-preview-values[root.transform-mode * 3 + 2] : root.transform-mode == 2 ? "1" : "0";
     }
+    changed transform-mode => { root.refresh-transform-values(); }
+    changed transform-preview-values => { if root.has-transform-preview { root.refresh-transform-values(); } }
+    changed has-transform-preview => { if root.has-transform-preview { root.refresh-transform-values(); } }
     in-out property <bool> show-tools: true;
     in-out property <bool> show-leak: true;
     in-out property <int> surface-view;
@@ -1850,8 +1856,13 @@ export component AppWindow inherits Window {
                             selected => { root.transform-tool-changed(); }
                         }
                         if root.handles-mode-index > 0 && root.handles-mode-index < 4: CheckBox {
-                            text: "Texture lock";
+                            text: "Follow move/rotation";
                             checked <=> root.transform-texture-lock;
+                            toggled => { root.transform-tool-changed(); }
+                        }
+                        if root.handles-mode-index == 3: CheckBox {
+                            text: "Stretch with scale";
+                            checked <=> root.transform-texture-scale-lock;
                             toggled => { root.transform-tool-changed(); }
                         }
                         if root.handles-mode-index == 2: HorizontalLayout {
@@ -2115,6 +2126,7 @@ export component AppWindow inherits Window {
                             color: #aab2c2; font-size: 12px;
                         }
                         TransformVector {
+                            enabled: !root.has-transform-preview;
                             x-value <=> root.transform-x;
                             y-value <=> root.transform-y;
                             z-value <=> root.transform-z;
@@ -2139,10 +2151,13 @@ export component AppWindow inherits Window {
                                 apply => { root.transform-tool-changed(); }
                             }
                         }
-                        if root.can-apply-material: CheckBox { text: "Keep textures attached"; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
+                        if root.can-apply-material: CheckBox { text: "Follow move and rotation"; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
+                        if root.can-apply-material && root.transform-mode == 2: CheckBox { text: "Stretch textures when scaling"; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
+                        if root.can-apply-material && root.transform-mode == 2: Text { text: root.transform-texture-scale-lock ? "The texture stretches with the brush." : "The texture keeps its size and repeats across the resized brush."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                         if root.transform-mode == 2: Text { text: "Resizes brushes and spaces entity origins."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                         Button {
                             text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : "Scale selection";
+                            enabled: !root.has-transform-preview;
                             clicked => { root.apply-transform(); }
                         }
                     }

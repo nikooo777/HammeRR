@@ -29,7 +29,7 @@ pub struct State {
 }
 
 pub fn result_json(result: &carve::Result) -> Value {
-    json!({"cutter": result.cutter,
+    json!({"cutter": result.cutter, "cutters":result.cutters,
         "changes": result.changes.iter().map(|change| json!({"source": change.source, "fragments": change.fragments})).collect::<Vec<_>>(),
         "removed": result.removed, "unchanged": result.unchanged,
         "objects": result.objects.iter().map(|id| match id {ObjectId::Solid(id) => format!("solid:{id}"), ObjectId::Entity(id) => format!("entity:{id}")}).collect::<Vec<_>>(),
@@ -48,8 +48,8 @@ impl Session {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        if ids.len() > carve::MAX_TARGETS + 1 {
-            return Err("Choose at most 17 brushes: one cutter and up to 16 targets".into());
+        if ids.len() > carve::MAX_TARGETS + carve::MAX_CUTTERS {
+            return Err("Choose at most 24 brushes: up to 8 cutters and 16 targets".into());
         }
         ids.into_iter()
             .map(|id| {
@@ -85,7 +85,7 @@ impl Session {
 
     pub fn carve_state(&self) -> Value {
         json!({"stamp":self.carve_stamp(),"preview": self.carving.preview.as_ref().map(|preview| json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"targets":preview.targets,"result":result_json(&preview.result)})),
-            "limits":{"targets":carve::MAX_TARGETS,"fragments":carve::MAX_FRAGMENTS,"sides_per_brush":subobject::MAX_SIDES},
+            "limits":{"cutters":carve::MAX_CUTTERS,"targets":carve::MAX_TARGETS,"fragments":carve::MAX_FRAGMENTS,"sides_per_brush":subobject::MAX_SIDES},
             "full_removal_policy":"World brushes may be removed. Empty brush entities reject; delete those owners explicitly."})
     }
 
@@ -112,6 +112,15 @@ impl Session {
         targets: &[u32],
         stamp: &str,
     ) -> Result<(), String> {
+        self.preview_carve_many(&[cutter], targets, stamp)
+    }
+
+    pub fn preview_carve_many(
+        &mut self,
+        cutters: &[u32],
+        targets: &[u32],
+        stamp: &str,
+    ) -> Result<(), String> {
         if stamp != self.carve_stamp() {
             return Err(
                 "Map, selection or preview changed; inspect the carving state again".into(),
@@ -119,15 +128,17 @@ impl Session {
         }
         let mut document = self.document.preview_snapshot();
         let result = document
-            .edit("preview carve", |tx| carve::carve(tx, cutter, targets))
+            .edit("preview carve", |tx| {
+                carve::carve_many(tx, cutters, targets)
+            })
             .map_err(|error| error.to_string())?;
         let requested = targets
             .iter()
             .copied()
-            .chain([cutter])
+            .chain(cutters.iter().copied())
             .collect::<std::collections::BTreeSet<_>>();
         let selected = self.component_solids();
-        let scope = if selected.len() <= carve::MAX_TARGETS + 1
+        let scope = if selected.len() <= carve::MAX_TARGETS + carve::MAX_CUTTERS
             && requested.iter().all(|id| selected.contains(id))
         {
             selected
@@ -202,7 +213,7 @@ impl Session {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;
         let result = self.edit(actor, "carve brushes", |tx| {
-            let result = carve::carve(tx, expected.cutter, &targets)?;
+            let result = carve::carve_many(tx, &expected.cutters, &targets)?;
             if result != expected
                 || solids.iter().any(|solid| {
                     subobject::solid(tx.document(), solid.id)
@@ -257,6 +268,60 @@ mod tests {
             unreachable!()
         };
         (session, target, cutter)
+    }
+
+    #[test]
+    fn cutter_batches_share_actor_preview_guards_and_exact_apply_undo() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, target, first) = fixture();
+            let ObjectId::Solid(second) = session
+                .create_block(
+                    Actor::Agent,
+                    DVec3::splat(48.0),
+                    DVec3::splat(112.0),
+                    "brick/second",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let source = session.document().vmf().clone();
+            let stamp = session.carve_stamp();
+            session
+                .preview_carve_many(&[second, first], &[target], &stamp)
+                .unwrap();
+            let token = session.carving.preview.as_ref().unwrap().token;
+            let draft = session.render_document().vmf().clone();
+            let report = session.carve_report();
+            assert_eq!(
+                report["preview"]["result"]["cutters"],
+                json!([first, second])
+            );
+            assert_eq!(session.document().vmf(), &source);
+            assert!(
+                session
+                    .preview_carve_many(&[first, second], &[target], &stamp)
+                    .is_err()
+            );
+            assert!(
+                session
+                    .preview_carve_many(&[first, first], &[target], &session.carve_stamp())
+                    .is_err()
+            );
+            assert_eq!(session.carving.preview.as_ref().unwrap().token, token);
+            session.cancel_carve(token).unwrap();
+            assert_eq!(session.render_document().vmf(), &source);
+            session
+                .preview_carve_many(&[first, second], &[target], &session.carve_stamp())
+                .unwrap();
+            let current = session.carving.preview.as_ref().unwrap().token;
+            assert!(session.commit_carve(actor, token).is_err());
+            session.commit_carve(actor, current).unwrap();
+            assert_eq!(session.document().vmf(), &draft);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &source);
+        }
     }
 
     #[test]
@@ -358,7 +423,7 @@ mod tests {
     fn explicit_carve_sources_stay_scoped_inside_a_large_brush_entity() {
         let (mut session, target, cutter) = fixture();
         let mut ids = vec![target];
-        for index in 0..16 {
+        for index in 0..carve::MAX_TARGETS + carve::MAX_CUTTERS {
             let ObjectId::Solid(id) = session
                 .create_block(
                     Actor::Agent,
@@ -389,7 +454,10 @@ mod tests {
         let ObjectId::Entity(owner) = owner else {
             unreachable!()
         };
-        assert_eq!(session.document.entity(owner).unwrap().solids.len(), 22);
+        assert_eq!(
+            session.document.entity(owner).unwrap().solids.len(),
+            ids.len() + 5
+        );
         session.document.vmf().validate_ids().unwrap();
     }
 }

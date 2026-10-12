@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use source_formats::vmf::{Side, Solid};
 
@@ -6,6 +6,7 @@ use crate::plane::ON_EPSILON;
 use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction, clip, subobject};
 
 pub const MAX_TARGETS: usize = 16;
+pub const MAX_CUTTERS: usize = 8;
 pub const MAX_FRAGMENTS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +27,7 @@ pub struct Inheritance {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Result {
     pub cutter: u32,
+    pub cutters: Vec<u32>,
     pub changes: Vec<Change>,
     pub unchanged: Vec<u32>,
     pub removed: Vec<u32>,
@@ -120,20 +122,30 @@ fn subtract(source: &Solid, cutter: &Solid) -> std::result::Result<Vec<Solid>, E
 
 fn plan(
     document: &Document,
-    cutter: u32,
+    cutters: &[u32],
     targets: &[u32],
 ) -> std::result::Result<(Vec<Planned>, Vec<u32>), EditError> {
     let targets = targets.iter().copied().collect::<BTreeSet<_>>();
     if targets.is_empty() || targets.len() > MAX_TARGETS {
         return Err(invalid("Carve between 1 and 16 target brushes at a time"));
     }
-    if targets.contains(&cutter) {
-        return Err(invalid("The cutter cannot also be a target brush"));
+    let ids = cutters.iter().copied().collect::<BTreeSet<_>>();
+    if cutters.is_empty() || cutters.len() > MAX_CUTTERS || ids.len() != cutters.len() {
+        return Err(invalid("Choose between 1 and 8 distinct cutter brushes"));
     }
-    let (_, cutter) = subobject::solid(document, cutter)?;
-    subobject::topology(cutter)?;
-    if cutter.sides.iter().any(|side| side.displacement.is_some()) {
-        return Err(invalid("Carving with displacement brushes is unsupported"));
+    let mut cutters = Vec::new();
+    for id in ids {
+        if targets.contains(&id) {
+            return Err(invalid("A cutter cannot also be a target brush"));
+        }
+        let (_, cutter) = subobject::solid(document, id)?;
+        subobject::topology(cutter)?;
+        if cutter.sides.iter().any(|side| side.displacement.is_some()) {
+            return Err(invalid(format!(
+                "Cutter {id}: carving displacements is unsupported"
+            )));
+        }
+        cutters.push(cutter);
     }
     let mut planned = Vec::new();
     let mut unchanged = Vec::new();
@@ -146,11 +158,32 @@ fn plan(
                 "Brush {id}: carving displacements is unsupported"
             )));
         }
-        if !intersects(source, cutter)? {
+        let mut parts = vec![source.clone()];
+        let mut affected = false;
+        for cutter in &cutters {
+            let mut remaining = Vec::new();
+            for part in parts {
+                if intersects(&part, cutter)? {
+                    affected = true;
+                    remaining.extend(subtract(&part, cutter)?);
+                } else {
+                    remaining.push(part);
+                }
+                if count + remaining.len() > MAX_FRAGMENTS {
+                    return Err(invalid(
+                        "Carving would exceed 256 fragments at an intermediate stage; reduce the selection",
+                    ));
+                }
+            }
+            parts = remaining;
+            if parts.is_empty() {
+                break;
+            }
+        }
+        if !affected {
             unchanged.push(id);
             continue;
         }
-        let parts = subtract(source, cutter)?;
         count += parts.len();
         if count > MAX_FRAGMENTS {
             return Err(invalid(
@@ -193,15 +226,39 @@ pub fn carve(
     cutter: u32,
     targets: &[u32],
 ) -> std::result::Result<Result, EditError> {
-    let (planned, unchanged) = plan(tx.document(), cutter, targets)?;
-    let cutter_sides = subobject::solid(tx.document(), cutter)?
-        .1
-        .sides
+    carve_many(tx, &[cutter], targets)
+}
+
+pub fn carve_many(
+    tx: &mut Transaction,
+    cutters: &[u32],
+    targets: &[u32],
+) -> std::result::Result<Result, EditError> {
+    let (planned, unchanged) = plan(tx.document(), cutters, targets)?;
+    let cutters = cutters
         .iter()
-        .map(|side| side.id)
-        .collect::<BTreeSet<_>>();
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let cutter_sides = cutters
+        .iter()
+        .map(|id| {
+            subobject::solid(tx.document(), *id).map(|(_, solid)| {
+                solid
+                    .sides
+                    .iter()
+                    .map(|side| (side.id, *id))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<BTreeMap<_, _>>();
     let mut result = Result {
-        cutter,
+        cutter: cutters[0],
+        cutters,
         changes: Vec::new(),
         unchanged,
         removed: Vec::new(),
@@ -216,14 +273,17 @@ pub fn carve(
             }
             for side in &mut solid.sides {
                 let source_side = side.id;
-                let from_cutter = cutter_sides.contains(&source_side);
+                let from_cutter = cutter_sides.contains_key(&source_side);
                 if index > 0 || from_cutter {
                     side.id = tx.new_side_id()?;
                 }
                 result.faces.push(Inheritance {
                     solid: solid.id,
                     side: side.id,
-                    source_solid: if from_cutter { cutter } else { part.source },
+                    source_solid: cutter_sides
+                        .get(&source_side)
+                        .copied()
+                        .unwrap_or(part.source),
                     source_side,
                     cutter: from_cutter,
                 });
@@ -305,6 +365,127 @@ mod tests {
             })
             .sum::<f64>()
             .abs()
+    }
+
+    #[test]
+    fn overlapping_cutters_subtract_union_volume_once_with_stable_order_and_inheritance() {
+        let mut document = Document::empty();
+        let target = block(&mut document, DVec3::ZERO, DVec3::splat(128.0));
+        let first = block(&mut document, DVec3::splat(16.0), DVec3::splat(80.0));
+        let second = block(&mut document, DVec3::splat(48.0), DVec3::splat(112.0));
+        document
+            .edit("cutter settings", |tx| {
+                for (id, material, scale) in
+                    [(first, "brick/first", 8), (second, "brick/second", 32)]
+                {
+                    for side in &mut tx.solid_mut(id)?.sides {
+                        side.material = material.into();
+                        side.lightmap_scale = scale;
+                        side.extra_properties.set("cut_source", material);
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let mut reverse = document.preview_snapshot();
+        let expected = reverse
+            .edit("reversed", |tx| carve_many(tx, &[second, first], &[target]))
+            .unwrap();
+        let result = document
+            .edit("batch carve", |tx| {
+                carve_many(tx, &[first, second], &[target])
+            })
+            .unwrap();
+        assert_eq!(result, expected);
+        assert_eq!(document.vmf(), reverse.vmf());
+        assert_eq!(result.cutters, vec![first, second]);
+        let remaining: f64 = result.changes[0]
+            .fragments
+            .iter()
+            .map(|id| volume(document.solid(*id).unwrap()))
+            .sum();
+        assert!((remaining - (128f64.powi(3) - 2.0 * 64f64.powi(3) + 32f64.powi(3))).abs() < 1e-5);
+        for face in &result.faces {
+            let old = source
+                .solids()
+                .find(|solid| solid.id == face.source_solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| side.id == face.source_side)
+                .unwrap();
+            let new = document
+                .solid(face.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| side.id == face.side)
+                .unwrap();
+            assert_eq!(new.material, old.material);
+            assert_eq!(new.u_axis, old.u_axis);
+            assert_eq!(new.v_axis, old.v_axis);
+            assert_eq!(new.lightmap_scale, old.lightmap_scale);
+            assert_eq!(new.extra_properties, old.extra_properties);
+        }
+        assert_eq!(
+            document.solid(first).unwrap(),
+            source.solids().find(|solid| solid.id == first).unwrap()
+        );
+        assert_eq!(
+            document.solid(second).unwrap(),
+            source.solids().find(|solid| solid.id == second).unwrap()
+        );
+        document.undo().unwrap();
+        assert_eq!(document.vmf(), &source);
+    }
+
+    #[test]
+    fn combined_full_removal_and_invalid_cutter_sets_are_atomic() {
+        for entity in [false, true] {
+            let mut document = Document::empty();
+            let target = block(&mut document, DVec3::ZERO, DVec3::splat(64.0));
+            let first = block(&mut document, DVec3::ZERO, DVec3::new(32.0, 64.0, 64.0));
+            let second = block(
+                &mut document,
+                DVec3::new(32.0, 0.0, 0.0),
+                DVec3::splat(64.0),
+            );
+            if entity {
+                document
+                    .edit("owner", |tx| {
+                        edit::tie_to_entity(tx, &[target], "func_detail", &[])
+                    })
+                    .unwrap();
+            }
+            let source = document.vmf().clone();
+            for cutters in [
+                vec![],
+                vec![first, first],
+                vec![first, second, target],
+                vec![first, second, 999_999],
+                vec![first; MAX_CUTTERS + 1],
+            ] {
+                assert!(
+                    document
+                        .edit("invalid batch", |tx| carve_many(tx, &cutters, &[target]))
+                        .is_err()
+                );
+                assert_eq!(document.vmf(), &source);
+            }
+            let result = document.edit("combined removal", |tx| {
+                carve_many(tx, &[first, second], &[target])
+            });
+            if entity {
+                assert!(result.is_err());
+                assert_eq!(document.vmf(), &source);
+            } else {
+                assert_eq!(result.unwrap().removed, vec![target]);
+                assert!(document.solid(target).is_none());
+                document.undo().unwrap();
+                assert_eq!(document.vmf(), &source);
+            }
+        }
     }
 
     #[test]

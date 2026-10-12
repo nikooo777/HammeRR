@@ -6,14 +6,26 @@ use crate::mcp::{SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{CarveRow, CarveWindow};
 
-fn parameters(window: &CarveWindow) -> Result<(u32, Vec<u32>), String> {
+fn parameters(window: &CarveWindow) -> Result<(Vec<u32>, Vec<u32>), String> {
     let rows = window.get_targets();
-    let cutter = rows
-        .row_data(window.get_cutter() as usize)
-        .ok_or("Select at least two brushes in the map first")?
-        .solid
-        .parse()
-        .map_err(|_| "Invalid cutter brush")?;
+    let mut cutters = if window.get_multiple_cutters() {
+        rows.iter()
+            .filter(|row| row.cutter)
+            .map(|row| {
+                row.solid
+                    .parse::<u32>()
+                    .map_err(|_| "Invalid cutter brush".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        vec![
+            rows.row_data(window.get_cutter() as usize)
+                .ok_or("Select at least two brushes in the map first")?
+                .solid
+                .parse()
+                .map_err(|_| "Invalid cutter brush")?,
+        ]
+    };
     let mut targets = rows
         .iter()
         .filter(|row| row.selected && !row.cutter)
@@ -23,8 +35,18 @@ fn parameters(window: &CarveWindow) -> Result<(u32, Vec<u32>), String> {
                 .map_err(|_| "Invalid target brush".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
+    cutters.sort_unstable();
     targets.sort_unstable();
-    Ok((cutter, targets))
+    Ok((cutters, targets))
+}
+
+fn can_preview(window: &CarveWindow) -> bool {
+    parameters(window).is_ok_and(|(cutters, targets)| {
+        !cutters.is_empty()
+            && cutters.len() <= map_core::carve::MAX_CUTTERS
+            && !targets.is_empty()
+            && targets.len() <= map_core::carve::MAX_TARGETS
+    })
 }
 
 pub fn refresh(window: &CarveWindow, session: &Session) {
@@ -42,17 +64,45 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
     match session.carve_sources() {
         Ok(sources) => {
             let default = sources.len().saturating_sub(1);
-            let chosen = if !token.is_empty() && window.get_token() != token {
+            let incoming = !token.is_empty() && window.get_token() != token;
+            if !incoming && !unchanged_source {
+                window.set_multiple_cutters(false);
+            }
+            if incoming {
+                window.set_multiple_cutters(
+                    preview["result"]["cutters"].as_array().unwrap().len() > 1,
+                );
+            }
+            let chosen = if incoming {
                 preview["result"]["cutter"].as_u64().map(|id| id as u32)
             } else if unchanged_source {
-                previous.as_ref().map(|(cutter, _)| *cutter)
+                previous
+                    .as_ref()
+                    .and_then(|(cutters, _)| cutters.first().copied())
             } else {
                 None
             };
             let cutter = chosen
                 .and_then(|id| sources.iter().position(|source| source.solid == id))
                 .unwrap_or(default);
-            let targets = if !token.is_empty() && window.get_token() != token {
+            let cutters = if incoming {
+                preview["result"]["cutters"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|id| id.as_u64().unwrap() as u32)
+                    .collect::<Vec<_>>()
+            } else if unchanged_source && window.get_multiple_cutters() {
+                previous
+                    .as_ref()
+                    .map_or_else(Vec::new, |(cutters, _)| cutters.clone())
+            } else {
+                sources
+                    .get(cutter)
+                    .map(|source| vec![source.solid])
+                    .unwrap_or_default()
+            };
+            let targets = if incoming {
                 preview["targets"].as_array().map(|ids| {
                     ids.iter()
                         .map(|id| id.as_u64().unwrap() as u32)
@@ -65,8 +115,7 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
             };
             let rows = sources
                 .iter()
-                .enumerate()
-                .map(|(index, source)| {
+                .map(|source| {
                     let size = source.maxs - source.mins;
                     CarveRow {
                         solid: source.solid.to_string().into(),
@@ -75,11 +124,11 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
                             source.solid, size.x, size.y, size.z, source.material
                         )
                         .into(),
-                        selected: index != cutter
+                        selected: !cutters.contains(&source.solid)
                             && targets
                                 .as_ref()
                                 .is_none_or(|targets| targets.contains(&source.solid)),
-                        cutter: index == cutter,
+                        cutter: cutters.contains(&source.solid),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -101,14 +150,11 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
     window.set_stamp(session.carve_stamp().into());
     window.set_source(source.into());
     window.set_token(token.into());
-    window.set_can_preview(
-        window.get_targets().row_count() >= 2
-            && parameters(window).is_ok_and(|(_, targets)| !targets.is_empty()),
-    );
+    window.set_can_preview(can_preview(window));
     window.set_ready(
         !preview.is_null()
-            && parameters(window).is_ok_and(|(cutter, targets)| {
-                preview["result"]["cutter"] == cutter
+            && parameters(window).is_ok_and(|(cutters, targets)| {
+                preview["result"]["cutters"] == serde_json::json!(cutters)
                     && preview["targets"] == serde_json::json!(targets)
             }),
     );
@@ -154,9 +200,41 @@ pub fn bind(window: &CarveWindow, shared: &SharedSession) {
                 .collect::<Vec<_>>();
             window.set_targets(Rc::new(VecModel::from(rows)).into());
             window.set_ready(false);
-            window
-                .set_can_preview(parameters(&window).is_ok_and(|(_, targets)| !targets.is_empty()));
+            window.set_can_preview(can_preview(&window));
             window.set_message("Cutter changed. Preview the result before applying.".into());
+        }
+    });
+    window.on_toggle_multiple({
+        let window = window.as_weak();
+        move || {
+            let window = window.unwrap();
+            if !window.get_multiple_cutters() {
+                window.invoke_choose_cutter();
+            }
+            window.set_ready(false);
+            window.set_can_preview(can_preview(&window));
+            window.set_message("Cutter mode changed. Preview the result before applying.".into());
+        }
+    });
+    window.on_choose_cut_role({
+        let window = window.as_weak();
+        move |id| {
+            let window = window.unwrap();
+            let rows = window
+                .get_targets()
+                .iter()
+                .map(|mut row| {
+                    if row.solid == id {
+                        row.cutter = !row.cutter;
+                        row.selected = !row.cutter;
+                    }
+                    row
+                })
+                .collect::<Vec<_>>();
+            window.set_targets(Rc::new(VecModel::from(rows)).into());
+            window.set_ready(false);
+            window.set_can_preview(can_preview(&window));
+            window.set_message("Brush roles changed. Preview the result before applying.".into());
         }
     });
     window.on_choose_target({
@@ -175,8 +253,7 @@ pub fn bind(window: &CarveWindow, shared: &SharedSession) {
                 .collect::<Vec<_>>();
             window.set_targets(Rc::new(VecModel::from(rows)).into());
             window.set_ready(false);
-            window
-                .set_can_preview(parameters(&window).is_ok_and(|(_, targets)| !targets.is_empty()));
+            window.set_can_preview(can_preview(&window));
             window.set_message("Targets changed. Preview the result before applying.".into());
         }
     });
@@ -185,8 +262,12 @@ pub fn bind(window: &CarveWindow, shared: &SharedSession) {
         move || {
             let window = window.unwrap();
             let mut session = lock(&shared);
-            let result = parameters(&window).and_then(|(cutter, targets)| {
-                session.preview_carve(cutter, &targets, window.get_stamp().as_str())
+            let result = parameters(&window).and_then(|(cutters, targets)| {
+                if cutters.len() == 1 {
+                    session.preview_carve(cutters[0], &targets, window.get_stamp().as_str())
+                } else {
+                    session.preview_carve_many(&cutters, &targets, window.get_stamp().as_str())
+                }
             });
             refresh(&window, &session);
             if let Err(error) = result {

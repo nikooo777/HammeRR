@@ -242,7 +242,7 @@ def validate(client, output, render):
     client.call("new_map", {"discard_changes": True})
     target = block([0, 0, 0], [128, 128, 128])
     children = [target] + [
-        block([256 + i * 64, 0, 0], [288 + i * 64, 32, 32]) for i in range(16)
+        block([256 + i * 64, 0, 0], [288 + i * 64, 32, 32]) for i in range(24)
     ]
     owner = client.call("tie_to_entity", {"ids": children, "classname": "func_detail"})[
         "id"
@@ -257,7 +257,7 @@ def validate(client, output, render):
     client.call("commit_carve", {"token": draft["preview"]["token"]})
     changed = detail(client, [owner])[0]
     check(
-        len(changed["brushes"]) == 22
+        len(changed["brushes"]) == len(children) + 5
         and changed["properties"] == original["properties"],
         "Carving retains entity ownership, properties and sibling brushes",
     )

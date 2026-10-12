@@ -5842,6 +5842,93 @@ mod tests {
     }
 
     #[test]
+    fn carving_multiple_cutters_exposes_roles_and_preserves_preview_cancel_apply() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                renderer_name: Some("software".into()),
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let mut ids = Vec::new();
+        for (mins, maxs) in [
+            (DVec3::ZERO, DVec3::splat(128.0)),
+            (DVec3::splat(16.0), DVec3::splat(80.0)),
+            (DVec3::splat(48.0), DVec3::splat(112.0)),
+            (DVec3::splat(256.0), DVec3::splat(288.0)),
+        ] {
+            ids.push(
+                state
+                    .create_block(Actor::Agent, mins, maxs, "brick/test", false)
+                    .unwrap(),
+            );
+        }
+        state.select(&ids, SelectMode::Replace).unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = CarveWindow::new().unwrap();
+        carve_ui::bind(&window, &shared);
+        carve_ui::refresh(&window, &lock(&shared));
+        window.set_cutter(1);
+        window.invoke_choose_cutter();
+        window.set_multiple_cutters(true);
+        window.invoke_toggle_multiple();
+        let second = window.get_targets().row_data(2).unwrap().solid;
+        let ignored = window.get_targets().row_data(3).unwrap().solid;
+        window.invoke_choose_cut_role(second.clone());
+        window.invoke_choose_target(ignored);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert!(window.get_multiple_cutters());
+        assert_eq!(
+            window.get_targets().iter().filter(|row| row.cutter).count(),
+            2
+        );
+        assert!(!window.get_targets().row_data(3).unwrap().selected);
+        let draft = lock(&shared).render_document().vmf().clone();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "carving-multiple-cutters");
+        for label in [
+            "Cancel",
+            "Discard preview",
+            "Preview carve",
+            "Apply carve",
+            "Use multiple cutter brushes",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_choose_cut_role(second.clone());
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_choose_cut_role(second);
+        window.invoke_preview_edit();
+        window.invoke_discard();
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &draft);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        lock(&shared).select(&ids, SelectMode::Replace).unwrap();
+        carve_ui::refresh(&window, &lock(&shared));
+        window.set_cutter(1);
+        window.invoke_choose_cutter();
+        window.set_multiple_cutters(true);
+        window.invoke_toggle_multiple();
+        window.invoke_choose_cut_role(window.get_targets().row_data(2).unwrap().solid);
+        window.invoke_choose_target(window.get_targets().row_data(3).unwrap().solid);
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
+    }
+
+    #[test]
     fn carve_controls_keep_targets_show_preview_and_share_apply_discard_cancel() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -15,6 +15,9 @@ export component CarveWindow inherits Window {
     in property <bool> ready;
     in property <bool> can-preview;
     in-out property <int> cutter: 0;
+    in-out property <bool> multiple-cutters;
+    callback toggle-multiple();
+    callback choose-cut-role(string);
     callback choose-cutter();
     callback choose-target(string);
     callback preview-edit();
@@ -27,23 +30,33 @@ export component CarveWindow inherits Window {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
             padding: 24px; spacing: 12px;
-            Text { text: "Subtract a brush shape"; font-size: 24px; font-weight: 600; }
-            Text { text: "Choose a cutter from the selected brushes, then the brushes to carve. Only overlapping volume is removed. The cutter stays unchanged."; wrap: word-wrap; color: #aeb9c8; }
-            Text { text: "Cutter · shape to subtract"; font-weight: 600; }
-            ComboBox { model: root.cutters; current-index <=> root.cutter; enabled: root.cutters.length > 1; selected => { root.choose-cutter(); } }
-            Text { text: "Target brushes"; font-size: 18px; font-weight: 600; }
+            Text { text: "Subtract brush shapes"; font-size: 24px; font-weight: 600; }
+            Text { text: "Choose the shapes to subtract and the target brushes to carve. Only their combined overlapping volume is removed. Cutters stay unchanged."; wrap: word-wrap; color: #aeb9c8; }
+            CheckBox { text: "Use multiple cutter brushes"; checked <=> root.multiple-cutters; toggled => {root.toggle-multiple();} }
+            if !root.multiple-cutters: Text { text: "Cutter · shape to subtract"; font-weight: 600; }
+            if !root.multiple-cutters: ComboBox { model: root.cutters; current-index <=> root.cutter; enabled: root.cutters.length > 1; selected => { root.choose-cutter(); } }
+            Text { text: root.multiple-cutters ? "Brush roles · cutters are retained" : "Target brushes"; font-size: 18px; font-weight: 600; }
             ListView {
                 vertical-stretch: 1; min-height: 160px;
-                for target in root.targets: CheckBox {
-                    text: target.label + (target.cutter ? " · Cutter" : "");
-                    checked: target.selected;
-                    enabled: !target.cutter;
-                    toggled => { root.choose-target(target.solid); }
+                for target in root.targets: VerticalLayout {
+                    min-height: 44px; padding-top: 6px; padding-bottom: 6px; spacing: 4px;
+                    if root.multiple-cutters: HorizontalLayout {
+                        spacing: 12px;
+                        Text {text: target.label; wrap: word-wrap; horizontal-stretch: 1;}
+                        CheckBox {text: "Cutter"; checked:target.cutter; toggled => {root.choose-cut-role(target.solid);} }
+                        CheckBox {text: "Target"; checked:target.selected; enabled:!target.cutter; toggled => {root.choose-target(target.solid);} }
+                    }
+                    if !root.multiple-cutters: CheckBox {
+                        text: target.label + (target.cutter ? " · Cutter" : "");
+                        checked: target.selected;
+                        enabled: !target.cutter;
+                        toggled => { root.choose-target(target.solid); }
+                    }
                 }
             }
             Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
-            Text { text: "New cut faces inherit the cutter's material, texture projection and lighting. Original faces keep their settings. Whole world brushes may disappear; removing every brush from an entity is rejected."; wrap: word-wrap; color: #aeb9c8; }
-            Text { text: "One convex cutter · up to 16 targets · 256 fragments. Displacement brushes are unsupported."; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
+            Text { text: "New cut faces inherit their cutter's material, texture projection and lighting. Original faces keep their settings. Whole world brushes may disappear; removing every brush from an entity is rejected."; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "1–8 convex cutters · up to 16 targets · 256 fragments at every stage. Displacement brushes are unsupported."; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
             HorizontalLayout {
                 spacing: 10px;

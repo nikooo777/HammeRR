@@ -366,6 +366,9 @@ pub fn store(tx: &mut Transaction, request: &Crease) -> Result<(), EditError> {
     let key = (request.solid, request.side);
     if let Some(previous) = metadata.entries.get(&key) {
         intent.extra = previous.extra.clone();
+        if previous.source == intent.source && previous.resolve(tx.document()).is_ok() {
+            intent.corners = previous.corners.clone();
+        }
     }
     metadata.entries.insert(key, intent);
     metadata.write(tx)
@@ -566,7 +569,10 @@ mod tests {
                     })
                     .unwrap();
                 let vmf = Vmf::parse(&changed.vmf().write(&Default::default())).unwrap();
-                let changed = Document::new(vmf);
+                let mut changed = Document::new(vmf);
+                changed
+                    .edit("keep again", |tx| store(tx, &request))
+                    .unwrap();
                 let after = Metadata::parse(changed.vmf())
                     .unwrap()
                     .resolve(&changed)

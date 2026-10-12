@@ -373,16 +373,24 @@ Enter the **Shared ridge height** and **Preview ridge** to raise both
 pieces together; **Return to flat** restores the staged surface.
 
 **Apply raised partition** records one undo step. **Discard preview** restores
-the original face selection, and **Cancel** closes the tool. Flat pieces are
-temporary drafts: raise and Apply, or Cancel, before saving, compiling or
-playing. Flat Apply is disabled. Highlighting controls inspection and framing;
-raising always affects the shared ridge of both pieces.
+the original face selection, and **Cancel** closes the tool. **Keep flat pieces**
+saves the dividing intent without changing brush geometry. Save the map, reopen
+it later, and use **Saved flat pieces → Resume pieces** to inspect or raise them.
+**Remove saved** removes an intent, including one whose source was deleted or
+changed. Keeping, removing and applying raised pieces each share ordinary undo.
+Applying a raised partition consumes its saved flat intent in the same edit.
+Saved dividing edges stay visible within the active component scope.
+Resolve a pending draft by keeping, applying or cancelling before saving,
+compiling or playing. Highlighting controls inspection and framing; raising
+always affects the shared ridge of both pieces.
 
 | Flat pieces staged | Shared ridge raised |
 | --- | --- |
 | ![An independent dividing edge on an unchanged brush face](docs/images/component-partition-flat.png) | ![The staged pieces raised into two checked roof planes](docs/images/component-partition-raised.png) |
 
 ![Flat partition controls with source corners, midpoints and highlighted pieces](docs/images/component-partition-controls.png)
+
+![Saved flat partitions with Resume and Remove controls](docs/images/component-partition-saved-controls.png)
 
 | Ridge controls | Shared ridge preview |
 | --- | --- |
@@ -900,6 +908,7 @@ For example, place a warm light:
 | Brush components | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
 | Staged flat partitions | `preview_component_partition`, `raise_component_partition`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `get_brush_components`, `commit_component_edit`, `cancel_component_edit` |
+| Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Entity authoring | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -1029,6 +1038,7 @@ python -B scripts/validate_roof_texture_attachment.py --output /tmp/hammerr-roof
 python -B scripts/validate_split_texture_attachment.py --output /tmp/hammerr-split-texture-check
 python -B scripts/validate_weld_texture_attachment.py --output /tmp/hammerr-weld-texture-check
 python -B scripts/validate_partition_picking.py --output /tmp/hammerr-partition-picking-check
+python -B scripts/validate_saved_partitions.py --output /tmp/hammerr-saved-partitions-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1160,6 +1170,19 @@ flat topology, otherwise use 0.125–4096 units. Successful height changes retur
 a new token. Commit raised geometry with `commit_component_edit` or discard
 with `cancel_component_edit`. Flat commit and save/compile/play are blocked
 while this temporary draft remains pending.
+
+`store_component_partition` takes the current flat draft `token`, keeps its
+bounded editor metadata and closes the draft without changing brush planes.
+`get_saved_component_partitions` returns `entries`, per-source `valid`/`error`,
+metadata limits and the latest `snapshot`. `resume_component_partitions` and
+`remove_saved_component_partitions` take `sources: [{solid, side}]` and that
+snapshot. Resume supports one source per brush across 1–16 brushes; remove
+supports 1–64 saved records, including stale sources. Piece identities survive
+affine edits and reflection. Saved intents leave native BSP output unchanged.
+The map-wide registry allows 64 faces and 64 KiB of key/value text. Unknown
+metadata is preserved; unsupported versions are reported and cannot be
+overwritten by these operations. Independent extrusion and per-piece material
+overrides remain unfinished.
 
 `get_carve_preview` exposes candidates, limits and the latest `stamp`.
 `preview_carve` takes numeric `cutter` and `targets` brush IDs, including children
@@ -1381,7 +1404,7 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes persistent flat partitions, independent piece
+Editor work ahead includes arbitrary flat partitions, independent piece
 extrusion, displacement clipping and authoring, model rendering and broader
 map checks.
 

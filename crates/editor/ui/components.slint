@@ -24,6 +24,12 @@ export component ComponentsWindow inherits Window {
     in property <[ComponentRow]> partition-rows;
     in property <bool> has-partition-preview;
     in property <bool> partition-flat;
+    in property <[ComponentRow]> saved-partitions;
+    in-out property <int> saved-partition-index;
+    in property <[string]> saved-partition-labels;
+    in property <string> saved-partition-error;
+    callback resume-saved-partition();
+    callback remove-saved-partition();
     in property <float> aspect: 1.6;
     callback choose-partition(string);
     callback frame-partitions();
@@ -221,7 +227,7 @@ export component ComponentsWindow inherits Window {
                     }
                     if root.operation == 6: VerticalLayout {
                         spacing: 10px;
-                        Text { text: "Divide one quad face per brush into two flat pieces. Stage first, then raise their shared ridge."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Divide one quad face per brush into two flat pieces. Keep them for later or raise their shared ridge."; wrap: word-wrap; color: #aeb9c8; }
                         ListView {
                             preferred-height: 90px;
                             for row in root.crease-rows: VerticalLayout {
@@ -246,7 +252,19 @@ export component ComponentsWindow inherits Window {
                             Button { text: "Return to flat"; enabled: !root.partition-flat; clicked => { root.flatten-partitions(); } }
                         }
                         Text { text: "Raising moves the shared ridge of both pieces. Highlighting changes inspection and framing."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                        Text { text: "Flat pieces are temporary. Raise and Apply, or Cancel, before saving or compiling."; wrap: word-wrap; color: #ffc66d; font-size: 12px; }
+                        Text { text: "Keep flat pieces to save them for later. Raise and Apply to change the brush shape."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        if !root.has-partition-preview && root.saved-partitions.length > 0: VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "Saved flat pieces"; font-weight: 600; }
+                            ComboBox { model: root.saved-partition-labels; current-index <=> root.saved-partition-index; }
+                            Text { text: root.saved-partitions[root.saved-partition-index].detail; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Button { text: "Resume pieces"; enabled: root.saved-partitions[root.saved-partition-index].selected; clicked => { root.resume-saved-partition(); } }
+                                Button { text: "Remove saved"; clicked => { root.remove-saved-partition(); } }
+                            }
+                        }
+                        if root.saved-partition-error != "": Text { text: root.saved-partition-error; wrap: word-wrap; color: #ffc66d; }
                     }
                     if root.operation == 3 || root.operation == 4: VerticalLayout {
                         spacing: 10px;
@@ -283,7 +301,7 @@ export component ComponentsWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: root.operation == 6 ? "Apply raised partition" : root.operation == 5 ? "Apply ridge" : root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.operation == 6 ? (root.partition-flat ? "Keep flat pieces" : "Apply raised partition") : root.operation == 5 ? "Apply ridge" : root.operation == 3 ? "Apply scale" : root.operation == 4 ? "Apply rotation" : root.operation == 2 ? "Apply split" : root.operation == 1 ? "Apply weld" : "Apply move"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

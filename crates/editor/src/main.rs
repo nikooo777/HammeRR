@@ -5571,7 +5571,7 @@ mod tests {
         save_ui_snapshot(window.window(), "flat-face-partition");
         assert_eq!(window.get_operation(), 6);
         assert!(window.get_has_partition_preview() && window.get_partition_flat());
-        assert!(!window.get_ready());
+        assert!(window.get_ready());
         assert_eq!(window.get_partition_rows().row_count(), 2);
         assert!(
             window
@@ -5584,14 +5584,12 @@ mod tests {
             "Keep roof texture at corners",
             "Preview ridge",
             "Return to flat",
-            "Apply raised partition",
+            "Keep flat pieces",
             "Discard preview",
             "Cancel",
         ] {
             assert_dialog_button_visible(&window, label);
         }
-        assert_eq!(lock(&shared).document().vmf(), &source);
-        window.invoke_apply();
         assert_eq!(lock(&shared).document().vmf(), &source);
         let first = window.get_partition_rows().row_data(0).unwrap();
         window.invoke_choose_partition(first.key);
@@ -5610,7 +5608,7 @@ mod tests {
         );
         let raised = lock(&shared).render_document().vmf().clone();
         window.invoke_flatten_partitions();
-        assert!(window.get_partition_flat() && !window.get_ready());
+        assert!(window.get_partition_flat() && window.get_ready());
         assert_eq!(lock(&shared).render_document().vmf(), &source);
         assert!(!window.get_partition_rows().row_data(0).unwrap().selected);
         window.set_split_rise("0.01".into());
@@ -5646,6 +5644,36 @@ mod tests {
         window.invoke_choose(top.key);
         window.invoke_preview_edit();
         assert!(window.get_has_partition_preview());
+        window.invoke_apply();
+        assert!(window.get_message().contains("Kept 1 flat partitions"));
+        assert!(!window.get_has_partition_preview());
+        assert_eq!(window.get_saved_partitions().row_count(), 1);
+        let stored = lock(&shared).document().vmf().clone();
+        assert_eq!(stored.world, source.world);
+        save_ui_snapshot(window.window(), "saved-face-partitions");
+        assert_dialog_button_visible(&window, "Resume pieces");
+        assert_dialog_button_visible(&window, "Remove saved");
+        window.invoke_resume_saved_partition();
+        assert!(window.get_has_partition_preview() && window.get_partition_flat());
+        assert_eq!(lock(&shared).document().vmf(), &stored);
+        window.invoke_discard_preview();
+        window.invoke_remove_saved_partition();
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &stored);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        components_ui::refresh(&window, &lock(&shared));
+        window.set_kind(2);
+        window.invoke_change_kind();
+        window.set_operation(6);
+        let top = window
+            .get_rows()
+            .iter()
+            .find(|row| row.key == format!("{id}:{side}"))
+            .unwrap();
+        window.invoke_choose(top.key);
+        window.invoke_preview_edit();
         window.invoke_cancel();
         assert_eq!(lock(&shared).partition_preview_token(), None);
         assert_eq!(lock(&shared).document().vmf(), &source);

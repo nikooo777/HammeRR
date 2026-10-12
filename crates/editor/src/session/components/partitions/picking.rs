@@ -103,7 +103,11 @@ impl Session {
                             partition: piece.id,
                         }) == Some(&true)
                             && contains(
-                                piece.vertices.map(|index| positions[index as usize]),
+                                &piece
+                                    .vertices
+                                    .iter()
+                                    .map(|index| positions[*index as usize])
+                                    .collect::<Vec<_>>(),
                                 point,
                                 tolerance,
                             )
@@ -158,12 +162,16 @@ impl Session {
             }
             let positions = partition.positions(draft.rise);
             for piece in &partition.loops {
-                let points = piece.vertices.map(|index| positions[index as usize]);
+                let points = piece
+                    .vertices
+                    .iter()
+                    .map(|index| positions[*index as usize])
+                    .collect::<Vec<_>>();
                 if visible.get(&PartitionRef {
                     solid: partition.source.solid,
                     partition: piece.id,
                 }) != Some(&true)
-                    || !contains(points, hit.point, tolerance)
+                    || !contains(&points, hit.point, tolerance)
                 {
                     continue;
                 }
@@ -186,13 +194,13 @@ impl Session {
     }
 }
 
-fn contains(points: [DVec3; 4], point: DVec3, tolerance: f64) -> bool {
+fn contains(points: &[DVec3], point: DVec3, tolerance: f64) -> bool {
     let Some(plane) = Plane::from_points([points[0], points[1], points[2]]) else {
         return false;
     };
     plane.distance_to(point).abs() <= tolerance
-        && (0..4).all(|index| {
-            let edge = points[(index + 1) % 4] - points[index];
+        && (0..points.len()).all(|index| {
+            let edge = points[(index + 1) % points.len()] - points[index];
             edge.cross(point - points[index]).dot(plane.normal) <= tolerance * edge.length()
         })
 }

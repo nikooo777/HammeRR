@@ -154,7 +154,9 @@ impl Session {
                         },
                         points: piece
                             .vertices
-                            .map(|index| part.vertices[index as usize].position),
+                            .iter()
+                            .map(|index| part.vertices[*index as usize].position)
+                            .collect(),
                         material: draft
                             .effective_material(&self.document, part, piece.id)?
                             .to_string(),

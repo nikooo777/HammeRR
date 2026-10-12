@@ -25,7 +25,7 @@ pub struct PartitionVertex {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PartitionLoop {
     pub id: u32,
-    pub vertices: [u32; 4],
+    pub vertices: Vec<u32>,
     pub source_side: u32,
 }
 
@@ -36,6 +36,10 @@ pub struct Partition {
     pub plane: [DVec3; 3],
     pub vertices: Vec<PartitionVertex>,
     pub loops: [PartitionLoop; 2],
+}
+
+pub fn partition_pairs(source: &Solid, side: u32) -> Result<Vec<CreasePair>, EditError> {
+    topology(source)?.partition_pairs(side)
 }
 
 fn area(points: &[DVec3], normal: DVec3) -> f64 {
@@ -110,38 +114,54 @@ impl Partition {
         for (index, part) in self.loops.iter().enumerate() {
             if part.id != index as u32
                 || part.source_side != self.source.side
+                || !(3..=5).contains(&part.vertices.len())
                 || part.vertices.iter().any(|id| *id >= 6)
-                || part.vertices.into_iter().collect::<BTreeSet<_>>().len() != 4
+                || part.vertices.iter().collect::<BTreeSet<_>>().len() != part.vertices.len()
             {
                 return Err(fail());
             }
-            let points = part.vertices.map(|id| self.vertices[id as usize].position);
+            let points = part
+                .vertices
+                .iter()
+                .map(|id| self.vertices[*id as usize].position)
+                .collect::<Vec<_>>();
+            let count = points.len();
             let size = area(&points, plane.normal);
             if !size.is_finite() || size <= MIN_EDGE * MIN_EDGE {
                 return Err(fail());
             }
-            for index in 0..4 {
-                let cross = (points[(index + 1) % 4] - points[index])
-                    .cross(points[(index + 2) % 4] - points[(index + 1) % 4]);
+            for index in 0..count {
+                let cross = (points[(index + 1) % count] - points[index])
+                    .cross(points[(index + 2) % count] - points[(index + 1) % count]);
                 if cross.dot(plane.normal) >= -MIN_EDGE * MIN_EDGE {
                     return Err(fail());
                 }
                 *directed
-                    .entry([part.vertices[index], part.vertices[(index + 1) % 4]])
+                    .entry([part.vertices[index], part.vertices[(index + 1) % count]])
                     .or_insert(0) += 1;
             }
             total += size;
         }
-        let boundary = [
-            [0, 4],
-            [4, 1],
-            [1, 2],
-            [2, 5],
-            [5, 3],
-            [3, 0],
-            [4, 5],
-            [5, 4],
-        ];
+        let mut boundary = vec![[4, 5], [5, 4]];
+        for index in 0..4 {
+            let corners = [index as u32, ((index + 1) % 4) as u32];
+            let endpoint = self.vertices[4..].iter().find(|vertex| {
+                let VertexSource::Edge { corners: edge, .. } = &vertex.source else {
+                    return false;
+                };
+                let endpoints =
+                    corners.map(|corner| match &self.vertices[corner as usize].source {
+                        VertexSource::Corner(sides) => sides,
+                        _ => unreachable!(),
+                    });
+                edge.iter().all(|corner| endpoints.contains(&corner))
+            });
+            if let Some(endpoint) = endpoint {
+                boundary.extend([[corners[0], endpoint.id], [endpoint.id, corners[1]]]);
+            } else {
+                boundary.push(corners);
+            }
+        }
         if directed != boundary.into_iter().map(|edge| (edge, 1)).collect()
             || (total - area(source_ring, plane.normal)).abs() > total * 1e-10 + EPSILON
         {
@@ -176,6 +196,22 @@ pub(crate) fn checked_partition(
     document: &Document,
     part: &Partition,
 ) -> Result<Partition, EditError> {
+    if part.vertices.len() != 6
+        || part
+            .loops
+            .iter()
+            .any(|piece| !(3..=5).contains(&piece.vertices.len()))
+        || part.vertices.iter().any(|vertex| match &vertex.source {
+            VertexSource::Corner(sides) => sides.len() > MAX_SIDES,
+            VertexSource::Edge { corners, .. } => {
+                corners.iter().any(|sides| sides.len() > MAX_SIDES)
+            }
+        })
+    {
+        return Err(invalid(
+            "Partition topology exceeds its bounded source and loop limits",
+        ));
+    }
     let canonical = plan_partitions_at(document, &[part.cut()?])?.remove(0);
     let mut checked = part.clone();
     checked.loops = canonical.loops.clone();
@@ -230,12 +266,12 @@ pub fn plan_partitions_at(
         let mut request = request.source.clone();
         request.edges.sort_unstable();
         let pair = shape
-            .crease_pairs(request.side)?
+            .partition_pairs(request.side)?
             .into_iter()
             .find(|pair| pair.edges == request.edges)
             .ok_or_else(|| {
                 invalid(format!(
-                    "Brush {id}: choose opposing source edges to partition"
+                    "Brush {id}: choose two distinct source boundary edges to partition"
                 ))
             })?;
         let face = shape
@@ -253,6 +289,14 @@ pub fn plan_partitions_at(
             })
             .ok_or_else(|| invalid(format!("Brush {id}: partition edge incidence changed")))?;
         ring.rotate_left(start);
+        let second = (1..4)
+            .find(|index| {
+                let midpoint = (shape.vertices[ring[*index]].position
+                    + shape.vertices[ring[(*index + 1) % 4]].position)
+                    * 0.5;
+                midpoint.distance(pair.midpoints[1]) < EPSILON
+            })
+            .ok_or_else(|| invalid("Partition second edge incidence changed"))?;
         let mut vertices = ring
             .iter()
             .enumerate()
@@ -262,7 +306,7 @@ pub fn plan_partitions_at(
                 source: VertexSource::Corner(shape.vertices[*vertex].sides.clone()),
             })
             .collect::<Vec<_>>();
-        for (index, endpoints) in [[ring[0], ring[1]], [ring[2], ring[3]]]
+        for (index, endpoints) in [[ring[0], ring[1]], [ring[second], ring[(second + 1) % 4]]]
             .into_iter()
             .enumerate()
         {
@@ -298,6 +342,12 @@ pub fn plan_partitions_at(
             .unwrap()
             .plane
             .0;
+        let loops = match second {
+            1 => [vec![4, 1, 5], vec![5, 2, 3, 0, 4]],
+            2 => [vec![0, 4, 5, 3], vec![4, 1, 2, 5]],
+            3 => [vec![5, 0, 4], vec![4, 1, 2, 3, 5]],
+            _ => unreachable!(),
+        };
         let partition = Partition {
             source: request,
             owner,
@@ -306,12 +356,12 @@ pub fn plan_partitions_at(
             loops: [
                 PartitionLoop {
                     id: 0,
-                    vertices: [0, 4, 5, 3],
+                    vertices: loops[0].clone(),
                     source_side: face.side,
                 },
                 PartitionLoop {
                     id: 1,
-                    vertices: [4, 1, 2, 5],
+                    vertices: loops[1].clone(),
                     source_side: face.side,
                 },
             ],
@@ -331,7 +381,7 @@ mod tests {
     use super::*;
     use crate::edit;
 
-    fn fixture(oblique: bool) -> (Document, u32) {
+    pub(super) fn fixture(oblique: bool) -> (Document, u32) {
         let mut document = Document::empty();
         let ObjectId::Solid(id) = document
             .edit("block", |tx| {
@@ -560,7 +610,7 @@ mod tests {
             let mut changed = first[0].clone();
             match invalid {
                 0 => changed.loops[0].vertices.swap(0, 1),
-                1 => changed.loops[1].vertices = changed.loops[0].vertices,
+                1 => changed.loops[1].vertices = changed.loops[0].vertices.clone(),
                 2 => changed.loops[1].vertices[0] = 9,
                 _ => {
                     let normal = changed.normal();
@@ -607,3 +657,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod boundary_tests;

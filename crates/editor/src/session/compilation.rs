@@ -64,6 +64,9 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "faces": stats.faces,
         "models": stats.models,
         "cubemap_samples": stats.cubemap_samples,
+        "clusters": stats.clusters,
+        "visibility_portals": stats.visibility_portals,
+        "visibility_bytes": stats.visibility_bytes,
         "elapsed_ms": stats.elapsed.as_millis(),
     })
 }

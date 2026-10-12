@@ -157,6 +157,7 @@ fn entity_text(map: &Map, models: &[Model]) -> Result<String, String> {
 pub fn build(
     map: &Map,
     models: &[Model],
+    visibility: &crate::visibility::Visibility,
     revision: i32,
     control: &crate::Control,
 ) -> Result<Bsp, String> {
@@ -230,7 +231,13 @@ pub fn build(
                 let open = !node.solid();
                 leaves[(-1 - mapping[node_index]) as usize] = bsp::Leaf {
                     contents: node.contents,
-                    cluster: if open { 0 } else { -1 },
+                    cluster: if model.entity == 0 {
+                        visibility.clusters[node_index]
+                            .map(|cluster| cluster as i16)
+                            .unwrap_or(-1)
+                    } else {
+                        -1
+                    },
                     area_flags: if open { 1 | (OPEN_LEAF_FLAGS << 9) } else { 0 },
                     mins,
                     maxs,
@@ -360,13 +367,8 @@ pub fn build(
     bsp.set_values(lump::MAP_FLAGS, &[0i32]);
     bsp.set_values(lump::OCCLUSION, &[0i32; 3]);
     bsp.lumps[lump::OCCLUSION].version = 2;
-    let mut visibility = Vec::new();
-    for value in [1i32, 12, 13] {
-        visibility.extend_from_slice(&value.to_le_bytes());
-    }
-    visibility.extend_from_slice(&[1, 1]);
     bsp.lumps[lump::VISIBILITY] = Lump {
-        data: visibility,
+        data: visibility.data.clone(),
         ..Lump::default()
     };
     let mut zip = b"PK\x05\x06".to_vec();

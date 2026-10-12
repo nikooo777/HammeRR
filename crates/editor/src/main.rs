@@ -7451,6 +7451,12 @@ mod tests {
             lock(&shared).compile_status()["job"]["result"]["stats"]["cubemap_samples"],
             1
         );
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Visibility: 1 cluster · 0 portals")
+        );
         assert!(controller.window.get_launch_ready());
         assert!(controller.window.get_launch_details().contains("room.bsp"));
         assert!(

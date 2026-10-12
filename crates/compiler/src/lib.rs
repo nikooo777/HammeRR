@@ -8,6 +8,7 @@ pub mod materials;
 pub mod planes;
 pub mod portals;
 pub mod tree;
+mod visibility;
 pub mod winding;
 
 use std::io::Write;
@@ -95,6 +96,9 @@ pub struct Stats {
     pub faces: usize,
     pub models: usize,
     pub cubemap_samples: usize,
+    pub clusters: usize,
+    pub visibility_portals: usize,
+    pub visibility_bytes: usize,
     pub elapsed: Duration,
 }
 
@@ -187,6 +191,16 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
     if output.report.has_errors() {
         return Ok(());
     }
+    control.advance(Stage::Visibility)?;
+    let visibility = visibility::build(&tree, &portals, control)?;
+    output.stats.clusters = visibility.count;
+    output.stats.visibility_portals = visibility.portals;
+    output.stats.visibility_bytes = visibility.data.len();
+    output.report.diagnostics.push(Diagnostic::info(
+        "Visibility uses conservative portal bounds; tighter portal-flow clipping is not implemented yet",
+        None,
+        None,
+    ));
     control.advance(Stage::Faces)?;
     let faces = faces::build_controlled(&map, &tree, 0, control)?;
     let mut models = vec![emit::Model {
@@ -216,7 +230,7 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     control.advance(Stage::Emitting)?;
-    let bsp = emit::build(&map, &models, revision, control)?;
+    let bsp = emit::build(&map, &models, &visibility, revision, control)?;
     control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();

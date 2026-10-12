@@ -7,6 +7,11 @@ use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction};
 
 mod weld;
 pub use weld::{WeldChange, WeldPlan, plan_weld};
+mod split;
+pub use split::{
+    MAX_RISE as MAX_SPLIT_RISE, MIN_RISE as MIN_SPLIT_RISE, SplitChange, SplitFace, SplitPlan,
+    split,
+};
 
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;
@@ -220,7 +225,7 @@ impl Topology {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Replacement {
     owner: ObjectId,
     solid: Solid,

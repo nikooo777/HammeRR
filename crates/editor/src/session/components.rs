@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
-use map_core::subobject::{self, Component, Replacement, Topology, WeldChange};
-use map_core::{Document, ObjectId};
+use map_core::subobject::{self, Component, Replacement, SplitChange, Topology, WeldChange};
+use map_core::{Document, EditError, ObjectId};
 use serde_json::{Value, json};
 
 use super::{Actor, SelectMode, Session};
@@ -16,7 +16,13 @@ pub struct Preview {
     generation: u64,
     revision: u64,
     pub(super) weld: Option<Vec<WeldChange>>,
+    split: Option<SplitDraft>,
     selection: BTreeSet<Component>,
+}
+
+struct SplitDraft {
+    rise: f64,
+    changes: Vec<SplitChange>,
 }
 
 #[derive(Default)]
@@ -67,7 +73,7 @@ impl Session {
         self.components
             .preview
             .as_ref()
-            .is_some_and(|preview| preview.weld.is_some())
+            .is_some_and(|preview| preview.weld.is_some() || preview.split.is_some())
     }
 
     pub fn clear_component_edit(&mut self) {
@@ -137,9 +143,10 @@ impl Session {
             "picking":self.components.picking, "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
             "brushes":brushes, "selection":self.displayed_component_selection().iter().map(component_json).collect::<Vec<_>>(),
             "source_selection":self.components.selection.iter().map(component_json).collect::<Vec<_>>(),
-            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.weld.is_some() {"weld"} else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len(),
-                "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>())})),
-            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS},
+            "preview":self.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.replacements.len(),
+                "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
+                "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
+            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
         }))
     }
 
@@ -286,6 +293,7 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             weld: None,
+            split: None,
             selection: self.components.selection.clone(),
         });
         self.scene_serial += 1;
@@ -326,6 +334,48 @@ impl Session {
                 .map(|change| change.selection.clone())
                 .collect(),
             weld: Some(plan.changes),
+            split: None,
+        });
+        self.scene_serial += 1;
+        self.view_serial += 1;
+        Ok(token)
+    }
+
+    pub fn preview_component_split(&mut self, rise: f64, stamp: &str) -> Result<u64, String> {
+        self.check_component_stamp(stamp)?;
+        let components = self
+            .components
+            .selection
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut document = self.document.preview_snapshot();
+        let plan = document
+            .edit("preview component split", |tx| {
+                subobject::split(tx, &components, rise)
+            })
+            .map_err(|error| error.to_string())?;
+        self.components.serial += 1;
+        let token = self.components.serial;
+        self.components.drag = None;
+        self.components.preview = Some(Preview {
+            document,
+            token,
+            delta: DVec3::ZERO,
+            texture_lock: false,
+            replacements: plan.replacements,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+            weld: None,
+            selection: plan
+                .changes
+                .iter()
+                .map(|change| change.selection.clone())
+                .collect(),
+            split: Some(SplitDraft {
+                rise,
+                changes: plan.changes,
+            }),
         });
         self.scene_serial += 1;
         self.view_serial += 1;
@@ -348,8 +398,10 @@ impl Session {
     }
 
     pub fn commit_component_move(&mut self, actor: Actor, token: u64) -> Result<usize, String> {
-        if self.checked_component_preview(token)?.weld.is_some() {
-            return Err("Use Apply component edit for a corner weld".into());
+        if self.checked_component_preview(token)?.weld.is_some()
+            || self.checked_component_preview(token)?.split.is_some()
+        {
+            return Err("Use Apply component edit for a topology change".into());
         }
         self.commit_component_edit(actor, token)
     }
@@ -368,13 +420,39 @@ impl Session {
         let preview = self.checked_component_preview(token)?;
         let label = if preview.weld.is_some() {
             "weld brush corners"
+        } else if preview.split.is_some() {
+            "split brush component"
         } else {
             "move brush components"
         };
         let replacements = preview.replacements.clone();
         let selection = preview.selection.clone();
-        let picking = self.components.picking.clone();
-        let result = self.edit(actor, label, |tx| subobject::apply(tx, &replacements))?;
+        let rise = preview.split.as_ref().map(|split| split.rise);
+        let components = self
+            .components
+            .selection
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let picking = self.components.picking.clone().map(|mut picking| {
+            if rise.is_some() {
+                picking.kind = super::component_picking::Kind::Vertex;
+            }
+            picking
+        });
+        let result = self.edit(actor, label, |tx| {
+            if let Some(rise) = rise {
+                let actual = subobject::split(tx, &components, rise)?;
+                if actual.replacements != replacements {
+                    return Err(EditError::Invalid(
+                        "Face allocation changed; preview the split again".into(),
+                    ));
+                }
+                Ok(actual.replacements.len())
+            } else {
+                subobject::apply(tx, &replacements)
+            }
+        })?;
         self.components.selection = selection;
         self.components.picking = picking;
         self.refresh_component_origin();
@@ -615,6 +693,107 @@ mod tests {
         assert!(session.commit_component_edit(Actor::Agent, token).is_err());
         assert!(session.cancel_component_move(token).is_err());
         assert!(session.components.preview.is_none());
+    }
+
+    #[test]
+    fn component_split_shares_preview_allocation_cancel_apply_and_scope() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, id, component) = fixture();
+            session
+                .set_component_picking(
+                    Some(super::super::component_picking::Kind::Edge),
+                    &[id],
+                    &session.component_stamp(),
+                )
+                .unwrap();
+            let source = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let first = session
+                .preview_component_split(16.0, &session.component_stamp())
+                .unwrap();
+            let draft = session.render_document().vmf().clone();
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert!(session.component_guide().is_none());
+            let report = session.component_report(&[id]).unwrap();
+            assert_eq!(report["preview"]["operation"], "split");
+            assert_eq!(
+                report["preview"]["split"]["changes"][0]["new_sides"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                4
+            );
+            assert_eq!(
+                report["preview"]["split"]["changes"][0]["faces"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                6
+            );
+            assert_eq!(
+                report["brushes"][0]["vertices"].as_array().unwrap().len(),
+                9
+            );
+            assert!(
+                session
+                    .preview_component_split(0.0, &session.component_stamp())
+                    .is_err()
+            );
+            assert_eq!(session.render_document().vmf(), &draft);
+            session.cancel_component_move(first).unwrap();
+            assert_eq!(session.render_document().vmf(), &source);
+            assert_eq!(session.component_selection(), &BTreeSet::from([component]));
+            let token = session
+                .preview_component_split(16.0, &session.component_stamp())
+                .unwrap();
+            assert_eq!(session.render_document().vmf(), &draft);
+            assert!(session.commit_component_edit(actor, first).is_err());
+            session.commit_component_edit(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            assert_eq!(session.component_selection().len(), 1);
+            assert_eq!(
+                session.component_picking().unwrap().kind,
+                super::super::component_picking::Kind::Vertex
+            );
+            assert_eq!(session.component_solids(), vec![id]);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &source);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+        }
+    }
+
+    #[test]
+    fn split_commit_rejects_allocation_changes_without_recording_history() {
+        let (mut session, _, _) = fixture();
+        let token = session
+            .preview_component_split(16.0, &session.component_stamp())
+            .unwrap();
+        let source = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        session
+            .document
+            .edit("reserve", |tx| tx.new_side_id())
+            .unwrap();
+        assert!(
+            session
+                .commit_component_edit(Actor::Agent, token)
+                .unwrap_err()
+                .contains("allocation")
+        );
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.document.undo_labels().count(), history);
+        assert_eq!(session.components.preview.as_ref().unwrap().token, token);
+        let replacement = session
+            .preview_component_split(16.0, &session.component_stamp())
+            .unwrap();
+        session
+            .commit_component_edit(Actor::User, replacement)
+            .unwrap();
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        session.document.vmf().validate_ids().unwrap();
     }
 
     #[test]

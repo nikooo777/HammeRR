@@ -5388,6 +5388,121 @@ mod tests {
     }
 
     #[test]
+    fn component_split_controls_show_new_corners_validate_rise_and_restore_selection() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(id) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        window.set_kind(2);
+        window.set_operation(2);
+        components_ui::refresh(&window, &lock(&shared));
+        let top = window
+            .get_rows()
+            .iter()
+            .find(|row| row.label.starts_with("Top"))
+            .unwrap();
+        window.invoke_choose(top.key);
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert!(window.get_topology_preview());
+        assert_eq!(window.get_kind(), 1);
+        assert_eq!(window.get_rows().row_count(), 9);
+        assert!(
+            window
+                .get_preview_summary()
+                .contains("Add a corner and 3 faces")
+        );
+        let draft = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-face-split");
+        for label in ["Apply split", "Discard preview", "Cancel"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.set_split_rise("0".into());
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert!(!window.get_message().is_empty());
+        assert_eq!(lock(&shared).render_document().vmf(), &draft);
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_choose_rise(32.0);
+        assert_eq!(window.get_split_rise(), "32");
+        assert!(!window.get_ready());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.invoke_discard_preview();
+        assert_eq!(window.get_kind(), 2);
+        assert_eq!(lock(&shared).component_selection().len(), 1);
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(window.get_kind(), 1);
+        assert_eq!(lock(&shared).component_selection().len(), 1);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+
+        window.set_kind(0);
+        window.invoke_refresh();
+        let shape = lock(&shared).component_topology(&[id]).unwrap().remove(0);
+        let edge = shape
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.vertices
+                    .iter()
+                    .all(|index| shape.vertices[*index].position.z == 64.0)
+            })
+            .unwrap();
+        let key = format!(
+            "{}:{}",
+            id,
+            edge.sides
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        window.invoke_choose(key.into());
+        window.set_split_rise("16".into());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "brush-edge-split");
+        window.invoke_apply();
+        assert_eq!(
+            lock(&shared).component_topology(&[id]).unwrap()[0]
+                .faces
+                .len(),
+            10
+        );
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_cancel();
+    }
+
+    #[test]
     fn component_weld_controls_preview_discard_apply_and_undo() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -1513,6 +1513,7 @@ export component AppWindow inherits Window {
     in-out property <int> area-rule-index;
     in-out property <int> area-mode-index;
     in property <bool> has-transform-preview;
+    in property <string> transform-preview-summary;
     in property <[string]> transform-preview-values: ["0", "0", "0", "0", "0", "0", "1", "1", "1"];
     in property <bool> has-area-preview;
     in property <bool> has-paint-preview;
@@ -2122,7 +2123,14 @@ export component AppWindow inherits Window {
                     }
                     if root.has-selection && root.show-transform: VerticalLayout {
                         spacing: 7px;
+                        if root.has-transform-preview: Text {
+                            text: root.transform-preview-summary;
+                            color: #e6e8ec;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
                         ComboBox {
+                            enabled: !root.has-transform-preview;
                             model: ["Move", "Rotate", "Scale", "Mirror", "Shear"];
                             current-index <=> root.transform-mode;
                             selected => { root.handles-mode-index = self.current-index >= 3 ? 0 : self.current-index + 1; root.transform-tool-changed(); }
@@ -2187,8 +2195,8 @@ export component AppWindow inherits Window {
                                 apply => { root.transform-tool-changed(); }
                             }
                         }
-                        if root.can-apply-material && root.transform-mode < 3: CheckBox { text: "Follow move and rotation"; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
-                        if root.can-apply-material && root.transform-mode == 2: CheckBox { text: "Stretch textures when scaling"; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
+                        if root.can-apply-material && root.transform-mode < 3: CheckBox { text: "Follow move and rotation"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
+                        if root.can-apply-material && root.transform-mode == 2: CheckBox { text: "Stretch textures when scaling"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
                         if root.can-apply-material && root.transform-mode == 2: Text { text: root.transform-texture-scale-lock ? "The texture stretches with the brush." : "The texture keeps its size and repeats across the resized brush."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                         if root.can-apply-material && root.transform-mode >= 3: CheckBox { text: root.transform-mode == 3 ? "Mirror textures with geometry" : "Keep textures attached while shearing"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
                         if root.transform-mode >= 3: Text { text: "Edits brushes and brush entities. Point entities and terrain require separate support."; color: #8a909c; font-size: 12px; wrap: word-wrap; }

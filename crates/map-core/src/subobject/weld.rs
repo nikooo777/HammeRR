@@ -31,6 +31,15 @@ pub fn plan_weld_target(
     components: &[Component],
     target: &WeldTarget,
 ) -> Result<WeldPlan, EditError> {
+    plan_weld_with_textures(document, components, target, false)
+}
+
+pub fn plan_weld_with_textures(
+    document: &Document,
+    components: &[Component],
+    target: &WeldTarget,
+    texture_lock: bool,
+) -> Result<WeldPlan, EditError> {
     if !(2..=MAX_COMPONENTS).contains(&components.len()) {
         return Err(invalid("Weld needs 2–512 selected corners"));
     }
@@ -172,6 +181,30 @@ pub fn plan_weld_target(
             let mut side = original.clone();
             if face.vertices.iter().any(|index| selected.contains(index)) {
                 side.plane.0 = triple;
+                if texture_lock {
+                    let before = ring
+                        .iter()
+                        .map(|point| {
+                            let contributors = face
+                                .vertices
+                                .iter()
+                                .filter(|index| positions[**index].distance(*point) < EPSILON)
+                                .copied()
+                                .collect::<Vec<_>>();
+                            contributors
+                                .iter()
+                                .map(|index| shape.vertices[*index].position)
+                                .sum::<DVec3>()
+                                / contributors.len() as f64
+                        })
+                        .collect::<Vec<_>>();
+                    let projection = crate::texture_deform::attach(original, &before, &ring)
+                        .map_err(|error| {
+                            invalid(format!("Brush {id}, face {}: {error}", original.id))
+                        })?;
+                    side.u_axis = projection.u;
+                    side.v_axis = projection.v;
+                }
             }
             replacement.sides.push(side);
         }
@@ -256,6 +289,200 @@ mod tests {
             })
             .collect();
         (document, id, selection)
+    }
+
+    #[test]
+    fn attached_welds_preserve_surviving_uvs_and_average_merged_contributors_per_face() {
+        for oblique in [false, true] {
+            for owned in [false, true] {
+                let (mut document, id, all_selected) =
+                    fixture(DVec3::new(0.125, -7.25, 16.5), 64.0);
+                document
+                    .edit("metadata", |tx| {
+                        for side in &mut tx.solid_mut(id)?.sides {
+                            side.u_axis.offset = 17.123456789;
+                            side.v_axis.offset = -9.125;
+                            side.u_axis.scale = 0.3125;
+                            side.v_axis.scale = -0.523456789;
+                            side.lightmap_scale = 8;
+                            side.smoothing_groups = Some(7);
+                            side.extra_properties.set("vendor", "retain");
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+                if oblique {
+                    document
+                        .edit("oblique", |tx| {
+                            edit::transform(
+                                tx,
+                                &[ObjectId::Solid(id)],
+                                edit::Transform {
+                                    rotation: DVec3::new(17.0, -23.0, 31.0),
+                                    scale: DVec3::new(1.125, 0.75, 1.5),
+                                    texture_lock: false,
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                        .unwrap();
+                }
+                if owned {
+                    document
+                        .edit("owner", |tx| {
+                            edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                        })
+                        .unwrap();
+                }
+                let (owner, source) = solid(&document, id).unwrap();
+                let source = source.clone();
+                let shape = topology(&source).unwrap();
+                let top = all_selected
+                    .iter()
+                    .map(|component| shape.resolve(&component.sides).unwrap()[0])
+                    .collect::<Vec<_>>();
+                let mean = top
+                    .iter()
+                    .map(|index| shape.vertices[*index].position)
+                    .sum::<DVec3>()
+                    / top.len() as f64;
+                for mode in 0..4 {
+                    let selected = if mode == 3 {
+                        all_selected[..3].to_vec()
+                    } else {
+                        all_selected.clone()
+                    };
+                    let target = match mode {
+                        0 => WeldTarget::Mean,
+                        1 => WeldTarget::Position(mean + DVec3::new(0.125, -0.25, 8.5)),
+                        2 => WeldTarget::Corner(all_selected[0].clone()),
+                        _ => WeldTarget::Corner(all_selected[3].clone()),
+                    };
+                    let selected_indices = selected
+                        .iter()
+                        .map(|component| shape.resolve(&component.sides).unwrap()[0])
+                        .collect::<BTreeSet<_>>();
+                    let plan =
+                        plan_weld_with_textures(&document, &selected, &target, true).unwrap();
+                    assert_eq!(document.owner_of_solid(id), Some(owner));
+                    let result = &plan.replacements[0].solid;
+                    let after = topology(result).unwrap();
+                    let position = plan.changes[0].position;
+                    for side in &result.sides {
+                        let original = source
+                            .sides
+                            .iter()
+                            .find(|candidate| candidate.id == side.id)
+                            .unwrap();
+                        let face = shape
+                            .faces
+                            .iter()
+                            .find(|face| face.side == side.id)
+                            .unwrap();
+                        let changed = face
+                            .vertices
+                            .iter()
+                            .any(|index| selected_indices.contains(index));
+                        if !changed {
+                            assert_eq!(side, original);
+                            continue;
+                        }
+                        let contributors = face
+                            .vertices
+                            .iter()
+                            .filter(|index| {
+                                selected_indices.contains(index)
+                                    || shape.vertices[**index].position.distance(position) < EPSILON
+                            })
+                            .copied()
+                            .collect::<Vec<_>>();
+                        let merged_uv = contributors
+                            .iter()
+                            .map(|index| crate::texel_uv(original, shape.vertices[*index].position))
+                            .sum::<glam::DVec2>()
+                            / contributors.len() as f64;
+                        let result_face = after
+                            .faces
+                            .iter()
+                            .find(|face| face.side == side.id)
+                            .unwrap();
+                        for vertex in &result_face.vertices {
+                            let point = after.vertices[*vertex].position;
+                            let expected = if point.distance(position) < EPSILON {
+                                merged_uv
+                            } else {
+                                crate::texel_uv(original, point)
+                            };
+                            assert!(
+                                (expected - crate::texel_uv(side, point))
+                                    .abs()
+                                    .max_element()
+                                    < 0.0001
+                            );
+                        }
+                        let mut expected = original.clone();
+                        expected.plane = side.plane;
+                        expected.u_axis = side.u_axis;
+                        expected.v_axis = side.v_axis;
+                        assert_eq!(*side, expected);
+                    }
+                    let mut changed = document.clone();
+                    changed
+                        .edit("apply", |tx| apply(tx, &plan.replacements))
+                        .unwrap();
+                    assert_eq!(changed.owner_of_solid(id), Some(owner));
+                    let applied = changed.vmf().clone();
+                    changed.undo().unwrap();
+                    assert_eq!(changed.vmf(), document.vmf());
+                    changed.redo().unwrap();
+                    assert_eq!(changed.vmf(), &applied);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_weld_projection_rejects_without_source_or_allocator_changes() {
+        let (mut document, id, selection) = fixture(DVec3::ZERO, 64.0);
+        let side_id = document
+            .solid(id)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| Plane::from_points(side.plane.0).unwrap().normal == DVec3::X)
+            .unwrap()
+            .id;
+        document
+            .edit("invalid projection", |tx| {
+                let side = tx
+                    .solid_mut(id)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == side_id)
+                    .unwrap();
+                side.v_axis.axis = side.u_axis.axis;
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let history = document.undo_labels().count();
+        let expected = document.vmf().side_ids().max().unwrap() + 1;
+        let error = plan_weld_with_textures(&document, &selection, &WeldTarget::Mean, true)
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("Brush {id}, face {side_id}:"))
+        );
+        assert!(error.to_string().contains("independent U and V"));
+        assert_eq!(document.vmf(), &source);
+        assert_eq!(document.undo_labels().count(), history);
+        assert_eq!(
+            document.edit("allocate", |tx| tx.new_side_id()).unwrap(),
+            expected
+        );
+        plan_weld(&document, &selection).unwrap();
     }
 
     #[test]

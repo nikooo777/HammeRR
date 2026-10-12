@@ -5966,6 +5966,7 @@ mod tests {
         window.set_weld_x("16.125".into());
         window.set_weld_y("24.25".into());
         window.set_weld_z("96.5".into());
+        window.set_texture_lock(true);
         window.invoke_preview_edit();
         assert!(window.get_ready());
         assert!(
@@ -5984,6 +5985,7 @@ mod tests {
             "Weld target X",
             "Weld target Y",
             "Weld target Z",
+            "Keep textures at surviving corners",
         ] {
             assert_dialog_button_visible(&window, label);
         }

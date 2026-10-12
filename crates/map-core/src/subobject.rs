@@ -9,7 +9,9 @@ mod transform;
 pub use transform::{ComponentTransform, TransformPlan, component_center, plan_transform};
 
 mod weld;
-pub use weld::{WeldChange, WeldPlan, WeldTarget, plan_weld, plan_weld_target};
+pub use weld::{
+    WeldChange, WeldPlan, WeldTarget, plan_weld, plan_weld_target, plan_weld_with_textures,
+};
 mod split;
 pub use split::{
     MAX_RISE as MAX_SPLIT_RISE, MIN_RISE as MIN_SPLIT_RISE, SplitChange, SplitFace, SplitPlan,

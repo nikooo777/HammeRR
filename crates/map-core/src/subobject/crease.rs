@@ -240,7 +240,13 @@ pub fn crease_with_roof_textures(
             replacement.sides[index + roof_index].plane.0 = triple;
             if roof_texture_lock {
                 let projection =
-                    crate::texture_deform::attach(original, &flat_roofs[roof_index], roof)?;
+                    crate::texture_deform::attach(original, &flat_roofs[roof_index], roof)
+                        .map_err(|error| {
+                            invalid(format!(
+                                "Brush {}, face {}: {error}",
+                                request.solid, original.id
+                            ))
+                        })?;
                 replacement.sides[index + roof_index].u_axis = projection.u;
                 replacement.sides[index + roof_index].v_axis = projection.v;
             }

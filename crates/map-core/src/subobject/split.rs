@@ -173,7 +173,10 @@ pub fn split_with_textures(
                 let mut side = original.clone();
                 if texture_lock {
                     let before = [center, points[1], points[2]];
-                    let projection = crate::texture_deform::attach(original, &before, &points)?;
+                    let projection = crate::texture_deform::attach(original, &before, &points)
+                        .map_err(|error| {
+                            invalid(format!("Brush {id}, face {}: {error}", original.id))
+                        })?;
                     side.u_axis = projection.u;
                     side.v_axis = projection.v;
                 }

@@ -629,7 +629,8 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
                     && window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
             } else if weld {
-                weld_target(window, session).is_ok_and(|target| {
+                window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
+                    && weld_target(window, session).is_ok_and(|target| {
                     crate::session::components::weld_target_json(&target) == preview["weld_target"]
                 })
             } else {
@@ -1067,7 +1068,11 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                     })
             } else if window.get_operation() == 1 {
                 weld_target(&window, &session).and_then(|target| {
-                    session.preview_component_weld_target(target, window.get_stamp().as_str())
+                    session.preview_component_weld_with_texture(
+                        target,
+                        window.get_texture_lock(),
+                        window.get_stamp().as_str(),
+                    )
                 })
             } else {
                 delta.and_then(|delta| {

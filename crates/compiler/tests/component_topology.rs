@@ -246,7 +246,7 @@ fn welded_pyramid_compiles_inside_a_sealed_room_after_vmf_round_trip() {
                 sides: vertex.sides.clone(),
             })
             .collect::<Vec<_>>();
-        let plan = subobject::plan_weld_target(&document, &selected, &target).unwrap();
+        let plan = subobject::plan_weld_with_textures(&document, &selected, &target, true).unwrap();
         document
             .edit("weld", |tx| subobject::apply(tx, &plan.replacements))
             .unwrap();

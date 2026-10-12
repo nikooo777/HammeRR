@@ -188,7 +188,8 @@ export component ComponentsWindow inherits Window {
                             }
                         }
                         Text { text: "Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: #aeb9c8; }
-                        Text { text: "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        CheckBox { text: "Keep textures at surviving corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
+                        Text { text: root.texture-lock ? "Surviving corners keep their UVs. The merged corner averages its original UVs separately on each face." : "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                     }
                     if root.operation == 2: VerticalLayout {
                         spacing: 12px;

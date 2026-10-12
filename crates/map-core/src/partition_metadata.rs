@@ -13,6 +13,9 @@ pub const MAX_NODES: usize = 4096;
 pub const MAX_DEPTH: usize = 64;
 const KIND: &str = "opposing_midpoints";
 const EDGE_KIND: &str = "opposing_edges";
+const MATERIAL_KIND: &str = "opposing_midpoints_materials";
+const EDGE_MATERIAL_KIND: &str = "opposing_edges_materials";
+const MATERIAL_FIELDS: [&str; 2] = ["top_material_0", "top_material_1"];
 const PARAMETERS_FIELD: &str = "edge_parameters";
 const VERSION: &str = "1";
 const RECORD_FIELDS: [&str; 5] = ["kind", "solid", "side", "edges", "corner"];
@@ -21,6 +24,7 @@ const RECORD_FIELDS: [&str; 5] = ["kind", "solid", "side", "edges", "corner"];
 pub struct Intent {
     pub source: Crease,
     pub edge_parameters: [f64; 2],
+    pub top_materials: [Option<String>; 2],
     pub corners: [Vec<u32>; 4],
     pub extra: Vec<Node>,
 }
@@ -120,6 +124,7 @@ impl Intent {
         Self {
             source: partition.source.clone(),
             edge_parameters: partition.cut().unwrap().edge_parameters,
+            top_materials: [None, None],
             corners: std::array::from_fn(|index| match &partition.vertices[index].source {
                 VertexSource::Corner(sides) => sides.clone(),
                 _ => unreachable!(),
@@ -129,6 +134,13 @@ impl Intent {
     }
 
     fn validate(&self) -> Result<(), String> {
+        for material in self.top_materials.iter().flatten() {
+            if material.trim().is_empty() || material.chars().any(char::is_control) {
+                return Err(
+                    "Planned top materials need nonempty names without control characters".into(),
+                );
+            }
+        }
         if self
             .edge_parameters
             .iter()
@@ -163,6 +175,8 @@ impl Intent {
         if self.extra.iter().any(|node| {
             RECORD_FIELDS.contains(&node.key.as_str())
                 || (self.edge_parameters != [0.5; 2] && node.key == PARAMETERS_FIELD)
+                || (self.top_materials.iter().any(Option::is_some)
+                    && MATERIAL_FIELDS.contains(&node.key.as_str()))
         }) {
             return Err("Partition extra metadata repeats a reserved field".into());
         }
@@ -173,10 +187,14 @@ impl Intent {
         let mut fields = vec![
             Node::string(
                 "kind",
-                if self.edge_parameters == [0.5; 2] {
-                    KIND
-                } else {
-                    EDGE_KIND
+                match (
+                    self.edge_parameters == [0.5; 2],
+                    self.top_materials.iter().any(Option::is_some),
+                ) {
+                    (true, false) => KIND,
+                    (false, false) => EDGE_KIND,
+                    (true, true) => MATERIAL_KIND,
+                    (false, true) => EDGE_MATERIAL_KIND,
                 },
             ),
             Node::string("solid", self.source.solid.to_string()),
@@ -188,6 +206,11 @@ impl Intent {
                 PARAMETERS_FIELD,
                 format!("{} {}", self.edge_parameters[0], self.edge_parameters[1]),
             ));
+        }
+        for (key, material) in MATERIAL_FIELDS.iter().zip(&self.top_materials) {
+            if let Some(material) = material {
+                fields.push(Node::string(*key, material));
+            }
         }
         fields.extend(
             self.corners
@@ -280,12 +303,14 @@ impl Metadata {
             }
             let fields = node.children().ok_or("Partition entry must be a block")?;
             let kind = field(fields, "kind")?;
-            if kind != KIND && kind != EDGE_KIND {
+            if ![KIND, EDGE_KIND, MATERIAL_KIND, EDGE_MATERIAL_KIND].contains(&kind) {
                 return Err(
                     "Unsupported partition intent kind; raw metadata has been preserved".into(),
                 );
             }
-            let edge_parameters = if kind == EDGE_KIND {
+            let adjusted = kind == EDGE_KIND || kind == EDGE_MATERIAL_KIND;
+            let styled = kind == MATERIAL_KIND || kind == EDGE_MATERIAL_KIND;
+            let edge_parameters = if adjusted {
                 let values = field(fields, PARAMETERS_FIELD)?
                     .split_whitespace()
                     .take(3)
@@ -298,6 +323,19 @@ impl Metadata {
             } else {
                 [0.5; 2]
             };
+            let mut top_materials = [None, None];
+            if styled {
+                for (index, key) in MATERIAL_FIELDS.iter().enumerate() {
+                    if fields.iter().any(|node| node.key == *key) {
+                        top_materials[index] = Some(field(fields, key)?.to_owned());
+                    }
+                }
+                if top_materials.iter().all(Option::is_none) {
+                    return Err(
+                        "Material partition intent needs at least one planned top material".into(),
+                    );
+                }
+            }
             let edges = ids(field(fields, "edges")?, 2, 2)?.try_into().unwrap();
             let mut corners = Vec::new();
             for corner in fields.iter().filter(|field| field.key == "corner") {
@@ -323,12 +361,14 @@ impl Metadata {
             let intent = Intent {
                 source,
                 edge_parameters,
+                top_materials,
                 corners,
                 extra: fields
                     .iter()
                     .filter(|field| {
                         !RECORD_FIELDS.contains(&field.key.as_str())
-                            && !(kind == EDGE_KIND && field.key == PARAMETERS_FIELD)
+                            && !(adjusted && field.key == PARAMETERS_FIELD)
+                            && !(styled && MATERIAL_FIELDS.contains(&field.key.as_str()))
                     })
                     .cloned()
                     .collect(),
@@ -421,9 +461,52 @@ pub fn store_partition(tx: &mut Transaction, partition: &Partition) -> Result<()
         intent.extra = previous.extra.clone();
         if previous.source == intent.source && previous.resolve(tx.document()).is_ok() {
             intent.corners = previous.corners.clone();
+            intent.top_materials = previous.top_materials.clone();
+        } else if previous.top_materials.iter().any(Option::is_some) {
+            return Err(EditError::Invalid(
+                "Saved piece materials require unchanged source incidence and cut direction".into(),
+            ));
         }
     }
     metadata.entries.insert(key, intent);
+    metadata.write(tx)
+}
+
+pub fn set_piece_top_materials(
+    tx: &mut Transaction,
+    source: &Crease,
+    pieces: &[u32],
+    material: Option<&str>,
+) -> Result<(), EditError> {
+    if pieces.is_empty()
+        || pieces.len() > 2
+        || pieces.iter().any(|piece| *piece > 1)
+        || pieces.iter().collect::<BTreeSet<_>>().len() != pieces.len()
+    {
+        return Err(EditError::Invalid(
+            "Choose distinct saved piece IDs 0 or 1".into(),
+        ));
+    }
+    if material.is_some_and(|material| material.len() > MAX_TEXT_BYTES) {
+        return Err(EditError::Invalid(
+            "Partition metadata exceeds the shared 64 KiB text budget".into(),
+        ));
+    }
+    let mut metadata = Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
+    let intent = metadata
+        .entries
+        .get_mut(&(source.solid, source.side))
+        .ok_or_else(|| EditError::Invalid("Saved partition does not exist".into()))?;
+    if &intent.source != source {
+        return Err(EditError::Invalid(
+            "Saved partition cut direction changed".into(),
+        ));
+    }
+    intent.resolve(tx.document()).map_err(EditError::Invalid)?;
+    let material = material.map(|material| material.trim().to_ascii_uppercase());
+    for piece in pieces {
+        intent.top_materials[*piece as usize] = material.clone();
+    }
     metadata.write(tx)
 }
 
@@ -575,6 +658,291 @@ mod tests {
             .edit("remove", |tx| remove(tx, request.solid, request.side))
             .unwrap();
         assert!(!clean.vmf().extra.iter().any(|node| node.key == KEY));
+    }
+
+    #[test]
+    fn piece_materials_roundtrip_keep_reflect_and_reset_without_geometry_changes() {
+        for direction in 0..2 {
+            let (mut document, mut source) = fixture();
+            source.edges =
+                subobject::crease_pairs(document.solid(source.solid).unwrap(), source.side)
+                    .unwrap()[direction]
+                    .edges;
+            let partition = subobject::plan_partitions_at(
+                &document,
+                &[subobject::PartitionCut {
+                    source: source.clone(),
+                    edge_parameters: [0.2, 0.8],
+                }],
+            )
+            .unwrap()
+            .remove(0);
+            document
+                .edit("keep", |tx| store_partition(tx, &partition))
+                .unwrap();
+            let mut metadata = Metadata::parse(document.vmf()).unwrap();
+            metadata
+                .entries
+                .get_mut(&(source.solid, source.side))
+                .unwrap()
+                .extra
+                .push(Node::block("vendor", vec![Node::string("keep", "yes")]));
+            document.edit("unknown", |tx| metadata.write(tx)).unwrap();
+            let before = document.vmf().clone();
+            let mut allocation = document.clone();
+            document
+                .edit("materials", |tx| {
+                    set_piece_top_materials(tx, &source, &[0], Some(" brick/red "))?;
+                    set_piece_top_materials(tx, &source, &[1], Some("wood/blue"))
+                })
+                .unwrap();
+            let applied = document.vmf().clone();
+            assert_eq!(applied.world, before.world);
+            assert_eq!(applied.entities, before.entities);
+            let mut after_allocation = document.clone();
+            assert_eq!(
+                allocation
+                    .edit("IDs", |tx| Ok((tx.new_object_id()?, tx.new_side_id()?)))
+                    .unwrap(),
+                after_allocation
+                    .edit("IDs", |tx| Ok((tx.new_object_id()?, tx.new_side_id()?)))
+                    .unwrap()
+            );
+            document.undo().unwrap();
+            assert_eq!(document.vmf(), &before);
+            document.redo().unwrap();
+            assert_eq!(document.vmf(), &applied);
+            let original = Metadata::parse(document.vmf()).unwrap();
+            assert_eq!(
+                original.entries[&(source.solid, source.side)].top_materials,
+                [Some("BRICK/RED".into()), Some("WOOD/BLUE".into())]
+            );
+            let reopened = Vmf::parse(&applied.write(&Default::default())).unwrap();
+            assert_eq!(Metadata::parse(&reopened).unwrap(), original);
+            let mut changed = Document::new(reopened);
+            changed
+                .edit("reflect", |tx| {
+                    edit::transform(
+                        tx,
+                        &[ObjectId::Solid(source.solid)],
+                        Transform {
+                            reflection: [true, false, false],
+                            rotation: DVec3::new(17.0, -23.0, 31.0),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .unwrap();
+            let resolved = original.resolve(&changed).remove(0).result.unwrap();
+            for piece in 0..2 {
+                assert_eq!(membership(&partition, piece), membership(&resolved, piece));
+            }
+            changed
+                .edit("keep reflected", |tx| store_partition(tx, &resolved))
+                .unwrap();
+            assert_eq!(Metadata::parse(changed.vmf()).unwrap(), original);
+            let next = subobject::plan_partitions_at(
+                &changed,
+                &[subobject::PartitionCut {
+                    source: source.clone(),
+                    edge_parameters: [0.3, 0.7],
+                }],
+            )
+            .unwrap()
+            .remove(0);
+            changed
+                .edit("adjust", |tx| store_partition(tx, &next))
+                .unwrap();
+            let adjusted = Metadata::parse(changed.vmf()).unwrap();
+            assert_eq!(
+                adjusted.entries[&(source.solid, source.side)].top_materials,
+                original.entries[&(source.solid, source.side)].top_materials
+            );
+            assert_eq!(
+                adjusted.entries[&(source.solid, source.side)].corners,
+                original.entries[&(source.solid, source.side)].corners
+            );
+            changed
+                .edit("inherit first", |tx| {
+                    set_piece_top_materials(tx, &source, &[0], None)
+                })
+                .unwrap();
+            assert_eq!(
+                Metadata::parse(changed.vmf()).unwrap().entries[&(source.solid, source.side)]
+                    .top_materials,
+                [None, Some("WOOD/BLUE".into())]
+            );
+            changed
+                .edit("inherit both", |tx| {
+                    set_piece_top_materials(tx, &source, &[0, 1], None)
+                })
+                .unwrap();
+            let cleared = Metadata::parse(changed.vmf()).unwrap();
+            assert_eq!(
+                cleared.entries[&(source.solid, source.side)].extra,
+                original.entries[&(source.solid, source.side)].extra
+            );
+            assert_eq!(
+                cleared.entries[&(source.solid, source.side)].top_materials,
+                [None, None]
+            );
+        }
+    }
+
+    #[test]
+    fn piece_materials_reject_invalid_updates_and_reserved_conflicts_atomically() {
+        let (mut document, source) = fixture();
+        document.edit("keep", |tx| store(tx, &source)).unwrap();
+        let before = document.vmf().clone();
+        for (pieces, material) in [
+            (vec![], Some("brick/test")),
+            (vec![0, 0], Some("brick/test")),
+            (vec![0, 1, 1], Some("brick/test")),
+            (vec![2], None),
+            (vec![0], Some(" ")),
+            (vec![0], Some("brick/\nred")),
+        ] {
+            assert!(
+                document
+                    .edit("invalid", |tx| set_piece_top_materials(
+                        tx, &source, &pieces, material
+                    ))
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &before);
+        }
+        for length in [MAX_TEXT_BYTES, MAX_TEXT_BYTES + 1] {
+            let huge = "x".repeat(length);
+            assert!(
+                document
+                    .edit("budget", |tx| set_piece_top_materials(
+                        tx,
+                        &source,
+                        &[0, 1],
+                        Some(&huge)
+                    ))
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &before);
+        }
+        let mut metadata = Metadata::parse(document.vmf()).unwrap();
+        metadata
+            .entries
+            .get_mut(&(source.solid, source.side))
+            .unwrap()
+            .extra
+            .push(Node::string(MATERIAL_FIELDS[0], "vendor data"));
+        document.edit("unknown", |tx| metadata.write(tx)).unwrap();
+        let before = document.vmf().clone();
+        assert!(
+            document
+                .edit("conflict", |tx| set_piece_top_materials(
+                    tx,
+                    &source,
+                    &[1],
+                    Some("wood/test")
+                ))
+                .unwrap_err()
+                .to_string()
+                .contains("reserved field")
+        );
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(
+            Metadata::parse(document.vmf()).unwrap().entries[&(source.solid, source.side)].extra,
+            vec![Node::string(MATERIAL_FIELDS[0], "vendor data")]
+        );
+    }
+
+    #[test]
+    fn material_intents_reject_malformed_records_and_changed_sources() {
+        let (mut document, source) = fixture();
+        document.edit("keep", |tx| store(tx, &source)).unwrap();
+        document
+            .edit("material", |tx| {
+                set_piece_top_materials(tx, &source, &[0], Some("brick/test"))
+            })
+            .unwrap();
+        let metadata = Metadata::parse(document.vmf()).unwrap();
+        let intent = metadata.entries[&(source.solid, source.side)].clone();
+        for replacement in [
+            None,
+            Some(Node::string(MATERIAL_FIELDS[0], "")),
+            Some(Node::string(MATERIAL_FIELDS[0], "a\nb")),
+            Some(Node::block(MATERIAL_FIELDS[0], vec![])),
+        ] {
+            let mut node = intent.node(true);
+            let source_formats::keyvalues::Value::Block(fields) = &mut node.value else {
+                unreachable!()
+            };
+            fields.retain(|field| field.key != MATERIAL_FIELDS[0]);
+            if let Some(replacement) = replacement {
+                fields.push(replacement);
+            }
+            let mut vmf = document.vmf().clone();
+            vmf.extra.retain(|node| node.key != KEY);
+            vmf.extra.push(Node::block(
+                KEY,
+                vec![Node::string("version", VERSION), node],
+            ));
+            assert!(Metadata::parse(&vmf).is_err());
+        }
+        let mut duplicate = intent.node(true);
+        let source_formats::keyvalues::Value::Block(fields) = &mut duplicate.value else {
+            unreachable!()
+        };
+        fields.push(Node::string(MATERIAL_FIELDS[0], "wood/test"));
+        let mut vmf = document.vmf().clone();
+        vmf.extra.retain(|node| node.key != KEY);
+        vmf.extra.push(Node::block(
+            KEY,
+            vec![Node::string("version", VERSION), duplicate],
+        ));
+        let mut malformed = Document::new(vmf);
+        let before = malformed.vmf().clone();
+        assert!(
+            malformed
+                .edit("invalid write", |tx| metadata.write(tx))
+                .is_err()
+        );
+        assert_eq!(malformed.vmf(), &before);
+        let mut alternate = source.clone();
+        alternate.edges =
+            subobject::crease_pairs(document.solid(source.solid).unwrap(), source.side).unwrap()[1]
+                .edges;
+        let before = document.vmf().clone();
+        assert!(
+            document
+                .edit("direction", |tx| store(tx, &alternate))
+                .is_err()
+        );
+        assert!(
+            document
+                .edit("stale direction", |tx| set_piece_top_materials(
+                    tx,
+                    &alternate,
+                    &[0],
+                    Some("wood/test")
+                ))
+                .is_err()
+        );
+        assert_eq!(document.vmf(), &before);
+        document
+            .edit("delete", |tx| {
+                edit::delete(tx, &[ObjectId::Solid(source.solid)])
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        assert!(
+            document
+                .edit("missing source", |tx| set_piece_top_materials(
+                    tx,
+                    &source,
+                    &[0],
+                    None
+                ))
+                .is_err()
+        );
+        assert_eq!(document.vmf(), &before);
     }
 
     #[test]

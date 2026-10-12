@@ -164,19 +164,40 @@ fn saved_flat_partition_intents_leave_native_bsp_bytes_unchanged() {
                 map_core::partition_metadata::store_partition(tx, &partition)
             })
             .unwrap();
-        let reopened =
-            source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
-        assert_eq!(
-            map_core::partition_metadata::Metadata::parse(&reopened)
-                .unwrap()
-                .entries
-                .len(),
-            1
-        );
-        let after = compiler::compile(&reopened, &common::empty_game());
-        assert!(!after.report.has_errors());
-        assert!(after.leak.is_none());
-        assert_eq!(after.bsp.unwrap().to_bytes(), bytes);
+        for styled in [false, true] {
+            document
+                .edit("planned piece materials", |tx| {
+                    map_core::partition_metadata::set_piece_top_materials(
+                        tx,
+                        &request,
+                        &[0],
+                        styled.then_some("brick/planned_red"),
+                    )?;
+                    map_core::partition_metadata::set_piece_top_materials(
+                        tx,
+                        &request,
+                        &[1],
+                        styled.then_some("wood/planned_blue"),
+                    )
+                })
+                .unwrap();
+            let reopened =
+                source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default()))
+                    .unwrap();
+            let metadata = map_core::partition_metadata::Metadata::parse(&reopened).unwrap();
+            assert_eq!(metadata.entries.len(), 1);
+            assert_eq!(
+                metadata.entries[&(id, side)]
+                    .top_materials
+                    .iter()
+                    .all(Option::is_some),
+                styled
+            );
+            let after = compiler::compile(&reopened, &common::empty_game());
+            assert!(!after.report.has_errors());
+            assert!(after.leak.is_none());
+            assert_eq!(after.bsp.unwrap().to_bytes(), bytes);
+        }
     }
 }
 

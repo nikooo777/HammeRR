@@ -9,6 +9,9 @@ use serde_json::{Value, json};
 
 use super::{Actor, SelectMode, Session};
 
+pub const SOURCE_PAGE_SIZE: usize = 100;
+pub const MAX_SOURCE_PAGE_SIZE: usize = 256;
+
 pub struct Preview {
     pub document: Document,
     pub token: u64,
@@ -129,6 +132,10 @@ impl Session {
         if let Some(picking) = &self.components.picking {
             return picking.solids.iter().copied().collect();
         }
+        self.selected_component_solids()
+    }
+
+    fn selected_component_solids(&self) -> Vec<u32> {
         self.selected_ids()
             .iter()
             .flat_map(|id| match id {
@@ -138,6 +145,24 @@ impl Session {
                 }),
             })
             .collect()
+    }
+
+    pub fn component_sources(&self, offset: usize, limit: usize) -> Result<Value, String> {
+        if !(1..=MAX_SOURCE_PAGE_SIZE).contains(&limit) {
+            return Err("Brush source pages contain between 1 and 256 entries".into());
+        }
+        let ids = self
+            .selected_component_solids()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let sources = ids.iter().skip(offset).take(limit).map(|id| {
+            let (owner,solid) = subobject::solid(&self.document,*id).map_err(|error|error.to_string())?;
+            let owner = match owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
+            Ok(json!({"solid":id,"owner":owner,"material":solid.sides.first().map(|side|side.material.to_ascii_lowercase()),"bounds":map_core::query::solid_bounds(solid).map(|(mins,maxs)|json!({"mins":mins.to_array(),"maxs":maxs.to_array()}))}))
+        }).collect::<Result<Vec<Value>,String>>()?;
+        Ok(
+            json!({"snapshot":self.component_stamp(),"offset":offset,"limit":limit,"total":ids.len(),"sources":sources,"active_solids":self.component_solids(),"inspection_limit":subobject::MAX_SOLIDS}),
+        )
     }
 
     pub fn component_topology(&self, ids: &[u32]) -> Result<Vec<Topology>, String> {
@@ -768,6 +793,82 @@ mod tests {
             .select_components(&corners, SelectMode::Replace, &session.component_stamp())
             .unwrap();
         corners
+    }
+
+    #[test]
+    fn source_pages_cover_large_owners_without_mutating_scope_or_history() {
+        let (mut session, first, _) = fixture();
+        let mut ids = vec![first];
+        for index in 1..205 {
+            let ObjectId::Solid(id) = session
+                .create_block(
+                    Actor::Agent,
+                    DVec3::new(index as f64 * 96.0, 0.0, 0.0),
+                    DVec3::new(index as f64 * 96.0 + 64.0, 64.0, 64.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            ids.push(id);
+        }
+        let owner = session
+            .edit(Actor::Agent, "owner", |tx| {
+                map_core::edit::tie_to_entity(tx, &ids, "func_detail", &[])
+            })
+            .unwrap();
+        session.select(&[owner], SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let stamp = session.component_stamp();
+        assert!(
+            session
+                .component_topology(&session.component_solids())
+                .is_err()
+        );
+        let page = session.component_sources(100, 100).unwrap();
+        assert_eq!(page["total"], 205);
+        assert_eq!(page["sources"].as_array().unwrap().len(), 100);
+        assert_eq!(page["sources"][0]["solid"], ids[100]);
+        assert_eq!(
+            session.component_sources(200, 100).unwrap()["sources"]
+                .as_array()
+                .unwrap()
+                .len(),
+            5
+        );
+        assert!(
+            session.component_sources(usize::MAX, 1).unwrap()["sources"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(session.component_sources(0, 0).is_err());
+        assert!(session.component_sources(0, 257).is_err());
+        assert_eq!(session.component_stamp(), stamp);
+        assert_eq!(session.document().vmf(), &source);
+        session
+            .set_component_picking(
+                Some(super::super::component_picking::Kind::Face),
+                &[ids[100]],
+                &stamp,
+            )
+            .unwrap();
+        let scope = session.component_sources(0, 100).unwrap();
+        assert_eq!(scope["total"], 205);
+        assert_eq!(scope["active_solids"], json!([ids[100]]));
+        assert!(
+            session
+                .set_component_picking(
+                    Some(super::super::component_picking::Kind::Face),
+                    &[first],
+                    &stamp
+                )
+                .is_err()
+        );
+        assert_eq!(session.component_solids(), vec![ids[100]]);
+        assert_eq!(session.document().vmf(), &source);
     }
 
     #[test]

@@ -526,6 +526,12 @@ struct ComponentMoveArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ComponentSourcesArgs {
+    offset: Option<usize>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentWeldArgs {
     snapshot: String,
     target: Option<[f64; 3]>,
@@ -2962,6 +2968,23 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "List committed source brushes belonging to the selected owners, including children of large brush entities, without the 16-brush topology inspection limit. Returns numeric solid IDs, owner IDs, material, bounds, total, active_solids, inspection_limit and the latest component snapshot. offset defaults to 0; limit defaults to 100 and must be 1–256. Sorted, bounded pages do not alter selection, picking, map, history or previews. Source choices stay based on committed geometry during a draft. Capture an explicit 1–16-brush scope through set_component_picking using the returned snapshot, then get_brush_components uses that scope. Mirrors the component dialog's brush picker and page controls.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_component_sources(
+        &self,
+        Parameters(args): Parameters<ComponentSourcesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().component_sources(
+                args.offset.unwrap_or(0),
+                args.limit
+                    .unwrap_or(crate::session::components::SOURCE_PAGE_SIZE),
+            )
+        })
+    }
+
+    #[tool(
         description = "Inspect precise convex brush topology and the shared vertex/edge selection. Returns vertices with incident face IDs, edges with endpoint positions and vertex indices, face rings, document markers and a snapshot guard. Numeric solid IDs may address entity brushes; defaults to selected objects. At most 16 brushes, 64 sides each. Uses the currently rendered geometry preview when present, including generated hollow/carve brushes; applying or selecting draft-only components still requires committing that geometry first. Component identity is solid + incident face IDs; array indices are for this response only. Texture projections default to world anchoring; texture_mode describes the current component preview.",
         annotations(read_only_hint = true)
     )]
@@ -3017,7 +3040,8 @@ impl EditorServer {
             };
             let solids = args.solids.unwrap_or_else(|| session.component_solids());
             session.set_component_picking(kind, &solids, &args.snapshot)?;
-            session.component_report(&session.component_solids())
+            let report_solids = kind.map_or_else(Vec::new, |_| session.component_solids());
+            session.component_report(&report_solids)
         })
     }
 
@@ -5868,6 +5892,62 @@ mod headless_tests {
         let result = result.unwrap();
         assert!(!result.is_error.unwrap_or(false));
         serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+    }
+
+    #[test]
+    fn stopping_component_picking_succeeds_for_large_selected_owners() {
+        let mut session = Session::new(Err("no assets needed".into()));
+        let mut ids = Vec::new();
+        for index in 0..17 {
+            let origin = DVec3::X * (index as f64 * 128.0);
+            ids.push(
+                session
+                    .create_block(
+                        Actor::Agent,
+                        origin,
+                        origin + DVec3::splat(64.0),
+                        "brick/test",
+                        false,
+                    )
+                    .unwrap(),
+            );
+        }
+        let owner = session
+            .tie_to_entity(Actor::Agent, &ids, "func_detail", Default::default())
+            .unwrap();
+        session.select(&[owner], SelectMode::Replace).unwrap();
+        let ObjectId::Solid(id) = ids[0] else {
+            unreachable!()
+        };
+        let original = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let server = EditorServer::new(shared.clone(), None);
+        for enabled in [true, false, false] {
+            let snapshot = lock(&shared).component_stamp();
+            let report = value(
+                server.set_component_picking(Parameters(
+                    serde_json::from_value(
+                        json!({"enabled":enabled,"kind":"face","solids":[id],"snapshot":snapshot}),
+                    )
+                    .unwrap(),
+                )),
+            );
+            assert_eq!(report["picking"].is_null(), !enabled);
+            assert_eq!(
+                report["brushes"].as_array().unwrap().len(),
+                usize::from(enabled)
+            );
+            assert_eq!(lock(&shared).document().vmf(), &original);
+        }
+        let sources = value(
+            server.get_component_sources(Parameters(ComponentSourcesArgs {
+                offset: None,
+                limit: None,
+            })),
+        );
+        assert_eq!(sources["total"], 17);
+        assert_eq!(sources["active_solids"].as_array().unwrap().len(), 17);
+        assert!(server.offscreen.lock().unwrap().renderer.is_none());
     }
 
     #[test]

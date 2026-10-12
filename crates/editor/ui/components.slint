@@ -12,6 +12,17 @@ export component ComponentsWindow inherits Window {
     preferred-width: 880px;
     preferred-height: 720px;
     in property <[ComponentRow]> rows;
+    in property <[string]> source-labels;
+    in property <[string]> source-ids;
+    in property <string> source-summary;
+    in property <bool> source-next;
+    in property <bool> source-all;
+    in property <int> source-total;
+    in-out property <int> source-offset;
+    in-out property <int> source-index;
+    callback choose-source();
+    callback all-sources();
+    callback page-sources(int);
     in property <string> stamp;
     in property <string> token;
     in property <string> summary;
@@ -76,6 +87,18 @@ export component ComponentsWindow inherits Window {
                 spacing: 20px;
                 VerticalLayout {
                     horizontal-stretch: 1; spacing: 10px;
+                    Text {text: "Brush scope · viewport and list"; font-weight: 600;}
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ComboBox {min-width:0px; preferred-width:320px; horizontal-stretch:1; model:root.source-labels; current-index <=> root.source-index; enabled: root.source-total > 0 && !root.topology-preview; selected => {root.choose-source();} }
+                        Button {text:"All selected"; enabled:root.source-all && !root.topology-preview; clicked => {root.all-sources();} }
+                    }
+                    if root.source-total > 100: HorizontalLayout {
+                        spacing: 8px;
+                        Button {text:"Previous brushes"; enabled:root.source-offset > 0; clicked => {root.page-sources(-1);} }
+                        Text {text:root.source-summary; horizontal-stretch:1; vertical-alignment:center;}
+                        Button {text:"Next brushes"; enabled:root.source-next; clicked => {root.page-sources(1);} }
+                    }
                     HorizontalLayout {
                         spacing: 8px;
                         ComboBox { model: ["Edges", "Vertices", "Faces"]; enabled: !root.topology-preview; current-index <=> root.kind; selected => { root.change-kind(); } }

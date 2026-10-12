@@ -17,6 +17,8 @@ pub use split::{
 };
 mod crease;
 pub use crease::{Crease, CreaseChange, CreasePair, CreasePlan, crease, crease_pairs};
+mod partition;
+pub use partition::{Partition, PartitionLoop, PartitionVertex, VertexSource, plan_partitions};
 
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;

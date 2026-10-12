@@ -219,3 +219,59 @@ fn scaled_and_rotated_components_compile_after_vmf_round_trip() {
         assert!(!output.bsp.unwrap().records::<Face>().unwrap().is_empty());
     }
 }
+
+#[test]
+fn multi_cutter_room_compiles_after_retaining_then_removing_both_cutters() {
+    let mut document = Document::empty();
+    let (outer, left, right) = document
+        .edit("room inputs", |tx| {
+            let outer = edit::create_block(
+                tx,
+                DVec3::new(-144.0, -144.0, -16.0),
+                DVec3::splat(144.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            let left = edit::create_block(
+                tx,
+                DVec3::new(-128.0, -128.0, 0.0),
+                DVec3::new(0.0, 128.0, 128.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            let right = edit::create_block(
+                tx,
+                DVec3::new(0.0, -128.0, 0.0),
+                DVec3::splat(128.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            Ok((outer, left, right))
+        })
+        .unwrap();
+    let (ObjectId::Solid(outer), ObjectId::Solid(left), ObjectId::Solid(right)) =
+        (outer, left, right)
+    else {
+        unreachable!()
+    };
+    document
+        .edit("carve room", |tx| {
+            map_core::carve::carve_many(tx, &[left, right], &[outer])
+        })
+        .unwrap();
+    document
+        .edit("remove cutters and add spawn", |tx| {
+            edit::delete(tx, &[ObjectId::Solid(left), ObjectId::Solid(right)])?;
+            edit::create_entity(
+                tx,
+                "info_player_counterterrorist",
+                Some(DVec3::new(0.0, 0.0, 64.0)),
+                &[],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let vmf = source_formats::vmf::Vmf::parse(&document.vmf().write(&Default::default())).unwrap();
+    vmf.validate_ids().unwrap();
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.leak.is_none());
+    assert!(output.stats.brushes >= 6);
+}

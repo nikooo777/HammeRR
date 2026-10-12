@@ -26,7 +26,7 @@ and the shared entity inspector and activity panel.*
 | Viewport and brushes | Textured, flat, wireframe and diagnostic modes in every projection; grids, fractional snapping, brush drawing, move/rotate/scale handles, exact transforms, and texture locking. |
 | Saved views | Named perspective and planar cameras stored in the VMF, with restore, rename, replace, delete and undo. |
 | Selection | Object and face marquees, 3D volumes and visible-surface paint strokes, with shared previews and replace/add/remove/toggle rules. |
-| Brush hollowing and carving | Wall shells and convex cutter subtraction, with inherited materials and lighting, cancellable previews and one-step undo. |
+| Brush hollowing and carving | Wall shells and combined convex cutter subtraction, with inherited materials and lighting, cancellable previews and one-step undo. |
 | Brush clipping | Planar cuts, three-point surface picking, exact planes and 3D move/rotation handles; keep either side or both, cap materials and one-step undo. |
 | Brush components | Viewport/list selection, move handles, exact offsets, component scaling/rotation, corner welding and edge/face splitting, with guarded previews and atomic undo. |
 | Brush shapes | Parameterized wedges, cylinders, cones, spheres and arches, with material previews, editable dimensions and cancellable geometry previews. |
@@ -347,20 +347,28 @@ shows the resulting convex fragments and lists fully removed and unchanged
 brushes. **Apply carve** records one undo step; **Discard preview** or **Cancel**
 leaves the map unchanged. Unchecked candidates remain available during preview.
 
-The cutter stays in the map. Move or delete it when the carved space should be
-empty. Original fragment faces retain their surface settings; new cut faces
+Enable **Use multiple cutter brushes** to subtract several shapes in one
+preview. Each selected brush has explicit **Cutter** and **Target** roles.
+Overlapping cutters remove their shared volume once; caller order produces the
+same result. All cutters stay in the map. Move or delete them when the carved
+space should be empty. Original fragment faces retain their surface settings; new cut faces
 inherit the corresponding cutter face's material, world texture projection,
 lighting and metadata. Brush-entity ownership and unrelated objects remain.
 An entirely covered world brush can disappear; removing every brush from an
 entity is rejected so its meaning cannot silently change.
 
-Limits are one convex cutter, 16 targets, 256 fragments and 64 faces per brush.
+Limits are 1–8 convex cutters, 16 targets, 256 intermediate/final fragments
+and 64 faces per brush.
 Displacements, invalid or thin fragments and budget overflow reject atomically.
 Apply checks generated brush and face IDs against the exact preview.
 
 | Carving controls | Shared fragment preview |
 | --- | --- |
 | ![Cutter selector, target checkboxes and guarded preview actions](docs/images/brush-carving.png) | ![Six carved fragments around the retained cutter](docs/images/carve-preview.png) |
+
+| Multiple-cutter roles | Result with cutters hidden |
+| --- | --- |
+| ![Explicit cutter and target roles with cancellable batch preview](docs/images/multiple-cutter-controls.png) | ![Two combined cutter shapes leave a stepped cavity](docs/images/multiple-cutter-cavities.png) |
 
 ### Brush clipping
 
@@ -793,7 +801,7 @@ For example, place a warm light:
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
-| Brush carving | `get_carve_preview`, `preview_carve`, `commit_carve`, `cancel_carve` |
+| Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
 | Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
@@ -857,6 +865,7 @@ python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
 python -B scripts/validate_precision_cycles.py --output /tmp/hammerr-precision-check
 python -B scripts/validate_carving.py --output /tmp/hammerr-carving-check
+python -B scripts/validate_carve_many.py --output /tmp/hammerr-carve-many-check
 python -B scripts/validate_component_picking.py --output /tmp/hammerr-component-picking-check
 python -B scripts/validate_geometry_tools.py --output /tmp/hammerr-geometry-tools-check
 python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
@@ -929,6 +938,11 @@ of brush entities. Its `preview.result` lists changed fragments, fully removed
 and unchanged brushes, and face inheritance. `commit_carve` or `cancel_carve`
 requires the exact `preview.token`. Invalid updates retain the valid draft;
 source changes and competing geometry tools invalidate it.
+
+`preview_carve_many` accepts a bounded `cutters` list, `targets` and the same
+`stamp`. `preview.result.cutters` reports their normalized order, and face
+inheritance names the actual cutter for every generated face. Single and
+multiple cutters share `commit_carve`/`cancel_carve` and one-step undo.
 
 For component picking, `set_component_picking` captures the brush IDs and kind;
 `get_brush_components` reports that shared mode. `pick_brush_components` accepts

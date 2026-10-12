@@ -540,6 +540,13 @@ struct CarveArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct CarveManyArgs {
+    cutters: Vec<u32>,
+    targets: Vec<u32>,
+    stamp: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ComponentScaleArgs {
     factors: [f64; 3],
     pivot: Option<[f64; 3]>,
@@ -2835,7 +2842,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect selected brush candidates and the shared carve preview, source owners/bounds/materials, snapshot stamp, exact token, target brush IDs, resulting fragments, removed/unchanged brushes, per-face inheritance and limits. One convex cutter is retained; up to 16 targets and 256 fragments. World brushes may be removed completely; removing every brush from an entity rejects. No map edits.",
+        description = "Inspect selected brush candidates and the shared carve preview, source owners/bounds/materials, snapshot stamp, exact token, target brush IDs, resulting fragments, removed/unchanged brushes, per-face inheritance and limits. Up to 8 convex cutters are retained; up to 16 targets and 256 intermediate/final fragments. World brushes may be removed completely; removing every brush from an entity rejects. No map edits.",
         annotations(read_only_hint = true)
     )]
     fn get_carve_preview(&self) -> ToolResult {
@@ -2854,7 +2861,18 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the exact shared carving preview as one undo step. Rechecks fragment IDs, face inheritance and geometry against the draft. Retains the cutter and entity ownership; selects surviving carved objects. Source edits, selection/tool changes and other previews invalidate the token. Allocation changes reject without mutation."
+        description = "Preview subtracting the combined volume of 1–8 distinct retained convex cutter brushes from 1–16 target brushes. Cutters and targets must be disjoint roles. Inputs normalize to increasing brush IDs, so caller order cannot change fragments or coincident-face inheritance. Requires the latest get_carve_preview.stamp. All cutters stay unchanged; overlapping cutter volume is removed once. preview.result.cutters lists normalized IDs; each generated face reports its actual source_solid/source_side and inherits that cutter's material, world UVs, lighting and unknown metadata. Original faces and owner entities remain. Intermediate and final fragments are bounded at 256 with 64 sides each. Empty brush entities, invalid/displacement/thin geometry, bounds, all-disjoint inputs and budgets reject atomically while preserving the valid draft. render_view shows the same draft. commit_carve/cancel_carve use its token; Apply verifies allocations and records one undo step."
+    )]
+    fn preview_carve_many(&self, Parameters(args): Parameters<CarveManyArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_carve_many(&args.cutters, &args.targets, &args.stamp)?;
+            Ok(session.carve_report())
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact shared carving preview as one undo step. Rechecks fragment IDs, face inheritance and geometry against the draft. Retains all cutters and entity ownership; selects surviving carved objects. Source edits, selection/tool changes and other previews invalidate the token. Allocation changes reject without mutation."
     )]
     fn commit_carve(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {

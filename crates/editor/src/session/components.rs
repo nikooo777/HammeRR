@@ -278,7 +278,7 @@ impl Session {
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
                 "crease":preview.crease.as_ref().map(|crease|json!({"rise":crease.rise,"roof_texture_lock":crease.roof_texture_lock,"pairs":crease.requests.iter().map(|request|json!({"solid":request.solid,"edges":request.edges})).collect::<Vec<_>>(),"changes":crease.changes.iter().map(|change|json!({"solid":change.source.solid,"source_side":change.source.side,"edges":change.source.edges,"positions":change.positions.map(|point|point.to_array()),"new_side":change.new_side,"selection":change.selection.iter().map(component_json).collect::<Vec<_>>()})).collect::<Vec<_>>()})),
                 "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
-            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
+            "texture_mode":if self.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock && preview.weld.is_some()) {"weld_attached"} else if self.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE]},
         }))
     }
 
@@ -548,7 +548,16 @@ impl Session {
 
     pub fn preview_component_weld_target(
         &mut self,
+        target: WeldTarget,
+        stamp: &str,
+    ) -> Result<u64, String> {
+        self.preview_component_weld_with_texture(target, false, stamp)
+    }
+
+    pub fn preview_component_weld_with_texture(
+        &mut self,
         mut target: WeldTarget,
+        texture_lock: bool,
         stamp: &str,
     ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
@@ -561,8 +570,9 @@ impl Session {
         if let WeldTarget::Corner(component) = &mut target {
             component.sides.sort_unstable();
         }
-        let plan = subobject::plan_weld_target(&self.document, &components, &target)
-            .map_err(|error| error.to_string())?;
+        let plan =
+            subobject::plan_weld_with_textures(&self.document, &components, &target, texture_lock)
+                .map_err(|error| error.to_string())?;
         let mut document = self.document.preview_snapshot();
         document
             .edit("preview corner weld", |tx| {
@@ -576,7 +586,7 @@ impl Session {
             document,
             token,
             delta: DVec3::ZERO,
-            texture_lock: false,
+            texture_lock,
             replacements: plan.replacements,
             generation: self.document_generation,
             revision: self.document.revision(),
@@ -1350,6 +1360,54 @@ mod tests {
             assert!(session.component_guide().is_some());
             session.undo(actor).unwrap();
             assert_eq!(session.document.vmf(), &original);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+        }
+    }
+
+    #[test]
+    fn attached_welds_share_averaged_policy_and_keep_valid_preview_on_rejection() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, id, _) = fixture();
+            select_top_corners(&mut session, id);
+            let source = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let token = session
+                .preview_component_weld_with_texture(
+                    WeldTarget::Mean,
+                    true,
+                    &session.component_stamp(),
+                )
+                .unwrap();
+            let report = session.component_report(&[id]).unwrap();
+            let draft = session.render_document().vmf().clone();
+            assert_eq!(report["texture_mode"], "weld_attached");
+            assert_eq!(report["preview"]["texture_lock"], true);
+            assert!(
+                session
+                    .preview_component_weld_with_texture(
+                        WeldTarget::Position(DVec3::splat(65537.0)),
+                        false,
+                        &session.component_stamp()
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.component_report(&[id]).unwrap(), report);
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.document.undo_labels().count(), history);
+            session.cancel_component_move(token).unwrap();
+            let token = session
+                .preview_component_weld_with_texture(
+                    WeldTarget::Mean,
+                    true,
+                    &session.component_stamp(),
+                )
+                .unwrap();
+            assert_eq!(session.render_document().vmf(), &draft);
+            session.commit_component_edit(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &source);
             session.redo(actor).unwrap();
             assert_eq!(session.document.vmf(), &draft);
         }

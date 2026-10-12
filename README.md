@@ -304,6 +304,11 @@ Nonplanar, concave, empty or redundant geometry is rejected. Movement handles
 and selection changes pause during the topology preview. **Apply weld** records
 one undo step; **Discard preview** restores the original corner selection.
 
+Enable **Keep textures at surviving corners** to attach textures during a weld.
+Surviving corners retain their UVs; the merged corner averages its contributors'
+UVs separately on each source face. Incompatible projections reject the preview
+without replacing the previous valid draft. World projection remains the default.
+
 | Welding controls | Shared pyramid preview |
 | --- | --- |
 | ![Merged selection and Apply/Cancel controls](docs/images/brush-welding.png) | ![Four box corners welded into a pyramid apex](docs/images/component-weld-preview.png) |
@@ -1019,6 +1024,7 @@ python -B scripts/validate_transform_display.py --output /tmp/hammerr-transform-
 python -B scripts/validate_component_partitions.py --output /tmp/hammerr-partition-check
 python -B scripts/validate_roof_texture_attachment.py --output /tmp/hammerr-roof-texture-check
 python -B scripts/validate_split_texture_attachment.py --output /tmp/hammerr-split-texture-check
+python -B scripts/validate_weld_texture_attachment.py --output /tmp/hammerr-weld-texture-check
 python -B scripts/validate_texture_lock_modes.py --output /tmp/hammerr-texture-modes-check
 python -B scripts/validate_brush_reflection.py --output /tmp/hammerr-reflection-check
 python -B scripts/validate_brush_shear.py --output /tmp/hammerr-shear-check
@@ -1095,7 +1101,10 @@ position, or `target_corner: {solid, sides}` for a source corner. The two target
 inputs are mutually exclusive. `get_brush_components.weld_targets` lists
 original corner choices and `weld_center` gives their selected center;
 `preview.weld_target` records the chosen mode.
-Each brush welds to its own average position, with world-anchored textures.
+With no target inputs, each brush welds to its own average position.
+Textures remain world-anchored by default. Optional `texture_lock: true`
+preserves surviving corner UVs and averages merged contributors separately on
+each face; the shared report uses `texture_mode: "weld_attached"`.
 The response reports `preview.operation`, merged positions and removed side IDs
 in `preview.weld`. `selection` identifies the resulting corners;
 `source_selection` retains the original inputs while the draft is open.

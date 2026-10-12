@@ -33,7 +33,7 @@ pub fn crease_pairs(source: &Solid, side: u32) -> Result<Vec<CreasePair>, EditEr
 }
 
 impl Topology {
-    pub fn crease_pairs(&self, side: u32) -> Result<Vec<CreasePair>, EditError> {
+    fn quad_boundary_edges(&self, side: u32) -> Result<Vec<(u32, DVec3)>, EditError> {
         let shape = self;
         let face = shape
             .faces
@@ -72,6 +72,11 @@ impl Topology {
                 * 0.5;
             edges.push((neighbor, midpoint));
         }
+        Ok(edges)
+    }
+
+    pub fn crease_pairs(&self, side: u32) -> Result<Vec<CreasePair>, EditError> {
+        let edges = self.quad_boundary_edges(side)?;
         let mut choices = Vec::new();
         for index in 0..2 {
             let mut pair = [edges[index], edges[index + 2]];
@@ -82,6 +87,23 @@ impl Topology {
             });
         }
         choices.sort_by_key(|pair| pair.edges);
+        Ok(choices)
+    }
+
+    pub fn partition_pairs(&self, side: u32) -> Result<Vec<CreasePair>, EditError> {
+        let mut choices = self.crease_pairs(side)?;
+        let edges = self.quad_boundary_edges(side)?;
+        let mut adjacent = Vec::new();
+        for index in 0..4 {
+            let mut pair = [edges[index], edges[(index + 1) % 4]];
+            pair.sort_by_key(|edge| edge.0);
+            adjacent.push(CreasePair {
+                edges: pair.map(|edge| edge.0),
+                midpoints: pair.map(|edge| edge.1),
+            });
+        }
+        adjacent.sort_by_key(|pair| pair.edges);
+        choices.extend(adjacent);
         Ok(choices)
     }
 }
@@ -109,6 +131,14 @@ pub(super) fn crease_partition_roofs(
     rise: f64,
     roof_texture_lock: bool,
 ) -> Result<CreasePlan, EditError> {
+    if partitions
+        .iter()
+        .any(|part| part.loops.iter().any(|piece| piece.vertices.len() != 4))
+    {
+        return Err(invalid(
+            "Shared ridges require two quad roof pieces; extrude adjacent cuts",
+        ));
+    }
     let requests = partitions
         .iter()
         .map(|part| part.source.clone())
@@ -435,7 +465,7 @@ mod tests {
                                 plan.changes[0].new_side
                             };
                             let side = result.sides.iter().find(|side| side.id == side_id).unwrap();
-                            for vertex in piece.vertices {
+                            for &vertex in &piece.vertices {
                                 let expected = crate::texel_uv(
                                     original,
                                     partition.vertices[vertex as usize].position,

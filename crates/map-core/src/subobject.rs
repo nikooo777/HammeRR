@@ -24,8 +24,8 @@ pub use crease::{
 mod partition;
 pub(crate) use partition::checked_partition;
 pub use partition::{
-    Partition, PartitionCut, PartitionLoop, PartitionVertex, VertexSource, plan_partitions,
-    plan_partitions_at,
+    Partition, PartitionCut, PartitionLoop, PartitionVertex, VertexSource, partition_pairs,
+    plan_partitions, plan_partitions_at,
 };
 mod extrusion;
 pub use extrusion::{

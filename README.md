@@ -444,6 +444,10 @@ brush is hidden by the tool-material filter.
 | --- | --- |
 | ![Roof ridge direction, height and Apply/Discard/Cancel controls](docs/images/brush-roof-ridge.png) | ![Two roof planes joined at the raised opposing edge midpoints](docs/images/component-roof-ridge.png) |
 
+Adjacent-edge triangle/pentagon geometry and extrusion are checked in the core
+and native fixtures. Saved authoring and its shared UI/MCP controls are the next
+step; the current partition controls offer the two opposing directions.
+
 Movement and welding support 512 selected components across 16 brushes, with up
 to 64 sides per brush. Duplicate IDs, open/redundant geometry and changes that
 collapse edges are rejected before the map is changed. Movement preserves

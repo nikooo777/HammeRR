@@ -9,7 +9,7 @@ fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
     for edge_parameters in [[0.5; 2], [0.2, 0.8]] {
         for owned in [false, true] {
             for oblique in [false, true] {
-                for direction in 0..2 {
+                for direction in 0..6 {
                     let mut document = Document::new(common::room());
                     let object = document
                         .edit("block", |tx| {
@@ -64,7 +64,7 @@ fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
                     let request = subobject::Crease {
                         solid: id,
                         side,
-                        edges: subobject::crease_pairs(source, side).unwrap()[direction].edges,
+                        edges: subobject::partition_pairs(source, side).unwrap()[direction].edges,
                     };
                     let partitions = subobject::plan_partitions_at(
                         &document,
@@ -74,11 +74,13 @@ fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
                         }],
                     )
                     .unwrap();
-                    document
-                        .edit("keep", |tx| {
-                            map_core::partition_metadata::store_partition(tx, &partitions[0])
-                        })
-                        .unwrap();
+                    if direction < 2 {
+                        document
+                            .edit("keep", |tx| {
+                                map_core::partition_metadata::store_partition(tx, &partitions[0])
+                            })
+                            .unwrap();
+                    }
                     let spec = subobject::ExtrusionSpec {
                         height: 16.125,
                         wall_material: Some("dev/dev_measurewall01a".into()),
@@ -133,7 +135,7 @@ fn independently_extruded_partition_prisms_compile_after_vmf_reopening() {
                             .records::<Brush>()
                             .unwrap()
                             .iter()
-                            .all(|brush| brush.side_count >= 6)
+                            .all(|brush| brush.side_count >= 5)
                     );
                 }
             }

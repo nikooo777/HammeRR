@@ -968,6 +968,18 @@ impl Session {
     ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
         let requests = self.crease_requests(pairs)?;
+        for request in &requests {
+            let (_, source) = subobject::solid(&self.document, request.solid)
+                .map_err(|error| error.to_string())?;
+            let choices =
+                subobject::crease_pairs(source, request.side).map_err(|error| error.to_string())?;
+            if !choices.iter().any(|pair| pair.edges == request.edges) {
+                return Err(
+                    "Choose opposing edges until adjacent-cut storage and controls are available"
+                        .into(),
+                );
+            }
+        }
         let mut partitions = subobject::plan_partitions(&self.document, &requests)
             .map_err(|error| error.to_string())?;
         let materials = if let Ok(metadata) =
@@ -1168,7 +1180,7 @@ impl Session {
                     solid: part.source.solid,
                     partition: piece.id,
                 }) {
-                    for index in piece.vertices {
+                    for &index in &piece.vertices {
                         let point = positions[index as usize];
                         bounds = Some(bounds.map_or((point, point), |(mins, maxs)| {
                             (mins.min(point), maxs.max(point))
@@ -1229,8 +1241,11 @@ impl Session {
                 } else {
                     [95, 215, 255, 255]
                 };
-                for index in 0..4 {
-                    for vertex in [piece.vertices[index], piece.vertices[(index + 1) % 4]] {
+                for index in 0..piece.vertices.len() {
+                    for vertex in [
+                        piece.vertices[index],
+                        piece.vertices[(index + 1) % piece.vertices.len()],
+                    ] {
                         mesh.lines.push(render::scene::LineVertex {
                             position: (positions[vertex as usize] + part.normal() * 0.02)
                                 .as_vec3()
@@ -1249,7 +1264,8 @@ impl Session {
                         })
                     {
                         let base = positions[piece.vertices[index] as usize];
-                        let next = positions[piece.vertices[(index + 1) % 4] as usize];
+                        let next =
+                            positions[piece.vertices[(index + 1) % piece.vertices.len()] as usize];
                         let delta = part.normal() * extrusion.spec.height;
                         for point in [base + delta, next + delta, base, base + delta] {
                             mesh.lines.push(render::scene::LineVertex {

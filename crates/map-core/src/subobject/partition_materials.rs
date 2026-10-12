@@ -80,7 +80,11 @@ pub fn crease_partitions_with_materials(
             let Some(material) = materials.get(&(part.source.solid, piece.id)) else {
                 continue;
             };
-            let points = piece.vertices.map(|vertex| positions[vertex as usize]);
+            let points = piece
+                .vertices
+                .iter()
+                .map(|vertex| positions[*vertex as usize])
+                .collect::<Vec<_>>();
             let sides = replacement
                 .solid
                 .sides

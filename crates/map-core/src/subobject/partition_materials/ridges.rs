@@ -77,7 +77,7 @@ fn adjusted_planar_roofs_preserve_cut_points_material_identity_and_surface_polic
                             assert_eq!(roof.smoothing_groups, original.smoothing_groups);
                             assert_eq!(roof.extra_properties, original.extra_properties);
                             assert_eq!(roof.rotation, original.rotation);
-                            for index in piece.vertices {
+                            for &index in &piece.vertices {
                                 let flat = part.vertices[index as usize].position;
                                 let raised = positions[index as usize];
                                 let expected =

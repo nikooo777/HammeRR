@@ -7,6 +7,38 @@ fn piece(solid: u32, partition: u32) -> PartitionRef {
 }
 
 #[test]
+fn boundary_cut_authoring_waits_for_shared_storage_and_controls() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (mut session, solid, pairs) = fixture(actor, 0);
+        let token = session
+            .preview_component_partition(&pairs, &session.component_stamp())
+            .unwrap();
+        let side = session.checked_partition(token).unwrap().partitions[0]
+            .source
+            .side;
+        let (_, source) = subobject::solid(session.document(), solid).unwrap();
+        let adjacent = subobject::partition_pairs(source, side).unwrap()[2].edges;
+        let report = session.component_report(&[solid]).unwrap();
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let error = session
+            .preview_component_partition(
+                &[CreaseEdges {
+                    solid,
+                    edges: adjacent,
+                }],
+                &session.component_stamp(),
+            )
+            .unwrap_err();
+        assert!(error.contains("opposing edges"));
+        assert_eq!(session.partition_preview_token(), Some(token));
+        assert_eq!(session.component_report(&[solid]).unwrap(), report);
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+    }
+}
+
+#[test]
 fn adjusted_planar_ridge_drafts_share_rejection_history_and_material_replay() {
     for actor in [Actor::User, Actor::Agent] {
         for direction in 0..2 {
@@ -503,8 +535,8 @@ fn planned_surface_visibility_and_picking_follow_each_piece_and_owner() {
                 .unwrap();
             let center = invisible
                 .vertices
-                .map(|index| part.vertices[index as usize].position)
-                .into_iter()
+                .iter()
+                .map(|index| part.vertices[*index as usize].position)
                 .sum::<DVec3>()
                 / 4.0;
             let point = divider + (center - divider).normalize() * (256.0 / 700.0 * 0.25);
@@ -527,8 +559,8 @@ fn planned_surface_visibility_and_picking_follow_each_piece_and_owner() {
                 let part = &draft.partitions[0];
                 let center = item
                     .vertices
-                    .map(|index| part.vertices[index as usize].position)
-                    .into_iter()
+                    .iter()
+                    .map(|index| part.vertices[*index as usize].position)
                     .sum::<DVec3>()
                     / 4.0;
                 let camera = Camera::planar(Projection::Top, center.as_vec3(), 256.0);

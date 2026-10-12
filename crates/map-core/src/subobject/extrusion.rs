@@ -118,8 +118,14 @@ pub fn plan_partition_extrusion_with_materials(
             .unwrap();
         let bottom = piece
             .vertices
-            .map(|vertex| part.vertices[vertex as usize].position);
-        let top = bottom.map(|point| point + part.normal() * spec.height);
+            .iter()
+            .map(|vertex| part.vertices[*vertex as usize].position)
+            .collect::<Vec<_>>();
+        let top = bottom
+            .iter()
+            .map(|point| *point + part.normal() * spec.height)
+            .collect::<Vec<_>>();
+        let count = bottom.len();
         if top
             .iter()
             .any(|point| !point.is_finite() || point.abs().max_element() > MAX_COORDINATE)
@@ -128,9 +134,9 @@ pub fn plan_partition_extrusion_with_materials(
                 "Brush {solid_id}: extruded piece exceeds ±65536 units"
             )));
         }
-        let mut polygons = vec![top.to_vec(), bottom.into_iter().rev().collect()];
-        for index in 0..4 {
-            let next = (index + 1) % 4;
+        let mut polygons = vec![top.clone(), bottom.iter().copied().rev().collect()];
+        for index in 0..count {
+            let next = (index + 1) % count;
             polygons.push(vec![bottom[index], bottom[next], top[next], top[index]]);
         }
         let planes = crate::primitive::convex_planes(polygons)?;
@@ -160,9 +166,9 @@ pub fn plan_partition_extrusion_with_materials(
                 surface: ExtrusionSurface::Base,
             },
         ];
-        for index in 0..4 {
+        for index in 0..count {
             let a = incidence(&part.vertices[piece.vertices[index] as usize]);
-            let b = incidence(&part.vertices[piece.vertices[(index + 1) % 4] as usize]);
+            let b = incidence(&part.vertices[piece.vertices[(index + 1) % count] as usize]);
             let neighbor = a
                 .intersection(&b)
                 .find(|side| **side != original.id)
@@ -208,8 +214,11 @@ pub fn plan_partition_extrusion_with_materials(
             extra: Vec::new(),
         };
         let shape = topology(&prism)?;
-        if shape.vertices.len() != 8
-            || shape.faces.iter().any(|face| face.vertices.len() != 4)
+        if shape.vertices.len() != count * 2
+            || shape.faces.iter().any(|face| {
+                let expected = if face.side <= 2 { count } else { 4 };
+                face.vertices.len() != expected
+            })
             || bottom.iter().chain(&top).any(|point| {
                 !shape
                     .vertices
@@ -218,7 +227,7 @@ pub fn plan_partition_extrusion_with_materials(
             })
         {
             return Err(invalid(format!(
-                "Brush {solid_id}: extrusion does not retain its eight planned corners"
+                "Brush {solid_id}: extrusion does not retain its planned corners"
             )));
         }
         pieces.push(ExtrusionPiece {
@@ -449,7 +458,7 @@ mod tests {
                                     == "WOOD/TEST"
                                     && side.rotation == 0.0));
                                 let ring = &partitions[0].loops[piece.partition as usize];
-                                for vertex in ring.vertices {
+                                for &vertex in &ring.vertices {
                                     let point = partitions[0].vertices[vertex as usize].position;
                                     if texture_lock {
                                         let a = crate::texel_uv(source, point);

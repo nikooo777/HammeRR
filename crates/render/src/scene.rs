@@ -80,7 +80,7 @@ pub struct SceneMesh {
 #[derive(Debug, Clone)]
 pub struct FaceOverlay {
     pub source: FaceId,
-    pub points: [DVec3; 4],
+    pub points: Vec<DVec3>,
     pub material: String,
 }
 

@@ -191,12 +191,17 @@ supporting brush faces for selection queries.
 
 ### Vertices, edges and faces
 
-Select brushes, then open **Reshape brushes…**. Choose **Edges**, **Vertices** or
+Select brushes, then open **Reshape brushes…**. **Brush scope** chooses one
+brush by ID, material and position, or **All selected** captures up to sixteen
+brushes. Large brush entities have paginated child choices; selecting one child
+keeps its owner and siblings intact. Choose **Edges**, **Vertices** or
 **Faces**, then **Pick in viewport**. Click to select, Ctrl-click to toggle, or
 use the component list to choose overlapping parts. The original brush scope
 stays available as you select components. An empty click clears the component
 selection. **Stop viewport picking**, **Cancel** or Esc returns to object picking
 and discards the component draft.
+
+![Inspecting one child from the final page of a large brush entity](docs/images/component-brush-scope.png)
 
 Corners and edges can be selected through surfaces, matching their blue guides.
 Face clicks select the nearest visible brush surface. Hidden brushes have no
@@ -802,7 +807,7 @@ For example, place a warm light:
 | Brush clipping | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Brush hollowing | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Brush carving | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
-| Brush components | `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
+| Brush components | `get_component_sources`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component reshaping | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `commit_component_edit`, `cancel_component_edit` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
@@ -860,6 +865,7 @@ python -B scripts/validate_texture_strokes.py --output /tmp/hammerr-texture-chec
 python -B scripts/validate_texture_chain.py --output /tmp/hammerr-chain-check
 python -B scripts/validate_map_statistics.py --output /tmp/hammerr-statistics-check
 python -B scripts/validate_pointfiles.py --output /tmp/hammerr-pointfile-check
+python -B scripts/validate_component_sources.py --output /tmp/hammerr-source-check
 python -B scripts/validate_components.py --output /tmp/hammerr-component-check
 python -B scripts/validate_component_topology.py --output /tmp/hammerr-topology-check
 python -B scripts/validate_component_transforms.py --output /tmp/hammerr-transform-check
@@ -883,6 +889,12 @@ camera, selection and view.
 `validate_component_transforms.py` and `validate_carving.py` use a private
 headless session and do not accept a GUI URL. Add `--render` to the topology
 validator for offscreen GPU pixel checks without opening a desktop window.
+
+`get_component_sources` pages the selected owners' committed brushes without
+expanding full topology. It returns ID, owner, material, bounds, total, active
+scope and `snapshot`; `offset` defaults to 0 and `limit` to 100 (1–256).
+Capture one to sixteen returned IDs with `set_component_picking`. Source pages
+stay unchanged during previews and do not alter map history.
 
 Component queries return full stored precision. Use each response's `snapshot`
 when selecting components or previewing a move, and the preview's `token` for
@@ -1152,8 +1164,8 @@ static props, areaportals, overlays, cubemaps and origin brushes remain
 unfinished. Unsupported geometry is reported in diagnostics. The BSP
 reader/writer is verified against stock CS:S maps.
 
-Editor work ahead includes broader component split/weld controls, displacement clipping,
-multi-cutter carving, displacement tools, model rendering and broader map checks.
+Editor work ahead includes staged component partitions and creases, displacement
+clipping and authoring, model rendering and broader map checks.
 
 ## Project layout
 

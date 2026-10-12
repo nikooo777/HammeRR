@@ -5418,6 +5418,93 @@ mod tests {
     }
 
     #[test]
+    fn component_source_controls_page_large_owners_and_edit_one_child() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let mut ids = Vec::new();
+        for index in 0..105 {
+            let ObjectId::Solid(id) = state
+                .create_block(
+                    Actor::Agent,
+                    DVec3::new(index as f64 * 96.0, 0.0, 0.0),
+                    DVec3::new(index as f64 * 96.0 + 64.0, 64.0, 64.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            ids.push(id);
+        }
+        let owner = state
+            .edit(Actor::Agent, "owner", |tx| {
+                map_core::edit::tie_to_entity(tx, &ids, "func_detail", &[])
+            })
+            .unwrap();
+        state.select(&[owner], SelectMode::Replace).unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = ComponentsWindow::new().unwrap();
+        components_ui::bind(&window, &shared);
+        window.set_kind(2);
+        components_ui::refresh(&window, &lock(&shared));
+        assert_eq!(window.get_source_total(), 105);
+        assert!(window.get_rows().row_count() == 0);
+        assert!(!window.get_source_all());
+        assert!(window.get_summary().contains("Choose a brush"));
+        window.invoke_page_sources(1);
+        assert_eq!(window.get_source_ids().row_count(), 5);
+        assert_eq!(window.get_source_summary(), "101–105 of 105");
+        window.set_source_index(1);
+        window.invoke_choose_source();
+        assert!(window.get_picking());
+        assert_eq!(window.get_rows().row_count(), 6);
+        assert_eq!(lock(&shared).component_solids(), vec![ids[100]]);
+        assert_eq!(lock(&shared).selected_ids(), vec![owner]);
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "component-brush-scope");
+        for label in [
+            "Previous brushes",
+            "Next brushes",
+            "All selected",
+            "Cancel",
+            "Preview move",
+        ] {
+            assert_dialog_button_visible(&window, label);
+        }
+        window.invoke_choose(window.get_rows().row_data(0).unwrap().key);
+        window.set_move_z("8".into());
+        window.set_snap(false);
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        window.invoke_apply();
+        let changed = lock(&shared).document().vmf().clone();
+        assert_eq!(
+            &changed.entities[0].solids[..100],
+            &original.entities[0].solids[..100]
+        );
+        assert_eq!(
+            &changed.entities[0].solids[101..],
+            &original.entities[0].solids[101..]
+        );
+        assert_ne!(
+            changed.entities[0].solids[100],
+            original.entities[0].solids[100]
+        );
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        window.invoke_cancel();
+    }
+
+    #[test]
     fn component_scale_rotate_controls_share_pivots_and_preserve_valid_drafts() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -121,8 +121,77 @@ fn transform_inputs(
     Ok((spec, pivot))
 }
 
+fn refresh_sources(window: &ComponentsWindow, session: &Session) {
+    let mut offset = window.get_source_offset().max(0) as usize;
+    let mut report = session
+        .component_sources(offset, crate::session::components::SOURCE_PAGE_SIZE)
+        .unwrap();
+    let total = report["total"].as_u64().unwrap() as usize;
+    if offset >= total && offset != 0 {
+        offset = 0;
+        report = session
+            .component_sources(offset, crate::session::components::SOURCE_PAGE_SIZE)
+            .unwrap();
+    }
+    let sources = report["sources"].as_array().unwrap();
+    let mut labels = vec![slint::SharedString::from("Choose a brush to inspect…")];
+    let mut ids = Vec::new();
+    for source in sources {
+        let material = source["material"].as_str().unwrap_or("no material");
+        let bounds = &source["bounds"];
+        let center = if bounds.is_null() {
+            String::new()
+        } else {
+            let point = DVec3::from_array(std::array::from_fn(|index| {
+                (bounds["mins"][index].as_f64().unwrap() + bounds["maxs"][index].as_f64().unwrap())
+                    * 0.5
+            }));
+            format!(" · {}", position(point))
+        };
+        let id = source["solid"].as_u64().unwrap().to_string();
+        labels.push(format!("Brush {id} · {material}{center}").into());
+        ids.push(slint::SharedString::from(id));
+    }
+    let active = session.component_solids();
+    let index = if active.len() == 1 {
+        ids.iter()
+            .position(|id| id.as_str() == active[0].to_string())
+            .map_or(0, |index| index + 1)
+    } else {
+        0
+    };
+    window.set_source_labels(Rc::new(VecModel::from(labels)).into());
+    window.set_source_ids(Rc::new(VecModel::from(ids)).into());
+    window.set_source_index(index as i32);
+    window.set_source_offset(offset as i32);
+    window.set_source_total(total.min(i32::MAX as usize) as i32);
+    window.set_source_all(total > 0 && total <= map_core::subobject::MAX_SOLIDS);
+    window.set_source_next(offset.saturating_add(sources.len()) < total);
+    window.set_source_summary(
+        format!(
+            "{}–{} of {total}",
+            offset + usize::from(!sources.is_empty()),
+            offset + sources.len()
+        )
+        .into(),
+    );
+}
+
+fn capture_sources(window: &ComponentsWindow, shared: &SharedSession, ids: Vec<u32>) {
+    let kind = match window.get_kind() {
+        1 => Kind::Vertex,
+        2 => Kind::Face,
+        _ => Kind::Edge,
+    };
+    let mut session = lock(shared);
+    let result = session.set_component_picking(Some(kind), &ids, window.get_stamp().as_str());
+    refresh(window, &session);
+    window.set_message(result.err().unwrap_or_default().into());
+}
+
 pub fn refresh(window: &ComponentsWindow, session: &Session) {
     let was_topology_preview = window.get_topology_preview();
+    refresh_sources(window, session);
     let center = session.component_center().ok().flatten();
     window.set_transform_center(
         center
@@ -178,7 +247,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         Ok(shapes) => shapes,
         Err(error) => {
             window.set_rows(Rc::new(VecModel::default()).into());
-            window.set_summary(error.into());
+            window.set_summary(format!("{error}. Choose a brush in Brush scope above.").into());
             window.set_ready(false);
             return;
         }
@@ -457,6 +526,59 @@ fn picking(window: &ComponentsWindow, shared: &SharedSession, enabled: bool) {
 }
 
 pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
+    window.on_choose_source({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            if window.get_source_index() <= 0 {
+                return;
+            }
+            if let Some(id) = window
+                .get_source_ids()
+                .row_data(window.get_source_index() as usize - 1)
+                .and_then(|id| id.parse::<u32>().ok())
+            {
+                capture_sources(&window, &shared, vec![id]);
+            }
+        }
+    });
+    window.on_all_sources({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let session = lock(&shared);
+            let report = session
+                .component_sources(0, map_core::subobject::MAX_SOLIDS)
+                .unwrap();
+            if report["total"].as_u64().unwrap() as usize > map_core::subobject::MAX_SOLIDS {
+                return;
+            }
+            let ids = report["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|source| source["solid"].as_u64().unwrap() as u32)
+                .collect();
+            drop(session);
+            capture_sources(&window, &shared, ids);
+        }
+    });
+    window.on_page_sources({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move |direction| {
+            let window = window.unwrap();
+            window.set_source_offset(
+                window
+                    .get_source_offset()
+                    .saturating_add(
+                        direction
+                            .saturating_mul(crate::session::components::SOURCE_PAGE_SIZE as i32),
+                    )
+                    .max(0),
+            );
+            refresh(&window, &lock(&shared));
+        }
+    });
     window.on_toggle_picking({
         let (window, shared) = (window.as_weak(), shared.clone());
         move || {

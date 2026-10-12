@@ -24,6 +24,7 @@ pub struct Catalog {
     pub entries: Vec<Entry>,
     pub total: usize,
     pub offset: usize,
+    pub favorites: crate::material_favorites::Status,
 }
 
 pub fn category(name: &str) -> &'static str {
@@ -158,6 +159,7 @@ pub fn browse(
             .collect(),
         total,
         offset,
+        favorites: crate::material_favorites::Status::session(favorites.len()),
     })
 }
 

@@ -10,6 +10,7 @@ mod inspector;
 mod interaction;
 mod lighting_ui;
 mod management_ui;
+mod material_favorites;
 mod material_replace_ui;
 mod materials;
 mod mcp;
@@ -2032,6 +2033,18 @@ fn refresh_material_catalog(window: &MaterialWindow, session: &mut Session) {
         })
         .collect::<Vec<_>>();
     window.set_groups(ModelRc::new(VecModel::from(groups)));
+    window.set_favorites_status(
+        catalog
+            .favorites
+            .error
+            .as_deref()
+            .unwrap_or(match catalog.favorites.persistence {
+                material_favorites::Persistence::Session => "Favorites last for this session",
+                material_favorites::Persistence::Persistent => "Favorites saved across sessions",
+                material_favorites::Persistence::Blocked => "Favorites storage unavailable",
+            })
+            .into(),
+    );
     window.set_total(catalog.total as i32);
     window.set_catalog_label(if catalog.total == 0 {
         "No matching materials".into()
@@ -8135,6 +8148,10 @@ mod tests {
             assert_dialog_button_visible(&material, label);
         }
         assert!(material.get_total() > 0);
+        assert_eq!(
+            material.get_favorites_status(),
+            "Favorites last for this session"
+        );
         let concrete = session
             .material_catalog("", "category:Concrete", 0, 36)
             .unwrap();
@@ -8168,6 +8185,36 @@ mod tests {
             .unwrap()
             .invoke_accessible_default_action();
         assert!(cancelled.get());
+        let favorites_directory = tempfile::tempdir().unwrap();
+        session.configure_recovery(Ok(favorites_directory.path().join("recovery")));
+        session.favorite_material("brick/wall", true).unwrap();
+        refresh_material_catalog(&material, &mut session);
+        assert_eq!(
+            material.get_favorites_status(),
+            "Favorites saved across sessions"
+        );
+        let favorite_path = favorites_directory
+            .path()
+            .join("recovery")
+            .join(material_favorites::FILE_NAME);
+        let mut permissions = std::fs::metadata(&favorite_path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&favorite_path, permissions).unwrap();
+        assert!(session.favorite_material("wood/floor", true).is_err());
+        refresh_material_catalog(&material, &mut session);
+        refresh_material_window(&material, &mut session);
+        assert!(material.get_favorites_status().contains("could not save"));
+        save_ui_snapshot(material.window(), "material-favorites-error");
+        let status = i_slint_backend_testing::ElementHandle::find_by_element_id(
+            &material,
+            "MaterialWindow::favorites-state",
+        )
+        .next()
+        .unwrap();
+        assert!(
+            status.absolute_position().y + status.size().height
+                <= material.window().size().height as f32
+        );
         material.hide().unwrap();
         let surface = SurfaceWindow::new().unwrap();
         surface.set_selection_label("Textures on 3 selected faces".into());

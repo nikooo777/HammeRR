@@ -1550,7 +1550,9 @@ fail explicitly and retain previous output. Editing works without this backend.
 Bodies currently use default surface properties; brush models use a one-kilogram
 mass fallback. Horizontal structural-world liquids also receive clipped fluid
 bodies with native surface planes and damping defaults. Material friction/density,
-authored masses, detail/model liquids and prop/terrain bodies remain unfinished.
+authored masses and detail/model liquids remain unfinished. World terrain receives
+native triangle-soup contact bodies when engine physics is selected; static
+props use the collision assets supplied with their models.
 Private CS:S checks establish world body contact;
 one live player spawn/teleport remains grounded in both modes, while a physics
 crate falls through the map without bodies and rests on the floor with engine
@@ -1617,6 +1619,16 @@ Leaf membership uses conservative model-header bounds; baked prop lighting,
 prop shadows and exact hull clipping remain unfinished.
 Static-prop asset collision works in either physics build mode; embedded
 brush/fluid body counts are reported separately.
+
+Imported **world displacements** compile native power-2/3/4 surface grids, alpha
+weights, triangle tags and face/leaf references, with matching UI/MCP build
+counts. Their parent volumes do not seal the map or become solid boxes. Engine
+physics adds checked terrain contact meshes and reports `physics_mesh_triangles`.
+Native no-physics, no-hull and no-ray flags are retained. Invalid grids, unsupported
+entity/detail terrain, subdivision and triangle removal retain previous output.
+Baked terrain lighting and neighbor sewing remain unfinished; these surfaces
+currently render without lightmaps. Terrain creation/editing controls remain
+roadmap work; use existing terrain in imported VMFs.
 
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
@@ -1731,10 +1743,12 @@ connections in the same private display. Direction properties such as Move
 direction accept Pitch/Yaw/Roll through both the inspector and MCP.
 `scripts/validate_static_props.py` checks native props through both MCP build
 paths; add `--runtime` to verify their collision choices in private CS:S.
+`scripts/validate_terrain.py --runtime` checks imported terrain through both MCP
+build paths, asymmetric heights, player hulls, ray flags and dynamic contact.
 
 </details>
 
-Tighter VVIS portal flow, VRAD, physics collision, compiled displacements,
+Tighter VVIS portal flow, VRAD, broader physics collision, terrain lighting/sewing,
 production static-prop lighting, areaportals and overlays remain unfinished. Horizontal world water
 now has native leaf/surface metadata and optional fluid bodies with verified crate
 buoyancy; depth/below-water material handling and broader rendering remain pending. Cubemap samples
@@ -1745,8 +1759,8 @@ contact remain pending. Unsupported geometry is reported
 in diagnostics. The BSP reader/writer is verified against stock CS:S maps,
 including bounded native LDR/HDR lighting ranges, styles, bump maps and
 world-light records, static-prop layouts and displacement grids/neighbors.
-Displacement geometry records round trip exactly across stock maps; terrain
-compilation remains pending. A tested CPU reference recovers projected luxels and
+Displacement geometry records round trip exactly across stock maps; world grids
+and optional native contact meshes now compile. A tested CPU reference recovers projected luxels and
 point-light/brush-shadow contributions and drives the optional Direct LDR bake.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,

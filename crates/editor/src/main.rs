@@ -7574,6 +7574,42 @@ mod tests {
             )
         })
         .unwrap();
+        room.edit("terrain surface", |tx| {
+            let ObjectId::Solid(id) = map_core::edit::create_block(
+                tx,
+                DVec3::new(-224.0, -224.0, 0.0),
+                DVec3::new(-160.0, -160.0, 8.0),
+                "dev/dev_measuregeneric01",
+            )?
+            else {
+                unreachable!()
+            };
+            let solid = tx.solid_mut(id)?;
+            let geometry = map_core::BrushGeometry::from_solid(solid).unwrap();
+            let face = geometry
+                .faces
+                .iter()
+                .find(|face| face.plane.normal.z > 0.99)
+                .unwrap();
+            solid.sides[face.side].displacement = Some(source_formats::vmf::DispInfo {
+                power: 2,
+                start_position: face.vertices[0],
+                flags: Some(0),
+                elevation: 0.0,
+                subdivided: false,
+                normals: None,
+                distances: None,
+                offsets: None,
+                offset_normals: None,
+                alphas: None,
+                triangle_tags: None,
+                allowed_verts: None,
+                extra_properties: Default::default(),
+                extra: Vec::new(),
+            });
+            Ok(())
+        })
+        .unwrap();
         std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
         controller.window.invoke_change_lighting(1);
@@ -7602,12 +7638,23 @@ mod tests {
         assert_eq!(stats["static_props"], 1);
         assert_eq!(stats["static_prop_models"], 1);
         assert!(controller.window.get_details().contains("Static props: 1"));
+        assert_eq!(stats["displacements"], 1);
+        assert_eq!(stats["displacement_vertices"], 25);
+        assert_eq!(stats["displacement_triangles"], 32);
+        assert!(controller.window.get_details().contains("Terrain: 1"));
         assert_eq!(stats["lighting_mode"], "direct_ldr");
         assert_eq!(stats["world_lights"], 1);
         if native_physics {
             assert_eq!(stats["physics_mode"], "engine");
             assert!(stats["physics_convexes"].as_u64().unwrap() > 0);
             assert_eq!(stats["physics_fluids"], 1);
+            assert_eq!(stats["physics_mesh_triangles"], 32);
+            assert!(
+                controller
+                    .window
+                    .get_details()
+                    .contains("Terrain triangles: 32")
+            );
             assert!(controller.window.get_details().contains("1 fluid region"));
         }
         assert!(controller.window.get_details().contains("Baked lighting:"));

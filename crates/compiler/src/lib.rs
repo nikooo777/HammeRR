@@ -101,7 +101,7 @@ impl PhysicsMode {
                 "Keeps BSP brush hulls and static-prop asset collisions; omits compiled brush/fluid bodies."
             }
             Self::Engine => {
-                "Uses the installed Linux64 CS:S library in an isolated worker. Builds world, clip, brush-model and horizontal world-fluid bodies with default surfaces. Static props use model assets. Terrain bodies, material density and authored masses are unfinished."
+                "Uses the installed Linux64 CS:S library in an isolated worker. Builds world, clip, brush-model, world-fluid and terrain bodies with default surfaces. Static props use model assets. Material density and authored masses are unfinished."
             }
         }
     }
@@ -193,6 +193,9 @@ pub struct Stats {
     pub static_props: usize,
     pub static_prop_models: usize,
     pub static_prop_leaf_refs: usize,
+    pub displacements: usize,
+    pub displacement_vertices: usize,
+    pub displacement_triangles: usize,
     pub clusters: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
@@ -209,6 +212,7 @@ pub struct Stats {
     pub physics_convexes: usize,
     pub physics_bytes: usize,
     pub physics_fluids: usize,
+    pub physics_mesh_triangles: usize,
     pub elapsed: Duration,
 }
 
@@ -274,6 +278,17 @@ fn build(
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
     output.stats.cubemap_samples = map.cubemaps.len();
+    output.stats.displacements = map.terrains.len();
+    output.stats.displacement_vertices = map
+        .terrains
+        .iter()
+        .map(|terrain| terrain.vertices.len())
+        .sum();
+    output.stats.displacement_triangles = map
+        .terrains
+        .iter()
+        .map(|terrain| terrain.triangles.len())
+        .sum();
     for info in map.materials.iter().filter(|m| !m.found) {
         output.report.diagnostics.push(Diagnostic::warning(
             format!("material {} was not found", info.name),
@@ -343,7 +358,11 @@ fn build(
         None,
     ));
     control.advance(Stage::Faces)?;
-    let faces = faces::build_controlled(&map, &tree, 0, control)?;
+    let mut faces = faces::build_controlled(&map, &tree, 0, control)?;
+    faces.extend(map.terrain_faces(&tree, &mut output.report, control)?);
+    if output.report.has_errors() {
+        return Ok(());
+    }
     let mut models = vec![emit::Model {
         entity: 0,
         tree,
@@ -418,6 +437,7 @@ fn build(
         output.stats.physics_convexes = stats.convexes;
         output.stats.physics_bytes = stats.bytes;
         output.stats.physics_fluids = stats.fluids;
+        output.stats.physics_mesh_triangles = stats.mesh_triangles;
     }
     control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();

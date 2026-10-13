@@ -79,6 +79,9 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "static_props": stats.static_props,
         "static_prop_models": stats.static_prop_models,
         "static_prop_leaf_refs": stats.static_prop_leaf_refs,
+        "displacements": stats.displacements,
+        "displacement_vertices": stats.displacement_vertices,
+        "displacement_triangles": stats.displacement_triangles,
         "clusters": stats.clusters,
         "visibility_portals": stats.visibility_portals,
         "visibility_bytes": stats.visibility_bytes,
@@ -95,6 +98,7 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "physics_convexes": stats.physics_convexes,
         "physics_bytes": stats.physics_bytes,
         "physics_fluids": stats.physics_fluids,
+        "physics_mesh_triangles": stats.physics_mesh_triangles,
         "elapsed_ms": stats.elapsed.as_millis(),
     })
 }

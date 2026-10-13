@@ -26,6 +26,10 @@ mod origins;
 #[path = "cubemaps.rs"]
 mod cubemaps;
 
+#[path = "terrain.rs"]
+mod terrain;
+pub use terrain::Terrain;
+
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
@@ -155,6 +159,7 @@ pub struct Map<'a> {
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
     pub cubemaps: Vec<bsp::Cubemap>,
+    pub terrains: Vec<Terrain>,
     brush_side_count: usize,
 }
 
@@ -178,6 +183,7 @@ impl<'a> Map<'a> {
             brushes: Vec::new(),
             entities: Vec::new(),
             cubemaps: Vec::new(),
+            terrains: Vec::new(),
             brush_side_count: 0,
         };
         if let Err(error) = vmf.validate_ids() {
@@ -320,12 +326,7 @@ impl<'a> Map<'a> {
             return Ok(());
         };
         if solid.sides.iter().any(|side| side.displacement.is_some()) {
-            report.diagnostics.push(Diagnostic::warning(
-                "displacements are not compiled yet; brush left out",
-                Some(object),
-                None,
-            ));
-            return Ok(());
+            return self.add_terrain(solid, &geometry, entity, extra_contents, report, control);
         }
         if self.origin_material(solid, control)? {
             report.diagnostics.push(Diagnostic::error("Origin brushes must belong to a runtime brush entity; world and func_detail origins are unsupported", Some(object), Some(geometry.center())));
@@ -518,5 +519,27 @@ impl<'a> Map<'a> {
             flags: info.surface,
             texdata: texdata as i32,
         })
+    }
+
+    pub(crate) fn model_bounds(&self, entity: usize) -> (DVec3, DVec3) {
+        let mut bounds = self.entities[entity].brushes.iter().fold(
+            (DVec3::MAX, DVec3::MIN),
+            |(lo, hi), &index| {
+                (
+                    lo.min(self.brushes[index].mins),
+                    hi.max(self.brushes[index].maxs),
+                )
+            },
+        );
+        if entity == 0 {
+            for point in self
+                .terrains
+                .iter()
+                .flat_map(|terrain| &terrain.mesh.positions)
+            {
+                bounds = (bounds.0.min(*point), bounds.1.max(*point));
+            }
+        }
+        bounds
     }
 }

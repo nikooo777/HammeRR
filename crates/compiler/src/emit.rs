@@ -112,7 +112,9 @@ impl Geometry {
             first_edge,
             edge_count: index(vertices.len(), "face edge")?,
             texinfo: index(face.texinfo, "texinfo")?,
-            dispinfo: -1,
+            dispinfo: face
+                .displacement
+                .map_or(Ok(-1), |value| index(value, "displacement"))?,
             fog_volume: if model.entity == 0 {
                 water.face_volume(face, map, &model.tree)
             } else {
@@ -135,12 +137,7 @@ fn entity_text(map: &Map, models: &[Model]) -> Result<String, String> {
     for (entity_index, entity) in map.entities.iter().enumerate() {
         let mut properties = entity.properties.clone();
         if entity_index == 0 {
-            let (mins, maxs) = map.entities[0]
-                .brushes
-                .iter()
-                .fold((DVec3::MAX, DVec3::MIN), |(lo, hi), &i| {
-                    (lo.min(map.brushes[i].mins), hi.max(map.brushes[i].maxs))
-                });
+            let (mins, maxs) = map.model_bounds(0);
             properties.retain(|(key, _)| !matches!(key.as_str(), "world_mins" | "world_maxs"));
             properties.push(("world_mins".into(), format_vec3(mins)));
             properties.push(("world_maxs".into(), format_vec3(maxs)));
@@ -296,12 +293,7 @@ pub fn build(
                 leaf_brushes[(-1 - mapping[leaf]) as usize].push(id);
             }
         }
-        let (mins, maxs) = map.entities[model.entity]
-            .brushes
-            .iter()
-            .fold((DVec3::MAX, DVec3::MIN), |(lo, hi), &i| {
-                (lo.min(map.brushes[i].mins), hi.max(map.brushes[i].maxs))
-            });
+        let (mins, maxs) = map.model_bounds(model.entity);
         bsp_models.push(bsp::Model {
             mins: mins.as_vec3().to_array(),
             maxs: maxs.as_vec3().to_array(),
@@ -424,5 +416,57 @@ pub fn build(
     }
     bsp.set_texdata_strings(&names);
     bsp.set_entities(&entity_text(map, models)?);
+    if !map.terrains.is_empty() {
+        let mut data = bsp::Displacements {
+            infos: Vec::new(),
+            vertices: Vec::new(),
+            triangles: Vec::new(),
+        };
+        for (terrain_index, terrain) in map.terrains.iter().enumerate() {
+            control.checkpoint()?;
+            let face = faces
+                .iter()
+                .position(|face| face.dispinfo == terrain_index as i16)
+                .ok_or("Displacement face was not emitted")?;
+            let info = bsp::DisplacementInfo {
+                face: index(face, "displacement face")?,
+                vertex_start: index(data.vertices.len(), "displacement vertex")?,
+                triangle_start: index(data.triangles.len(), "displacement triangle")?,
+                ..terrain.info
+            };
+            data.infos.push(info);
+            data.vertices.extend_from_slice(&terrain.vertices);
+            data.triangles.extend_from_slice(&terrain.triangles);
+        }
+        bsp.set_displacements(&data).map_err(|e| e.to_string())?;
+        for (index, terrain) in map.terrains.iter().enumerate() {
+            let quad = terrain
+                .base
+                .map(|point| stored_vertex(point).as_vec3().to_array());
+            let positions = data.positions(index, quad).map_err(|e| e.to_string())?;
+            if terrain.indices.iter().any(|&[a, b, c]| {
+                let [a, b, c] =
+                    [a, b, c].map(|index| DVec3::from_array(positions[index].map(f64::from)));
+                (b - a).cross(c - a).length_squared() < 1e-12
+            }) {
+                return Err(format!(
+                    "Displacement {} has collapsed native float triangles; enlarge its base or reduce its power",
+                    terrain.side
+                ));
+            }
+            if positions
+                .iter()
+                .zip(&terrain.mesh.positions)
+                .any(|(point, &source)| {
+                    DVec3::from_array(point.map(f64::from)).distance(source) > 0.02
+                })
+            {
+                return Err(format!(
+                    "Displacement {} native float grid does not preserve its authored vertices",
+                    terrain.side
+                ));
+            }
+        }
+    }
     Ok(bsp)
 }

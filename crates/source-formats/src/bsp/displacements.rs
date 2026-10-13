@@ -83,6 +83,10 @@ impl Default for DisplacementInfo {
 }
 
 impl DisplacementInfo {
+    pub fn flags(self) -> Option<u32> {
+        (self.min_tessellation < 0).then_some(self.min_tessellation as u32 & i32::MAX as u32)
+    }
+
     pub fn grid_size(self) -> io::Result<usize> {
         if !(2..=4).contains(&self.power) {
             return Err(invalid("displacement power must be 2, 3 or 4"));

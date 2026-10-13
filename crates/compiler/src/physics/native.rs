@@ -12,6 +12,9 @@ use source_formats::bsp::{
 
 use super::{Body, Request, Shape, read_bounded};
 
+#[path = "native_soup.rs"]
+mod soup;
+
 const LIBRARY_SHA256: &str = "2676cdc02be4b4188f7121c201d5f5a681f9c1c7c924fe7f9159cefd5a718277";
 const GUARD_BYTES: usize = 64;
 const GEOMETRY_EPSILON: f64 = 0.02;
@@ -33,6 +36,10 @@ type GameData = unsafe extern "C" fn(Pointer, i32) -> u32;
 type Vertices = unsafe extern "C" fn(Pointer, i32, i32, *mut Vector);
 type Material = unsafe extern "C" fn(Pointer, i32, i32) -> i32;
 type SetMaterial = unsafe extern "C" fn(Pointer, i32, i32, i32);
+type CreateSoup = unsafe extern "C" fn(Pointer) -> Pointer;
+type SoupTriangle =
+    unsafe extern "C" fn(Pointer, Pointer, *const Vector, *const Vector, *const Vector, i32);
+type ConvertSoup = unsafe extern "C" fn(Pointer, Pointer, bool) -> Pointer;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -45,6 +52,10 @@ struct Api {
     set_game_data: SetGameData,
     convex_free: Release,
     convert: Convert,
+    soup_create: CreateSoup,
+    soup_destroy: Release,
+    soup_triangle: SoupTriangle,
+    soup_convert: ConvertSoup,
     destroy: Release,
     size: Size,
     write: Write,
@@ -112,6 +123,10 @@ impl Api {
             set_game_data: unsafe { member(pointer, base, 6, 0x20aa0)? },
             convex_free: unsafe { member(pointer, base, 7, 0x20c90)? },
             convert: unsafe { member(pointer, base, 15, 0x20980)? },
+            soup_create: unsafe { member(pointer, base, 11, 0x23230)? },
+            soup_destroy: unsafe { member(pointer, base, 12, 0x22590)? },
+            soup_triangle: unsafe { member(pointer, base, 13, 0x21830)? },
+            soup_convert: unsafe { member(pointer, base, 14, 0x23c40)? },
             destroy: unsafe { member(pointer, base, 17, 0x227b0)? },
             size: unsafe { member(pointer, base, 18, 0x21ce0)? },
             write: unsafe { member(pointer, base, 19, 0x20a90)? },
@@ -146,6 +161,9 @@ impl Api {
     }
 
     fn body(&self, body: &Body) -> Result<Collide<'_>, String> {
+        if let Some(mesh) = &body.mesh {
+            return self.soup(mesh);
+        }
         let mut convexes = body
             .shapes
             .iter()
@@ -215,6 +233,9 @@ fn point(vector: Vector) -> DVec3 {
 
 impl Collide<'_> {
     fn verify(&self, body: &Body, material: i32, work: &mut usize) -> Result<f32, String> {
+        if let Some(mesh) = &body.mesh {
+            return self.verify_soup(mesh, material, work);
+        }
         let volume = unsafe { (self.api.volume)(self.api.pointer, self.pointer) };
         if !volume.is_finite() || volume <= 0.0 {
             return Err("Native physics body has invalid volume".into());

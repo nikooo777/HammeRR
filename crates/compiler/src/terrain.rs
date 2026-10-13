@@ -1,0 +1,311 @@
+use glam::DVec3;
+use map_core::brush::BrushGeometry;
+use map_core::displacement::DisplacementMesh;
+use source_formats::bsp::{
+    self, DisplacementInfo, DisplacementTriangle, DisplacementVertex, contents, surf,
+};
+use source_formats::vmf::Solid;
+
+use super::{Map, support};
+use crate::emit::stored_vertex;
+use crate::faces::Face;
+use crate::tree::Tree;
+use crate::winding::Winding;
+use crate::{Control, Diagnostic, Report};
+
+const MAX_LEAF_WORK: usize = 16_000_000;
+const GEOMETRY_EPSILON: f64 = 0.02;
+
+#[derive(Debug)]
+pub struct Terrain {
+    pub solid: u32,
+    pub side: u32,
+    pub plane: usize,
+    pub texinfo: usize,
+    pub smoothing_groups: u32,
+    pub base: [DVec3; 4],
+    pub mesh: DisplacementMesh,
+    pub info: DisplacementInfo,
+    pub vertices: Vec<DisplacementVertex>,
+    pub triangles: Vec<DisplacementTriangle>,
+    pub indices: Vec<[usize; 3]>,
+}
+
+fn native_triangles(size: usize) -> Vec<[usize; 3]> {
+    let mut pending = vec![(0, 0, size - 1)];
+    let mut triangles = Vec::with_capacity((size - 1).pow(2) * 2);
+    while let Some((x, y, cells)) = pending.pop() {
+        if cells > 2 {
+            let half = cells / 2;
+            for (dx, dy) in [(half, half), (0, half), (half, 0), (0, 0)] {
+                pending.push((x + dx, y + dy, half));
+            }
+        } else {
+            let center = (y + 1) * size + x + 1;
+            let ring = [
+                (0, 1),
+                (0, 0),
+                (1, 0),
+                (2, 0),
+                (2, 1),
+                (2, 2),
+                (1, 2),
+                (0, 2),
+                (0, 1),
+            ]
+            .map(|(dx, dy)| (y + dy) * size + x + dx);
+            for pair in ring.windows(2) {
+                triangles.push([pair[1], pair[0], center]);
+            }
+        }
+    }
+    triangles
+}
+
+impl Map<'_> {
+    pub(super) fn add_terrain(
+        &mut self,
+        solid: &Solid,
+        geometry: &BrushGeometry,
+        entity: usize,
+        extra_contents: i32,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<(), String> {
+        let result = self.prepare_terrain(solid, geometry, entity, extra_contents, control);
+        match result {
+            Ok(terrain) => self.terrains.extend(terrain),
+            Err(error) => {
+                control.checkpoint()?;
+                report.diagnostics.push(Diagnostic::error(
+                    error,
+                    Some(format!("solid:{}", solid.id)),
+                    Some(geometry.center()),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn prepare_terrain(
+        &mut self,
+        solid: &Solid,
+        geometry: &BrushGeometry,
+        entity: usize,
+        extra_contents: i32,
+        control: &Control,
+    ) -> Result<Vec<Terrain>, String> {
+        if entity != 0 || extra_contents != 0 {
+            return Err("Only world displacement surfaces are compiled; detach this terrain from its brush entity".into());
+        }
+        let mut terrains = Vec::new();
+        for face in &geometry.faces {
+            control.checkpoint()?;
+            let side = &solid.sides[face.side];
+            let Some(disp) = &side.displacement else {
+                continue;
+            };
+            if disp.normals.is_some() != disp.distances.is_some() {
+                return Err("Displacement normals and distances must be provided together".into());
+            }
+            if self.terrains.len() + terrains.len() >= bsp::MAX_DISPLACEMENTS {
+                return Err("Native displacement patch limit exceeded".into());
+            }
+            if disp.flags.unwrap_or(0) & !14 != 0 || disp.subdivided {
+                return Err(
+                    "Bumped/unknown displacement flags and subdivision are not supported yet"
+                        .into(),
+                );
+            }
+            let base: [DVec3; 4] = face
+                .vertices
+                .clone()
+                .try_into()
+                .map_err(|_| "Displacements need a convex quad base face")?;
+            if !disp.start_position.is_finite()
+                || base
+                    .iter()
+                    .all(|point| point.distance(disp.start_position) > GEOMETRY_EPSILON)
+            {
+                return Err("Displacement start position must match a base corner".into());
+            }
+            let mesh = DisplacementMesh::build(face, disp).map_err(|e| e.to_string())?;
+            if mesh.positions.iter().any(|point| {
+                !point.is_finite() || point.abs().max_element() > super::MAX_COMPILE_COORD
+            }) || mesh.alphas.iter().any(|alpha| !(*alpha as f32).is_finite())
+            {
+                return Err("Displacement vertices/alphas must be finite and positions must fit Source compile bounds".into());
+            }
+            let material = self.materials.load(&side.material);
+            let material_info = self.materials.get(material);
+            if !material_info.draws
+                || material_info.contents != contents::SOLID
+                || material_info.surface & (surf::SKY | surf::SKY2D | surf::WARP) != 0
+            {
+                return Err(
+                    "Displacements currently require a visible ordinary solid material".into(),
+                );
+            }
+            let plane = support::find_authored(&mut self.planes, geometry, face, control)?
+                .ok_or("Cannot preserve displacement base plane support")?;
+            let source_texinfo = self.texinfo(side, material, DVec3::ZERO);
+            let mut info = self.texinfos.infos[source_texinfo];
+            if info
+                .texture_vecs
+                .iter()
+                .chain(&info.lightmap_vecs)
+                .flatten()
+                .any(|value| !value.is_finite())
+            {
+                return Err(
+                    "Displacement texture/lightmap projections must fit finite native floats"
+                        .into(),
+                );
+            }
+            info.flags = (info.flags | surf::NOLIGHT) & !surf::BUMPLIGHT;
+            let texinfo = self.texinfos.add(info);
+            let first = mesh.base_positions[0];
+            let info = DisplacementInfo {
+                start: stored_vertex(first).as_vec3().to_array(),
+                power: disp.power as i32,
+                min_tessellation: i32::MIN | disp.flags.unwrap_or(0) as i32,
+                ..Default::default()
+            };
+            let vertices = mesh
+                .positions
+                .iter()
+                .zip(&mesh.base_positions)
+                .zip(&mesh.alphas)
+                .map(|((&point, &base), &alpha)| {
+                    let offset = point - base;
+                    let distance = offset.length();
+                    DisplacementVertex {
+                        direction: if distance == 0.0 {
+                            [0.0; 3]
+                        } else {
+                            (offset / distance).as_vec3().to_array()
+                        },
+                        distance: distance as f32,
+                        alpha: alpha as f32,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let indices = native_triangles(mesh.size);
+            let triangles = if let Some(rows) = &disp.triangle_tags {
+                let cells = mesh.size - 1;
+                if rows.len() != cells || rows.iter().any(|row| row.len() != cells * 2) {
+                    return Err("Displacement triangle tag rows do not match its power".into());
+                }
+                rows.iter()
+                    .flatten()
+                    .map(|&tags| {
+                        let tags = u16::try_from(tags).map_err(
+                            |_| "Displacement triangle tags must fit native unsigned shorts",
+                        )?;
+                        if tags & 0x20 != 0 {
+                            return Err("Displacement triangle removal is not supported yet");
+                        }
+                        Ok(DisplacementTriangle { tags })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                indices
+                    .iter()
+                    .map(|&[a, b, c]| {
+                        let normal = (mesh.positions[c] - mesh.positions[a])
+                            .cross(mesh.positions[b] - mesh.positions[a])
+                            .normalize_or_zero();
+                        DisplacementTriangle {
+                            tags: 1 | if normal.z >= 0.7 { 6 } else { 0 },
+                        }
+                    })
+                    .collect()
+            };
+            if indices.iter().any(|&[a, b, c]| {
+                (mesh.positions[b] - mesh.positions[a])
+                    .cross(mesh.positions[c] - mesh.positions[a])
+                    .length_squared()
+                    < 1e-12
+            }) {
+                return Err("Displacement contains collapsed triangles".into());
+            }
+            terrains.push(Terrain {
+                solid: solid.id,
+                side: side.id,
+                plane,
+                texinfo,
+                smoothing_groups: side.smoothing_groups.unwrap_or(0),
+                base,
+                mesh,
+                info,
+                vertices,
+                triangles,
+                indices,
+            });
+        }
+        Ok(terrains)
+    }
+
+    pub(crate) fn terrain_faces(
+        &self,
+        tree: &Tree,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<Vec<Face>, String> {
+        let mut faces = Vec::with_capacity(self.terrains.len());
+        let mut work = 0;
+        for (terrain_index, terrain) in self.terrains.iter().enumerate() {
+            let (mins, maxs) = terrain
+                .mesh
+                .positions
+                .iter()
+                .fold((DVec3::MAX, DVec3::MIN), |(lo, hi), &point| {
+                    (lo.min(point), hi.max(point))
+                });
+            let mut leaves = Vec::new();
+            let mut pending = vec![0];
+            while let Some(index) = pending.pop() {
+                control.checkpoint()?;
+                work += 1;
+                if work > MAX_LEAF_WORK {
+                    return Err("Displacement leaf membership exceeded its work budget".into());
+                }
+                let node = &tree.nodes[index];
+                if let Some((plane, children)) = node.split {
+                    let plane = self.planes.get(plane);
+                    let center = (mins + maxs) * 0.5;
+                    let extent = plane.normal.abs().dot((maxs - mins) * 0.5);
+                    let distance = plane.distance(center);
+                    if distance + extent >= -GEOMETRY_EPSILON {
+                        pending.push(children[0]);
+                    }
+                    if distance - extent <= GEOMETRY_EPSILON {
+                        pending.push(children[1]);
+                    }
+                } else if !node.solid() {
+                    leaves.push(index);
+                }
+            }
+            if leaves.is_empty() {
+                report.diagnostics.push(Diagnostic::error(
+                    "Displacement does not touch open world space",
+                    Some(format!("solid:{}", terrain.solid)),
+                    Some((mins + maxs) * 0.5),
+                ));
+            }
+            faces.push(Face {
+                plane: terrain.plane,
+                texinfo: terrain.texinfo,
+                smoothing_groups: terrain.smoothing_groups,
+                winding: Winding(terrain.base.to_vec()),
+                node: None,
+                leaves,
+                displacement: Some(terrain_index),
+            });
+        }
+        if !self.terrains.is_empty() {
+            report.diagnostics.push(Diagnostic::warning("World displacement surfaces compiled without baked terrain lighting or neighbor sewing; they do not seal the map. CS:S engine physics adds terrain contact bodies", None, None));
+        }
+        Ok(faces)
+    }
+}

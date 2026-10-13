@@ -348,6 +348,40 @@ fn soft_sun_bakes_a_penumbra_without_changing_native_light_direction() {
 }
 
 #[test]
+fn local_model_ambient_changes_with_quality_without_rebaking_point_lightmaps() {
+    let document = room(
+        DVec3::new(0.0, 0.0, 100.0),
+        &[("_light", "255 0 0 200"), ("_quadratic_attn", "1")],
+    );
+    let mut maps = Vec::new();
+    for quality in [compiler::SkyQuality::Fast, compiler::SkyQuality::Detailed] {
+        let output = compiler::compile_with_options(
+            document.vmf(),
+            &common::empty_game(),
+            Options {
+                sky_quality: quality,
+                ..options()
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.stats.ambient_samples > 0);
+        maps.push(output.bsp.unwrap());
+    }
+    assert_eq!(
+        maps[0].lumps[bsp::lump::LIGHTING],
+        maps[1].lumps[bsp::lump::LIGHTING]
+    );
+    assert_eq!(
+        maps[0].lumps[bsp::lump::WORLDLIGHTS],
+        maps[1].lumps[bsp::lump::WORLDLIGHTS]
+    );
+    assert_ne!(
+        maps[0].lumps[bsp::lump::LEAF_AMBIENT_LIGHTING].data,
+        maps[1].lumps[bsp::lump::LEAF_AMBIENT_LIGHTING].data
+    );
+}
+
+#[test]
 fn model_ambient_probes_reflect_world_light_and_avoid_detail_solids() {
     use source_formats::bsp::{Leaf, LeafAmbient, Model, Node};
     let mut document = room(

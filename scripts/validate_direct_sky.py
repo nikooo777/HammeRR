@@ -7,7 +7,7 @@ from pathlib import Path
 
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
-from validate_direct_lighting import center_sample, floor_samples
+from validate_direct_lighting import center_sample, floor_samples, lightmaps
 from validate_face_lighting import ROOT, Client, detail
 from validate_visibility import ROOM
 
@@ -415,6 +415,55 @@ def soft_sun_checks(client, output):
     (output / "soft-sun-results.json").write_text(json.dumps(results, indent=2) + "\n")
 
 
+def local_ambient_checks(client, output):
+    client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"})
+    client.call(
+        "open_map", {"path": str(output / "clear.vmf"), "discard_changes": True}
+    )
+    sun = client.call("find_objects", {"classname": "light_environment"})["objects"][0][
+        "id"
+    ]
+    client.call("delete_objects", {"ids": [sun]})
+    client.call(
+        "create_entity",
+        {
+            "classname": "light",
+            "origin": [0, 0, 100],
+            "properties": {"_light": "255 0 0 200", "_quadratic_attn": "1"},
+        },
+    )
+    vmf = output / "local-gradient.vmf"
+    client.call("save_map", {"path": str(vmf)})
+    source = vmf.read_bytes()
+    history = client.call("get_map_info")["undo"]
+    cases = []
+    for quality in ["fast", "detailed"]:
+        client.call("set_compile_settings", {"sky_quality": quality})
+        path = output / f"local-gradient-{quality}.bsp"
+        built = client.call("compile_map", {"path": str(path)})
+        assert built["success"], built
+        data = path.read_bytes()
+        colors = ambient_probes(data, built["stats"])
+        assert any(color[0] > 0 for color in colors)
+        background = output / f"local-gradient-{quality}-background.bsp"
+        client.call("start_compile", {"path": str(background)})
+        assert (
+            wait_job(client)["status"] == "completed"
+            and background.read_bytes() == data
+        )
+        assert (
+            source == vmf.read_bytes()
+            and history == client.call("get_map_info")["undo"]
+        )
+        cases.append(data)
+    assert lightmaps(cases[0]) == lightmaps(cases[1])
+    samples = []
+    for data in cases:
+        offset, length, _, _ = struct.unpack_from("<4i", data, 8 + 56 * 16)
+        samples.append(data[offset : offset + length])
+    assert samples[0] != samples[1]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
@@ -432,6 +481,11 @@ def main():
         action="store_true",
         help="Check soft sun on brush and terrain shadows at every quality",
     )
+    parser.add_argument(
+        "--local-ambient-tests",
+        action="store_true",
+        help="Check local model-ambient quality on a point-light gradient without changing world lightmaps",
+    )
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)
@@ -441,6 +495,8 @@ def main():
             quality_checks(client, args.output)
         if args.soft_sun_tests:
             soft_sun_checks(client, args.output)
+        if args.local_ambient_tests:
+            local_ambient_checks(client, args.output)
     finally:
         client.close()
     print(json.dumps({"output": str(args.output), "cases": 13}))

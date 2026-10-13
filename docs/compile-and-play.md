@@ -136,9 +136,9 @@ Ambient probes let models pick up reflected light from world surfaces and the sk
 
 ![Sky and surface ambient tint on the weapon model in Counter-Strike: Source](images/model-ambient.png)
 
-The compiler places one quantized probe in each open world leaf, avoiding detail solids and space below terrain. It gathers reflected face-average lighting and visible sky radiance, without adding direct point/spot lights twice. Narrow or occupied leaves can lack a safe probe; diagnostics report those omissions.
+The compiler places one quantized probe in each open world leaf, avoiding detail solids and space below terrain. It gathers reflected world lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby world surfaces use interpolated local lightmap samples; distant rays blend toward face averages to reduce aliasing. Higher sampling quality preserves more local detail. Narrow or occupied leaves can lack a safe probe; diagnostics report those omissions.
 
-Limits: face averages smooth over local lighting detail; adaptive probe placement, static-prop occlusion and baked prop lightmaps remain unfinished. These probes do not add bounced lighting to world lightmaps.
+Limits: terrain still uses face-average radiance; local terrain UV sampling, adaptive probe placement, static-prop occlusion and baked prop lightmaps remain unfinished. These probes do not add bounced lighting to world lightmaps.
 
 ### Physics
 

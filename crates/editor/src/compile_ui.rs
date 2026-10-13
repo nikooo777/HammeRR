@@ -55,7 +55,7 @@ impl Controller {
                         )
                     });
                 window.unwrap().set_message(match result {
-                    Ok(_) => "Sky quality updated. Compile again to use this quality.".into(),
+                    Ok(_) => "Sky quality updated. The next build will use this quality.".into(),
                     Err(error) => error.into(),
                 });
             }
@@ -72,7 +72,7 @@ impl Controller {
                         session.update_compile_settings(Actor::User, None, Some(mode))
                     });
                 window.unwrap().set_message(match result {
-                    Ok(_) => "Physics mode updated. Compile again to use this mode.".into(),
+                    Ok(_) => "Physics mode updated. The next build will use this mode.".into(),
                     Err(error) => error.into(),
                 });
             }
@@ -87,7 +87,7 @@ impl Controller {
                     .ok_or_else(|| "Choose a supported lighting mode".to_string())
                     .and_then(|mode| session.set_compile_settings(Actor::User, mode));
                 window.unwrap().set_message(match result {
-                    Ok(_) => "Build lighting updated. Compile again to use this mode.".into(),
+                    Ok(_) => "Build lighting updated. The next build will use this mode.".into(),
                     Err(error) => error.into(),
                 });
             }
@@ -202,7 +202,7 @@ impl Controller {
             self.window
                 .set_summary("No build has run in this session.".into());
             self.window.set_details(
-                "Compile the current map to inspect its stages and diagnostics.".into(),
+                "Choose settings above, then Compile or Run Map from the toolbar.".into(),
             );
             self.window.set_diagnostics("".into());
             return;

@@ -1744,7 +1744,9 @@ door, rotation and trigger runtime checks. Other brush behaviors and moving-body
 contact remain pending. Unsupported geometry is reported
 in diagnostics. The BSP reader/writer is verified against stock CS:S maps,
 including bounded native LDR/HDR lighting ranges, styles, bump maps and
-world-light records. A tested CPU reference recovers projected luxels and
+world-light records, static-prop layouts and displacement grids/neighbors.
+Displacement geometry records round trip exactly across stock maps; terrain
+compilation remains pending. A tested CPU reference recovers projected luxels and
 point-light/brush-shadow contributions and drives the optional Direct LDR bake.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,

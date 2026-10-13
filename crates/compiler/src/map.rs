@@ -164,6 +164,7 @@ pub struct Map<'a> {
     pub terrains: Vec<Terrain>,
     pub(crate) area_portals: Vec<crate::areas::PortalBrush>,
     pub(crate) overlays: crate::overlays::Plan,
+    pub(crate) hints: Vec<crate::hints::Hint>,
     brush_side_count: usize,
 }
 
@@ -190,6 +191,7 @@ impl<'a> Map<'a> {
             terrains: Vec::new(),
             area_portals: Vec::new(),
             overlays: crate::overlays::Plan::default(),
+            hints: Vec::new(),
             brush_side_count: 0,
         };
         if let Err(error) = vmf.validate_ids() {
@@ -432,11 +434,14 @@ impl<'a> Map<'a> {
             });
         }
         if hint {
-            report.diagnostics.push(Diagnostic::warning(
-                "hint visibility splitting is not supported yet; brush left out",
-                Some(object),
-                Some(world_center),
-            ));
+            if let Err(error) =
+                crate::hints::collect(self, solid.id, entity, extra_contents, &sides)
+            {
+                report
+                    .diagnostics
+                    .push(Diagnostic::error(error, Some(object), Some(world_center)));
+            }
+            self.brush_side_count += sides.len();
             return Ok(());
         }
         if solid_sides && brush_contents & !(contents::SOLID | contents::DETAIL) != 0 {

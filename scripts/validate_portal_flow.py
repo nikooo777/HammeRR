@@ -269,9 +269,9 @@ def worker(args):
     runtime.worker(args)
 
 
-def compare_captures(output):
+def compare_captures(output, names=("fast", "detailed")):
     captures = []
-    for mode in ["fast", "detailed"]:
+    for mode in names:
         magic, dimensions, maximum, pixels = (
             (output / mode / "game.ppm").read_bytes().split(b"\n", 3)
         )

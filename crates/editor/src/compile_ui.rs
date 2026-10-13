@@ -284,6 +284,14 @@ impl Controller {
                 format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
             })
             .unwrap_or_default();
+        let hints = result["stats"]["hint_surfaces"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let splits = result["stats"]["hint_splits"].as_u64().unwrap_or_default();
+                format!("\nHint surfaces: {count} · Added splits: {splits}")
+            })
+            .unwrap_or_default();
         let terrain = result["stats"]["displacements"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -390,10 +398,12 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{areas}{terrain}{overlays}{water}{sky}{lighting}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{areas}{terrain}{overlays}{water}{sky}{lighting}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),
+                compiler::VisibilityMode::parse(job["settings"]["visibility"].as_str().unwrap_or_default()).unwrap_or_default().label(),
+                compiler::SkyQuality::parse(job["settings"]["sky_quality"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,
                 if job["stale"].as_bool().unwrap_or(false) {

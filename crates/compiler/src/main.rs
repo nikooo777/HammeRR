@@ -98,6 +98,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.overlays, stats.overlay_face_refs
     );
     println!(
+        "hint surfaces: {} · added splits: {} · work units: {}",
+        stats.hint_surfaces, stats.hint_splits, stats.hint_work
+    );
+    println!(
         "lighting {}: {} baked faces, {} samples, {} light sources, {} bytes",
         stats.lighting_mode.label(),
         stats.lighting_faces,

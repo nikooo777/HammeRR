@@ -26,6 +26,15 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let texdata = bsp.records::<TexData>().map_err(e)?;
     let texinfo = bsp.records::<TexInfo>().map_err(e)?;
     let faces = bsp.records::<Face>().map_err(e)?;
+    if let Some(overlays) = bsp.overlay_data().map_err(e)? {
+        let mut copy = bsp.clone();
+        copy.set_overlay_data(&overlays).map_err(e)?;
+        for index in [bsp::lump::OVERLAYS, bsp::lump::OVERLAY_FADES] {
+            if copy.lumps[index] != bsp.lumps[index] {
+                return Err("overlay payload does not round trip".into());
+            }
+        }
+    }
     if let Some(areas) = bsp.area_data().map_err(e)? {
         let mut copy = bsp.clone();
         copy.set_area_data(&areas).map_err(e)?;

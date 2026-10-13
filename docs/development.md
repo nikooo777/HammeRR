@@ -33,13 +33,13 @@ cargo test -p editor compile_controls_share_cancel_status_and_guard_replaced_job
 
 This software-rendered check opens **Build settings…** from a fresh session, changes lighting, physics and sky quality before a build, and checks cancellation and job replacement. It uses a private testing backend and sends no desktop input. Set `HAMMERR_UI_SNAPSHOTS` to an existing directory to save its window captures.
 
-### Ambient cube formats
+### Native BSP formats
 
 ```sh
-cargo test -p source-formats --test ambient --test areas --test bsp
+cargo test -p source-formats --test ambient --test areas --test overlays --test bsp
 ```
 
-Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions, native area/areaportal/clip geometry and malformed records. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
+Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions, native area/areaportal/clip geometry, overlay projections/fades and malformed records. Overlay checks include packed render order, zero-face records, inactive face slots and negative fade sentinels. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
 
 ## Validation scripts
 

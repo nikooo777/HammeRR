@@ -18,6 +18,8 @@ mod areas;
 pub use areas::{AreaData, MAX_AREA_PORTALS, MAX_AREAS, MAX_CLIP_PORTAL_VERTICES};
 mod displacements;
 mod lighting;
+mod overlays;
+pub use overlays::{MAX_OVERLAY_FACES, MAX_OVERLAYS, Overlay, OverlayData, OverlayFade};
 mod physics;
 mod static_props;
 mod visibility;

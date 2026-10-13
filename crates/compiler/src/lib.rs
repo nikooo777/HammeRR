@@ -3,6 +3,7 @@
 pub mod control;
 mod emit;
 pub mod faces;
+pub mod lighting;
 pub mod map;
 pub mod materials;
 pub mod planes;

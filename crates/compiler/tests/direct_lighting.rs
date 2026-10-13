@@ -107,6 +107,41 @@ fn direct_ldr_emits_checked_colored_samples_averages_and_world_lights() {
 }
 
 #[test]
+fn native_spotlights_bake_inside_the_cone_and_keep_outside_samples_dark() {
+    let document = room(
+        DVec3::new(0.0, 0.0, 100.0),
+        &[
+            ("_light", "255 0 0 200"),
+            ("_constant_attn", "1"),
+            ("pitch", "-90"),
+            ("_inner_cone", "20"),
+            ("_cone", "45"),
+            ("_exponent", "2"),
+        ],
+    );
+    let mut vmf = document.vmf().clone();
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("light"))
+        .unwrap()
+        .properties
+        .set("classname", "light_spot");
+    let source = vmf.clone();
+    let output = compiler::compile_with_options(&vmf, &common::empty_game(), options());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.world_lights, 1);
+    let bsp = output.bsp.unwrap();
+    assert_eq!(
+        bsp.world_lights(LightingKind::Ldr).unwrap()[0].kind,
+        bsp::world_light_kind::SPOT
+    );
+    assert_eq!(floor_sample(&bsp, DVec3::ZERO), DVec3::new(200.0, 0.0, 0.0));
+    assert_eq!(floor_sample(&bsp, DVec3::new(128.0, 0.0, 0.0)), DVec3::ZERO);
+    assert!(floor_sample(&bsp, DVec3::new(32.0, 0.0, 0.0)).x > 175.0);
+    assert_eq!(vmf, source);
+}
+
+#[test]
 fn opaque_world_hulls_cast_shadows_and_near_far_light_matches_reference() {
     let mut document = room(
         DVec3::new(0.0, 0.0, 100.0),

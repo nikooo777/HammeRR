@@ -7551,11 +7551,15 @@ mod tests {
         room.edit("baked point light", |tx| {
             map_core::edit::create_entity(
                 tx,
-                "light",
+                "light_spot",
                 Some(DVec3::new(0.0, -160.0, 128.0)),
                 &[
                     ("_light".into(), "255 170 100 300".into()),
                     ("_quadratic_attn".into(), "1".into()),
+                    ("pitch".into(), "-90".into()),
+                    ("_inner_cone".into(), "20".into()),
+                    ("_cone".into(), "45".into()),
+                    ("_exponent".into(), "1".into()),
                 ],
                 Vec::new(),
             )
@@ -7641,7 +7645,12 @@ mod tests {
         assert_eq!(stats["displacements"], 1);
         assert_eq!(stats["displacement_vertices"], 25);
         assert_eq!(stats["displacement_triangles"], 32);
-        assert!(controller.window.get_details().contains("Terrain: 1"));
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Terrain surfaces: 1")
+        );
         assert_eq!(stats["lighting_mode"], "direct_ldr");
         assert_eq!(stats["world_lights"], 1);
         if native_physics {

@@ -10,6 +10,7 @@ pub mod displacement;
 pub mod document;
 pub mod edit;
 pub mod hollow;
+pub mod light;
 pub mod partition_metadata;
 pub mod picking;
 pub mod plane;

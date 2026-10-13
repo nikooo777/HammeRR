@@ -7473,6 +7473,17 @@ mod tests {
         controller.window.invoke_change_physics(0);
         controller.refresh(&lock(&shared));
         assert_eq!(
+            controller.window.get_selected_visibility(),
+            "Fast (conservative)"
+        );
+        controller.window.invoke_change_visibility(1);
+        controller.refresh(&lock(&shared));
+        assert_eq!(
+            controller.window.get_selected_visibility(),
+            "Detailed (portal clipping)"
+        );
+        assert_eq!(lock(&shared).compile_settings()["visibility"], "detailed");
+        assert_eq!(
             controller.window.get_selected_physics(),
             "No physics bodies"
         );
@@ -7494,6 +7505,7 @@ mod tests {
         assert!(lock(&shared).compile_status()["job"].is_null());
         assert_eq!(lock(&shared).document().undo_labels().count(), 0);
         controller.window.invoke_change_sky_quality(0);
+        controller.window.invoke_change_visibility(0);
         controller.window.invoke_change_lighting(0);
         controller.refresh(&lock(&shared));
         assert!(controller.window.get_summary().contains("No build"));

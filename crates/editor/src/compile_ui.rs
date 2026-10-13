@@ -38,6 +38,32 @@ impl Controller {
             .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
             .collect::<Vec<_>>();
         window.set_sky_qualities(Rc::new(slint::VecModel::from(sky_labels)).into());
+        let visibility_labels = settings["visibility_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        window.set_visibility_modes(Rc::new(slint::VecModel::from(visibility_labels)).into());
+        window.on_change_visibility({
+            let (shared, window) = (shared.clone(), window.as_weak());
+            move |choice| {
+                let mut session = lock(&shared);
+                let settings = session.compile_settings();
+                let result = settings["visibility_choices"][choice as usize]["name"]
+                    .as_str()
+                    .ok_or_else(|| "Choose a supported visibility quality".to_string())
+                    .and_then(|mode| {
+                        session.update_compile_options(Actor::User, None, None, None, Some(mode))
+                    });
+                window.unwrap().set_message(match result {
+                    Ok(_) => {
+                        "Visibility quality updated. The next build will use this quality.".into()
+                    }
+                    Err(error) => error.into(),
+                });
+            }
+        });
         window.on_change_sky_quality({
             let (shared, window) = (shared.clone(), window.as_weak());
             move |choice| {
@@ -184,6 +210,23 @@ impl Controller {
         self.window.set_sky_enabled(
             settings["editable"].as_bool().unwrap_or(false) && settings["lighting"] == "direct_ldr",
         );
+        let visibility_choice = settings["visibility_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|choice| choice["name"] == settings["visibility"]);
+        self.window.set_selected_visibility(
+            visibility_choice
+                .and_then(|choice| choice["label"].as_str())
+                .unwrap_or_default()
+                .into(),
+        );
+        self.window.set_visibility_description(
+            visibility_choice
+                .and_then(|choice| choice["description"].as_str())
+                .unwrap_or_default()
+                .into(),
+        );
         let launch = &status["launch"];
         self.window
             .set_launch_ready(launch["ready"].as_bool().unwrap_or(false));
@@ -236,7 +279,9 @@ impl Controller {
                     .unwrap_or_default();
                 let cluster_label = if count == 1 { "cluster" } else { "clusters" };
                 let portal_label = if portals == 1 { "portal" } else { "portals" };
-                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label}")
+                let removed = result["stats"]["visibility_removed_pairs"].as_u64().unwrap_or_default();
+                let fallbacks = result["stats"]["visibility_fallbacks"].as_u64().unwrap_or_default();
+                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
             })
             .unwrap_or_default();
         let terrain = result["stats"]["displacements"]

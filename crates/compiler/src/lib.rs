@@ -29,7 +29,8 @@ use source_formats::vmf::Vmf;
 pub use control::{Control, Stage};
 pub use portals::Leak;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LightingMode {
     #[default]
     Fullbright,
@@ -114,9 +115,54 @@ pub struct Options {
     pub lighting: LightingMode,
     pub physics: PhysicsMode,
     pub sky_quality: SkyQuality,
+    pub visibility: VisibilityMode,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VisibilityMode {
+    #[default]
+    Fast,
+    Detailed,
+}
+
+impl VisibilityMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Detailed => "detailed",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "Fast (conservative)",
+            Self::Detailed => "Detailed (portal clipping)",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Fast => {
+                "Quickly builds conservative visible and audible sets. Some hidden areas remain visible."
+            }
+            Self::Detailed => {
+                "Clips sight volumes through portal paths to remove hidden areas. Takes longer and uses bounded conservative fallbacks. Hint controls and parallel flow are unfinished."
+            }
+        }
+    }
+
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "fast" => Ok(Self::Fast),
+            "detailed" => Ok(Self::Detailed),
+            _ => Err("Visibility must be fast or detailed".into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PhysicsMode {
     #[default]
     None,
@@ -223,10 +269,11 @@ impl Report {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
     pub lighting_mode: LightingMode,
     pub physics_mode: PhysicsMode,
+    pub visibility_mode: VisibilityMode,
     pub brushes: usize,
     pub nodes: usize,
     pub leaves: usize,
@@ -243,6 +290,9 @@ pub struct Stats {
     pub clusters: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
+    pub visibility_work: usize,
+    pub visibility_removed_pairs: usize,
+    pub visibility_fallbacks: usize,
     pub areas: usize,
     pub areaportals: usize,
     pub areaportal_windows: usize,
@@ -265,7 +315,15 @@ pub struct Stats {
     pub physics_bytes: usize,
     pub physics_fluids: usize,
     pub physics_mesh_triangles: usize,
+    #[serde(rename = "elapsed_ms", serialize_with = "serialize_elapsed")]
     pub elapsed: Duration,
+}
+
+fn serialize_elapsed<S: serde::Serializer>(
+    elapsed: &Duration,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_u64(u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
 }
 
 #[derive(Debug)]
@@ -411,12 +469,19 @@ fn build(
         });
     }
     control.advance(Stage::Visibility)?;
-    let mut visibility = visibility::build(&tree, &portals, control)?;
+    let mut visibility = visibility::build(&tree, &portals, control, options.visibility)?;
     output.stats.clusters = visibility.count;
     output.stats.visibility_portals = visibility.portals;
     output.stats.visibility_bytes = visibility.data.len();
+    output.stats.visibility_mode = options.visibility;
+    output.stats.visibility_work = visibility.work;
+    output.stats.visibility_removed_pairs = visibility.removed_pairs;
+    output.stats.visibility_fallbacks = visibility.fallbacks;
     output.report.diagnostics.push(Diagnostic::info(
-        "Visibility uses conservative portal bounds; tighter portal-flow clipping is not implemented yet",
+        match options.visibility {
+            VisibilityMode::Fast => "Visibility uses conservative portal bounds; choose Detailed for portal separator clipping",
+            VisibilityMode::Detailed => "Visibility uses bounded portal separator clipping; hint controls and parallel flow remain unfinished",
+        },
         None,
         None,
     ));
@@ -557,6 +622,7 @@ pub fn compile_with_options_controlled(
     };
     output.stats.lighting_mode = options.lighting;
     output.stats.physics_mode = options.physics;
+    output.stats.visibility_mode = options.visibility;
     if let Err(message) = build(vmf, fs, &mut output, options, control) {
         output
             .report

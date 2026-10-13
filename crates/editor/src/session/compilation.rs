@@ -67,49 +67,7 @@ impl CompileRequest {
 }
 
 pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
-    json!({
-        "lighting_mode": stats.lighting_mode.name(),
-        "physics_mode": stats.physics_mode.name(),
-        "brushes": stats.brushes,
-        "nodes": stats.nodes,
-        "leaves": stats.leaves,
-        "faces": stats.faces,
-        "models": stats.models,
-        "cubemap_samples": stats.cubemap_samples,
-        "static_props": stats.static_props,
-        "static_prop_models": stats.static_prop_models,
-        "static_prop_leaf_refs": stats.static_prop_leaf_refs,
-        "displacements": stats.displacements,
-        "displacement_vertices": stats.displacement_vertices,
-        "displacement_triangles": stats.displacement_triangles,
-        "displacement_neighbor_pairs": stats.displacement_neighbor_pairs,
-        "clusters": stats.clusters,
-        "visibility_portals": stats.visibility_portals,
-        "visibility_bytes": stats.visibility_bytes,
-        "areas": stats.areas,
-        "areaportals": stats.areaportals,
-        "areaportal_windows": stats.areaportal_windows,
-        "areaportal_vertices": stats.areaportal_vertices,
-        "overlays": stats.overlays,
-        "overlay_face_refs": stats.overlay_face_refs,
-        "water_regions": stats.water_regions,
-        "water_leaves": stats.water_leaves,
-        "sky_clusters": stats.sky_clusters,
-        "world_lights": stats.world_lights,
-        "lighting_faces": stats.lighting_faces,
-        "lightmap_samples": stats.lightmap_samples,
-        "lighting_bytes": stats.lighting_bytes,
-        "lighting_work": stats.lighting_work,
-        "ambient_samples": stats.ambient_samples,
-        "ambient_bytes": stats.ambient_bytes,
-        "physics_models": stats.physics_models,
-        "physics_solids": stats.physics_solids,
-        "physics_convexes": stats.physics_convexes,
-        "physics_bytes": stats.physics_bytes,
-        "physics_fluids": stats.physics_fluids,
-        "physics_mesh_triangles": stats.physics_mesh_triangles,
-        "elapsed_ms": stats.elapsed.as_millis(),
-    })
+    serde_json::to_value(stats).expect("compiler statistics are JSON-compatible")
 }
 
 fn result_json(result: &CompileResult) -> Value {
@@ -138,7 +96,8 @@ impl Session {
         let physics_choices = [compiler::PhysicsMode::None, compiler::PhysicsMode::Engine]
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let sky_choices = [compiler::SkyQuality::Fast, compiler::SkyQuality::Balanced, compiler::SkyQuality::Detailed].map(|quality| json!({"name":quality.name(), "label":quality.label(), "directions":quality.directions()}));
-        json!({"sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+        let visibility_choices = [compiler::VisibilityMode::Fast, compiler::VisibilityMode::Detailed].map(|mode| json!({"name":mode.name(), "label":mode.label(), "description":mode.description()}));
+        json!({"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
@@ -162,7 +121,22 @@ impl Session {
         physics: Option<&str>,
         sky_quality: Option<&str>,
     ) -> Result<Value, String> {
+        self.update_compile_options(actor, lighting, physics, sky_quality, None)
+    }
+
+    pub fn update_compile_options(
+        &mut self,
+        actor: Actor,
+        lighting: Option<&str>,
+        physics: Option<&str>,
+        sky_quality: Option<&str>,
+        visibility: Option<&str>,
+    ) -> Result<Value, String> {
         let options = compiler::Options {
+            visibility: visibility
+                .map(compiler::VisibilityMode::parse)
+                .transpose()?
+                .unwrap_or(self.compilation.options.visibility),
             sky_quality: sky_quality
                 .map(compiler::SkyQuality::parse)
                 .transpose()?
@@ -189,9 +163,10 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {}",
+                    "Build settings: {} · {} · {} visibility",
                     options.lighting.label(),
-                    options.physics.label()
+                    options.physics.label(),
+                    options.visibility.label()
                 ),
             );
         }
@@ -356,7 +331,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "settings":{"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name()},
+                "settings":{"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {
@@ -438,6 +413,24 @@ mod tests {
             let revision = session.document.revision();
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
             assert_eq!(session.compile_settings()["sky_quality"], "fast");
+            assert_eq!(session.compile_settings()["visibility"], "fast");
+            session
+                .update_compile_options(actor, None, None, None, Some("detailed"))
+                .unwrap();
+            let settings = session.compile_settings();
+            assert_eq!(settings["visibility"], "detailed");
+            assert!(
+                session
+                    .update_compile_options(
+                        actor,
+                        Some("direct_ldr"),
+                        Some("engine"),
+                        Some("detailed"),
+                        Some("invalid")
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.compile_settings(), settings);
             let result = session
                 .update_compile_settings_quality(actor, None, None, Some("balanced"))
                 .unwrap();
@@ -473,6 +466,15 @@ mod tests {
             assert_eq!(session.document.vmf().write(&Default::default()), before);
             assert_eq!(session.document.revision(), revision);
             let request = session.begin_compile(actor, None).unwrap();
+            assert_eq!(
+                session.compile_status()["job"]["settings"]["visibility"],
+                "detailed"
+            );
+            assert!(
+                session
+                    .update_compile_options(actor, None, None, None, Some("fast"))
+                    .is_err()
+            );
             assert_eq!(
                 session.compile_status()["job"]["settings"]["lighting"],
                 "direct_ldr"
@@ -513,6 +515,14 @@ mod tests {
         );
         let result = session.begin_compile(Actor::User, None).unwrap().run();
         session.finish_compile(Actor::User, &result);
+        assert!(session.launch_readiness().is_ok());
+        session
+            .update_compile_options(Actor::Agent, None, None, None, Some("detailed"))
+            .unwrap();
+        assert!(session.launch_readiness().is_err());
+        session
+            .update_compile_options(Actor::User, None, None, None, Some("fast"))
+            .unwrap();
         assert!(session.launch_readiness().is_ok());
         session
             .update_compile_settings(Actor::Agent, None, Some("engine"))

@@ -1649,7 +1649,9 @@ now has native leaf/surface metadata; fluid physics and rendering remain pending
 compile, while reflection binding/capture and lighting-origin references remain
 pending. Brush-entity origin volumes and explicit pivots compile; rotating,
 moving and trigger behavior still needs CS:S runtime validation. Unsupported geometry is reported
-in diagnostics. The BSP reader/writer is verified against stock CS:S maps.
+in diagnostics. The BSP reader/writer is verified against stock CS:S maps,
+including bounded native LDR/HDR lighting ranges, styles, bump maps and
+world-light records. These readers do not yet produce baked lighting.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,
 per-piece UV editing, displacement clipping and authoring, model rendering and broader

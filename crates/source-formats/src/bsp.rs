@@ -10,7 +10,12 @@ use std::io;
 use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
+mod lighting;
 mod visibility;
+pub use lighting::{
+    FaceLighting, Lighting, LightingKind, MAX_LIGHTING_BYTES, MAX_WORLD_LIGHTS, RgbExp32,
+    WorldLight, world_light_kind,
+};
 pub use visibility::{MAX_VISIBILITY_BYTES, MAX_VISIBILITY_CLUSTERS, Visibility, VisibilityKind};
 
 pub const IDENT: [u8; 4] = *b"VBSP";

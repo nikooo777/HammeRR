@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use source_formats::bsp::{
-    self, Brush, BrushSide, Bsp, Cubemap, Edge, Face, Leaf, LeafWaterData, Model, Node, Plane,
-    TexData, TexInfo, VisibilityKind,
+    self, Brush, BrushSide, Bsp, Cubemap, Edge, Face, Leaf, LeafWaterData, LightingKind, Model,
+    Node, Plane, TexData, TexInfo, VisibilityKind,
 };
 
 fn maps_dir() -> Option<PathBuf> {
@@ -26,6 +26,26 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let texdata = bsp.records::<TexData>().map_err(e)?;
     let texinfo = bsp.records::<TexInfo>().map_err(e)?;
     let faces = bsp.records::<Face>().map_err(e)?;
+    let hdr_faces: Vec<Face> = bsp.values(bsp::lump::FACES_HDR).map_err(e)?;
+    for kind in [LightingKind::Ldr, LightingKind::Hdr] {
+        bsp.world_lights(kind).map_err(e)?;
+        if let Some(lighting) = bsp.lighting(kind).map_err(e)? {
+            let lit_faces = if kind == LightingKind::Hdr && !hdr_faces.is_empty() {
+                &hdr_faces
+            } else {
+                &faces
+            };
+            for face in lit_faces {
+                if face.light_offset == -1 {
+                    continue;
+                }
+                let info = texinfo
+                    .get(face.texinfo as usize)
+                    .ok_or("lighting texinfo")?;
+                lighting.face(face, info).map_err(e)?;
+            }
+        }
+    }
     let nodes = bsp.records::<Node>().map_err(e)?;
     let leafs = bsp.records::<Leaf>().map_err(e)?;
     let edges = bsp.records::<Edge>().map_err(e)?;

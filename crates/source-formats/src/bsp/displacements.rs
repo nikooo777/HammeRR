@@ -108,31 +108,62 @@ impl DisplacementInfo {
     }
 
     pub fn triangle_indices(self) -> io::Result<Vec<[usize; 3]>> {
+        self.ordered_triangles(false)
+    }
+
+    pub fn lightmap_triangle_indices(self) -> io::Result<Vec<[usize; 3]>> {
+        self.ordered_triangles(true)
+    }
+
+    fn ordered_triangles(self, lightmap: bool) -> io::Result<Vec<[usize; 3]>> {
         let size = self.grid_size()?;
         let mut pending = vec![(0, 0, size - 1)];
         let mut triangles = Vec::with_capacity(self.triangle_count()?);
         while let Some((x, y, cells)) = pending.pop() {
             if cells > 2 {
                 let half = cells / 2;
-                for (dx, dy) in [(half, half), (0, half), (half, 0), (0, 0)] {
+                let children = if lightmap {
+                    [(half, 0), (0, 0), (0, half), (half, half)]
+                } else {
+                    [(half, half), (0, half), (half, 0), (0, 0)]
+                };
+                for (dx, dy) in children {
                     pending.push((x + dx, y + dy, half));
                 }
             } else {
                 let center = (y + 1) * size + x + 1;
-                let ring = [
-                    (0, 1),
-                    (0, 0),
-                    (1, 0),
-                    (2, 0),
-                    (2, 1),
-                    (2, 2),
-                    (1, 2),
-                    (0, 2),
-                    (0, 1),
-                ]
+                let ring = if lightmap {
+                    [
+                        (2, 0),
+                        (1, 0),
+                        (0, 0),
+                        (0, 1),
+                        (0, 2),
+                        (1, 2),
+                        (2, 2),
+                        (2, 1),
+                        (2, 0),
+                    ]
+                } else {
+                    [
+                        (0, 1),
+                        (0, 0),
+                        (1, 0),
+                        (2, 0),
+                        (2, 1),
+                        (2, 2),
+                        (1, 2),
+                        (0, 2),
+                        (0, 1),
+                    ]
+                }
                 .map(|(dx, dy)| (y + dy) * size + x + dx);
                 for pair in ring.windows(2) {
-                    triangles.push([pair[1], pair[0], center]);
+                    triangles.push(if lightmap {
+                        [pair[0], pair[1], center]
+                    } else {
+                        [pair[1], pair[0], center]
+                    });
                 }
             }
         }

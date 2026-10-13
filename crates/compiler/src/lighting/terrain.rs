@@ -17,6 +17,24 @@ pub(super) struct TerrainPlan {
     pub samples: Vec<TerrainSample>,
 }
 
+pub(super) fn positions(terrain: &Terrain) -> Result<Vec<[f32; 3]>, String> {
+    let size = terrain.mesh.size;
+    let data = Displacements {
+        infos: vec![terrain.info],
+        vertices: terrain.vertices.clone(),
+        triangles: terrain.triangles.clone(),
+    };
+    let base = &terrain.mesh.base_positions;
+    let quad = [
+        base[0],
+        base[(size - 1) * size],
+        base[size * size - 1],
+        base[size - 1],
+    ]
+    .map(|point| point.as_vec3().to_array());
+    data.positions(0, quad).map_err(|error| error.to_string())
+}
+
 impl TerrainPlan {
     pub(super) fn dimensions(terrain: &Terrain, info: &TexInfo) -> Result<[usize; 2], String> {
         if terrain.info.power == 4 {
@@ -58,22 +76,12 @@ impl TerrainPlan {
     ) -> Result<Self, String> {
         let size = terrain.mesh.size;
         let cells = (size - 1) as f64;
-        let data = Displacements {
-            infos: vec![terrain.info],
-            vertices: terrain.vertices.clone(),
-            triangles: terrain.triangles.clone(),
-        };
-        let base = &terrain.mesh.base_positions;
-        let quad = [
-            base[0],
-            base[(size - 1) * size],
-            base[size * size - 1],
-            base[size - 1],
-        ]
-        .map(|point| point.as_vec3().to_array());
-        let positions = data.positions(0, quad).map_err(|error| error.to_string())?;
-        let coordinates = terrain
-            .indices
+        let positions = positions(terrain)?;
+        let indices = terrain
+            .info
+            .lightmap_triangle_indices()
+            .map_err(|error| error.to_string())?;
+        let coordinates = indices
             .iter()
             .map(|indices| {
                 indices.map(|index| DVec2::new((index % size) as f64, (index / size) as f64))
@@ -103,7 +111,7 @@ impl TerrainPlan {
                         weights: weights.map(|weight| (weight.clamp(0.0, 1.0) * 255.9) as u8),
                     };
                     let sample = record
-                        .surface(&terrain.indices, &positions)
+                        .surface(&indices, &positions)
                         .map_err(|error| error.to_string())?
                         .ok_or("Terrain luxel unexpectedly has no surface sample")?;
                     found = Some(TerrainSample {

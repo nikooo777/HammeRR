@@ -6,6 +6,87 @@ use super::Occluder;
 const MAX_OCCLUDERS: usize = 65_536;
 const LEAF_SIZE: usize = 4;
 const STACK_SIZE: usize = usize::BITS as usize;
+const TRIANGLE_EPSILON: f64 = 1e-9;
+
+pub(super) trait ShadowObject {
+    const MAX_OBJECTS: usize;
+    fn bounds(&self) -> (DVec3, DVec3);
+    fn work(&self) -> usize;
+    fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String>;
+}
+
+impl ShadowObject for Occluder {
+    const MAX_OBJECTS: usize = MAX_OCCLUDERS;
+    fn bounds(&self) -> (DVec3, DVec3) {
+        (self.mins, self.maxs)
+    }
+    fn work(&self) -> usize {
+        self.plane_count() + 1
+    }
+    fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
+        self.intersects(start, end)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct Triangle {
+    points: [DVec3; 3],
+    mins: DVec3,
+    maxs: DVec3,
+}
+
+impl Triangle {
+    pub(super) fn new(points: [DVec3; 3]) -> Result<Self, String> {
+        let [a, b, c] = points;
+        let normal = (b - a).cross(c - a);
+        if points.iter().any(|point| !point.is_finite())
+            || !normal.is_finite()
+            || !normal.length_squared().is_finite()
+            || normal.length_squared() == 0.0
+        {
+            return Err("Terrain shadow triangle must be finite and noncollapsed".into());
+        }
+        Ok(Self {
+            points,
+            mins: a.min(b).min(c) - DVec3::splat(0.0001),
+            maxs: a.max(b).max(c) + DVec3::splat(0.0001),
+        })
+    }
+}
+
+impl ShadowObject for Triangle {
+    const MAX_OBJECTS: usize = source_formats::bsp::MAX_DISPLACEMENTS * 128;
+    fn bounds(&self) -> (DVec3, DVec3) {
+        (self.mins, self.maxs)
+    }
+    fn work(&self) -> usize {
+        8
+    }
+    fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
+        let [a, b, c] = self.points;
+        let delta = end - start;
+        let edges = [b - a, c - a];
+        let cross = delta.cross(edges[1]);
+        let determinant = edges[0].dot(cross);
+        let scale = edges[0].length() * edges[1].length() * delta.length();
+        if !delta.is_finite() || !determinant.is_finite() || !scale.is_finite() {
+            return Err("Terrain shadow ray arithmetic must be finite".into());
+        }
+        if scale == 0.0 || determinant.abs() <= scale * 1e-12 {
+            return Ok(false);
+        }
+        let offset = start - a;
+        let u = offset.dot(cross) / determinant;
+        let q = offset.cross(edges[0]);
+        let v = delta.dot(q) / determinant;
+        let t = edges[1].dot(q) / determinant;
+        Ok(u >= -TRIANGLE_EPSILON
+            && v >= -TRIANGLE_EPSILON
+            && u + v <= 1.0 + TRIANGLE_EPSILON
+            && t > TRIANGLE_EPSILON
+            && t < 1.0 - TRIANGLE_EPSILON)
+    }
+}
 
 struct Node {
     mins: DVec3,
@@ -14,19 +95,22 @@ struct Node {
     children: Option<[usize; 2]>,
 }
 
-pub(super) struct ShadowIndex {
-    hulls: Vec<Occluder>,
+pub(super) struct ShadowIndex<T> {
+    hulls: Vec<T>,
     order: Vec<usize>,
     nodes: Vec<Node>,
 }
 
-impl ShadowIndex {
+impl<T: ShadowObject> ShadowIndex<T> {
     pub(super) fn new(
-        hulls: Vec<Occluder>,
+        hulls: Vec<T>,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<Self, String> {
-        if hulls.len() > MAX_OCCLUDERS {
-            return Err("Direct lighting exceeds the 65,536 shadow-hull limit".into());
+        if hulls.len() > T::MAX_OBJECTS {
+            return Err(format!(
+                "Direct lighting exceeds its {} shadow-object limit",
+                T::MAX_OBJECTS
+            ));
         }
         consume(hulls.len())?;
         let mut index = Self {
@@ -49,8 +133,9 @@ impl ShadowIndex {
         let mut mins = DVec3::splat(f64::INFINITY);
         let mut maxs = DVec3::splat(f64::NEG_INFINITY);
         for &hull in &self.order[range.clone()] {
-            mins = mins.min(self.hulls[hull].mins);
-            maxs = maxs.max(self.hulls[hull].maxs);
+            let (low, high) = self.hulls[hull].bounds();
+            mins = mins.min(low);
+            maxs = maxs.max(high);
         }
         let node = self.nodes.len();
         self.nodes.push(Node {
@@ -71,7 +156,10 @@ impl ShadowIndex {
             let levels = range.len().ilog2() as usize + 1;
             consume(range.len() * levels)?;
             self.order[range.clone()].sort_unstable_by(|&a, &b| {
-                let center = |hull: &Occluder| hull.mins[axis] * 0.5 + hull.maxs[axis] * 0.5;
+                let center = |hull: &T| {
+                    let (mins, maxs) = hull.bounds();
+                    mins[axis] * 0.5 + maxs[axis] * 0.5
+                };
                 center(&self.hulls[a])
                     .total_cmp(&center(&self.hulls[b]))
                     .then(a.cmp(&b))
@@ -117,7 +205,7 @@ impl ShadowIndex {
             } else {
                 for &hull in &self.order[node.range.clone()] {
                     let hull = &self.hulls[hull];
-                    consume(hull.plane_count() + 1)?;
+                    consume(hull.work())?;
                     if hull.intersects(start, end)? {
                         return Ok(true);
                     }
@@ -148,6 +236,28 @@ mod tests {
             center + DVec3::splat(half),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn terrain_triangles_cast_two_sided_shadows_with_clear_edges_and_endpoints() {
+        let triangle = Triangle::new([DVec3::ZERO, DVec3::X * 8.0, DVec3::Y * 8.0]).unwrap();
+        let index = ShadowIndex::new(vec![triangle], &mut |_| Ok(())).unwrap();
+        for (start, end, expected) in [
+            (DVec3::new(2.0, 2.0, -8.0), DVec3::new(2.0, 2.0, 8.0), true),
+            (DVec3::new(2.0, 2.0, 8.0), DVec3::new(2.0, 2.0, -8.0), true),
+            (DVec3::new(4.0, 4.0, -8.0), DVec3::new(4.0, 4.0, 8.0), true),
+            (DVec3::new(6.0, 6.0, -8.0), DVec3::new(6.0, 6.0, 8.0), false),
+            (DVec3::new(2.0, 2.0, 0.0), DVec3::new(2.0, 2.0, 8.0), false),
+            (DVec3::new(2.0, 2.0, -8.0), DVec3::new(2.0, 2.0, 0.0), false),
+            (DVec3::new(2.0, 2.0, 0.0), DVec3::new(4.0, 2.0, 0.0), false),
+        ] {
+            assert_eq!(
+                index.blocked(start, end, &mut |_| Ok(())).unwrap(),
+                expected
+            );
+        }
+        assert!(Triangle::new([DVec3::ZERO; 3]).is_err());
+        assert!(Triangle::new([DVec3::splat(f64::NAN); 3]).is_err());
     }
 
     #[test]
@@ -207,7 +317,7 @@ mod tests {
             ))
             .is_err()
         );
-        let empty = ShadowIndex::new(Vec::new(), &mut |_| Ok(())).unwrap();
+        let empty = ShadowIndex::new(Vec::<Occluder>::new(), &mut |_| Ok(())).unwrap();
         assert!(
             !empty
                 .blocked(DVec3::ZERO, DVec3::X, &mut |_| Ok(()))

@@ -46,7 +46,7 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
         let positions = data
             .positions(0, bsp.displacement_quad(0).unwrap())
             .unwrap();
-        let triangles = data.infos[0].triangle_indices().unwrap();
+        let triangles = data.infos[0].lightmap_triangle_indices().unwrap();
         let samples = bsp.displacement_lightmap_samples(0).unwrap().unwrap();
         assert_eq!(samples.len(), 100);
         let lighting = bsp.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
@@ -72,6 +72,41 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
                 compiler::lighting::encode_color(light.contribution(point, normal).unwrap())
                     .unwrap();
             assert_eq!(*color, expected);
+        }
+        let planes = bsp.records::<bsp::Plane>().unwrap();
+        let infos = bsp.records::<TexInfo>().unwrap();
+        let floor = bsp
+            .records::<bsp::Face>()
+            .unwrap()
+            .into_iter()
+            .find(|face| {
+                let plane = planes[face.plane as usize];
+                plane.normal[2] > 0.99 && plane.dist.abs() < 0.01
+            })
+            .unwrap();
+        let info = &infos[floor.texinfo as usize];
+        let frame = compiler::lighting::LuxelFrame::new(
+            map_core::Plane {
+                normal: DVec3::Z,
+                dist: 0.0,
+            },
+            info,
+            floor.lightmap_mins,
+            floor.lightmap_size,
+        )
+        .unwrap();
+        let colors = lighting.face(&floor, info).unwrap().unwrap();
+        let [width, height] = frame.dimensions();
+        for (point, shadowed) in [
+            (DVec3::new(64.0, 64.0, 0.0), true),
+            (DVec3::new(-64.0, -64.0, 0.0), false),
+        ] {
+            let index = (0..height)
+                .flat_map(|t| (0..width).map(move |s| (s, t)))
+                .find(|&(s, t)| frame.position(s, t).unwrap().distance(point) < 0.001)
+                .unwrap();
+            let color = colors.samples(0, 0).unwrap()[index.1 * width + index.0];
+            assert_eq!(color.rgb == [0; 3], shadowed);
         }
         assert_eq!(*document.vmf(), source);
     }

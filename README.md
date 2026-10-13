@@ -1635,9 +1635,10 @@ physics adds checked terrain contact meshes and reports `physics_mesh_triangles`
 Native no-physics, no-hull and no-ray flags are retained. Invalid grids, unsupported
 entity/detail terrain, subdivision and triangle removal retain previous output.
 **Direct LDR** bakes lit power-2/3 terrain using actual raised surface positions,
-native sample records and flat triangle normals, including brush shadows.
+native sample records and flat triangle normals, including indexed opaque
+brush/terrain shadows. Raised terrain can shade the world faces beneath it.
 Power 4 and unlit terrain materials require **Fullbright**, which keeps terrain
-without lightmaps. Terrain shadows, smoothed/sewn normals and neighbor LOD remain
+without lightmaps. Smoothed/sewn normals and neighbor LOD remain
 unfinished. Terrain creation/editing controls remain roadmap work; use existing
 terrain in imported VMFs.
 
@@ -1666,6 +1667,10 @@ active job freezes them. A previous build stays stale while its mode differs.
 is unavailable; `launch_game` performs the same launch as **Play built map**.
 
 ![Build lighting choice, baked sample counts, stage, output and diagnostics](docs/images/build-status.png)
+
+Direct LDR terrain and its shadow in private CS:S, with fullbright disabled:
+
+![Baked warm terrain lighting and shadows beneath a raised surface](docs/images/compiled-terrain.png)
 
 Maps need sealed world geometry and
 at least one point entity in open space. A leak produces a `.lin` pointfile
@@ -1767,7 +1772,7 @@ both MCP paths; `--reference` compares its BSP and work against an earlier run.
 
 </details>
 
-Tighter VVIS portal flow, VRAD, broader physics collision, terrain lighting/sewing,
+Tighter VVIS portal flow, production VRAD, broader physics collision, power-4 terrain lighting/sewing,
 production static-prop lighting, areaportals and overlays remain unfinished. Horizontal world water
 now has native leaf/surface metadata and optional fluid bodies with verified crate
 buoyancy; depth/below-water material handling and broader rendering remain pending. Cubemap samples

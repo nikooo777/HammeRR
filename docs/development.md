@@ -39,7 +39,7 @@ This software-rendered check opens **Build settings…** from a fresh session, c
 cargo test -p source-formats --test ambient --test areas --test overlays --test bsp
 ```
 
-Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions, native area/areaportal/clip geometry, overlay projections/fades and malformed records. Overlay checks include packed render order, zero-face records, inactive face slots and negative fade sentinels. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
+Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions, native area/areaportal/clip geometry, overlay projections/fades and malformed records. Overlay checks include packed render order, zero-face records, inactive face slots, negative fade sentinels and a bounded 1,024-record payload. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
 
 ### Compiler face provenance
 
@@ -96,6 +96,7 @@ python3 -B scripts/validate_terrain_normals.py --output /tmp/hammerr-normals-che
 python3 -B scripts/validate_terrain_seams.py --output /tmp/hammerr-seams-check
 python3 -B scripts/validate_areaportals.py --output /tmp/hammerr-areas-check
 python3 -B scripts/validate_window_portals.py --output /tmp/hammerr-windows-check
+python3 -B scripts/validate_overlay_capacity.py --output /tmp/hammerr-overlay-capacity-check
 ```
 
 `direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
@@ -117,6 +118,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `terrain --runtime` | Terrain with uneven heights, power-4 and mixed-size lighting, player collision, ray flags and moving objects. `--runtime-cases power-four mixed` limits the game checks to those two fixtures; `--runtime-cases neighbors` runs the linked-edge fixture. |
 | `areaportals --runtime` | Native area/portal bindings, hidden and invalid boundaries, exact MCP build output, and visible-area/client portal bits through close/reopen from both sides. |
 | `window_portals --runtime` | Rendered and foreground brush models, distance closing, fade-distance inputs, and server/client visibility bits. |
+| `overlay_capacity --runtime` | Current-engine record capacity: 1,024 native records with only the last one drawing, checked against the same scene without overlays. This patches a private MCP-built BSP; authored overlay compilation is still unfinished. |
 | `terrain_seams --runtime` | Rotated curved neighbors share continuous baked lighting and retain seam contact heights. |
 | `terrain_normals --runtime` | A curved terrain ridge with smooth normals, shared with the viewport, keeps its collision height in game. |
 

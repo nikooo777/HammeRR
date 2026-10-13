@@ -58,6 +58,27 @@ fn overlay_records_preserve_packed_fields_empty_faces_unused_slots_and_fade_sent
 }
 
 #[test]
+fn modern_overlay_capacity_round_trips_a_live_final_record_above_the_old_sdk_limit() {
+    let (mut bsp, good) = fixture();
+    let mut overlays = (0..bsp::MAX_OVERLAYS)
+        .map(|id| Overlay {
+            id: id as i32,
+            ..good.overlays[0].with_face_count(0).unwrap()
+        })
+        .collect::<Vec<_>>();
+    overlays.last_mut().unwrap().face_count_order = 1;
+    let data = OverlayData {
+        overlays,
+        fades: vec![good.fades[0]; bsp::MAX_OVERLAYS],
+    };
+    bsp.set_overlay_data(&data).unwrap();
+    let parsed = Bsp::parse(&bsp.to_bytes()).unwrap();
+    let decoded = parsed.overlay_data().unwrap().unwrap();
+    assert!(decoded.overlays.len() > 512);
+    assert_eq!(decoded, data);
+}
+
+#[test]
 fn malformed_overlay_data_and_reference_arrays_reject_atomically() {
     let (bsp, good) = fixture();
     let original = bsp.to_bytes();

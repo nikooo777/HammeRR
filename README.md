@@ -183,6 +183,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) |
 | Choose a quick conservative build or tighter visibility through portal openings. |
 
+| Hint planes |
+| --- |
+| ![Hint face and skip bounds in the editor](docs/images/hint-planes.png) |
+| Guide visibility partitions with invisible hint surfaces and skip bounds. |
+
 | Imported overlays |
 | --- |
 | ![Graffiti projected onto the floor in Counter-Strike: Source](docs/images/overlays.png) |

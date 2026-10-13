@@ -317,6 +317,36 @@ impl Tree {
         index
     }
 
+    pub(crate) fn split_leaf(
+        &mut self,
+        index: usize,
+        plane: usize,
+        planes: &PlaneSet,
+    ) -> Result<(), String> {
+        if self.nodes.len() + 2 > MAX_TREE_NODES {
+            return Err("BSP hint partitioning exceeds the node allocation budget".into());
+        }
+        let node = &self.nodes[index];
+        let [Some(front), Some(back)] = node.volume.split(plane, planes) else {
+            return Err("Hint plane produced a degenerate BSP leaf volume".into());
+        };
+        let children = [self.nodes.len(), self.nodes.len() + 1];
+        let contents = node.contents;
+        let brushes = node.brushes.clone();
+        self.nodes[index].split = Some((plane, children));
+        self.nodes[index].contents = contents::EMPTY;
+        self.nodes[index].brushes.clear();
+        for volume in [front, back] {
+            self.nodes.push(Node {
+                split: None,
+                volume,
+                contents,
+                brushes: brushes.clone(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn preorder(&self) -> Vec<usize> {
         let mut order = Vec::new();
         let mut pending = vec![0];

@@ -142,9 +142,8 @@ fn mixed_detail_faces_keep_solid_contents_and_mixed_fog_faces_report_the_limit()
 }
 
 #[test]
-fn unsupported_flags_and_hint_brushes_are_reported() {
+fn unsupported_flags_and_misplaced_areaportals_are_reported() {
     for (params, message) in [
-        ("%compilehint 1", "hint visibility"),
         ("%compilefuture true", "%compilefuture"),
         (
             "%compileareaportal 1",

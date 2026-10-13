@@ -7398,6 +7398,16 @@ mod tests {
         )
         .unwrap();
         std::fs::write(materials.join("sky.vmt"), "UnlitGeneric { %compilesky 1 }").unwrap();
+        std::fs::write(
+            materials.join("hint.vmt"),
+            "UnlitGeneric { %compilehint 1 }",
+        )
+        .unwrap();
+        std::fs::write(
+            materials.join("skip.vmt"),
+            "UnlitGeneric { %compileskip 1 }",
+        )
+        .unwrap();
         std::fs::create_dir(materials.join("dev")).unwrap();
         std::fs::write(
             materials.join("dev/dev_measuregeneric01.vmt"),
@@ -7583,6 +7593,24 @@ mod tests {
             Ok(())
         })
         .unwrap();
+        room.edit("hint partition", |tx| {
+            let ObjectId::Solid(id) = map_core::edit::create_block(
+                tx,
+                DVec3::new(-8.0, -64.0, 8.0),
+                DVec3::new(8.0, 64.0, 192.0),
+                "skip",
+            )?
+            else {
+                unreachable!()
+            };
+            for side in &mut tx.solid_mut(id)?.sides {
+                if map_core::Plane::from_points(side.plane.0).unwrap().normal.x > 0.99 {
+                    side.material = "hint".into();
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
         room.edit("baked point light", |tx| {
             map_core::edit::create_entity(
                 tx,
@@ -7683,6 +7711,15 @@ mod tests {
         controller.refresh(&lock(&shared));
         assert!(controller.window.get_details().contains("Visibility:"));
         let stats = lock(&shared).compile_status()["job"]["result"]["stats"].clone();
+        assert_eq!(stats["hint_surfaces"], 1);
+        assert!(stats["hint_splits"].as_u64().unwrap() > 0);
+        assert!(controller.window.get_details().contains("Hint surfaces: 1"));
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Visibility: Fast (conservative) · Sampling: Fast (32 directions)")
+        );
         assert_eq!(stats["static_props"], 1);
         assert_eq!(stats["static_prop_models"], 1);
         assert!(controller.window.get_details().contains("Static props: 1"));

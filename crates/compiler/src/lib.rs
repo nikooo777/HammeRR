@@ -4,6 +4,7 @@ mod areas;
 pub mod control;
 mod emit;
 pub mod faces;
+mod hints;
 pub mod lighting;
 pub mod map;
 pub mod materials;
@@ -147,7 +148,7 @@ impl VisibilityMode {
                 "Quickly builds conservative visible and audible sets. Some hidden areas remain visible."
             }
             Self::Detailed => {
-                "Clips sight volumes through portal paths to remove hidden areas. Takes longer and uses bounded conservative fallbacks. Hint controls and parallel flow are unfinished."
+                "Clips sight volumes through portal paths to remove hidden areas. Takes longer and uses bounded conservative fallbacks. Parallel flow and broader map coverage are unfinished."
             }
         }
     }
@@ -293,6 +294,9 @@ pub struct Stats {
     pub visibility_work: usize,
     pub visibility_removed_pairs: usize,
     pub visibility_fallbacks: usize,
+    pub hint_surfaces: usize,
+    pub hint_splits: usize,
+    pub hint_work: usize,
     pub areas: usize,
     pub areaportals: usize,
     pub areaportal_windows: usize,
@@ -389,6 +393,7 @@ fn build(
     output.stats.brushes = map.brushes.len();
     output.stats.cubemap_samples = map.cubemaps.len();
     output.stats.displacements = map.terrains.len();
+    output.stats.hint_surfaces = map.hints.len();
     output.stats.displacement_vertices = map
         .terrains
         .iter()
@@ -420,7 +425,7 @@ fn build(
     let mut tree =
         tree::Tree::build_controlled(&map.brushes, &structural, &mut map.planes, control)?;
     control.advance(Stage::Portals)?;
-    let portals = portals::build_controlled(&tree, &map.planes, control)?;
+    let mut portals = portals::build_controlled(&tree, &map.planes, control)?;
     control.advance(Stage::Flood)?;
     output.leak = portals::flood_controlled(
         &mut tree,
@@ -432,6 +437,14 @@ fn build(
     )?;
     if output.report.has_errors() {
         return Ok(());
+    }
+    control.advance(Stage::Hints)?;
+    let hints = hints::apply(&map, &mut tree, &mut output.report, control)?;
+    output.stats.hint_splits = hints.splits;
+    output.stats.hint_work = hints.work;
+    if hints.splits > 0 {
+        control.advance(Stage::Portals)?;
+        portals = portals::build_controlled(&tree, &map.planes, control)?;
     }
     control.advance(Stage::Areas)?;
     let areas = areas::build(&mut map, &tree, &portals, control)?;
@@ -480,7 +493,7 @@ fn build(
     output.report.diagnostics.push(Diagnostic::info(
         match options.visibility {
             VisibilityMode::Fast => "Visibility uses conservative portal bounds; choose Detailed for portal separator clipping",
-            VisibilityMode::Detailed => "Visibility uses bounded portal separator clipping; hint controls and parallel flow remain unfinished",
+            VisibilityMode::Detailed => "Visibility uses bounded portal separator clipping; hint priority and parallel flow remain unfinished",
         },
         None,
         None,

@@ -3,7 +3,7 @@ import { Button, ComboBox, TextEdit } from "std-widgets.slint";
 export component CompileWindow inherits Window {
     title: "Build status - HammeRR";
     width: 720px;
-    height: 760px;
+    height: 840px;
     in property <int> lighting-choice;
     in property <bool> lighting-enabled;
     in property <string> lighting-description;
@@ -12,6 +12,10 @@ export component CompileWindow inherits Window {
     in-out property <string> selected-physics <=> physics-selector.current-value;
     in property <[string]> physics-modes;
     in property <string> physics-description;
+    in property <[string]> sky-qualities;
+    in-out property <string> selected-sky-quality <=> sky-selector.current-value;
+    in property <bool> sky-enabled;
+    callback change-sky-quality(int);
     in property <string> summary;
     in property <string> details;
     in property <string> diagnostics;
@@ -47,6 +51,12 @@ export component CompileWindow inherits Window {
             physics-selector := ComboBox { model: root.physics-modes; enabled: root.lighting-enabled; selected(value) => { root.change-physics(self.current-index); } }
         }
         Text { text: root.physics-description; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            spacing: 12px;
+            Text { text: "Sky quality"; vertical-alignment: center; }
+            sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
+        }
+        Text { text: "More directions improve diffuse sky visibility near windows and openings, and take longer. Used by Direct LDR sky ambient."; wrap: word-wrap; color: #bac2ce; }
         Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
         Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
         Text { text: "Diagnostics"; font-weight: 600; }

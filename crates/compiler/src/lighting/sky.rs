@@ -6,16 +6,18 @@ use crate::map::MapEntity;
 
 pub(super) const TRACE_LENGTH: f64 = crate::map::MAX_COMPILE_COORD * 4.0;
 pub(super) const SKY_HIT_BIAS: f64 = 0.0001;
-pub(super) const AMBIENT_DIRECTIONS: usize = 32;
 const GOLDEN_ANGLE: f64 = 2.399963229728653;
 
-pub(super) fn ambient_directions() -> [DVec3; AMBIENT_DIRECTIONS] {
-    std::array::from_fn(|index| {
-        let z = 1.0 - 2.0 * (index as f64 + 0.5) / AMBIENT_DIRECTIONS as f64;
-        let radius = (1.0 - z * z).sqrt();
-        let angle = index as f64 * GOLDEN_ANGLE;
-        DVec3::new(radius * angle.cos(), radius * angle.sin(), z)
-    })
+pub(super) fn ambient_directions(quality: crate::SkyQuality) -> Vec<DVec3> {
+    let count = quality.directions();
+    (0..count)
+        .map(|index| {
+            let z = 1.0 - 2.0 * (index as f64 + 0.5) / count as f64;
+            let radius = (1.0 - z * z).sqrt();
+            let angle = index as f64 * GOLDEN_ANGLE;
+            DVec3::new(radius * angle.cos(), radius * angle.sin(), z)
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -124,7 +126,7 @@ impl SkyLight {
     pub(super) fn ambient_contribution(
         self,
         normal: DVec3,
-        directions: &[DVec3; AMBIENT_DIRECTIONS],
+        directions: &[DVec3],
         visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
     ) -> Result<DVec3, String> {
         let normal = normal

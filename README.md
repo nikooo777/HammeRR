@@ -1542,10 +1542,11 @@ reach; without hard falloff, a dim tail can extend beyond it.
 
 Direct sun requires a sky surface in the lighting direction. Opaque brushes and
 terrain cast shadows; a closed room stays dark. Sun direction shares angle/pitch
-or target handling with spotlights. Sky **Ambient** adds diffuse illumination from visible sky, using 32 fixed
-directions and normal-weighted visibility. Zero disables it; missing ambient uses
+or target handling with spotlights. Sky **Ambient** adds diffuse illumination from visible sky using normal-weighted
+visibility. **Sky quality** offers Fast (32 directions), Balanced (128) and
+Detailed (512); Fast remains the default. Zero disables it; missing ambient uses
 half the sun radiance. **Sun spread** remains zero; duplicate visible sky emitters
-fail with an object diagnostic. Narrow openings can need higher sampling quality.
+fail with an object diagnostic. Detailed sampling improves narrow openings at a higher build cost.
 
 World/detail brush shadows use a bounded spatial index and exact convex-hull
 tests. A 70-brush fixture produces the same BSP while using 70% fewer lighting
@@ -1679,6 +1680,8 @@ Through MCP, `start_compile` returns immediately with a job token. Poll
 A map edit marks the build snapshot stale and prevents launching it.
 `get_compile_settings` lists modes and limitations. Use `set_compile_settings`
 with `{"lighting":"direct_ldr"}` or `{"lighting":"fullbright"}` before compiling.
+Set `"sky_quality":"fast"`, `"balanced"` or `"detailed"` for sky ambient; the CLI
+accepts the same names with `--sky-quality`.
 Add `"physics":"engine"` or `"physics":"none"` to the same call, or update just
 that field. Omitted fields retain their values; invalid combinations leave all
 settings unchanged.
@@ -1793,7 +1796,8 @@ connected-edge fixture.
 viewport rendering, unchanged native contact data and both MCP build paths.
 `scripts/validate_direct_sky.py` checks directional/ambient sky eligibility, brush/terrain shadows, native records,
 both MCP paths and rejected sky settings. `--reference` compares zero-ambient
-BSPs against an earlier sun-only run.
+BSPs against an earlier sun-only run. `--quality-tests` checks all quality modes,
+frozen jobs and a narrow sky opening.
 `scripts/validate_spotlights.py` checks native cones, target aiming and both MCP
 build paths, including hidden lights and rejected output preservation.
 `scripts/validate_shadow_index.py` checks a dense mixed-light fixture through

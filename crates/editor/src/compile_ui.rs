@@ -31,6 +31,35 @@ impl Controller {
             .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
             .collect::<Vec<_>>();
         window.set_physics_modes(Rc::new(slint::VecModel::from(physics_labels)).into());
+        let sky_labels = settings["sky_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        window.set_sky_qualities(Rc::new(slint::VecModel::from(sky_labels)).into());
+        window.on_change_sky_quality({
+            let (shared, window) = (shared.clone(), window.as_weak());
+            move |choice| {
+                let mut session = lock(&shared);
+                let settings = session.compile_settings();
+                let result = settings["sky_choices"][choice as usize]["name"]
+                    .as_str()
+                    .ok_or_else(|| "Choose a supported sky quality".to_string())
+                    .and_then(|quality| {
+                        session.update_compile_settings_quality(
+                            Actor::User,
+                            None,
+                            None,
+                            Some(quality),
+                        )
+                    });
+                window.unwrap().set_message(match result {
+                    Ok(_) => "Sky quality updated. Compile again to use this quality.".into(),
+                    Err(error) => error.into(),
+                });
+            }
+        });
         window.on_change_physics({
             let (shared, window) = (shared.clone(), window.as_weak());
             move |choice| {
@@ -140,6 +169,20 @@ impl Controller {
                 .as_str()
                 .unwrap_or_default()
                 .into(),
+        );
+        let sky_choice = settings["sky_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|choice| choice["name"] == settings["sky_quality"]);
+        self.window.set_selected_sky_quality(
+            sky_choice
+                .and_then(|choice| choice["label"].as_str())
+                .unwrap_or_default()
+                .into(),
+        );
+        self.window.set_sky_enabled(
+            settings["editable"].as_bool().unwrap_or(false) && settings["lighting"] == "direct_ldr",
         );
         let launch = &status["launch"];
         self.window

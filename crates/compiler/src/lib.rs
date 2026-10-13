@@ -68,9 +68,50 @@ impl LightingMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SkyQuality {
+    #[default]
+    Fast,
+    Balanced,
+    Detailed,
+}
+
+impl SkyQuality {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Balanced => "balanced",
+            Self::Detailed => "detailed",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "Fast (32 directions)",
+            Self::Balanced => "Balanced (128 directions)",
+            Self::Detailed => "Detailed (512 directions)",
+        }
+    }
+    pub fn directions(self) -> usize {
+        match self {
+            Self::Fast => 32,
+            Self::Balanced => 128,
+            Self::Detailed => 512,
+        }
+    }
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fast" => Ok(Self::Fast),
+            "balanced" => Ok(Self::Balanced),
+            "detailed" => Ok(Self::Detailed),
+            _ => Err("Sky quality must be fast, balanced or detailed".into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Options {
     pub lighting: LightingMode,
     pub physics: PhysicsMode,
+    pub sky_quality: SkyQuality,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -413,6 +454,7 @@ fn build(
             &mut bsp,
             &mut output.report,
             control,
+            options.sky_quality,
         )?;
         if output.report.has_errors() {
             return Ok(());

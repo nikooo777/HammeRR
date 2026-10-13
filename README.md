@@ -1550,8 +1550,9 @@ fail explicitly and retain previous output. Editing works without this backend.
 Bodies currently use default surface properties; brush models use a one-kilogram
 mass fallback. Material friction/density, authored masses, fluid, prop and terrain
 bodies remain unfinished. Private CS:S checks establish world body contact;
-live player movement, moving-brush behavior and broader collision still need
-validation. Builds without native bodies reproduce falling in the room fixture.
+one live player spawn/teleport remains grounded in both modes, while a physics
+crate falls through the map without bodies and rests on the floor with engine
+physics. Moving-brush behavior and broader collision still need validation.
 
 Compilation requires finite brush geometry and entity origins within
 **±16,384 units**. Out-of-range objects produce diagnostics before BSP
@@ -1666,8 +1667,9 @@ supporting boundaries in working geometry and emitted BSP float records.
 Native sloped, near-axis, distant, reflected and thin-brush fixtures verify
 surface preservation and swept hulls against an independent geometric reference.
 Optional engine physics now emits bounded world/clip and brush-model records.
-World body contact has private CS:S evidence; live player movement, moving-body
-behavior and full collision validation remain unfinished.
+Private CS:S checks verify live player grounding in both modes and a physics
+crate resting on native world bodies. Moving-body behavior and full collision
+validation remain unfinished.
 
 <details>
 <summary>Headless physics backend probe</summary>
@@ -1689,6 +1691,18 @@ The BSP reader/writer now checks native physics model/solid lengths, key data,
 model references and the end marker, with exact round trips across all 21
 installed maps. Unknown VPHY types remain opaque. Checked outer records do not
 make arbitrary compact-body internals safe for the engine loader.
+
+With **Cage** and **grim** installed, the runtime check builds its fixtures through
+MCP and runs CS:S with `-insecure` on a private headless display:
+
+```sh
+systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
+  python3 -B scripts/validate_native_runtime.py
+```
+
+It checks a single player spawn/teleport, baked red lightmaps and a physics
+crate with and without native bodies. Maps, config writes, scripts and logs use
+private directories; the check sends no mouse or keyboard events to the desktop.
 
 </details>
 

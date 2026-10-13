@@ -1,0 +1,310 @@
+import argparse
+import json
+import os
+import re
+import resource
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from validate_face_lighting import ROOT, Client
+from validate_visibility import ROOM
+
+OBSERVER = """
+stage <- 0;
+next_report <- 0.0;
+function HammeRRThink() {
+    local prop = Entities.FindByName(null, "physics_crate");
+    if (prop != null) {
+        local prop_pos = prop.GetOrigin();
+        printl("HAMMERR_PROP " + prop_pos.x + " " + prop_pos.y + " " + prop_pos.z);
+    }
+    local player = Entities.FindByClassname(null, "player");
+    if (player == null) return 1.0;
+    if (stage == 0) {
+        SendToConsole("sv_cheats 1; joystick 0; jointeam 2; joinclass 1; hidepanel info; hidepanel team; hidepanel class_ter; hidepanel class_ct; r_drawvgui 0; gameui_hide");
+        stage = 1;
+        next_report = Time() + 5.0;
+    }
+    if (Time() > next_report) {
+        local pos = player.GetOrigin();
+        printl("HAMMERR_PLAYER " + player.GetHealth() + " " + player.GetTeam() + " " + pos.x + " " + pos.y + " " + pos.z);
+        if (stage == 1) {
+            SendToConsole("setpos -64 -64 32; setang 25 45 0; mat_fullbright");
+            stage = 2;
+        }
+        next_report = Time() + 3.0;
+    }
+    return 1.0;
+}
+"""
+
+
+def private_game(root, output, bsp):
+    game = output / "cstrike"
+    for directory in [
+        game / "maps",
+        game / "cfg",
+        game / "scripts/vscripts",
+        game / "download",
+    ]:
+        directory.mkdir(parents=True, exist_ok=True)
+    paths = [
+        ("game", str(game)),
+        ("mod+mod_write+default_write_path", "|gameinfo_path|."),
+        ("game+game_write", str(game)),
+        ("game+download", str(game / "download")),
+    ]
+    paths += [
+        ("game+mod", str(root / "cstrike" / name))
+        for name in ["cstrike_english.vpk", "cstrike_pak.vpk"]
+    ]
+    paths += [
+        ("game", str(root / "hl2" / name))
+        for name in [
+            "hl2_textures.vpk",
+            "hl2_sound_vo_english.vpk",
+            "hl2_sound_misc.vpk",
+            "hl2_misc.vpk",
+        ]
+    ]
+    paths += [
+        ("gamebin", str(root / "cstrike/bin")),
+        ("game", str(root / "cstrike")),
+        ("game", str(root / "hl2")),
+        ("platform", str(root / "platform/platform_misc.vpk")),
+        ("platform", str(root / "platform")),
+    ]
+    search = "\n".join(f'"{kind}" "{path}"' for kind, path in paths)
+    (game / "gameinfo.txt").write_text(
+        '"GameInfo" { game "HammeRR validation" title "Counter-Strike Source" type multiplayer_only nomodels 1 nohimodel 1 bots 1 nodegraph 0 FileSystem { SteamAppId 240 SearchPaths {\n'
+        + search
+        + "\n} } }\n"
+    )
+    for name in ["autoexec.cfg", "config.cfg"]:
+        (game / "cfg" / name).write_text("")
+    (game / "motd.txt").write_text("HammeRR private validation\n")
+    (game / "scripts/vscripts/mapspawn.nut").write_text('printl("HAMMERR_MAPSPAWN");\n')
+    (game / "scripts/vscripts/hammerr_observer.nut").write_text(OBSERVER)
+    shutil.copyfile(bsp, game / "maps/hammerr_runtime.bsp")
+    (game / "hammerr-runtime.log").unlink(missing_ok=True)
+    return game
+
+
+def worker(args):
+    root = args.game_dir.resolve()
+    output = args.output.resolve()
+    game = private_game(root, output, args.bsp)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    env = {
+        **os.environ,
+        "LD_LIBRARY_PATH": str(root / "bin/linux64"),
+        "SteamAppId": "240",
+        "SteamGameId": "240",
+        "SDL_VIDEODRIVER": "x11",
+    }
+    command = [
+        str(root / "cstrike_linux64"),
+        "-game",
+        str(game),
+        "-windowed",
+        "-w",
+        "1280",
+        "-h",
+        "720",
+        "-novid",
+        "-insecure",
+        "-nomaster",
+        "-nojoy",
+        "-console",
+        "-port",
+        "27583",
+        "+con_logfile",
+        "hammerr-runtime.log",
+        "+sv_lan",
+        "1",
+        "+mat_hdr_level",
+        "0",
+        "+fps_max",
+        "60",
+        "+map",
+        "hammerr_runtime",
+    ]
+    with (output / "launcher.log").open("w") as log:
+        process = subprocess.Popen(
+            command, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log
+        )
+        try:
+            started = time.monotonic()
+            while time.monotonic() - started < 30:
+                if process.poll() is not None:
+                    raise RuntimeError(f"CS:S exited early: {process.returncode}")
+                time.sleep(1)
+            subprocess.run(["grim", str(output / "game.png")], check=True, timeout=10)
+            text = (game / "hammerr-runtime.log").read_text(errors="replace")
+            players = [
+                list(map(float, match))
+                for match in re.findall(
+                    r"HAMMERR_PLAYER ([\d.-]+) ([\d.-]+) ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)",
+                    text,
+                )
+            ]
+            props = [
+                list(map(float, match))
+                for match in re.findall(
+                    r"HAMMERR_PROP ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)", text
+                )
+            ]
+            assert len(players) >= 3 and all(
+                row[0] == 100 and row[1] == 2 for row in players
+            ), players
+            assert all(abs(row[4]) < 1 for row in players[-3:]), players
+            assert '"mat_fullbright" = "0"' in text and "Level unlit" not in text
+            assert props, "Physics prop did not enter the observer"
+            report = {
+                "players": players,
+                "prop_positions": props,
+                "display": os.environ.get("DISPLAY"),
+                "wayland_display": os.environ.get("WAYLAND_DISPLAY"),
+                "insecure": True,
+            }
+            (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+
+
+def compile_cases(args):
+    client = Client(None, args.binary, args.output)
+    try:
+        for low, high in ROOM:
+            client.call(
+                "create_block",
+                {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
+            )
+        client.call(
+            "create_entity",
+            {"classname": "info_player_terrorist", "origin": [-64, 0, 8]},
+        )
+        client.call(
+            "create_entity",
+            {
+                "classname": "light",
+                "origin": [0, 0, 100],
+                "properties": {"_light": "255 0 0 200", "_quadratic_attn": "1"},
+            },
+        )
+        client.call(
+            "create_entity",
+            {
+                "classname": "logic_script",
+                "origin": [0, 0, 32],
+                "properties": {
+                    "targetname": "hammerr_observer",
+                    "vscripts": "hammerr_observer.nut",
+                    "thinkfunction": "HammeRRThink",
+                },
+            },
+        )
+        client.call(
+            "create_entity",
+            {
+                "classname": "prop_physics",
+                "origin": [64, 64, 160],
+                "properties": {
+                    "targetname": "physics_crate",
+                    "model": "models/props_junk/wood_crate001a.mdl",
+                },
+            },
+        )
+        client.call("save_map", {"path": str(args.output / "runtime.vmf")})
+        cases = []
+        for mode in ["none", "engine"]:
+            client.call(
+                "set_compile_settings", {"lighting": "direct_ldr", "physics": mode}
+            )
+            path = args.output / f"{mode}.bsp"
+            compiled = client.call("compile_map", {"path": str(path)})
+            assert compiled["success"]
+            cases.append((mode, path, compiled["stats"]))
+        return cases
+    finally:
+        client.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--game-dir",
+        type=Path,
+        default=Path.home()
+        / ".local/share/Steam/steamapps/common/Counter-Strike Source",
+    )
+    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument(
+        "--output", type=Path, default=Path("/tmp/hammerr-native-runtime-check")
+    )
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    if args.worker:
+        worker(args)
+        return
+    assert shutil.which("cage") and shutil.which("grim"), "Cage and grim are required"
+    results = []
+    for mode, bsp, stats in compile_cases(args):
+        output = args.output / mode
+        output.mkdir(exist_ok=True)
+        env = {
+            **os.environ,
+            "WLR_BACKENDS": "headless",
+            "WLR_HEADLESS_OUTPUTS": "1",
+            "WLR_RENDERER": "pixman",
+        }
+        command = [
+            "cage",
+            "--",
+            sys.executable,
+            "-B",
+            str(Path(__file__).resolve()),
+            "--worker",
+            "--game-dir",
+            str(args.game_dir),
+            "--output",
+            str(output),
+            "--bsp",
+            str(bsp),
+        ]
+        with (output / "compositor.log").open("w") as log:
+            subprocess.run(
+                command,
+                cwd=ROOT,
+                env=env,
+                stdout=log,
+                stderr=log,
+                check=True,
+                timeout=50,
+            )
+        result = json.loads((output / "runtime.json").read_text())
+        result.update({"mode": mode, "stats": stats})
+        results.append(result)
+    none, engine = results
+    assert none["prop_positions"][-1][2] < -512, none
+    assert 0 < engine["prop_positions"][-1][2] < 64, engine
+    assert (
+        max(
+            abs(a - b)
+            for a, b in zip(engine["prop_positions"][-1], engine["prop_positions"][-2])
+        )
+        < 0.1
+    )
+    (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+    print(json.dumps({"cases": len(results), "output": str(args.output)}))
+
+
+if __name__ == "__main__":
+    main()

@@ -47,7 +47,6 @@ fn bounds_error(object: String) -> Diagnostic {
 const CONSUMED: &[&str] = &["func_detail"];
 /// Entities whose compile support doesn't exist yet; dropped with a warning.
 const UNSUPPORTED: &[&str] = &[
-    "prop_static",
     "info_overlay",
     "info_overlay_transition",
     "func_viscluster",
@@ -55,7 +54,6 @@ const UNSUPPORTED: &[&str] = &[
     "func_areaportal",
     "func_areaportalwindow",
     "func_instance",
-    "info_lighting",
 ];
 
 pub fn unsupported_entity_class(classname: &str) -> bool {
@@ -231,6 +229,11 @@ impl<'a> Map<'a> {
             }
             if classname.eq_ignore_ascii_case("env_cubemap") {
                 map.add_cubemap(entity, report);
+                continue;
+            }
+            if classname.eq_ignore_ascii_case("prop_static")
+                || classname.eq_ignore_ascii_case("info_lighting")
+            {
                 continue;
             }
             if CONSUMED.contains(&classname.as_str()) {

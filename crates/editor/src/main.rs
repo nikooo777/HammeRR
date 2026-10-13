@@ -7408,6 +7408,19 @@ mod tests {
             ids: vec!["game".into()],
             mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
         });
+        std::fs::create_dir(directory.path().join("models")).unwrap();
+        let mut model = vec![0; 240];
+        model[..4].copy_from_slice(b"IDST");
+        for (offset, value) in [(4, 48_i32), (76, 240), (152, 16), (224, 1)] {
+            model[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        for offset in [116, 140] {
+            for axis in 0..3 {
+                model[offset + axis * 4..offset + axis * 4 + 4]
+                    .copy_from_slice(&32.0_f32.to_le_bytes());
+            }
+        }
+        std::fs::write(directory.path().join("models/check.mdl"), model).unwrap();
         let physics_root = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
             .map(|path| path.join(".local/share/Steam/steamapps/common/Counter-Strike Source"));
@@ -7548,6 +7561,19 @@ mod tests {
             )
         })
         .unwrap();
+        room.edit("static prop", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "prop_static",
+                Some(DVec3::new(-200.0, 160.0, 8.0)),
+                &[
+                    ("model".into(), "models/check.mdl".into()),
+                    ("solid".into(), "0".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
         std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
         controller.window.invoke_change_lighting(1);
@@ -7573,6 +7599,9 @@ mod tests {
         );
         assert!(controller.window.get_details().contains("Visibility:"));
         let stats = lock(&shared).compile_status()["job"]["result"]["stats"].clone();
+        assert_eq!(stats["static_props"], 1);
+        assert_eq!(stats["static_prop_models"], 1);
+        assert!(controller.window.get_details().contains("Static props: 1"));
         assert_eq!(stats["lighting_mode"], "direct_ldr");
         assert_eq!(stats["world_lights"], 1);
         if native_physics {

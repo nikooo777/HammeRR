@@ -9,6 +9,7 @@ pub mod materials;
 pub mod physics;
 pub mod planes;
 pub mod portals;
+mod static_props;
 pub mod tree;
 mod visibility;
 mod water;
@@ -97,10 +98,10 @@ impl PhysicsMode {
     pub fn description(self) -> &'static str {
         match self {
             Self::None => {
-                "Keeps brush BSP hulls; omits physics bodies for props and moving brushes."
+                "Keeps BSP brush hulls and static-prop asset collisions; omits compiled brush/fluid bodies."
             }
             Self::Engine => {
-                "Uses the installed Linux64 CS:S library in an isolated worker. Builds world, clip, brush-model and horizontal world-fluid bodies with default surfaces. Prop/terrain bodies, material density and authored masses are unfinished."
+                "Uses the installed Linux64 CS:S library in an isolated worker. Builds world, clip, brush-model and horizontal world-fluid bodies with default surfaces. Static props use model assets. Terrain bodies, material density and authored masses are unfinished."
             }
         }
     }
@@ -189,6 +190,9 @@ pub struct Stats {
     pub faces: usize,
     pub models: usize,
     pub cubemap_samples: usize,
+    pub static_props: usize,
+    pub static_prop_models: usize,
+    pub static_prop_leaf_refs: usize,
     pub clusters: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
@@ -371,6 +375,14 @@ fn build(
         .unwrap_or(0);
     control.advance(Stage::Emitting)?;
     let mut bsp = emit::build(&map, &models, &visibility, &water, revision, control)?;
+    control.advance(Stage::StaticProps)?;
+    let prop_stats = static_props::bake(vmf, fs, &mut bsp, &mut output.report, control)?;
+    if output.report.has_errors() {
+        return Ok(());
+    }
+    output.stats.static_props = prop_stats.props;
+    output.stats.static_prop_models = prop_stats.models;
+    output.stats.static_prop_leaf_refs = prop_stats.leaf_refs;
     if options.lighting == LightingMode::DirectLdr {
         control.advance(Stage::Lighting)?;
         let stats = lighting::bake(

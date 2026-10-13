@@ -83,6 +83,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lighting_bytes
     );
     println!(
+        "static props: {}, model assets: {}, leaf references: {}",
+        stats.static_props, stats.static_prop_models, stats.static_prop_leaf_refs
+    );
+    println!(
         "physics {}: {} models, {} bodies, {} convexes, {} fluid regions, {} bytes",
         stats.physics_mode.label(),
         stats.physics_models,

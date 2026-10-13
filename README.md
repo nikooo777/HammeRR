@@ -1605,6 +1605,19 @@ build results report `physics_fluids`. Private CS:S checks verify a crate rising
 and floating in the water. Depth-specific material patches, below-water materials,
 currents, authored damping and broader rendering/movement remain unfinished.
 
+**Static props** compile model dictionaries, fractional transforms, collision
+choices, skins, fading and lighting-origin references into native records.
+Place a **prop_static** through the entity browser or MCP `create_entity`, then
+edit its model and properties with the same inspector/session operations.
+Build details and MCP report prop, model and leaf-reference counts. Supported
+MDL versions are 44 and 48; models need the `$staticprop` flag. **Use VPhysics**
+also requires a matching, checked `.phy` asset. Invalid assets, unsupported
+scaling/lightmap requests and ambiguous lighting origins retain previous output.
+Leaf membership uses conservative model-header bounds; baked prop lighting,
+prop shadows and exact hull clipping remain unfinished.
+Static-prop asset collision works in either physics build mode; embedded
+brush/fluid body counts are reported separately.
+
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
 output, changed build settings, an unavailable Linux client or an active build/game disable it with an
@@ -1716,11 +1729,13 @@ fluid records and both MCP build paths without launching the game.
 `scripts/validate_brush_runtime.py` checks doors, rotating brushes and trigger
 connections in the same private display. Direction properties such as Move
 direction accept Pitch/Yaw/Roll through both the inspector and MCP.
+`scripts/validate_static_props.py` checks native props through both MCP build
+paths; add `--runtime` to verify their collision choices in private CS:S.
 
 </details>
 
 Tighter VVIS portal flow, VRAD, physics collision, compiled displacements,
-static props, areaportals and overlays remain unfinished. Horizontal world water
+production static-prop lighting, areaportals and overlays remain unfinished. Horizontal world water
 now has native leaf/surface metadata and optional fluid bodies with verified crate
 buoyancy; depth/below-water material handling and broader rendering remain pending. Cubemap samples
 compile, while reflection binding/capture and lighting-origin references remain

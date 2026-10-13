@@ -12,6 +12,7 @@ use std::path::Path;
 use bytemuck::{Pod, Zeroable};
 mod lighting;
 mod physics;
+mod static_props;
 mod visibility;
 pub use lighting::{
     FaceLighting, Lighting, LightingKind, MAX_LIGHTING_BYTES, MAX_WORLD_LIGHTS, RgbExp32,
@@ -20,6 +21,10 @@ pub use lighting::{
 pub use physics::{
     CollisionHeader, MAX_COLLISION_BYTES, MAX_PHYSICS_BYTES, MAX_PHYSICS_KEY_BYTES,
     MAX_PHYSICS_MODELS, MAX_PHYSICS_SOLIDS, PhysicsCollision, PhysicsModel, PhysicsSolid,
+};
+pub use static_props::{
+    MAX_STATIC_PROP_BYTES, MAX_STATIC_PROP_LEAVES, MAX_STATIC_PROP_MODELS, MAX_STATIC_PROPS,
+    STATIC_PROP_NAME_BYTES, StaticProp, StaticProps,
 };
 pub use visibility::{MAX_VISIBILITY_BYTES, MAX_VISIBILITY_CLUSTERS, Visibility, VisibilityKind};
 

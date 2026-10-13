@@ -1638,6 +1638,10 @@ Baked terrain lighting and neighbor sewing remain unfinished; these surfaces
 currently render without lightmaps. Terrain creation/editing controls remain
 roadmap work; use existing terrain in imported VMFs.
 
+Native BSP inspection also validates terrain lightmap sample streams, triangle
+references and allocation bounds. Shared triangle ordering and recovered surface
+samples provide the next terrain-lighting prerequisite.
+
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
 output, changed build settings, an unavailable Linux client or an active build/game disable it with an

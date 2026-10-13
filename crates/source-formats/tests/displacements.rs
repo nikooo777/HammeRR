@@ -1,6 +1,6 @@
 use source_formats::bsp::{
-    self, Bsp, DisplacementCorner, DisplacementInfo, DisplacementNeighbor, DisplacementTriangle,
-    DisplacementVertex, Displacements, Edge, Face,
+    self, Bsp, DisplacementCorner, DisplacementInfo, DisplacementLightmapSample,
+    DisplacementNeighbor, DisplacementTriangle, DisplacementVertex, Displacements, Edge, Face,
 };
 
 fn fixture() -> (Bsp, Displacements) {
@@ -78,6 +78,7 @@ fn native_displacement_layout_padding_inactive_neighbors_and_mesh_positions_roun
     bsp.set_displacements(&data).unwrap();
     let bsp = Bsp::parse(&bsp.to_bytes()).unwrap();
     assert_eq!(bsp.displacements().unwrap(), Some(data.clone()));
+    assert_eq!(bsp.displacement_lightmap_samples(0).unwrap(), None);
     let quad = bsp.displacement_quad(0).unwrap();
     let positions = data.positions(0, quad).unwrap();
     assert_eq!(positions[0], [0.0, 0.0, 0.0]);
@@ -196,4 +197,130 @@ fn unsupported_displacement_lumps_and_broken_base_quad_references_reject() {
         invalid.set_values(bsp::lump::SURFEDGES, &[edge, 2, 3, 4]);
         assert!(invalid.displacement_quad(0).is_err());
     }
+}
+
+#[test]
+fn native_triangle_order_keeps_clockwise_coverage_for_every_supported_power() {
+    for power in 2..=4 {
+        let info = DisplacementInfo {
+            power,
+            ..Default::default()
+        };
+        let size = info.grid_size().unwrap();
+        let triangles = info.triangle_indices().unwrap();
+        assert_eq!(triangles.len(), info.triangle_count().unwrap());
+        assert_eq!(triangles[0], [0, size, size + 1]);
+        assert_eq!(triangles[7], [size, 2 * size, size + 1]);
+        let mut area = 0isize;
+        for [a, b, c] in triangles {
+            assert!([a, b, c].iter().all(|&i| i < size * size));
+            let xy = |index: usize| [(index % size) as isize, (index / size) as isize];
+            let [a, b, c] = [a, b, c].map(xy);
+            let cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+            assert_eq!(cross, -1);
+            area -= cross;
+        }
+        assert_eq!(area as usize, 2 * (size - 1).pow(2));
+    }
+}
+
+#[test]
+fn native_lightmap_samples_preserve_escapes_weights_and_missing_samples() {
+    let (mut bsp, mut data) = fixture();
+    data.infos[0].power = 4;
+    data.vertices.resize(289, DisplacementVertex::default());
+    data.triangles.resize(512, DisplacementTriangle::default());
+    let mut face = bsp.records::<Face>().unwrap()[0];
+    face.lightmap_size = [4, 0];
+    bsp.set_records(&[face]);
+    let samples = [0, 254, 255, 510, 0].map(|triangle| DisplacementLightmapSample {
+        triangle,
+        weights: if triangle == 0 { [0; 3] } else { [127, 64, 63] },
+    });
+    let bytes = data.infos[0].encode_lightmap_samples(&samples).unwrap();
+    assert_eq!(bytes.len(), 22);
+    assert_eq!(&bytes[8..10], &[255, 0]);
+    assert_eq!(&bytes[13..15], &[255, 255]);
+    bsp.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS].data = bytes.clone();
+    bsp.set_displacements(&data).unwrap();
+    assert_eq!(
+        bsp.displacement_lightmap_samples(0).unwrap().unwrap(),
+        samples
+    );
+    assert_eq!(bsp.displacements().unwrap().unwrap(), data);
+    assert_eq!(
+        data.infos[0]
+            .encode_lightmap_samples(&bsp.displacement_lightmap_samples(0).unwrap().unwrap())
+            .unwrap(),
+        bytes
+    );
+    assert!(
+        data.infos[0]
+            .encode_lightmap_samples(&[DisplacementLightmapSample {
+                triangle: 511,
+                weights: [255, 0, 0]
+            }])
+            .is_err()
+    );
+}
+
+#[test]
+fn malformed_lightmap_streams_ranges_and_extents_fail_without_overwriting_records() {
+    let (mut bsp, data) = fixture();
+    bsp.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS].data = vec![0, 255, 0, 0];
+    bsp.set_displacements(&data).unwrap();
+    let mut cases = Vec::new();
+    for bytes in [vec![0, 255, 0], vec![255, 0, 255, 0], vec![32, 255, 0, 0]] {
+        let mut invalid = bsp.clone();
+        invalid.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS].data = bytes;
+        cases.push(invalid);
+    }
+    for size in [[-1, 0], [i32::MAX, i32::MAX], [1, 1]] {
+        let mut invalid = bsp.clone();
+        let mut face = invalid.records::<Face>().unwrap()[0];
+        face.lightmap_size = size;
+        invalid.set_records(&[face]);
+        cases.push(invalid);
+    }
+    for mut invalid in cases {
+        let before = invalid.clone();
+        assert!(invalid.displacement_lightmap_samples(0).is_err());
+        assert!(invalid.set_displacements(&data).is_err());
+        assert_eq!(invalid, before);
+    }
+}
+
+#[test]
+fn compressed_sample_weights_recover_raised_sloped_surfaces_and_outward_normals() {
+    let (mut bsp, mut data) = fixture();
+    for (index, vertex) in data.vertices.iter_mut().enumerate() {
+        vertex.direction = [0.0, 0.0, 1.0];
+        vertex.distance = 8.0 + (index % 5) as f32 * 2.0;
+    }
+    bsp.set_displacements(&data).unwrap();
+    let positions = data
+        .positions(0, bsp.displacement_quad(0).unwrap())
+        .unwrap();
+    let triangles = data.infos[0].triangle_indices().unwrap();
+    let sample = DisplacementLightmapSample {
+        triangle: 0,
+        weights: [64, 63, 127],
+    };
+    let result = sample.surface(&triangles, &positions).unwrap().unwrap();
+    let x = 4.0 * 127.0 / 254.0;
+    assert!((result.position[0] - x).abs() < 1e-10);
+    assert!((result.position[2] - (8.0 + x * 0.5)).abs() < 1e-10);
+    let normal = glam::DVec3::from_array(result.normal);
+    assert!(normal.distance(glam::DVec3::new(-0.5, 0.0, 1.0).normalize()) < 1e-10);
+    assert!(
+        DisplacementLightmapSample {
+            triangle: 0,
+            weights: [0; 3]
+        }
+        .surface(&triangles, &positions)
+        .unwrap()
+        .is_none()
+    );
+    assert!(sample.surface(&triangles, &[[f32::NAN; 3]; 25]).is_err());
+    assert!(sample.surface(&triangles, &[[0.0; 3]; 25]).is_err());
 }

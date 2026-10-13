@@ -31,37 +31,6 @@ pub struct Terrain {
     pub indices: Vec<[usize; 3]>,
 }
 
-fn native_triangles(size: usize) -> Vec<[usize; 3]> {
-    let mut pending = vec![(0, 0, size - 1)];
-    let mut triangles = Vec::with_capacity((size - 1).pow(2) * 2);
-    while let Some((x, y, cells)) = pending.pop() {
-        if cells > 2 {
-            let half = cells / 2;
-            for (dx, dy) in [(half, half), (0, half), (half, 0), (0, 0)] {
-                pending.push((x + dx, y + dy, half));
-            }
-        } else {
-            let center = (y + 1) * size + x + 1;
-            let ring = [
-                (0, 1),
-                (0, 0),
-                (1, 0),
-                (2, 0),
-                (2, 1),
-                (2, 2),
-                (1, 2),
-                (0, 2),
-                (0, 1),
-            ]
-            .map(|(dx, dy)| (y + dy) * size + x + dx);
-            for pair in ring.windows(2) {
-                triangles.push([pair[1], pair[0], center]);
-            }
-        }
-    }
-    triangles
-}
-
 impl Map<'_> {
     pub(super) fn add_terrain(
         &mut self,
@@ -190,7 +159,7 @@ impl Map<'_> {
                     }
                 })
                 .collect::<Vec<_>>();
-            let indices = native_triangles(mesh.size);
+            let indices = info.triangle_indices().map_err(|error| error.to_string())?;
             let triangles = if let Some(rows) = &disp.triangle_tags {
                 let cells = mesh.size - 1;
                 if rows.len() != cells || rows.iter().any(|row| row.len() != cells * 2) {

@@ -1,7 +1,7 @@
 use glam::DVec3;
 use source_formats::bsp::{
     Bsp, Edge, Face, Leaf, LeafAmbient, LeafAmbientIndex, LeafAmbientSample, LightingKind, Model,
-    TexInfo, contents, surf,
+    RgbExp32, TexInfo, contents, surf,
 };
 
 use super::bake::Budget;
@@ -13,6 +13,8 @@ use crate::visibility::Visibility;
 use crate::{Diagnostic, Report};
 
 const SURFACE_HIT_BIAS: f64 = 0.05;
+const LOCAL_FILTER_START: f64 = 20.0;
+const LOCAL_FILTER_END: f64 = 40.0;
 const CANDIDATE_FRACTIONS: [u8; 4] = [64, 128, 192, 224];
 const CUBE_AXES: [DVec3; 6] = [
     DVec3::X,
@@ -40,8 +42,53 @@ pub(super) struct Stats {
 
 struct Surface {
     triangle: Triangle,
-    radiance: DVec3,
+    source: usize,
+}
+
+struct Radiance {
+    average: DVec3,
+    reflectivity: DVec3,
+    samples: Vec<RgbExp32>,
+    dimensions: [usize; 2],
+    projection: [[f32; 4]; 2],
+    mins: [i32; 2],
     sky: bool,
+}
+
+impl Radiance {
+    fn at(&self, point: DVec3, distance: f64, cone: f64) -> DVec3 {
+        let blend = ((distance * cone - LOCAL_FILTER_START)
+            / (LOCAL_FILTER_END - LOCAL_FILTER_START))
+            .clamp(0.0, 1.0);
+        if self.samples.is_empty() || blend == 1.0 {
+            return self.average;
+        }
+        let coordinates: [f64; 2] = std::array::from_fn(|axis| {
+            let row = self.projection[axis];
+            (DVec3::from_array([row[0], row[1], row[2]].map(f64::from)).dot(point)
+                + f64::from(row[3])
+                - f64::from(self.mins[axis]))
+            .clamp(0.0, (self.dimensions[axis] - 1) as f64)
+        });
+        let lower = coordinates.map(|value| value.floor() as usize);
+        let upper: [usize; 2] =
+            std::array::from_fn(|axis| (lower[axis] + 1).min(self.dimensions[axis] - 1));
+        let color = |x: usize, y: usize| {
+            DVec3::from_array(self.samples[y * self.dimensions[0] + x].linear())
+        };
+        let weight = [
+            coordinates[0] - lower[0] as f64,
+            coordinates[1] - lower[1] as f64,
+        ];
+        let near = color(lower[0], lower[1]).lerp(color(upper[0], lower[1]), weight[0]);
+        let far = color(lower[0], upper[1]).lerp(color(upper[0], upper[1]), weight[0]);
+        (near.lerp(far, weight[1]) * self.reflectivity).lerp(self.average, blend)
+    }
+}
+
+struct SurfaceIndex {
+    geometry: ShadowIndex<Surface>,
+    radiance: Vec<Radiance>,
 }
 
 impl ShadowObject for Surface {
@@ -60,8 +107,7 @@ impl ShadowObject for Surface {
 fn add_surface(
     surfaces: &mut Vec<Surface>,
     points: [DVec3; 3],
-    radiance: DVec3,
-    sky: bool,
+    source: usize,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
     budget.consume(1)?;
@@ -77,17 +123,12 @@ fn add_surface(
     }
     surfaces.push(Surface {
         triangle: Triangle::new(points)?,
-        radiance,
-        sky,
+        source,
     });
     Ok(())
 }
 
-fn surfaces(
-    ctx: &Context<'_>,
-    bsp: &Bsp,
-    budget: &mut Budget<'_>,
-) -> Result<ShadowIndex<Surface>, String> {
+fn surfaces(ctx: &Context<'_>, bsp: &Bsp, budget: &mut Budget<'_>) -> Result<SurfaceIndex, String> {
     let world = bsp
         .records::<Model>()
         .map_err(|error| error.to_string())?
@@ -105,21 +146,20 @@ fn surfaces(
         .lighting(LightingKind::Ldr)
         .map_err(|error| error.to_string())?;
     let mut surfaces = Vec::new();
+    let mut radiance = Vec::new();
     for face in &faces[world.first_face as usize..(world.first_face + world.face_count) as usize] {
         budget.consume(1)?;
         let info = infos[face.texinfo as usize];
         let sky = info.flags & (surf::SKY | surf::SKY2D) != 0;
-        let radiance = if sky {
-            ctx.sky_radiance
+        let light = lighting
+            .as_ref()
+            .map(|lighting| lighting.face(face, &info))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .flatten();
+        let reflectivity = if sky {
+            DVec3::ONE
         } else {
-            let average = lighting
-                .as_ref()
-                .map(|lighting| lighting.face(face, &info))
-                .transpose()
-                .map_err(|error| error.to_string())?
-                .flatten()
-                .and_then(|light| light.average(0))
-                .map_or(DVec3::ZERO, |color| DVec3::from_array(color.linear()));
             let material = ctx
                 .map
                 .materials
@@ -131,11 +171,39 @@ fn surfaces(
                     material.name
                 ));
             }
-            average * reflectivity / 255.0
+            reflectivity / 255.0
         };
-        if !radiance.is_finite() || radiance.min_element() < 0.0 {
+        let average = if sky {
+            ctx.sky_radiance
+        } else {
+            light
+                .as_ref()
+                .and_then(|light| light.average(0))
+                .map_or(DVec3::ZERO, |color| DVec3::from_array(color.linear()))
+                * reflectivity
+        };
+        if !average.is_finite() || average.min_element() < 0.0 {
             return Err("Model ambient surface radiance is nonfinite or negative".into());
         }
+        let samples = if !sky && face.dispinfo < 0 {
+            light
+                .as_ref()
+                .and_then(|light| light.samples(0, 0))
+                .unwrap_or_default()
+        } else {
+            &[]
+        };
+        budget.consume(samples.len())?;
+        let source = radiance.len();
+        radiance.push(Radiance {
+            average,
+            reflectivity,
+            samples: samples.to_vec(),
+            dimensions: light.as_ref().map_or([0; 2], |light| light.dimensions()),
+            projection: info.lightmap_vecs,
+            mins: face.lightmap_mins,
+            sky,
+        });
         if face.dispinfo >= 0 {
             let terrain = &ctx.map.terrains[face.dispinfo as usize];
             budget.consume(terrain.vertices.len())?;
@@ -144,8 +212,7 @@ fn surfaces(
                 add_surface(
                     &mut surfaces,
                     indices.map(|index| DVec3::from_array(points[index].map(f64::from))),
-                    radiance,
-                    sky,
+                    source,
                     budget,
                 )?;
             }
@@ -163,14 +230,16 @@ fn surfaces(
                 add_surface(
                     &mut surfaces,
                     [points[0], points[index], points[index + 1]],
-                    radiance,
-                    sky,
+                    source,
                     budget,
                 )?;
             }
         }
     }
-    ShadowIndex::new(surfaces, &mut |work| budget.consume(work))
+    Ok(SurfaceIndex {
+        geometry: ShadowIndex::new(surfaces, &mut |work| budget.consume(work))?,
+        radiance,
+    })
 }
 
 fn candidate(
@@ -295,6 +364,7 @@ pub(super) fn bake(
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
     let surfaces = surfaces(ctx, bsp, budget)?;
+    let cone = (1.0 - 2.0 / ctx.directions.len() as f64).acos().tan();
     let leaves = bsp.records::<Leaf>().map_err(|error| error.to_string())?;
     let mut nodes = vec![None; ctx.visibility.count];
     for (node, cluster) in ctx.visibility.clusters.iter().enumerate() {
@@ -326,9 +396,9 @@ pub(super) fn bake(
                 .map_err(|error| error.to_string())?,
         );
         let colors = gather(ctx.directions, &mut |direction| {
-            budget.consume(7)?;
+            budget.consume(11)?;
             let end = point + direction * super::sky::TRACE_LENGTH;
-            let surface = surfaces.nearest(
+            let surface = surfaces.geometry.nearest(
                 point,
                 end,
                 &mut |work| budget.consume(work),
@@ -336,13 +406,14 @@ pub(super) fn bake(
                     Ok(surface
                         .triangle
                         .fraction(point, end)?
-                        .map(|fraction| (fraction, (surface.radiance, surface.sky))))
+                        .map(|fraction| (fraction, surface.source)))
                 },
             )?;
-            let Some((fraction, (color, sky))) = surface else {
+            let Some((fraction, source)) = surface else {
                 return Ok(DVec3::ZERO);
             };
-            let blocker = if sky {
+            let radiance = &surfaces.radiance[source];
+            let blocker = if radiance.sky {
                 let Some(hit) = ctx
                     .shadows
                     .sky_fraction(point, end, &mut |work| budget.consume(work))?
@@ -361,7 +432,8 @@ pub(super) fn bake(
             }) {
                 return Ok(DVec3::ZERO);
             }
-            Ok(color)
+            let distance = fraction * super::sky::TRACE_LENGTH;
+            Ok(radiance.at(point + direction * distance, distance, cone))
         })?;
         for (slot, color) in sample.cube.iter_mut().zip(colors) {
             *slot = encode_color(color)?;
@@ -386,13 +458,44 @@ pub(super) fn bake(
         &LeafAmbient::Indexed { indices, samples },
     )
     .map_err(|error| error.to_string())?;
-    report.diagnostics.push(Diagnostic::info("Model ambient uses one quantized probe per open world leaf, sampled from reflected face averages and sky radiance. Local lightmap sampling, adaptive probe placement, static-prop shadows and bounced world lighting remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Model ambient uses one quantized probe per open world leaf, sampled from filtered local world lightmaps and sky radiance; terrain uses face averages. Adaptive probe placement, local terrain sampling, static-prop shadows and bounced world lighting remain unfinished", None, None));
     Ok(stats)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_radiance_interpolates_clamps_and_filters_distant_detail() {
+        let field = Radiance {
+            average: DVec3::new(96.0 / 255.0, 0.0, 0.0),
+            reflectivity: DVec3::splat(1.0 / 255.0),
+            samples: [0, 64, 128, 192]
+                .map(|red| RgbExp32 {
+                    rgb: [red, 0, 0],
+                    exponent: 0,
+                })
+                .to_vec(),
+            dimensions: [2, 2],
+            projection: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+            mins: [0, 0],
+            sky: false,
+        };
+        assert_eq!(field.at(DVec3::ZERO, 10.0, 0.1), DVec3::ZERO);
+        assert_eq!(
+            field.at(DVec3::new(0.5, 0.5, 0.0), 10.0, 0.1),
+            field.average
+        );
+        assert_eq!(field.at(DVec3::ONE, 10.0, 0.1).x, 192.0 / 255.0);
+        assert_eq!(
+            field.at(DVec3::new(-100.0, 100.0, 0.0), 10.0, 0.1).x,
+            128.0 / 255.0
+        );
+        assert_eq!(field.at(DVec3::ONE, 1000.0, 0.1), field.average);
+        let middle = field.at(DVec3::ZERO, 300.0, 0.1);
+        assert_eq!(middle, field.average * 0.5);
+    }
+
     #[test]
     fn directional_cube_normalization_keeps_uniform_radiance_and_its_hemispheres() {
         let directions = super::super::sky::ambient_directions(crate::SkyQuality::Fast);

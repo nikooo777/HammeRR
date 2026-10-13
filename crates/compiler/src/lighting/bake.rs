@@ -604,6 +604,7 @@ pub(crate) fn bake(
             shadows: &shadows,
             terrain: &terrain_shadows,
             directions: &ambient_directions,
+            quality: sky_quality,
             sky_radiance,
         },
         bsp,

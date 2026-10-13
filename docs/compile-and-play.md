@@ -136,9 +136,11 @@ Ambient probes let models pick up reflected light from world surfaces and the sk
 
 ![Sky and surface ambient tint on the weapon model in Counter-Strike: Source](images/model-ambient.png)
 
-The compiler places one quantized probe in each open world leaf, avoiding detail solids and space below terrain. It gathers reflected world and terrain lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby surfaces use interpolated local lightmap samples; distant rays blend toward face averages to reduce aliasing. Terrain follows its displaced surface, including rotated patch origins. Higher sampling quality preserves more local detail. Narrow or occupied leaves can lack a safe probe; diagnostics report those omissions.
+Fast keeps one probe per open world leaf. Balanced and Detailed select up to four and eight probes, more than 128 units apart. Small leaves can still need only one. Higher quality adds spatial coverage and preserves more local detail.
 
-Limits: adaptive probe placement, static-prop occlusion and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. These probes do not add bounced lighting to world lightmaps.
+Probes avoid detail solids and space below terrain. They gather reflected world and terrain lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby rays interpolate local lightmap samples; distant rays blend toward face averages. Terrain follows its displaced surface, including rotated patch origins. Diagnostics report leaves without a safe probe.
+
+Limits: adaptive refinement, static-prop occlusion and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. The bake is capped at 65,536 probes and the shared lighting work limit; exceeding either preserves the previous build. These probes do not add bounced lighting to world lightmaps.
 
 ### Physics
 

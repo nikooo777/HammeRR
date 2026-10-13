@@ -30,7 +30,7 @@ HammeRR is in active development.
 | Build settings | Lighting, physics and sky quality available before the first build; shared with agents and frozen during builds | — |
 | Visibility | Conservative visible and audible sets from portals; sky visibility | Tight portal clipping (VVIS quality), areaportals |
 | Lighting | Fullbright; Direct LDR for static point lights, spotlights, one sun and sky ambient; soft sun, Fast/Balanced/Detailed sampling, percentage falloff, opaque shadows and terrain | Adaptive sky/sun sampling, bounced world light, HDR, transparent shadows, smoothing groups and bump maps on brush faces, baked prop and moving-model lightmaps |
-| Model ambient | LDR cubes from filtered local world/terrain lightmaps and sky, with one safe probe per open leaf; legacy and indexed LDR/HDR data preservation | Adaptive probe placement, static-prop occlusion, probes below terrain sheets |
+| Model ambient | LDR cubes from filtered local world/terrain lightmaps and sky, with up to 1/4/8 safe probes per open leaf by quality; legacy and indexed LDR/HDR data preservation | Adaptive refinement, static-prop occlusion, probes below terrain sheets |
 | Physics | World, clips, brush entities, water and terrain, using CS:S's own collision library | Surface materials, authored masses, broader collision with moving bodies |
 | Brush entities | Explicit and origin-brush pivots; sliding and rotating doors, rotating brushes and triggers | Broader brush-entity behavior coverage |
 | Water | Flat world water, fog regions, floating objects | Depth and below-water materials, currents, water in detail brushes or brush entities |

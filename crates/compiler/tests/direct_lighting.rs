@@ -404,7 +404,14 @@ fn model_ambient_probes_reflect_world_light_and_avoid_detail_solids() {
         })
         .unwrap();
     let source = document.vmf().clone();
-    let output = compiler::compile_with_options(document.vmf(), &common::empty_game(), options());
+    let output = compiler::compile_with_options(
+        document.vmf(),
+        &common::empty_game(),
+        Options {
+            sky_quality: compiler::SkyQuality::Detailed,
+            ..options()
+        },
+    );
     assert!(!output.report.has_errors(), "{:?}", output.report);
     assert!(output.stats.ambient_samples > 0);
     let bsp = output.bsp.unwrap();
@@ -427,29 +434,38 @@ fn model_ambient_probes_reflect_world_light_and_avoid_detail_solids() {
         .enumerate()
         .filter(|(_, index)| index.sample_count != 0)
     {
-        let sample = samples[usize::from(index.first_sample)];
-        let point = DVec3::from_array(sample.world_position(&leaves[owner]).unwrap());
-        assert!(
-            !point.cmpge(DVec3::new(-32.0, -32.0, 64.0)).all()
-                || !point.cmple(DVec3::new(32.0, 32.0, 192.0)).all()
-        );
-        let mut cursor = model.head_node;
-        while cursor >= 0 {
-            let node = nodes[cursor as usize];
-            let plane = planes[node.plane as usize];
-            let distance =
-                DVec3::from_array(plane.normal.map(f64::from)).dot(point) - f64::from(plane.dist);
-            cursor = node.children[usize::from(distance < 0.0)];
+        assert!(index.sample_count <= 8);
+        let first = usize::from(index.first_sample);
+        let selected = &samples[first..first + usize::from(index.sample_count)];
+        for (sample_index, sample) in selected.iter().enumerate() {
+            let point = DVec3::from_array(sample.world_position(&leaves[owner]).unwrap());
+            assert!(
+                !point.cmpge(DVec3::new(-32.0, -32.0, 64.0)).all()
+                    || !point.cmple(DVec3::new(32.0, 32.0, 192.0)).all()
+            );
+            for earlier in &selected[..sample_index] {
+                let earlier = DVec3::from_array(earlier.world_position(&leaves[owner]).unwrap());
+                assert!(point.distance(earlier) > 128.0);
+            }
+            let mut cursor = model.head_node;
+            while cursor >= 0 {
+                let node = nodes[cursor as usize];
+                let plane = planes[node.plane as usize];
+                let distance = DVec3::from_array(plane.normal.map(f64::from)).dot(point)
+                    - f64::from(plane.dist);
+                cursor = node.children[usize::from(distance < 0.0)];
+            }
+            assert_eq!((-1 - cursor) as usize, owner);
+            assert!(sample.cube.iter().any(|color| color.linear()[0] > 0.0));
+            assert!(
+                sample
+                    .cube
+                    .iter()
+                    .all(|color| color.linear()[1..] == [0.0, 0.0])
+            );
         }
-        assert_eq!((-1 - cursor) as usize, owner);
-        assert!(sample.cube.iter().any(|color| color.linear()[0] > 0.0));
-        assert!(
-            sample
-                .cube
-                .iter()
-                .all(|color| color.linear()[1..] == [0.0, 0.0])
-        );
     }
+    assert!(indices.iter().any(|index| index.sample_count > 1));
     assert_eq!(*document.vmf(), source);
     let fullbright =
         compiler::compile_with_options(document.vmf(), &common::empty_game(), Options::default());

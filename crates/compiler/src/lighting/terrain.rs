@@ -1,7 +1,5 @@
 use glam::DVec3;
-use source_formats::bsp::{
-    DisplacementLightmapSample, DisplacementSurfaceSampler, Displacements, TexInfo,
-};
+use source_formats::bsp::{DisplacementLightmapSample, DisplacementSurfaceSampler, TexInfo};
 
 use crate::map::Terrain;
 
@@ -16,24 +14,6 @@ pub(super) struct TerrainSample {
 pub(super) struct TerrainPlan {
     pub dimensions: [usize; 2],
     pub samples: Vec<TerrainSample>,
-}
-
-pub(super) fn positions(terrain: &Terrain) -> Result<Vec<[f32; 3]>, String> {
-    let size = terrain.mesh.size;
-    let data = Displacements {
-        infos: vec![terrain.info],
-        vertices: terrain.vertices.clone(),
-        triangles: terrain.triangles.clone(),
-    };
-    let base = &terrain.mesh.base_positions;
-    let quad = [
-        base[0],
-        base[(size - 1) * size],
-        base[size * size - 1],
-        base[size - 1],
-    ]
-    .map(|point| point.as_vec3().to_array());
-    data.positions(0, quad).map_err(|error| error.to_string())
 }
 
 impl TerrainPlan {
@@ -73,7 +53,7 @@ impl TerrainPlan {
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<Self, String> {
         consume(terrain.vertices.len() + 2 * terrain.triangles.len())?;
-        let positions = positions(terrain)?;
+        let positions = terrain.native_positions()?;
         let sampler = DisplacementSurfaceSampler::new(terrain.info, &positions)
             .map_err(|error| error.to_string())?;
         let mut samples = Vec::with_capacity(dimensions[0] * dimensions[1]);

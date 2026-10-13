@@ -196,6 +196,7 @@ pub struct Stats {
     pub displacements: usize,
     pub displacement_vertices: usize,
     pub displacement_triangles: usize,
+    pub displacement_neighbor_pairs: usize,
     pub clusters: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
@@ -299,6 +300,7 @@ fn build(
     if output.report.has_errors() {
         return Ok(());
     }
+    output.stats.displacement_neighbor_pairs = map.connect_terrain(&mut output.report, control)?;
     let structural: Vec<usize> = map.entities[0]
         .brushes
         .iter()

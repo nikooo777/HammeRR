@@ -1632,6 +1632,9 @@ Imported **world displacements** compile native power-2/3/4 surface grids, alpha
 weights, triangle tags and face/leaf references, with matching UI/MCP build
 counts. Their parent volumes do not seal the map or become solid boxes. Engine
 physics adds checked terrain contact meshes and reports `physics_mesh_triangles`.
+Matching equal-power full edges receive reciprocal native neighbor metadata; the
+build panel and MCP report `displacement_neighbor_pairs`. Ambiguous edges, unequal
+powers and mismatched surfaces stay unlinked with diagnostics.
 Native no-physics, no-hull and no-ray flags are retained. Invalid grids, unsupported
 entity/detail terrain, subdivision and triangle removal retain previous output.
 **Direct LDR** bakes lit power-2/3/4 terrain using full-precision raised surface
@@ -1640,7 +1643,8 @@ indexed opaque brush/terrain shadows. Native auxiliary records retain representa
 uses an explicit missing record while its luxel still receives baked lighting.
 Raised terrain can shade the world faces beneath it.
 Unlit terrain materials require **Fullbright**, which keeps terrain without
-lightmaps. Cross-patch normal sewing and neighbor LOD remain unfinished. Terrain
+lightmaps. Cross-patch normal sewing, mixed-power/partial-edge LOD and corner-only neighbors
+remain unfinished. Terrain
 creation/editing controls remain roadmap work; use existing terrain in imported
 VMFs.
 
@@ -1769,7 +1773,8 @@ paths; add `--runtime` to verify their collision choices in private CS:S.
 `scripts/validate_terrain.py --runtime` checks imported terrain through both MCP
 build paths, power-4 and mixed-power sample streams, asymmetric heights, player
 hulls, ray flags and dynamic contact. Use `--runtime-cases power-four mixed` to
-limit game checks to those two fixtures.
+limit game checks to those two fixtures, or `--runtime-cases neighbors` for the
+connected-edge fixture.
 `scripts/validate_terrain_normals.py --runtime` checks a curved ridge, shared
 viewport rendering, unchanged native contact data and both MCP build paths.
 `scripts/validate_spotlights.py` checks native cones, target aiming and both MCP

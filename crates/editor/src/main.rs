@@ -7645,6 +7645,13 @@ mod tests {
         assert_eq!(stats["displacements"], 1);
         assert_eq!(stats["displacement_vertices"], 25);
         assert_eq!(stats["displacement_triangles"], 32);
+        assert_eq!(stats["displacement_neighbor_pairs"], 0);
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Neighbor pairs: 0")
+        );
         assert!(
             controller
                 .window

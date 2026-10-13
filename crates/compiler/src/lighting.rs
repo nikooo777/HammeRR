@@ -4,6 +4,7 @@ use source_formats::bsp::{MAX_LIGHTING_BYTES, RgbExp32, TexInfo, WorldLight, wor
 
 use crate::map::MapEntity;
 mod bake;
+mod falloff;
 mod shadows;
 mod terrain;
 pub(crate) use bake::bake;
@@ -94,8 +95,7 @@ impl LuxelFrame {
 pub struct PointLight {
     pub origin: DVec3,
     intensity: DVec3,
-    attenuation: [f64; 3],
-    radius: f64,
+    falloff: falloff::Falloff,
     cluster: i32,
     cone: Option<SpotCone>,
 }
@@ -142,12 +142,6 @@ impl PointLight {
         {
             return Err("Direct LDR supports static style-0 lights; named or animated lights need light-style baking".into());
         }
-        if number(entity, "_fifty_percent_distance")? != 0.0
-            || number(entity, "_zero_percent_distance")? != 0.0
-            || number(entity, "_hardfalloff")? != 0.0
-        {
-            return Err("Direct LDR does not yet support percentage-distance or hard falloff; use constant, linear and quadratic attenuation".into());
-        }
         let values: Vec<f64> = property(entity, "_light")
             .ok_or("Point light needs a brightness value")?
             .split_whitespace()
@@ -175,36 +169,17 @@ impl PointLight {
                 "Point light colors must be 0–255 with finite nonnegative brightness".into(),
             );
         }
-        let mut attenuation = [
-            number(entity, "_constant_attn")?,
-            number(entity, "_linear_attn")?,
-            number(entity, "_quadratic_attn")?,
-        ];
-        if attenuation == [0.0; 3] {
-            attenuation[0] = 1.0;
-        }
-        let gain = attenuation[0]
-            + REFERENCE_DISTANCE * attenuation[1]
-            + REFERENCE_DISTANCE.powi(2) * attenuation[2];
+        let falloff = falloff::Falloff::from_entity(entity)?;
         let intensity = DVec3::from_array(
-            components.map(|value| (value / 255.0).powf(2.2) * brightness * gain),
+            components.map(|value| (value / 255.0).powf(2.2) * brightness * falloff.gain),
         );
         if !intensity.is_finite() || intensity.max_element() > f64::from(f32::MAX) {
             return Err("Point light intensity exceeds native world-light limits".into());
         }
-        let radius = number(entity, "_distance")?;
-        if attenuation
-            .iter()
-            .chain([radius].iter())
-            .any(|&value| value > f64::from(f32::MAX))
-        {
-            return Err("Point light attenuation exceeds native world-light limits".into());
-        }
         Ok(Self {
             origin,
             intensity,
-            attenuation,
-            radius,
+            falloff,
             cluster,
             cone: None,
         })
@@ -265,14 +240,11 @@ impl PointLight {
         let normal = normal
             .try_normalize()
             .ok_or("Light sample needs a nonzero normal")?;
-        if distance == 0.0 || (self.radius > 0.0 && distance > self.radius) {
+        if distance == 0.0 {
             return Ok(DVec3::ZERO);
         }
         let dot = normal.dot(offset / distance).clamp(0.0, 1.0);
-        let distance = distance.max(MIN_LIGHT_DISTANCE);
-        let divisor = self.attenuation[0]
-            + distance * self.attenuation[1]
-            + distance * distance * self.attenuation[2];
+        let falloff = self.falloff.factor(distance)?;
         let cone = if let Some(cone) = self.cone {
             let angle = cone.direction.dot(-offset / offset.length());
             if angle <= cone.outer {
@@ -291,7 +263,7 @@ impl PointLight {
         } else {
             1.0
         };
-        let result = self.intensity * (dot * cone / divisor);
+        let result = self.intensity * (dot * cone * falloff);
         if !result.is_finite() {
             return Err("Point-light contribution is nonfinite".into());
         }
@@ -305,10 +277,10 @@ impl PointLight {
             cluster: self.cluster,
             kind: world_light_kind::POINT,
             style: 0,
-            radius: self.radius as f32,
-            constant_attenuation: self.attenuation[0] as f32,
-            linear_attenuation: self.attenuation[1] as f32,
-            quadratic_attenuation: self.attenuation[2] as f32,
+            radius: self.falloff.radius as f32,
+            constant_attenuation: self.falloff.coefficients[0] as f32,
+            linear_attenuation: self.falloff.coefficients[1] as f32,
+            quadratic_attenuation: self.falloff.coefficients[2] as f32,
             texinfo: -1,
             owner: -1,
             ..WorldLight::default()

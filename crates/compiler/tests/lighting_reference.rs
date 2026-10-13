@@ -133,7 +133,7 @@ fn unsupported_and_nonfinite_light_settings_are_explicit() {
         vec![("_light", "255"), ("_quadratic_attn", "-1")],
         vec![("_light", "255"), ("style", "32")],
         vec![("_light", "255"), ("targetname", "switchable")],
-        vec![("_light", "255"), ("_fifty_percent_distance", "128")],
+        vec![("_light", "255"), ("_zero_percent_distance", "128")],
         vec![("_light", "255 255 255 1e308"), ("_quadratic_attn", "1")],
     ] {
         assert!(
@@ -141,6 +141,154 @@ fn unsupported_and_nonfinite_light_settings_are_explicit() {
             "{properties:?}"
         );
     }
+}
+
+#[test]
+fn percentage_falloff_matches_sdk_curves_without_legacy_intensity_rescaling() {
+    for (half, end, expected) in [
+        ("128", "2048", [1.0, 1.0 / 30720.0, 239.0 / 3932160.0]),
+        (
+            "100",
+            "200",
+            [8.0 / 261.0, 0.01 * 8.0 / 261.0, 0.006325 * 8.0 / 261.0],
+        ),
+    ] {
+        let source = entity(&[
+            ("_light", "255 0 0 200"),
+            ("_fifty_percent_distance", half),
+            ("_zero_percent_distance", end),
+            ("_quadratic_attn", "999"),
+            ("_distance", "1"),
+        ]);
+        let light = PointLight::from_entity(&source, 7).unwrap();
+        let record = light.world_light();
+        assert_eq!(record.radius, 0.0);
+        assert!((record.intensity[0] as f64 - 200.0 / 255.0).abs() < 1e-7);
+        for (actual, expected) in [
+            record.constant_attenuation,
+            record.linear_attenuation,
+            record.quadratic_attenuation,
+        ]
+        .into_iter()
+        .zip(expected)
+        {
+            assert!((f64::from(actual) - expected).abs() < 1e-7 * expected.abs().max(1e-10));
+        }
+        let half: f64 = half.parse().unwrap();
+        let color = light
+            .contribution(light.origin - DVec3::Z * half, DVec3::Z)
+            .unwrap();
+        assert!(color.distance(DVec3::new(100.0, 0.0, 0.0)) < 1e-10);
+    }
+    let light = PointLight::from_entity(
+        &entity(&[
+            ("_light", "255 0 0 200"),
+            ("_fifty_percent_distance", "128"),
+            ("_zero_percent_distance", "2048"),
+        ]),
+        0,
+    )
+    .unwrap();
+    assert!(
+        (light
+            .contribution(light.origin - DVec3::Z * 2048.0, DVec3::Z)
+            .unwrap()
+            .x
+            - 200.0 / 256.0)
+            .abs()
+            < 1e-10
+    );
+}
+
+#[test]
+fn percentage_hard_fade_and_soft_caps_keep_point_and_spot_response_bounded() {
+    let source = entity(&[
+        ("_light", "255 0 0 200"),
+        ("_fifty_percent_distance", "100"),
+        ("_zero_percent_distance", "200"),
+        ("_hardfalloff", "1"),
+        ("pitch", "-90"),
+        ("_inner_cone", "20"),
+        ("_cone", "45"),
+    ]);
+    let point = PointLight::from_entity(&source, 0).unwrap();
+    let spot = point.with_spotlight(&source, &Default::default()).unwrap();
+    let coefficients = [8.0 / 261.0, 0.01 * 8.0 / 261.0, 0.006325 * 8.0 / 261.0];
+    let d = 187.5;
+    let expected = 100.0 / (coefficients[0] + coefficients[1] * d + coefficients[2] * d * d);
+    for light in [point, spot] {
+        assert!(
+            (light
+                .contribution(light.origin - DVec3::Z * d, DVec3::Z)
+                .unwrap()
+                .x
+                - expected)
+                .abs()
+                < 1e-10
+        );
+        for distance in [200.0, 256.0] {
+            assert_eq!(
+                light
+                    .contribution(light.origin - DVec3::Z * distance, DVec3::Z)
+                    .unwrap(),
+                DVec3::ZERO
+            );
+        }
+    }
+    let source = entity(&[
+        ("_light", "255 0 0 200"),
+        ("_fifty_percent_distance", "100"),
+        ("_zero_percent_distance", "50000"),
+    ]);
+    let light = PointLight::from_entity(&source, 0).unwrap();
+    assert!(light.world_light().quadratic_attenuation < 0.0);
+    let mut previous = f64::INFINITY;
+    for distance in [100.0, 50000.0, 60000.0, 100000.0, 600000.0] {
+        let current = light
+            .contribution(light.origin - DVec3::Z * distance, DVec3::Z)
+            .unwrap()
+            .x;
+        assert!(current.is_finite() && current >= 0.0 && current <= previous);
+        previous = current;
+    }
+    assert_eq!(previous, 0.0);
+}
+
+#[test]
+fn invalid_percentage_falloff_and_unrepresentable_coefficients_are_explicit() {
+    for fields in [
+        vec![
+            ("_fifty_percent_distance", "100"),
+            ("_zero_percent_distance", "100"),
+        ],
+        vec![
+            ("_fifty_percent_distance", "100"),
+            ("_zero_percent_distance", "50"),
+        ],
+        vec![("_fifty_percent_distance", "-1")],
+        vec![("_fifty_percent_distance", "NaN")],
+        vec![("_fifty_percent_distance", "1e308")],
+        vec![("_fifty_percent_distance", "1e-100")],
+        vec![("_fifty_percent_distance", "100"), ("_hardfalloff", "2")],
+        vec![("_hardfalloff", "1")],
+        vec![("_quadratic_attn", "1e-100")],
+    ] {
+        let mut fields = fields;
+        fields.push(("_light", "255 0 0 200"));
+        assert!(
+            PointLight::from_entity(&entity(&fields), 0).is_err(),
+            "{fields:?}"
+        );
+    }
+    let light = PointLight::from_entity(
+        &entity(&[
+            ("_light", "255 0 0 200"),
+            ("_fifty_percent_distance", "100"),
+        ]),
+        0,
+    )
+    .unwrap();
+    assert!((light.contribution(DVec3::ZERO, DVec3::Z).unwrap().x - 100.0).abs() < 1e-10);
 }
 
 #[test]

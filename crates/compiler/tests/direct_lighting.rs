@@ -107,6 +107,41 @@ fn direct_ldr_emits_checked_colored_samples_averages_and_world_lights() {
 }
 
 #[test]
+fn percentage_light_bakes_half_intensity_and_hard_cutoff_without_source_edits() {
+    let document = room(
+        DVec3::new(0.0, 0.0, 100.0),
+        &[
+            ("_light", "255 0 0 200"),
+            ("_fifty_percent_distance", "100"),
+            ("_zero_percent_distance", "200"),
+            ("_hardfalloff", "1"),
+        ],
+    );
+    let before = document.vmf().clone();
+    let output = compiler::compile_with_options(document.vmf(), &common::empty_game(), options());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let bsp = output.bsp.unwrap();
+    assert_eq!(floor_sample(&bsp, DVec3::ZERO), DVec3::new(100.0, 0.0, 0.0));
+    assert_eq!(floor_sample(&bsp, DVec3::new(176.0, 0.0, 0.0)), DVec3::ZERO);
+    assert_eq!(*document.vmf(), before);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("previous.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    let invalid = room(
+        DVec3::new(0.0, 0.0, 100.0),
+        &[
+            ("_light", "255 0 0 200"),
+            ("_fifty_percent_distance", "100"),
+            ("_zero_percent_distance", "50"),
+        ],
+    );
+    let output = compiler::compile_with_options(invalid.vmf(), &common::empty_game(), options());
+    assert!(output.report.has_errors());
+    assert!(!output.write(&path).unwrap());
+    assert_eq!(std::fs::read(path).unwrap(), b"previous BSP");
+}
+
+#[test]
 fn native_spotlights_bake_inside_the_cone_and_keep_outside_samples_dark() {
     let document = room(
         DVec3::new(0.0, 0.0, 100.0),

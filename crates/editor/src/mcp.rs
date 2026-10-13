@@ -2836,14 +2836,14 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared build lighting/physics settings and available modes with limitations. Fullbright and no physics bodies are the defaults. direct_ldr bakes static point lights; engine physics builds checked brush bodies through an isolated worker using the verified installed CS:S Linux64 library. Settings are independent of VMF edits and undo history."
+        description = "Inspect shared build lighting/physics settings and limitations. Defaults are fullbright and no physics bodies. direct_ldr bakes static point/spot lights on world faces and power-2/3/4 terrain, including legacy/percentage falloff, shadows and smoothed terrain normals. Engine physics builds checked brush/fluid/terrain bodies using an isolated verified CS:S Linux64 worker. Settings leave VMF/undo unchanged."
     )]
     fn get_compile_settings(&self) -> ToolResult {
         ok(self.session().compile_settings())
     }
 
     #[tool(
-        description = "Update shared build lighting (fullbright/direct_ldr) and/or physics (none/engine); omitted fields retain their values and all fields validate before changing anything. Engine physics needs hammerr-physics beside the editor and the verified installed Linux64 vphysics.so. Horizontal structural-world liquids get clipped fluid bodies; detail/model liquids, prop/terrain bodies and authored material/mass properties remain unfinished. Active builds freeze settings. Previous builds are stale while settings differ; VMF and undo history are unchanged."
+        description = "Update shared build lighting (fullbright/direct_ldr) and/or physics (none/engine); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. Detail/model fluids and authored material/mass properties remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
     )]
     fn set_compile_settings(
         &self,
@@ -2895,7 +2895,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Compile the current map snapshot into a Source BSP using the shared lighting settings from get_compile_settings/set_compile_settings. Fullbright is the default; direct_ldr emits bounded static point-light samples and world-light records. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks. Runtime brush entities use explicit origins or one visible origin volume as their pivot, with checked local geometry and compensated texture/lightmap projections. World, func_detail, duplicate and origin-only volumes fail with object diagnostics while preserving previous output."
+        description = "Compile the current snapshot using shared lighting/physics settings. direct_ldr bakes static point/spot lights, legacy/percentage falloff and world/terrain shadows. World power-2/3/4 terrain supports smooth patch normals and matching equal-power full-edge neighbors; diagnostics and statistics describe limits and deferred edges. Fullbright is default. Returns structured diagnostics/leak paths and preserves previous output on failure. Does not save the VMF; leaks write a .lin file. Brush entities use explicit origins or one visible origin volume, with checked local geometry and compensated UVs."
     )]
     async fn compile_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
         self.compile_snapshot(args, false).await

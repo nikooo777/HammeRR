@@ -111,7 +111,27 @@ def validate(client, output):
         "Invalid modes leave settings unchanged",
     )
     client.call("set_compile_settings", {"lighting": "direct_ldr"})
-    for label in ["red", "far", "occluded", "hidden", "fractional", "unsupported"]:
+    description = next(
+        choice["description"]
+        for choice in settings["choices"]
+        if choice["name"] == "direct_ldr"
+    )
+    check(
+        "power-2/3/4" in description and "percentage-distance" in description,
+        "Shared build help describes current terrain and falloff support",
+    )
+    for label in [
+        "red",
+        "far",
+        "occluded",
+        "hidden",
+        "fractional",
+        "unsupported",
+        "percentage",
+        "hard-fade",
+        "percentage-spot",
+        "invalid-percentage",
+    ]:
         client.call("new_map", {"discard_changes": True})
         ids = [
             client.call(
@@ -138,9 +158,34 @@ def validate(client, output):
             "_hardfalloff": "0",
             "style": "1" if label == "unsupported" else "0",
         }
+        if label in [
+            "percentage",
+            "hard-fade",
+            "percentage-spot",
+            "invalid-percentage",
+        ]:
+            properties.update(
+                {
+                    "_fifty_percent_distance": "100",
+                    "_zero_percent_distance": "50"
+                    if label == "invalid-percentage"
+                    else "200",
+                    "_hardfalloff": "1"
+                    if label in ["hard-fade", "percentage-spot"]
+                    else "0",
+                }
+            )
+        if label == "percentage-spot":
+            properties.update(
+                {"pitch": "-90", "_inner_cone": "20", "_cone": "45", "_exponent": "2"}
+            )
         lamp = client.call(
             "create_entity",
-            {"classname": "light", "origin": [0, 0, height], "properties": properties},
+            {
+                "classname": "light_spot" if label == "percentage-spot" else "light",
+                "origin": [0, 0, height],
+                "properties": properties,
+            },
         )["id"]
         ids.append(lamp)
         if label == "hidden":
@@ -174,6 +219,34 @@ def validate(client, output):
                     "lightmap_scale": 8,
                 },
             )
+        if label == "hard-fade":
+            client.call(
+                "create_entity",
+                {
+                    "classname": "logic_script",
+                    "origin": [0, 0, 32],
+                    "properties": {
+                        "targetname": "hammerr_observer",
+                        "vscripts": "hammerr_observer.nut",
+                        "thinkfunction": "HammeRRThink",
+                    },
+                },
+            )
+            client.call(
+                "create_entity",
+                {
+                    "classname": "prop_physics",
+                    "origin": [160, -128, 128],
+                    "properties": {
+                        "targetname": "physics_crate",
+                        "model": "models/props_junk/wood_crate001a.mdl",
+                    },
+                },
+            )
+        client.call(
+            "set_compile_settings",
+            {"physics": "engine" if label == "hard-fade" else "none"},
+        )
         vmf = output / f"{label}.vmf"
         client.call("save_map", {"path": str(vmf)})
         client.call("open_map", {"path": str(vmf)})
@@ -181,11 +254,11 @@ def validate(client, output):
         history = client.call("get_map_info")["undo"]
         saved = vmf.read_bytes()
         bsp = output / f"{label}.bsp"
-        if label == "unsupported":
+        if label in ["unsupported", "invalid-percentage"]:
             client.call("set_compile_settings", {"lighting": "fullbright"})
             check(
                 client.call("compile_map", {"path": str(bsp)})["success"],
-                "Fullbright accepts a light style while style baking is unfinished",
+                f"{label}: Fullbright permits unsupported lighting properties",
             )
             previous = bsp.read_bytes()
             client.call("set_compile_settings", {"lighting": "direct_ldr"})
@@ -201,11 +274,11 @@ def validate(client, output):
                     message["object"] == lamp and message["level"] == "error"
                     for message in failed["diagnostics"]
                 ),
-                "Unsupported animated light has an object diagnostic",
+                f"{label}: rejected light has an object diagnostic",
             )
             check(
                 bsp.read_bytes() == previous,
-                "Rejected light style preserves the previous BSP",
+                f"{label}: rejected light preserves the previous BSP",
             )
         else:
             compiled = client.call("compile_map", {"path": str(bsp)})
@@ -237,6 +310,69 @@ def validate(client, output):
                 check(
                     center_sample(data) == expected,
                     f"{label}: native floor sample matches clear/far/shadow/hidden reference",
+                )
+            if label in ["percentage", "hard-fade", "percentage-spot"]:
+                check(
+                    center_sample(data) == [100, 0, 0],
+                    f"{label}: 50% reach receives half brightness",
+                )
+                coefficients = [8 / 261, 0.01 * 8 / 261, 0.006325 * 8 / 261]
+                light_record = world_lights[0]
+                check(
+                    abs(light_record[3] - 200 / 255) < 1e-6 and light_record[15] == 0,
+                    f"{label}: native intensity omits legacy distance normalization",
+                )
+                check(
+                    all(
+                        abs(a - b) < 1e-7
+                        for a, b in zip(light_record[16:19], coefficients, strict=True)
+                    ),
+                    f"{label}: native attenuation matches the SDK curve",
+                )
+                count = 0
+                for point, actual, quantization, _ in floor_samples(data):
+                    distance = math.sqrt(point[0] ** 2 + point[1] ** 2 + height**2)
+                    reference = (
+                        200
+                        / (
+                            coefficients[0]
+                            + coefficients[1] * distance
+                            + coefficients[2] * distance**2
+                        )
+                        * height
+                        / distance
+                    )
+                    if label in ["hard-fade", "percentage-spot"]:
+                        t = max(0, min(1, 1 - (distance - 175) / 25))
+                        reference *= t**3 * (t * (6 * t - 15) + 10)
+                    if label == "percentage-spot":
+                        angle = height / distance
+                        inner, outer = (
+                            math.cos(math.radians(20)),
+                            math.cos(math.radians(45)),
+                        )
+                        reference *= (
+                            0
+                            if angle <= outer
+                            else angle
+                            * (
+                                1
+                                if angle >= inner
+                                else ((angle - outer) / (inner - outer)) ** 2
+                            )
+                        )
+                    assert abs(
+                        actual[0] - reference
+                    ) <= quantization + 0.001 and actual[1:] == [0, 0], (
+                        label,
+                        point,
+                        actual,
+                        reference,
+                    )
+                    count += 1
+                check(
+                    count > 100,
+                    f"{label}: floor falloff agrees with an independent radiance reference",
                 )
             if label == "fractional":
                 interior, borders = 0, 0

@@ -378,13 +378,28 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
         let mut keys = String::new();
         for (index, body) in model.bodies.iter().enumerate() {
             let collide = api.body(body)?;
-            let volume = collide.verify(body, if model.index == 0 { 1 } else { 0 }, &mut work)?;
+            let volume = collide.verify(
+                body,
+                if model.index == 0 && body.surface.is_none() {
+                    1
+                } else {
+                    0
+                },
+                &mut work,
+            )?;
             let solid = collide.serialize()?;
             bytes += 4 + solid.len();
             if bytes > source_formats::bsp::MAX_PHYSICS_BYTES {
                 return Err("Native physics data exceeds its 64 MiB limit".into());
             }
-            if model.index == 0 {
+            if let Some(surface) = body.surface {
+                let property = if body.contents == source_formats::bsp::contents::SLIME {
+                    "slime"
+                } else {
+                    "water"
+                };
+                keys.push_str(&format!("fluid {{\n\"index\" \"{index}\"\n\"surfaceprop\" \"{property}\"\n\"damping\" \"0.01\"\n\"contents\" \"{}\"\n\"surfaceplane\" \"0 0 1 {surface}\"\n\"currentvelocity\" \"0 0 0\"\n}}\n", body.contents));
+            } else if model.index == 0 {
                 keys.push_str(&format!(
                     "staticsolid {{\n\"index\" \"{index}\"\n\"contents\" \"{}\"\n}}\n",
                     body.contents

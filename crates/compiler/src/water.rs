@@ -206,7 +206,7 @@ pub(crate) fn build(
         }
     }
     if !water.records.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; physics fluid volumes, depth-specific material patches and CS:S rendering validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; depth-specific material patches, below-water materials and broader CS:S rendering validation remain unfinished", None, None));
     }
     Ok(water)
 }

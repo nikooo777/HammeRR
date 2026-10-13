@@ -1548,8 +1548,10 @@ The worker checks its library build and generated geometry, bounds memory/work,
 and stops on cancellation or after 30 seconds. Missing or unverified libraries
 fail explicitly and retain previous output. Editing works without this backend.
 Bodies currently use default surface properties; brush models use a one-kilogram
-mass fallback. Material friction/density, authored masses, fluid, prop and terrain
-bodies remain unfinished. Private CS:S checks establish world body contact;
+mass fallback. Horizontal structural-world liquids also receive clipped fluid
+bodies with native surface planes and damping defaults. Material friction/density,
+authored masses, detail/model liquids and prop/terrain bodies remain unfinished.
+Private CS:S checks establish world body contact;
 one live player spawn/teleport remains grounded in both modes, while a physics
 crate falls through the map without bodies and rests on the floor with engine
 physics. Moving-brush behavior and broader collision still need validation.
@@ -1594,9 +1596,12 @@ existing controls are preserved, and the source document stays unchanged.
 
 Sloped or enclosed tops and incompatible overlapping liquids fail with object
 diagnostics and preserve previous output. Hidden volumes are omitted; detail
-and brush-model liquids report their unsupported region metadata. Fluid physics,
-depth-specific material patches, below-water materials and in-game rendering
-remain unfinished. Native metadata alone does not establish playable water.
+and brush-model liquids report their unsupported region metadata. With **CS:S
+engine physics** selected, compiled wet-leaf hulls form fluid bodies cut against
+solid floors/walls; connected compatible regions share a compound body. Shared
+build results report `physics_fluids`. Private CS:S checks verify a crate rising
+and floating in the water. Depth-specific material patches, below-water materials,
+currents, authored damping and broader rendering/movement remain unfinished.
 
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
@@ -1703,12 +1708,16 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 It checks a single player spawn/teleport, baked red lightmaps and a physics
 crate with and without native bodies. Maps, config writes, scripts and logs use
 private directories; the check sends no mouse or keyboard events to the desktop.
+Add `--fluid --output /tmp/hammerr-fluid-check` to include a pool and verify
+buoyancy. `scripts/validate_water_metadata.py --physics engine` checks native
+fluid records and both MCP build paths without launching the game.
 
 </details>
 
 Tighter VVIS portal flow, VRAD, physics collision, compiled displacements,
 static props, areaportals and overlays remain unfinished. Horizontal world water
-now has native leaf/surface metadata; fluid physics and rendering remain pending. Cubemap samples
+now has native leaf/surface metadata and optional fluid bodies with verified crate
+buoyancy; depth/below-water material handling and broader rendering remain pending. Cubemap samples
 compile, while reflection binding/capture and lighting-origin references remain
 pending. Brush-entity origin volumes and explicit pivots compile; rotating,
 moving and trigger behavior still needs CS:S runtime validation. Unsupported geometry is reported

@@ -302,3 +302,77 @@ fn authored_water_lod_controls_are_preserved_and_not_duplicated() {
     assert!(text.contains("\"cheapwaterstartdistance\" \"123\""));
     assert!(text.contains("\"cheapwaterenddistance\" \"456\""));
 }
+
+#[test]
+fn engine_fluids_use_connected_regions_and_clipped_wet_leaf_hulls() {
+    let Some(root) = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|path| path.join(".local/share/Steam/steamapps/common/Counter-Strike Source"))
+        .filter(|path| path.join("bin/linux64/vphysics.so").is_file())
+    else {
+        eprintln!("CS:S not installed; skipping native fluid fixture");
+        return;
+    };
+    let (_directory, mut fs) = game();
+    fs.base_dir = root;
+    let (vmf, _) = add_pool(
+        common::room(),
+        [-128.0, -128.0, 0.0],
+        [0.0, 128.0, 64.0],
+        "water",
+    );
+    let (vmf, _) = add_pool(vmf, [0.0, -128.0, 0.0], [128.0, 128.0, 64.0], "water");
+    let mut document = Document::new(vmf);
+    document
+        .edit("column in fluid", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-16.0, -16.0, 0.0),
+                DVec3::new(16.0, 16.0, 32.0),
+                "dev/dev_measuregeneric01",
+            )
+        })
+        .unwrap();
+    let before = document.vmf().write(&Default::default());
+    let output = compiler::compile_with_options(
+        document.vmf(),
+        &fs,
+        compiler::Options {
+            physics: compiler::PhysicsMode::Engine,
+            ..compiler::Options::default()
+        },
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.water_regions, 1);
+    assert_eq!(output.stats.physics_fluids, 1);
+    assert_eq!(output.stats.physics_solids, 2);
+    let bsp = output.bsp.unwrap();
+    let physics = bsp.physics().unwrap().unwrap();
+    let keys = std::str::from_utf8(physics.models[0].key_data).unwrap();
+    let nodes = source_formats::keyvalues::parse(&keys[..keys.len() - 1]).unwrap();
+    let fluid = nodes
+        .iter()
+        .find(|node| node.key == "fluid")
+        .unwrap()
+        .children()
+        .unwrap();
+    for (key, value) in [
+        ("index", "1"),
+        ("surfaceprop", "water"),
+        ("damping", "0.01"),
+        ("contents", "32"),
+        ("surfaceplane", "0 0 1 64"),
+        ("currentvelocity", "0 0 0"),
+    ] {
+        assert_eq!(
+            fluid.iter().find(|node| node.key == key).unwrap().as_str(),
+            Some(value)
+        );
+    }
+    assert_eq!(physics.models[0].solids.len(), 2);
+    let leaves = bsp.records::<Leaf>().unwrap();
+    let wet = leaves.iter().filter(|leaf| leaf.water_data >= 0).count();
+    assert!(wet > 2);
+    assert_eq!(output.stats.physics_convexes, 7 + wet);
+    assert_eq!(document.vmf().write(&Default::default()), before);
+}

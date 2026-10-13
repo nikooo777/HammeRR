@@ -100,7 +100,7 @@ impl PhysicsMode {
                 "Keeps brush BSP hulls; omits physics bodies for props and moving brushes."
             }
             Self::Engine => {
-                "Uses the verified installed Linux64 CS:S library in an isolated worker. Builds world, clip and brush-model hulls with default surfaces. Fluid, prop and terrain bodies and material density are unfinished."
+                "Uses the installed Linux64 CS:S library in an isolated worker. Builds world, clip, brush-model and horizontal world-fluid bodies with default surfaces. Prop/terrain bodies, material density and authored masses are unfinished."
             }
         }
     }
@@ -204,6 +204,7 @@ pub struct Stats {
     pub physics_solids: usize,
     pub physics_convexes: usize,
     pub physics_bytes: usize,
+    pub physics_fluids: usize,
     pub elapsed: Duration,
 }
 
@@ -391,11 +392,20 @@ fn build(
     }
     if options.physics == PhysicsMode::Engine {
         control.advance(Stage::Physics)?;
-        let stats = physics::bake(&map, &models, fs, &mut bsp, &mut output.report, control)?;
+        let stats = physics::bake(
+            &map,
+            &models,
+            &water,
+            fs,
+            &mut bsp,
+            &mut output.report,
+            control,
+        )?;
         output.stats.physics_models = stats.models;
         output.stats.physics_solids = stats.solids;
         output.stats.physics_convexes = stats.convexes;
         output.stats.physics_bytes = stats.bytes;
+        output.stats.physics_fluids = stats.fluids;
     }
     control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();

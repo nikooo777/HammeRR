@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use source_formats::bsp::{
-    Bsp, CollisionHeader, MAX_PHYSICS_BYTES, MAX_PHYSICS_MODELS, PhysicsCollision, contents,
+    Bsp, CollisionHeader, MAX_PHYSICS_BYTES, MAX_PHYSICS_MODELS, MAX_PHYSICS_SOLIDS,
+    PhysicsCollision, contents,
 };
 
 use crate::emit;
@@ -41,6 +42,8 @@ struct Shape {
 struct Body {
     contents: i32,
     shapes: Vec<Shape>,
+    #[serde(default)]
+    surface: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,12 +66,16 @@ pub(crate) struct Stats {
     pub solids: usize,
     pub convexes: usize,
     pub bytes: usize,
+    pub fluids: usize,
 }
 
-fn shape(map: &Map, index: usize) -> Result<Shape, String> {
-    let brush = &map.brushes[index];
-    let corners = brush
-        .points()
+fn hull(
+    map: &Map,
+    tag: usize,
+    points: impl Iterator<Item = DVec3>,
+    planes: impl Iterator<Item = usize>,
+) -> Result<Shape, String> {
+    let corners = points
         .map(|point| point.as_vec3().to_array())
         .collect::<Vec<_>>();
     let mut seen = BTreeSet::new();
@@ -76,18 +83,15 @@ fn shape(map: &Map, index: usize) -> Result<Shape, String> {
         .into_iter()
         .filter(|point| seen.insert(point.map(f32::to_bits)))
         .collect();
-    let planes = brush
-        .sides
-        .iter()
-        .filter(|side| !side.bevel)
-        .map(|side| {
-            let plane = map.planes.get(side.plane);
+    let planes = planes
+        .map(|index| {
+            let plane = map.planes.get(index);
             let normal = plane.normal.as_vec3();
             [normal.x, normal.y, normal.z, plane.dist as f32]
         })
         .collect();
     Ok(Shape {
-        brush: index
+        brush: tag
             .try_into()
             .map_err(|_| "Physics brush index exceeds native bounds")?,
         corners,
@@ -95,9 +99,24 @@ fn shape(map: &Map, index: usize) -> Result<Shape, String> {
     })
 }
 
+fn shape(map: &Map, index: usize) -> Result<Shape, String> {
+    let brush = &map.brushes[index];
+    hull(
+        map,
+        index,
+        brush.points(),
+        brush
+            .sides
+            .iter()
+            .filter(|side| !side.bevel)
+            .map(|side| side.plane),
+    )
+}
+
 fn plan(
     map: &Map,
     models: &[emit::Model],
+    water: &crate::water::Water,
     report: &mut Report,
     control: &Control,
 ) -> Result<Request, String> {
@@ -112,11 +131,9 @@ fn plan(
             control.checkpoint()?;
             let brush = &map.brushes[index];
             if brush.contents & (contents::WATER | contents::SLIME) != 0 {
-                report.diagnostics.push(Diagnostic::warning(
-                    "Engine physics does not emit fluid bodies yet",
-                    Some(format!("solid:{}", brush.id)),
-                    None,
-                ));
+                if model_index != 0 || !brush.structural() {
+                    report.diagnostics.push(Diagnostic::warning("Engine fluid physics requires structural world water regions; this detail or brush-model liquid is omitted", Some(format!("solid:{}", brush.id)), None));
+                }
                 continue;
             }
             if model_index == 0 {
@@ -134,17 +151,52 @@ fn plan(
                     .push(shape(map, index)?);
             }
         }
-        if !groups.is_empty() {
+        let mut bodies: Vec<_> = WORLD_MASKS
+            .into_iter()
+            .filter_map(|contents| {
+                groups.remove(&contents).map(|shapes| Body {
+                    contents,
+                    shapes,
+                    surface: None,
+                })
+            })
+            .collect();
+        if model_index == 0 {
+            let mut fluids = vec![Vec::new(); water.records.len()];
+            for (index, node) in model.tree.nodes.iter().enumerate() {
+                control.checkpoint()?;
+                let region = water.leaves[index];
+                if region >= 0 && !node.solid() && node.split.is_none() {
+                    fluids[region as usize].push(hull(
+                        map,
+                        map.brushes.len() + index,
+                        node.volume
+                            .sides
+                            .iter()
+                            .flat_map(|side| side.winding.0.iter().copied()),
+                        node.volume.sides.iter().map(|side| side.plane),
+                    )?);
+                }
+            }
+            for (record, shapes) in water.records.iter().zip(fluids) {
+                if shapes.is_empty() {
+                    continue;
+                }
+                let info = &map.texinfos.infos[record.surface_texinfo as usize];
+                let material = map.texdata[info.texdata as usize];
+                let contents =
+                    map.materials.get(material).contents & (contents::WATER | contents::SLIME);
+                bodies.push(Body {
+                    contents,
+                    shapes,
+                    surface: Some(record.surface_z),
+                });
+            }
+        }
+        if !bodies.is_empty() {
             request.models.push(Model {
                 index: model_index,
-                bodies: WORLD_MASKS
-                    .into_iter()
-                    .filter_map(|contents| {
-                        groups
-                            .remove(&contents)
-                            .map(|shapes| Body { contents, shapes })
-                    })
-                    .collect(),
+                bodies,
             });
         }
     }
@@ -166,17 +218,24 @@ fn validate(request: &Request) -> Result<(), String> {
         if model.index >= request.model_count
             || !seen_models.insert(model.index)
             || model.bodies.is_empty()
-            || model.bodies.len() > WORLD_MASKS.len()
+            || model.bodies.len() > MAX_PHYSICS_SOLIDS
         {
             return Err("Physics request has invalid or duplicate model records".into());
         }
         let mut seen_masks = BTreeSet::new();
         for body in &model.bodies {
-            if !WORLD_MASKS.contains(&body.contents)
-                || !seen_masks.insert(body.contents)
-                || body.shapes.is_empty()
-                || (model.index != 0 && body.contents != MASK_SOLID)
-            {
+            let fluid = body.surface.is_some();
+            let valid = if let Some(surface) = body.surface {
+                model.index == 0
+                    && matches!(body.contents, contents::WATER | contents::SLIME)
+                    && surface.is_finite()
+                    && surface.abs() as f64 <= MAX_COMPILE_COORD
+            } else {
+                WORLD_MASKS.contains(&body.contents)
+                    && seen_masks.insert(body.contents)
+                    && (model.index == 0 || body.contents == MASK_SOLID)
+            };
+            if !valid || body.shapes.is_empty() {
                 return Err("Physics request has invalid contents groups".into());
             }
             let mut seen_brushes = BTreeSet::new();
@@ -206,6 +265,9 @@ fn validate(request: &Request) -> Result<(), String> {
                     let point = DVec3::from_array(point.map(f64::from));
                     if !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD {
                         return Err("Physics corners require finite Source coordinates".into());
+                    }
+                    if fluid && point.z > body.surface.unwrap() as f64 + 0.02 {
+                        return Err("Fluid hull extends above its surface plane".into());
                     }
                     mins = mins.min(point);
                     maxs = maxs.max(point);
@@ -331,12 +393,13 @@ fn execute(
 pub(crate) fn bake(
     map: &Map,
     models: &[emit::Model],
+    water: &crate::water::Water,
     fs: &source_formats::gamefs::GameFs,
     bsp: &mut Bsp,
     report: &mut Report,
     control: &Control,
 ) -> Result<Stats, String> {
-    let request = plan(map, models, report, control)?;
+    let request = plan(map, models, water, report, control)?;
     let directory = fs.base_dir.join("bin/linux64");
     if !directory.join("vphysics.so").is_file() {
         return Err(
@@ -406,13 +469,19 @@ pub(crate) fn bake(
             .map(|body| body.shapes.len())
             .sum(),
         bytes: bytes.len(),
+        fluids: request
+            .models
+            .iter()
+            .flat_map(|model| &model.bodies)
+            .filter(|body| body.surface.is_some())
+            .count(),
     };
     bsp.set_physics(&physics)
         .map_err(|error| error.to_string())?;
     if models.len() > 1 {
         report.diagnostics.push(Diagnostic::warning("Engine physics uses default surface properties and a one-kilogram brush-model mass; material density and authored mass controls are unfinished", None, None));
     } else {
-        report.diagnostics.push(Diagnostic::info("Engine physics compiles owned brush hulls with default surface properties; material friction/density, fluid bodies, props and terrain physics remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush and horizontal world-fluid hulls with default surface properties; authored friction/density/masses, props and terrain physics remain unfinished", None, None));
     }
     Ok(stats)
 }

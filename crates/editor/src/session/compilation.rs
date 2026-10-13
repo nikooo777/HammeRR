@@ -91,6 +91,7 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "physics_solids": stats.physics_solids,
         "physics_convexes": stats.physics_convexes,
         "physics_bytes": stats.physics_bytes,
+        "physics_fluids": stats.physics_fluids,
         "elapsed_ms": stats.elapsed.as_millis(),
     })
 }

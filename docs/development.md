@@ -84,9 +84,10 @@ python3 -B scripts/validate_direct_lighting.py --output /tmp/hammerr-falloff-che
 python3 -B scripts/validate_direct_sky.py --quality-tests --output /tmp/hammerr-sky-check
 python3 -B scripts/validate_terrain.py --output /tmp/hammerr-terrain-check
 python3 -B scripts/validate_terrain_normals.py --output /tmp/hammerr-normals-check
+python3 -B scripts/validate_terrain_seams.py --output /tmp/hammerr-seams-check
 ```
 
-`direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
+`direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
 
 ## In-game checks
 
@@ -103,6 +104,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `brush_runtime` | Sliding and rotating doors, a continuously rotating brush, and trigger outputs. |
 | `static_props --runtime` | Static prop collision settings. |
 | `terrain --runtime` | Terrain with uneven heights, power-4 and mixed-size lighting, player collision, ray flags and moving objects. `--runtime-cases power-four mixed` limits the game checks to those two fixtures; `--runtime-cases neighbors` runs the linked-edge fixture. |
+| `terrain_seams --runtime` | Rotated curved neighbors share continuous baked lighting and retain seam contact heights. |
 | `terrain_normals --runtime` | A curved terrain ridge with smooth normals, shared with the viewport, keeps its collision height in game. |
 
 Pass `--game-dir` if CS:S isn't in `~/.local/share/Steam/steamapps/common/Counter-Strike Source`.

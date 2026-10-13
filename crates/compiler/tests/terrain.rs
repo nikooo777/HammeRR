@@ -378,6 +378,122 @@ fn native_terrain_full_edges_keep_sdk_orientations_for_rotated_start_corners() {
 }
 
 #[test]
+fn curved_neighbor_lightmaps_share_seam_normals_without_changing_native_geometry() {
+    for power in [2, 3, 4] {
+        for rotations in [[0, 2], [1, 3]] {
+            let mut vmf = adjacent_fixture([power; 2], rotations);
+            for solid in &mut vmf.world.solids {
+                let geometry = BrushGeometry::from_solid(solid).unwrap();
+                for face in &geometry.faces {
+                    let side = &mut solid.sides[face.side];
+                    let Some(disp) = &mut side.displacement else {
+                        continue;
+                    };
+                    let mesh = DisplacementMesh::build(face, disp).unwrap();
+                    disp.normals = Some(vec![vec![DVec3::Z; mesh.size]; mesh.size]);
+                    disp.distances = Some(
+                        mesh.positions
+                            .chunks(mesh.size)
+                            .map(|row| {
+                                row.iter()
+                                    .map(|point| (point.x - 112.0).powi(2) / 512.0)
+                                    .collect()
+                            })
+                            .collect(),
+                    );
+                }
+            }
+            let mut document = Document::new(vmf);
+            document
+                .edit("seam light", |tx| {
+                    edit::create_entity(
+                        tx,
+                        "light",
+                        Some(DVec3::new(112.0, 112.0, 220.0)),
+                        &[
+                            ("_light".into(), "0 255 0 200".into()),
+                            ("_constant_attn".into(), "1".into()),
+                            ("_quadratic_attn".into(), "0".into()),
+                        ],
+                        Vec::new(),
+                    )
+                })
+                .unwrap();
+            let source = document.vmf().clone();
+            let baseline = compiler::compile(document.vmf(), &common::empty_game())
+                .bsp
+                .unwrap();
+            let result = compiler::compile_with_options(
+                document.vmf(),
+                &common::empty_game(),
+                compiler::Options {
+                    lighting: compiler::LightingMode::DirectLdr,
+                    ..Default::default()
+                },
+            );
+            assert!(!result.report.has_errors(), "{:?}", result.report);
+            assert_eq!(result.stats.displacement_neighbor_pairs, 1);
+            let bsp = result.bsp.unwrap();
+            for lump in [
+                bsp::lump::DISP_VERTS,
+                bsp::lump::DISP_TRIS,
+                bsp::lump::PHYSCOLLIDE,
+            ] {
+                assert_eq!(bsp.lumps[lump].data, baseline.lumps[lump].data);
+            }
+            let data = bsp.displacements().unwrap().unwrap();
+            let old = baseline.displacements().unwrap().unwrap();
+            let faces = bsp.records::<bsp::Face>().unwrap();
+            let infos = bsp.records::<TexInfo>().unwrap();
+            let lightmaps = bsp.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
+            for (index, info) in data.infos.iter().enumerate() {
+                assert_eq!(info.edges, old.infos[index].edges);
+                let positions = data
+                    .positions(index, bsp.displacement_quad(index).unwrap())
+                    .unwrap();
+                let sampler = bsp::DisplacementSurfaceSampler::new(*info, &positions).unwrap();
+                let face = faces[usize::from(info.face)];
+                let samples = lightmaps
+                    .face(&face, &infos[face.texinfo as usize])
+                    .unwrap()
+                    .unwrap();
+                let colors = samples.samples(0, 0).unwrap();
+                let mut seam_samples = 0;
+                for (sample, color) in colors.iter().enumerate() {
+                    let width = face.lightmap_size[0] as usize + 1;
+                    let point = DVec3::from_array(
+                        sampler
+                            .sample([
+                                (sample % width) as f64 / face.lightmap_size[0] as f64,
+                                (sample / width) as f64 / face.lightmap_size[1] as f64,
+                            ])
+                            .unwrap()
+                            .surface
+                            .position,
+                    );
+                    if (point.x - 112.0).abs() < 1e-9 {
+                        seam_samples += 1;
+                        assert_eq!(
+                            *color,
+                            compiler::lighting::encode_color(
+                                DVec3::Y
+                                    * (200.0
+                                        * DVec3::Z.dot(
+                                            (DVec3::new(112.0, 112.0, 220.0) - point).normalize()
+                                        ))
+                            )
+                            .unwrap()
+                        );
+                    }
+                }
+                assert!(seam_samples >= 2);
+            }
+            assert_eq!(*document.vmf(), source);
+        }
+    }
+}
+
+#[test]
 fn unequal_power_mismatched_and_ambiguous_terrain_edges_stay_unlinked() {
     for case in 0..3 {
         let mut vmf = adjacent_fixture(if case == 0 { [2, 3] } else { [3, 3] }, [0, 0]);

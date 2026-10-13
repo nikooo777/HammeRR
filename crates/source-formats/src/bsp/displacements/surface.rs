@@ -25,6 +25,14 @@ impl DisplacementGeometricSample {
 
 impl DisplacementInfo {
     pub fn vertex_normals(self, positions: &[[f64; 3]]) -> io::Result<Vec<[f64; 3]>> {
+        Ok(self
+            .vertex_normal_sums(positions)?
+            .into_iter()
+            .map(|normal| DVec3::from_array(normal).normalize_or_zero().to_array())
+            .collect())
+    }
+
+    pub fn vertex_normal_sums(self, positions: &[[f64; 3]]) -> io::Result<Vec<[f64; 3]>> {
         if positions.len() != self.vertex_count()?
             || positions.iter().flatten().any(|x| !x.is_finite())
         {
@@ -39,11 +47,16 @@ impl DisplacementInfo {
             }
             for index in indices {
                 normals[index] += normal;
+                if !normals[index].is_finite() {
+                    return Err(invalid(
+                        "displacement vertex normal exceeds finite arithmetic",
+                    ));
+                }
             }
         }
         Ok(normals
             .into_iter()
-            .map(|normal| normal.normalize_or_zero().to_array())
+            .map(|normal| normal.to_array())
             .collect())
     }
 }
@@ -66,7 +79,6 @@ impl DisplacementSurfaceSampler {
     pub const MAX_SAMPLE_WORK: usize = 8;
     pub fn new(info: DisplacementInfo, positions: &[[f32; 3]]) -> io::Result<Self> {
         let size = info.grid_size()?;
-        let cells = size - 1;
         if positions.len() != size * size || positions.iter().flatten().any(|x| !x.is_finite()) {
             return Err(invalid("displacement surface grid is invalid"));
         }
@@ -76,6 +88,25 @@ impl DisplacementSurfaceSampler {
                 .map(|point| point.map(f64::from))
                 .collect::<Vec<_>>(),
         )?;
+        Self::with_vertex_normals(info, positions, normals)
+    }
+
+    pub fn with_vertex_normals(
+        info: DisplacementInfo,
+        positions: &[[f32; 3]],
+        normals: Vec<[f64; 3]>,
+    ) -> io::Result<Self> {
+        let size = info.grid_size()?;
+        let cells = size - 1;
+        if positions.len() != size * size
+            || positions.iter().flatten().any(|x| !x.is_finite())
+            || normals.len() != positions.len()
+            || normals.iter().flatten().any(|x| !x.is_finite())
+        {
+            return Err(invalid(
+                "displacement surface position/normal grid is invalid",
+            ));
+        }
         let indices = info.lightmap_triangle_indices()?;
         let mut triangles = Vec::with_capacity(indices.len());
         let mut lookup = vec![[u16::MAX; 2]; cells * cells];

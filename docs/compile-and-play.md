@@ -81,7 +81,7 @@ With **Direct LDR**:
 - Static `light`, `light_spot` and `light_environment` entities are baked in color.
 - Opaque world brushes, detail brushes and terrain cast shadows.
 - Each face uses its [lightmap scale](textures.md#face-lighting).
-- Terrain is lit using its real raised surface, with smooth normals within each patch. The viewport shades terrain with the same normals.
+- Terrain is lit using its real raised surface, with smooth normals within patches and across matching equal-power full edges. The viewport uses the same normal construction.
 
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
 
@@ -187,13 +187,22 @@ Not yet: baked prop lighting, prop shadows and exact placement in the BSP tree.
 
 ### Terrain (displacements)
 
+Connected terrain can keep its lighting continuous across patch seams.
+
+1. Click **Open…** and choose a VMF with adjacent terrain patches. Their powers and complete edge grids must match.
+2. Open **Build settings…** and choose **Direct LDR**. Add a light or sun using **Place entity** if the map has none.
+3. Click **Close**, then **Compile** or **Run Map**. Normal sewing happens automatically, and the viewport uses it too.
+4. Open **Build details…** and check **Neighbor pairs**. Unmatched or ambiguous edges are listed in **Diagnostics**.
+
+![Continuous baked lighting across rotated terrain patches](images/terrain-seams.png)
+
 - Terrain from imported VMFs compiles, at power 2, 3 and 4, with blend alpha and its no-physics, no-hull and no-ray flags.
 - Terrain doesn't seal the map, and its parent brush doesn't become a solid box.
 - With engine physics, terrain gets collision meshes.
 - Neighboring patches of the same power that share a full edge are linked to each other in the BSP. Build details and agents report the number of linked pairs. Ambiguous edges, different powers and mismatched surfaces stay unlinked, with a diagnostic.
-- Direct LDR lights terrain of every size, with smooth normals within each patch, and raised terrain shades the world beneath it. Terrain with unlit materials needs **Fullbright** for now.
+- Direct LDR lights terrain of every size, with smooth normals sewn across matching equal-power full edges, and raised terrain shades the world beneath it. Terrain with unlit materials needs **Fullbright** for now.
 
-Not yet: creating or editing terrain in HammeRR, subdivision, removed triangles, terrain on entities or detail brushes, smoothing normals across neighboring patches, LOD between different powers or partial edges, and neighbors that touch only at a corner.
+Not yet: creating or editing terrain in HammeRR, subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles, LOD between different powers or partial edges, and neighbors that touch only at a corner.
 
 ## Coordinate limits
 

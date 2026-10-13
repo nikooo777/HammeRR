@@ -1554,7 +1554,9 @@ authored masses, detail/model liquids and prop/terrain bodies remain unfinished.
 Private CS:S checks establish world body contact;
 one live player spawn/teleport remains grounded in both modes, while a physics
 crate falls through the map without bodies and rests on the floor with engine
-physics. Moving-brush behavior and broader collision still need validation.
+physics. Sliding and rotating doors, a continuously rotating brush, fractional
+pivots and trigger outputs also pass an MCP-authored CS:S fixture. Contact with
+moving bodies and broader collision still need validation.
 
 Compilation requires finite brush geometry and entity origins within
 **±16,384 units**. Out-of-range objects produce diagnostics before BSP
@@ -1673,8 +1675,8 @@ Native sloped, near-axis, distant, reflected and thin-brush fixtures verify
 surface preservation and swept hulls against an independent geometric reference.
 Optional engine physics now emits bounded world/clip and brush-model records.
 Private CS:S checks verify live player grounding in both modes and a physics
-crate resting on native world bodies. Moving-body behavior and full collision
-validation remain unfinished.
+crate resting on native world bodies. Door opening/closing, rotating pivots and
+trigger outputs pass; moving-body contact and full collision remain unfinished.
 
 <details>
 <summary>Headless physics backend probe</summary>
@@ -1711,6 +1713,9 @@ private directories; the check sends no mouse or keyboard events to the desktop.
 Add `--fluid --output /tmp/hammerr-fluid-check` to include a pool and verify
 buoyancy. `scripts/validate_water_metadata.py --physics engine` checks native
 fluid records and both MCP build paths without launching the game.
+`scripts/validate_brush_runtime.py` checks doors, rotating brushes and trigger
+connections in the same private display. Direction properties such as Move
+direction accept Pitch/Yaw/Roll through both the inspector and MCP.
 
 </details>
 
@@ -1719,8 +1724,9 @@ static props, areaportals and overlays remain unfinished. Horizontal world water
 now has native leaf/surface metadata and optional fluid bodies with verified crate
 buoyancy; depth/below-water material handling and broader rendering remain pending. Cubemap samples
 compile, while reflection binding/capture and lighting-origin references remain
-pending. Brush-entity origin volumes and explicit pivots compile; rotating,
-moving and trigger behavior still needs CS:S runtime validation. Unsupported geometry is reported
+pending. Brush-entity origin volumes and explicit pivots compile and pass basic
+door, rotation and trigger runtime checks. Other brush behaviors and moving-body
+contact remain pending. Unsupported geometry is reported
 in diagnostics. The BSP reader/writer is verified against stock CS:S maps,
 including bounded native LDR/HDR lighting ranges, styles, bump maps and
 world-light records. A tested CPU reference recovers projected luxels and

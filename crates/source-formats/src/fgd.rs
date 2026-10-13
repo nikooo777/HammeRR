@@ -59,7 +59,8 @@ impl Property {
             "integer" => value.parse::<i64>().is_ok(),
             "flags" => value.parse::<u64>().is_ok(),
             "angle" if self.name.eq_ignore_ascii_case("angles") => vector(value, 3).is_some(),
-            "float" | "angle" => number(value).is_some(),
+            "angle" => vector(value, 3).is_some() || number(value).is_some(),
+            "float" => number(value).is_some(),
             "bool" | "boolean" => matches!(value, "0" | "1"),
             "vector" | "origin" => vector(value, 3).is_some(),
             "color255" => vector(value, 3)
@@ -657,6 +658,7 @@ mod tests {
             value(integer) : "Count" : 4
             angles(angle) : "Orientation" : "0 0 0"
             pitch(angle) : "Pitch" : 0
+            movedir(angle) : "Move direction" : "0 0 0"
             spawnflags(flags) = [ 2 : "Special" : 1 ]
             style(choices) : "Style" : 0 = [ 0 : "Steady" 1 : "Pulse" ]
             output OnReady(void) : "Ready"
@@ -690,7 +692,12 @@ mod tests {
         assert!(angles.validate("0 NaN 0").is_err());
         let pitch = light.property("pitch").unwrap();
         assert!(pitch.validate("-45").is_ok());
-        assert!(pitch.validate("0 90 0").is_err());
+        assert!(pitch.validate("0 90 0").is_ok());
+        let direction = light.property("movedir").unwrap();
+        assert!(direction.validate("-45 90.25 0").is_ok());
+        for invalid in ["0 90", "0 90 0 1", "0 inf 0", "0 NaN 0"] {
+            assert!(direction.validate(invalid).is_err());
+        }
         let color = light.property("_light").unwrap();
         assert!(color.validate("255 128 64 500.5").is_ok());
         assert!(color.validate("-1 -1 -1 1").is_ok());

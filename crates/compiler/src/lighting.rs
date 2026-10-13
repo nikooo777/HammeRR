@@ -4,6 +4,7 @@ use source_formats::bsp::{MAX_LIGHTING_BYTES, RgbExp32, TexInfo, WorldLight, wor
 
 use crate::map::MapEntity;
 mod bake;
+mod shadows;
 pub(crate) use bake::bake;
 
 const PROJECTION_EPSILON: f64 = 1e-10;

@@ -5,6 +5,7 @@ use source_formats::bsp::{
     TexInfo, contents, surf,
 };
 
+use super::shadows::ShadowIndex;
 use super::{LuxelFrame, Occluder, PointLight, encode_color};
 use crate::map::Map;
 use crate::tree::Tree;
@@ -120,7 +121,7 @@ fn lights(
                     });
             match light {
                 Ok(light) if cluster.is_some() => lights.push(light),
-                Ok(_) => report.diagnostics.push(Diagnostic::warning("Point light is inside solid or unreachable space and does not illuminate the world", Some(format!("entity:{}", entity.id)), entity.origin)),
+                Ok(_) => report.diagnostics.push(Diagnostic::warning("Light source is inside solid or unreachable space and does not illuminate the world", Some(format!("entity:{}", entity.id)), entity.origin)),
                 Err(error) => report.diagnostics.push(Diagnostic::error(error, Some(format!("entity:{}", entity.id)), entity.origin)),
             }
         } else if entity.classname.to_ascii_lowercase().starts_with("light_") {
@@ -264,10 +265,11 @@ pub(crate) fn bake(
     if faces.iter().any(|face| face.smoothing_groups != 0) {
         report.diagnostics.push(Diagnostic::warning("Direct LDR does not smooth lighting normals across smoothing groups yet; authored masks remain in the BSP", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point lights and opaque brush shadows; bounced light, sky/ambient cubes, HDR, props and moving-model lighting remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights and indexed opaque brush shadows; bounced light, sky/ambient cubes, HDR, props, terrain and moving-model lighting remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.frame.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let mut budget = Budget { work: 0, control };
+    let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
     for plan in &plans {
         budget.consume(1)?;
         let average = colors.len();
@@ -287,14 +289,8 @@ pub(crate) fn bake(
                     if contribution == DVec3::ZERO {
                         continue;
                     }
-                    let mut blocked = false;
-                    for occluder in &occluders {
-                        budget.consume(occluder.plane_count() + 1)?;
-                        if occluder.intersects(origin, light.origin)? {
-                            blocked = true;
-                            break;
-                        }
-                    }
+                    let blocked = shadows
+                        .blocked(origin, light.origin, &mut |amount| budget.consume(amount))?;
                     if !blocked {
                         color += contribution;
                     }

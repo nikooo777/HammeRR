@@ -1533,6 +1533,10 @@ to 90 degrees and focus falloff. Viewport helpers share the direction logic.
 Matching 180-degree cones become point lights; invalid cones and target
 references retain previous output.
 
+World/detail brush shadows use a bounded spatial index and exact convex-hull
+tests. A 70-brush fixture produces the same BSP while using 70% fewer lighting
+work units. Large diagonal rays can still visit many candidates.
+
 Direct LDR limits lighting to 16 MiB, 8,192 light sources and bounded CPU work.
 Named/animated lights, percentage-distance falloff and invalid values fail with
 object diagnostics and preserve the previous BSP. Other light types, transparent
@@ -1751,6 +1755,8 @@ paths; add `--runtime` to verify their collision choices in private CS:S.
 build paths, asymmetric heights, player hulls, ray flags and dynamic contact.
 `scripts/validate_spotlights.py` checks native cones, target aiming and both MCP
 build paths, including hidden lights and rejected output preservation.
+`scripts/validate_shadow_index.py` checks a dense mixed-light fixture through
+both MCP paths; `--reference` compares its BSP and work against an earlier run.
 
 </details>
 

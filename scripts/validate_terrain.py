@@ -304,6 +304,88 @@ def fixtures(client, output):
     result.append(
         {"name": "mixed", "flags": 0, "bsp": str(destination), "stats": stats}
     )
+    client.call("open_map", {"path": str(output / "terrain.vmf")})
+    client.call("delete_objects", {"ids": [terrain]})
+    patches = []
+    for low, high, start in [
+        ([0, 0, 0], [112, 224, 16], [0, 0, 16]),
+        ([112, 0, 0], [224, 224, 16], [224, 224, 16]),
+    ]:
+        patch = client.call(
+            "create_block",
+            {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
+        )["id"]
+        face = next(
+            face
+            for face in detail(client, [patch])[0]["faces"]
+            if face["normal"][2] > 0.99
+        )
+        patches.append((patch, face["side"], start))
+    neighbor_vmf = output / "neighbors.vmf"
+    client.call("save_map", {"path": str(neighbor_vmf)})
+    contents = neighbor_vmf.read_text()
+    for _, side, start in patches:
+        disp = displacement(0).replace(
+            "[0 0 16]", "[" + " ".join(map(str, start)) + "]"
+        )
+        distances = "\n".join(
+            f'"row{row}" "{" ".join(["48"] * 9)}"' for row in range(9)
+        )
+        disp = re.sub(r"distances \{[^{}]*\}", f"distances {{ {distances} }}", disp)
+        pattern = rf'(\bside\s*\{{\s*"id"\s*"{side}"[^{{}}]*)(\}})'
+        contents, count = re.subn(
+            pattern,
+            lambda match, disp=disp: match[1] + disp + "\n" + match[2],
+            contents,
+        )
+        assert count == 1
+    neighbor_vmf.write_text(contents)
+    client.call("open_map", {"path": str(neighbor_vmf)})
+    source = neighbor_vmf.read_bytes()
+    ids = [patch for patch, _, _ in patches]
+    before = detail(client, ids)
+    history = client.call("get_map_info")["undo"]
+    client.call("set_compile_settings", {"lighting": "fullbright", "physics": "engine"})
+    fullbright = output / "neighbors-fullbright.bsp"
+    assert client.call("compile_map", {"path": str(fullbright)})["success"]
+    client.call("set_compile_settings", {"lighting": "direct_ldr"})
+    destination = output / "neighbors.bsp"
+    compiled = client.call("compile_map", {"path": str(destination)})
+    assert compiled["success"], compiled
+    stats = compiled["stats"]
+    assert stats["displacements"] == 2 and stats["displacement_neighbor_pairs"] == 1
+    assert stats["physics_mesh_triangles"] == 256 and stats["lighting_faces"] == 8
+    data = destination.read_bytes()
+    baseline = fullbright.read_bytes()
+    for lump in [33, 48, 29]:
+        offset, length, _, _ = struct.unpack_from("<4i", data, 8 + lump * 16)
+        old_offset, old_length, _, _ = struct.unpack_from(
+            "<4i", baseline, 8 + lump * 16
+        )
+        assert (
+            data[offset : offset + length]
+            == baseline[old_offset : old_offset + old_length]
+        )
+    infos = records(data, 26, "<3f4ifi2H2i48s40s10I")
+    assert len(infos) == 2
+    for index, info in enumerate(infos):
+        neighbors = [
+            struct.unpack_from("<H4B", info[13], offset) for offset in range(0, 48, 6)
+        ]
+        active = [neighbor for neighbor in neighbors if neighbor[0] != 65535]
+        assert active == [(1 - index, 2, 0, 0, 0)], active
+    background = output / "neighbors-background.bsp"
+    client.call("start_compile", {"path": str(background)})
+    job = wait_job(client)
+    assert job["status"] == "completed" and background.read_bytes() == data
+    assert (
+        source == neighbor_vmf.read_bytes()
+        and before == detail(client, ids)
+        and history == client.call("get_map_info")["undo"]
+    )
+    result.append(
+        {"name": "neighbors", "flags": 0, "bsp": str(destination), "stats": stats}
+    )
     (output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 
@@ -337,6 +419,15 @@ def main():
                 '    printl("HAMMERR_MIXED_TRACE " + first_patch + " " + second_patch);\n'
                 "    local center = TraceLine",
             )
+        if args.bsp.stem == "neighbors":
+            runtime.OBSERVER = runtime.OBSERVER.replace(
+                "    local center = TraceLine",
+                "    local seam_left = TraceLine(Vector(111, 84, 160), Vector(111, 84, -8), null);\n"
+                "    local seam = TraceLine(Vector(112, 84, 160), Vector(112, 84, -8), null);\n"
+                "    local seam_right = TraceLine(Vector(113, 84, 160), Vector(113, 84, -8), null);\n"
+                '    printl("HAMMERR_SEAM_TRACE " + seam_left + " " + seam + " " + seam_right);\n'
+                "    local center = TraceLine",
+            )
         args.ground_z = 0 if args.flags & 4 else 64
         runtime.worker(args)
         text = (args.output / "cstrike/hammerr-runtime.log").read_text(errors="replace")
@@ -357,6 +448,19 @@ def main():
             for values in re.findall(r"HAMMERR_TERRAIN_TRACE ([\d.eE+ -]+)", text)
         ]
         expected = [0, 0, 0] if args.flags & 8 else [64, 48, 32]
+        if args.bsp.stem == "neighbors":
+            expected = [64, 64, 64]
+            seam_traces = [
+                list(map(float, values.split()))
+                for values in re.findall(r"HAMMERR_SEAM_TRACE ([\d.eE+ -]+)", text)
+            ]
+            assert len(seam_traces) >= 3 and all(
+                all(abs(160 - value * 168 - 64) < 0.1 for value in row)
+                for row in seam_traces
+            ), seam_traces
+            (args.output / "seam-heights.json").write_text(
+                json.dumps(seam_traces, indent=2) + "\n"
+            )
         assert len(traces) >= 3, text[-4000:]
         heights = [[160 - fraction * 168 for fraction in row] for row in traces]
         assert all(

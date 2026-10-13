@@ -281,6 +281,149 @@ fn terrain_ridge_receives_interpolated_lighting_without_changing_contact_geometr
     assert_eq!(*document.vmf(), source);
 }
 
+fn adjacent_fixture(powers: [u32; 2], rotations: [usize; 2]) -> Vmf {
+    let mut document = Document::new(common::room());
+    for (index, power) in powers.into_iter().enumerate() {
+        document
+            .edit("adjacent terrain", |tx| {
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::new(index as f64 * 112.0, 0.0, 0.0),
+                    DVec3::new((index + 1) as f64 * 112.0, 224.0, 16.0),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let solid = tx.solid_mut(id)?;
+                let geometry = BrushGeometry::from_solid(solid).unwrap();
+                let face = geometry
+                    .faces
+                    .iter()
+                    .find(|face| face.plane.normal.z > 0.99)
+                    .unwrap();
+                solid.sides[face.side].displacement = Some(DispInfo {
+                    power,
+                    start_position: face.vertices[rotations[index]],
+                    flags: Some(0),
+                    elevation: 0.0,
+                    subdivided: false,
+                    normals: None,
+                    distances: None,
+                    offsets: None,
+                    offset_normals: None,
+                    alphas: None,
+                    triangle_tags: None,
+                    allowed_verts: None,
+                    extra_properties: Default::default(),
+                    extra: Vec::new(),
+                });
+                Ok(())
+            })
+            .unwrap();
+    }
+    document.vmf().clone()
+}
+
+#[test]
+fn native_terrain_full_edges_keep_sdk_orientations_for_rotated_start_corners() {
+    let orientations = [[2, 3, 0, 1], [1, 2, 3, 0], [0, 1, 2, 3], [3, 0, 1, 2]];
+    for power in [2, 3, 4] {
+        for first in 0..4 {
+            for second in 0..4 {
+                let vmf = adjacent_fixture([power; 2], [first, second]);
+                let source = vmf.clone();
+                let output = compiler::compile(&vmf, &common::empty_game());
+                assert!(!output.report.has_errors(), "{:?}", output.report);
+                assert_eq!(output.stats.displacement_neighbor_pairs, 1);
+                let bsp = Bsp::parse(&output.bsp.unwrap().to_bytes()).unwrap();
+                let data = bsp.displacements().unwrap().unwrap();
+                let edges = data
+                    .infos
+                    .iter()
+                    .map(|info| {
+                        info.edges
+                            .iter()
+                            .enumerate()
+                            .find(|(_, edge)| edge[0].index != u16::MAX)
+                            .unwrap()
+                            .0
+                    })
+                    .collect::<Vec<_>>();
+                for index in 0..2 {
+                    let edge = data.infos[index].edges[edges[index]];
+                    assert_eq!(edge[0].index as usize, 1 - index);
+                    assert_eq!(
+                        edge[0].orientation,
+                        orientations[edges[index]][edges[1 - index]]
+                    );
+                    assert_eq!((edge[0].span, edge[0].neighbor_span), (0, 0));
+                    assert_eq!(edge[1].index, u16::MAX);
+                    assert_eq!(
+                        data.infos[index]
+                            .edges
+                            .iter()
+                            .flatten()
+                            .filter(|edge| edge.index != u16::MAX)
+                            .count(),
+                        1
+                    );
+                    assert_eq!(data.infos[index].allowed_vertices, [u32::MAX; 10]);
+                }
+                assert_eq!(vmf, source);
+            }
+        }
+    }
+}
+
+#[test]
+fn unequal_power_mismatched_and_ambiguous_terrain_edges_stay_unlinked() {
+    for case in 0..3 {
+        let mut vmf = adjacent_fixture(if case == 0 { [2, 3] } else { [3, 3] }, [0, 0]);
+        if case == 1 {
+            vmf.world
+                .solids
+                .iter_mut()
+                .flat_map(|solid| &mut solid.sides)
+                .find_map(|side| side.displacement.as_mut())
+                .unwrap()
+                .elevation = 1.0;
+        }
+        if case == 2 {
+            let mut duplicate = vmf
+                .world
+                .solids
+                .iter()
+                .find(|solid| solid.sides.iter().any(|side| side.displacement.is_some()))
+                .unwrap()
+                .clone();
+            duplicate.id = 10000;
+            for (index, side) in duplicate.sides.iter_mut().enumerate() {
+                side.id = 10001 + index as u32;
+            }
+            vmf.world.solids.push(duplicate);
+        }
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.displacement_neighbor_pairs, 0);
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|row| row.message.contains("Terrain shared edges left unlinked"))
+        );
+        let data = output.bsp.unwrap().displacements().unwrap().unwrap();
+        assert!(
+            data.infos
+                .iter()
+                .flat_map(|info| info.edges)
+                .flatten()
+                .all(|neighbor| neighbor.index == u16::MAX)
+        );
+    }
+}
+
 fn fixture(power: u32) -> (Vmf, u32) {
     let mut document = Document::new(common::room());
     let id = document

@@ -87,8 +87,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.static_props, stats.static_prop_models, stats.static_prop_leaf_refs
     );
     println!(
-        "terrain: {} surfaces, {} vertices, {} triangles",
-        stats.displacements, stats.displacement_vertices, stats.displacement_triangles
+        "terrain: {} surfaces, {} vertices, {} triangles, {} neighbor pairs",
+        stats.displacements,
+        stats.displacement_vertices,
+        stats.displacement_triangles,
+        stats.displacement_neighbor_pairs
     );
     println!(
         "physics {}: {} models, {} bodies, {} convexes, {} fluid regions, {} terrain triangles, {} bytes",

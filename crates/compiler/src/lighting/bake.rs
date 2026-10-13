@@ -318,7 +318,7 @@ fn terrain_shadows(map: &Map, budget: &mut Budget<'_>) -> Result<ShadowIndex<Tri
     let mut triangles = Vec::new();
     for terrain in &map.terrains {
         budget.consume(terrain.vertices.len())?;
-        let points = super::terrain::positions(terrain)?;
+        let points = terrain.native_positions()?;
         for indices in &terrain.indices {
             budget.consume(1)?;
             if triangles.len() == Triangle::MAX_OBJECTS {

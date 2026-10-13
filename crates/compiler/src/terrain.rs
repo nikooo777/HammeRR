@@ -15,6 +15,8 @@ use crate::{Control, Diagnostic, Report};
 
 const MAX_LEAF_WORK: usize = 16_000_000;
 const GEOMETRY_EPSILON: f64 = 0.02;
+#[path = "terrain/neighbors.rs"]
+mod neighbors;
 
 #[derive(Debug)]
 pub struct Terrain {
@@ -31,7 +33,30 @@ pub struct Terrain {
     pub indices: Vec<[usize; 3]>,
 }
 
+impl Terrain {
+    pub(crate) fn native_positions(&self) -> Result<Vec<[f32; 3]>, String> {
+        let data = bsp::Displacements {
+            infos: vec![self.info],
+            vertices: self.vertices.clone(),
+            triangles: self.triangles.clone(),
+        };
+        data.positions(
+            0,
+            self.base
+                .map(|point| stored_vertex(point).as_vec3().to_array()),
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
 impl Map<'_> {
+    pub(crate) fn connect_terrain(
+        &mut self,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<usize, String> {
+        neighbors::connect(&mut self.terrains, report, control)
+    }
     pub(super) fn add_terrain(
         &mut self,
         solid: &Solid,
@@ -273,7 +298,7 @@ impl Map<'_> {
             });
         }
         if !self.terrains.is_empty() {
-            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map; neighbor sewing is unfinished. CS:S engine physics adds terrain contact bodies", None, None));
+            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map. Native neighbor metadata supports matching equal-power full edges; mixed powers, partial spans, corner-only neighbors and cross-patch normal sewing remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
         }
         Ok(faces)
     }

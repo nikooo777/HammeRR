@@ -82,6 +82,7 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "displacements": stats.displacements,
         "displacement_vertices": stats.displacement_vertices,
         "displacement_triangles": stats.displacement_triangles,
+        "displacement_neighbor_pairs": stats.displacement_neighbor_pairs,
         "clusters": stats.clusters,
         "visibility_portals": stats.visibility_portals,
         "visibility_bytes": stats.visibility_bytes,

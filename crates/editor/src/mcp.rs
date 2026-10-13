@@ -203,7 +203,7 @@ write the FGD value; remove deletes the override. All targets apply in one undo 
 get_object_report searches names/classes/materials/types/visibility/bounds; select_object_report \
 selects all matches and can frame them. set_object_visibility hides/shows/isolates/restores \
 saved VMF visibility. Hidden objects and child brushes are OMITTED from compilation. \
-The current compiler still produces fullbright maps without baked lighting. \
+get_compile_settings and set_compile_settings select shared build lighting: fullbright (default) or direct_ldr for bounded static point-light baking and opaque brush shadows; sky, bounced light, HDR, props and model lighting remain unfinished. \
 Start asynchronous builds with start_compile; poll get_compile_status and cancel_compile using the job token. Compile synchronously with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
 in the viewport; set_view controls their visibility.";
@@ -2146,6 +2146,12 @@ pub struct CompileArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CompileSettingsArgs {
+    /// fullbright or direct_ldr; shared by synchronous, background and compile-and-play builds.
+    pub lighting: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GameLogArgs {
     /// Tail lines per log (default 200, maximum 2000).
     pub lines: Option<usize>,
@@ -2828,6 +2834,26 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Inspect shared build lighting settings, available modes and their limitations. Fullbright is the default; direct_ldr bakes static point lights and opaque brush shadows with bounded CPU work. Settings are independent of VMF edits and undo history."
+    )]
+    fn get_compile_settings(&self) -> ToolResult {
+        ok(self.session().compile_settings())
+    }
+
+    #[tool(
+        description = "Set the same build lighting mode used by the editor: fullbright or direct_ldr. An active build freezes its settings, so wait for it to finish before changing them. A previous build is stale while its lighting mode differs; map data and undo history are unchanged."
+    )]
+    fn set_compile_settings(
+        &self,
+        Parameters(args): Parameters<CompileSettingsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .set_compile_settings(Actor::Agent, &args.lighting)
+        })
+    }
+
+    #[tool(
         description = "Start a background compile of the current map snapshot and return its job token immediately. Poll get_compile_status, or cancel_compile with that token. Does not launch the game or save the VMF. Completed output is published atomically; cancelled builds preserve previous output."
     )]
     fn start_compile(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
@@ -2864,7 +2890,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Compile the current map snapshot into a fullbright Source BSP. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks. Runtime brush entities use explicit origins or one visible origin volume as their pivot, with checked local geometry and compensated texture/lightmap projections. World, func_detail, duplicate and origin-only volumes fail with object diagnostics while preserving previous output."
+        description = "Compile the current map snapshot into a Source BSP using the shared lighting settings from get_compile_settings/set_compile_settings. Fullbright is the default; direct_ldr emits bounded static point-light samples and world-light records. Returns structured diagnostics and a leak path on failure. Does not save the VMF; writes a .lin pointfile for leaks. Runtime brush entities use explicit origins or one visible origin volume as their pivot, with checked local geometry and compensated texture/lightmap projections. World, func_detail, duplicate and origin-only volumes fail with object diagnostics while preserving previous output."
     )]
     async fn compile_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
         self.compile_snapshot(args, false).await

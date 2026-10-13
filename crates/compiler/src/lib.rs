@@ -1,4 +1,4 @@
-//! Compiles VMF brush maps into fullbright Source engine BSP files.
+//! Compiles VMF brush maps into Source engine BSP files.
 
 pub mod control;
 mod emit;
@@ -24,6 +24,51 @@ use source_formats::vmf::Vmf;
 
 pub use control::{Control, Stage};
 pub use portals::Leak;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LightingMode {
+    #[default]
+    Fullbright,
+    DirectLdr,
+}
+
+impl LightingMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fullbright => "fullbright",
+            Self::DirectLdr => "direct_ldr",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fullbright => "Fullbright",
+            Self::DirectLdr => "Direct LDR",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
+            Self::DirectLdr => {
+                "Bakes unnamed static point lights with constant, linear or quadratic falloff and opaque brush shadows. Bounced light, sky/ambient, HDR, props and brush-model lighting are unfinished."
+            }
+        }
+    }
+
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "fullbright" => Ok(Self::Fullbright),
+            "direct_ldr" => Ok(Self::DirectLdr),
+            _ => Err("Lighting must be fullbright or direct_ldr".into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Options {
+    pub lighting: LightingMode,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -92,6 +137,7 @@ impl Report {
 
 #[derive(Debug, Default)]
 pub struct Stats {
+    pub lighting_mode: LightingMode,
     pub brushes: usize,
     pub nodes: usize,
     pub leaves: usize,
@@ -104,6 +150,11 @@ pub struct Stats {
     pub water_regions: usize,
     pub water_leaves: usize,
     pub sky_clusters: usize,
+    pub world_lights: usize,
+    pub lighting_faces: usize,
+    pub lightmap_samples: usize,
+    pub lighting_bytes: usize,
+    pub lighting_work: usize,
     pub elapsed: Duration,
 }
 
@@ -158,7 +209,13 @@ impl Output {
     }
 }
 
-fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Result<(), String> {
+fn build(
+    vmf: &Vmf,
+    fs: &GameFs,
+    output: &mut Output,
+    options: Options,
+    control: &Control,
+) -> Result<(), String> {
     control.advance(Stage::Loading)?;
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
@@ -263,7 +320,26 @@ fn build(vmf: &Vmf, fs: &GameFs, output: &mut Output, control: &Control) -> Resu
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     control.advance(Stage::Emitting)?;
-    let bsp = emit::build(&map, &models, &visibility, &water, revision, control)?;
+    let mut bsp = emit::build(&map, &models, &visibility, &water, revision, control)?;
+    if options.lighting == LightingMode::DirectLdr {
+        control.advance(Stage::Lighting)?;
+        let stats = lighting::bake(
+            &map,
+            &models[0].tree,
+            &visibility,
+            &mut bsp,
+            &mut output.report,
+            control,
+        )?;
+        if output.report.has_errors() {
+            return Ok(());
+        }
+        output.stats.world_lights = stats.lights;
+        output.stats.lighting_faces = stats.faces;
+        output.stats.lightmap_samples = stats.samples;
+        output.stats.lighting_bytes = stats.bytes;
+        output.stats.lighting_work = stats.work;
+    }
     control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
@@ -278,6 +354,19 @@ pub fn compile(vmf: &Vmf, fs: &GameFs) -> Output {
 }
 
 pub fn compile_controlled(vmf: &Vmf, fs: &GameFs, control: &Control) -> Output {
+    compile_with_options_controlled(vmf, fs, Options::default(), control)
+}
+
+pub fn compile_with_options(vmf: &Vmf, fs: &GameFs, options: Options) -> Output {
+    compile_with_options_controlled(vmf, fs, options, &Control::default())
+}
+
+pub fn compile_with_options_controlled(
+    vmf: &Vmf,
+    fs: &GameFs,
+    options: Options,
+    control: &Control,
+) -> Output {
     let start = Instant::now();
     let mut output = Output {
         bsp: None,
@@ -285,7 +374,8 @@ pub fn compile_controlled(vmf: &Vmf, fs: &GameFs, control: &Control) -> Output {
         leak: None,
         stats: Stats::default(),
     };
-    if let Err(message) = build(vmf, fs, &mut output, control) {
+    output.stats.lighting_mode = options.lighting;
+    if let Err(message) = build(vmf, fs, &mut output, options, control) {
         output
             .report
             .diagnostics

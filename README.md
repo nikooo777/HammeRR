@@ -1014,7 +1014,7 @@ For example, place a warm light:
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
 | Saved cameras | `get_camera_views`, `save_camera_view`, `restore_camera_view`, `rename_camera_view`, `delete_camera_view` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
-| Compile and play | `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
+| Compile and play | `get_compile_settings`, `set_compile_settings`, `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
 
 `transform_objects` accepts independent `texture_lock` (follow movement and
 rotation) and `texture_scale_lock` (stretch during scaling). Both use the chosen
@@ -1497,7 +1497,7 @@ hidden counts and the compiler's visibility policy.
 | --- | --- |
 | **Compile** | Build the current snapshot, including unsaved edits, into a BSP beside the VMF. Unsaved maps prompt for an output filename. |
 | **Run Map** | Compile and launch the snapshot in the installed Linux CS:S client with `-insecure`. |
-| **Build details…** | Inspect the current stage, elapsed time, snapshot freshness and compile diagnostics. |
+| **Build details…** | Choose build lighting and inspect stages, elapsed time, snapshot freshness and diagnostics. |
 | **Play built map** | Launch the last successful build from Build details without compiling again. |
 | **Cancel build** | Stop the active build while preserving previous output. |
 | **Game Log** | Read console and launcher output. |
@@ -1521,6 +1521,21 @@ Visibility work and native lump limits fail with diagnostics and retain previous
 output. **Cancel build** waits for the worker to stop; cancelled builds keep the previous BSP and pointfile.
 Output is published atomically, and a build cannot be cancelled after publication.
 Closing Build details leaves the build running.
+
+**Build lighting** offers **Fullbright** (the default, for fast geometry checks)
+and **Direct LDR**. Direct LDR bakes unnamed, static **light** entities into native
+world-face lightmaps, with colored light, constant/linear/quadratic attenuation
+and opaque world/detail brush shadows. Border samples clamp to the actual face;
+fractional, rotated and mirrored texture projections retain their lightmap axes.
+Build details and MCP results report baked faces, samples, point lights and bytes.
+
+Direct LDR limits lighting to 16 MiB, 8,192 point lights and bounded CPU work.
+Named/animated lights, percentage-distance falloff and invalid values fail with
+object diagnostics and preserve the previous BSP. Other light types, transparent
+shadows, smoothed/bump normals, bounced light, sky/ambient cubes, HDR, props and
+brush-model lighting remain unfinished. A private headless CS:S check loaded and
+rendered the red-light fixture with Fullbright off; playable collision and
+production lighting still need validation.
 
 Compilation requires finite brush geometry and entity origins within
 **±16,384 units**. Out-of-range objects produce diagnostics before BSP
@@ -1568,7 +1583,7 @@ remain unfinished. Native metadata alone does not establish playable water.
 
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing
-output, an unavailable Linux client or an active build/game disable it with an
+output, changed build settings, an unavailable Linux client or an active build/game disable it with an
 explanation. A failed rebuild retains the previous successful build when that
 snapshot is still current. Launches always include `-insecure`.
 
@@ -1576,10 +1591,14 @@ Through MCP, `start_compile` returns immediately with a job token. Poll
 `get_compile_status`; pass that token to `cancel_compile`. The existing
 `compile_map` and `run_map` calls wait for completion and expose the same status.
 A map edit marks the build snapshot stale and prevents launching it.
+`get_compile_settings` lists modes and limitations. Use `set_compile_settings`
+with `{"lighting":"direct_ldr"}` or `{"lighting":"fullbright"}` before compiling.
+Settings apply to all build paths without editing the VMF or undo history; an
+active job freezes them. A previous build stays stale while its mode differs.
 `get_compile_status.launch` reports readiness, the BSP path or the reason play
 is unavailable; `launch_game` performs the same launch as **Play built map**.
 
-![Build status with stage, visibility, water, sky and cubemap counts, output path and diagnostics](docs/images/build-status.png)
+![Build lighting choice, baked sample counts, stage, output and diagnostics](docs/images/build-status.png)
 
 Maps need sealed world geometry and
 at least one point entity in open space. A leak produces a `.lin` pointfile
@@ -1599,7 +1618,8 @@ cargo run --release -p compiler --bin hammerr-compile -- \
   map.vmf --game /path/to/cstrike/gameinfo.txt
 ```
 
-Use `-o /path/to/map.bsp` to choose the output. To generate a sealed room
+Use `-o /path/to/map.bsp` to choose the output and `--lighting direct_ldr`
+to bake supported point lights; omit it for Fullbright. To generate a sealed room
 with both player spawns:
 
 ```sh
@@ -1614,10 +1634,11 @@ player spawned inside and fullbright rendering enabled by the engine.
 
 ## Status
 
-**The compiler is experimental.** It produces fullbright BSP v20 maps with
-conservative portal-based visible/audible sets. Lights are saved in VMF and
-carried into BSP entities; baked lighting and tight portal clipping remain
-pending. The expanded visibility pipeline needs CS:S runtime validation.
+**The compiler is experimental.** It produces BSP v20 maps with conservative
+portal-based visible/audible sets and a shared Fullbright/Direct LDR choice.
+Direct LDR emits bounded static point-light samples and world-light records;
+production lighting and tight portal clipping remain unfinished. The expanded
+visibility and lighting pipelines need CS:S runtime validation.
 
 Authored brush planes and axial/non-axial collision bevels use checked support.
 Snapping and approximate plane reuse must preserve whole authored faces and
@@ -1652,7 +1673,7 @@ moving and trigger behavior still needs CS:S runtime validation. Unsupported geo
 in diagnostics. The BSP reader/writer is verified against stock CS:S maps,
 including bounded native LDR/HDR lighting ranges, styles, bump maps and
 world-light records. A tested CPU reference recovers projected luxels and
-point-light/brush-shadow contributions; compile jobs still use fullbright output.
+point-light/brush-shadow contributions and drives the optional Direct LDR bake.
 
 Editor work ahead includes arbitrary flat partitions, inward extrusion,
 per-piece UV editing, displacement clipping and authoring, model rendering and broader

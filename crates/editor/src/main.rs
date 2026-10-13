@@ -7411,6 +7411,21 @@ mod tests {
         let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
         let controller = compile_ui::Controller::new(&shared).unwrap();
         controller.show(&lock(&shared)).unwrap();
+        assert_eq!(controller.window.get_lighting_choice(), 0);
+        assert_eq!(controller.window.get_selected_lighting(), "Fullbright");
+        controller.window.invoke_change_lighting(1);
+        assert_eq!(lock(&shared).compile_settings()["lighting"], "direct_ldr");
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.window.get_lighting_choice(), 1);
+        assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
+        assert!(
+            controller
+                .window
+                .get_lighting_description()
+                .contains("static point lights")
+        );
+        controller.window.invoke_change_lighting(0);
+        controller.refresh(&lock(&shared));
         assert!(controller.window.get_summary().contains("No build"));
         assert!(!controller.window.get_launch_ready());
         let path = directory.path().join("room.bsp");
@@ -7486,8 +7501,22 @@ mod tests {
             Ok(())
         })
         .unwrap();
+        room.edit("baked point light", |tx| {
+            map_core::edit::create_entity(
+                tx,
+                "light",
+                Some(DVec3::new(0.0, -160.0, 128.0)),
+                &[
+                    ("_light".into(), "255 170 100 300".into()),
+                    ("_quadratic_attn".into(), "1".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
         std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
+        controller.window.invoke_change_lighting(1);
         let request = lock(&shared)
             .begin_compile(Actor::Agent, Some(&path))
             .unwrap();
@@ -7507,6 +7536,9 @@ mod tests {
         );
         assert!(controller.window.get_details().contains("Visibility:"));
         let stats = lock(&shared).compile_status()["job"]["result"]["stats"].clone();
+        assert_eq!(stats["lighting_mode"], "direct_ldr");
+        assert_eq!(stats["world_lights"], 1);
+        assert!(controller.window.get_details().contains("Baked lighting:"));
         assert!(stats["clusters"].as_u64().unwrap() > 1);
         assert_eq!(stats["water_regions"], 1);
         let leaves = stats["water_leaves"].as_u64().unwrap();
@@ -7540,6 +7572,7 @@ mod tests {
                 .contains("current map snapshot")
         );
         save_ui_snapshot(controller.window.window(), "build-status");
+        assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
         controller.window.invoke_close_dialog();
         assert!(!controller.window.window().is_visible());
         assert_eq!(lock(&shared).compile_status()["job"]["status"], "completed");

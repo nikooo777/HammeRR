@@ -3,6 +3,8 @@ use map_core::Plane;
 use source_formats::bsp::{MAX_LIGHTING_BYTES, RgbExp32, TexInfo, WorldLight, world_light_kind};
 
 use crate::map::MapEntity;
+mod bake;
+pub(crate) use bake::bake;
 
 const PROJECTION_EPSILON: f64 = 1e-10;
 const MIN_LIGHT_DISTANCE: f64 = 1.0;
@@ -105,8 +107,9 @@ fn property<'a>(entity: &'a MapEntity, name: &str) -> Option<&'a str> {
 
 fn number(entity: &MapEntity, name: &str) -> Result<f64, String> {
     let value = property(entity, name)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .unwrap_or("0")
-        .trim()
         .parse::<f64>()
         .map_err(|_| format!("Invalid light {name}"))?;
     if !value.is_finite() || value < 0.0 {

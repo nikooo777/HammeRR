@@ -1,21 +1,26 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use compiler::{Level, compile};
+use compiler::{Level, LightingMode, Options, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let mut map = None;
     let mut game = None;
     let mut destination = None;
+    let mut options = Options::default();
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--game") => game = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
             Some("-o" | "--output") => destination = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
+            Some("--lighting") => {
+                let name = args.next().ok_or(USAGE)?;
+                options.lighting = LightingMode::parse(name.to_str().ok_or(USAGE)?)?;
+            }
             Some("-h" | "--help") => {
                 println!("{USAGE}");
                 return Ok(());
@@ -37,7 +42,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let vmf = Vmf::parse(&std::fs::read_to_string(&map)?)?;
     let fs = GameFs::from_gameinfo(game)?;
-    let output = compile(&vmf, &fs);
+    let output = compile_with_options(&vmf, &fs, options);
     for diagnostic in &output.report.diagnostics {
         let level = match diagnostic.level {
             Level::Info => "info",
@@ -64,6 +69,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.water_regions,
         stats.sky_clusters,
         stats.elapsed
+    );
+    println!(
+        "lighting {}: {} baked faces, {} samples, {} point lights, {} bytes",
+        stats.lighting_mode.label(),
+        stats.lighting_faces,
+        stats.lightmap_samples,
+        stats.world_lights,
+        stats.lighting_bytes
     );
     Ok(())
 }

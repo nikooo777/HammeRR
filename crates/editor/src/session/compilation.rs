@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 pub struct State {
     serial: u64,
     job: Option<Job>,
+    options: compiler::Options,
 }
 
 struct Job {
@@ -13,6 +14,7 @@ struct Job {
     control: compiler::Control,
     path: PathBuf,
     snapshot: Snapshot,
+    options: compiler::Options,
     started: Instant,
     finished: Option<Duration>,
     status: &'static str,
@@ -26,6 +28,7 @@ pub struct CompileRequest {
     path: PathBuf,
     generation: u64,
     revision: u64,
+    options: compiler::Options,
 }
 
 pub struct CompileResult {
@@ -33,6 +36,7 @@ pub struct CompileResult {
     pub path: PathBuf,
     generation: u64,
     revision: u64,
+    options: compiler::Options,
 }
 
 impl CompileRequest {
@@ -42,7 +46,12 @@ impl CompileRequest {
     }
 
     fn run_inner(self) -> Result<CompileResult, String> {
-        let output = compiler::compile_controlled(&self.vmf, &self.game, &self.control);
+        let output = compiler::compile_with_options_controlled(
+            &self.vmf,
+            &self.game,
+            self.options,
+            &self.control,
+        );
         self.control.checkpoint()?;
         output
             .write_controlled(&self.path, &self.control)
@@ -52,12 +61,14 @@ impl CompileRequest {
             path: self.path,
             generation: self.generation,
             revision: self.revision,
+            options: self.options,
         })
     }
 }
 
 pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
     json!({
+        "lighting_mode": stats.lighting_mode.name(),
         "brushes": stats.brushes,
         "nodes": stats.nodes,
         "leaves": stats.leaves,
@@ -70,6 +81,11 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "water_regions": stats.water_regions,
         "water_leaves": stats.water_leaves,
         "sky_clusters": stats.sky_clusters,
+        "world_lights": stats.world_lights,
+        "lighting_faces": stats.lighting_faces,
+        "lightmap_samples": stats.lightmap_samples,
+        "lighting_bytes": stats.lighting_bytes,
+        "lighting_work": stats.lighting_work,
         "elapsed_ms": stats.elapsed.as_millis(),
     })
 }
@@ -90,6 +106,34 @@ fn result_json(result: &CompileResult) -> Value {
 }
 
 impl Session {
+    pub fn compile_options(&self) -> compiler::Options {
+        self.compilation.options
+    }
+
+    pub fn compile_settings(&self) -> Value {
+        let choices = [compiler::LightingMode::Fullbright, compiler::LightingMode::DirectLdr]
+            .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
+        json!({"lighting":self.compilation.options.lighting.name(),"editable":!self.compiling && !self.closing,
+            "choices":choices})
+    }
+
+    pub fn set_compile_settings(&mut self, actor: Actor, lighting: &str) -> Result<Value, String> {
+        let lighting = compiler::LightingMode::parse(lighting)?;
+        if self.closing {
+            return Err("The editor is closing".into());
+        }
+        if self.compiling {
+            return Err(
+                "Wait for the active compile to finish before changing build settings".into(),
+            );
+        }
+        if lighting != self.compilation.options.lighting {
+            self.compilation.options.lighting = lighting;
+            self.log(actor, format!("Build lighting: {}", lighting.label()));
+        }
+        Ok(self.compile_settings())
+    }
+
     pub fn begin_compile(
         &mut self,
         actor: Actor,
@@ -131,6 +175,7 @@ impl Session {
                 generation: self.document_generation,
                 revision: self.document.revision(),
             },
+            options: self.compilation.options,
             started: Instant::now(),
             finished: None,
             status: "running",
@@ -143,6 +188,7 @@ impl Session {
             path,
             generation: self.document_generation,
             revision: self.document.revision(),
+            options: self.compilation.options,
         };
         self.compiling = true;
         self.log(actor, "compiling map");
@@ -184,6 +230,7 @@ impl Session {
                 self.compiled = Some(CompiledMap {
                     path: result.path.clone(),
                     snapshot,
+                    options: result.options,
                 });
             }
         }
@@ -245,13 +292,14 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "stale":!self.current_snapshot(&job.snapshot),"result":job.result})
+                "settings":{"lighting":job.options.lighting.name()},
+                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {
             Ok(path) => json!({"ready":true,"bsp":path.display().to_string(),"reason":null}),
             Err(reason) => json!({"ready":false,"bsp":null,"reason":reason}),
         };
-        json!({"job":job,"launch":launch})
+        json!({"job":job,"launch":launch,"settings":self.compile_settings()})
     }
 
     pub fn compile_token(&self) -> Option<u64> {
@@ -284,10 +332,10 @@ impl Session {
             "completed" => format!(
                 "Compiled in {:.2}s{}",
                 job.finished.unwrap_or_default().as_secs_f64(),
-                if self.current_snapshot(&job.snapshot) {
+                if self.current_snapshot(&job.snapshot) && job.options == self.compilation.options {
                     ""
                 } else {
-                    " · earlier map snapshot"
+                    " · earlier map snapshot or build settings"
                 }
             ),
             "cancelled" => "Compilation cancelled · previous output preserved".into(),
@@ -306,5 +354,91 @@ impl Session {
         if let Some(job) = &self.compilation.job {
             let _ = job.control.cancel();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_lighting_settings_are_shared_and_do_not_edit_map_history() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (directory, game, _) = game::tests::fixture(true);
+            let mut session = Session::new(Ok(game));
+            session.replace_document(
+                Document::new(crate::test_assets::room()),
+                Some(directory.path().join("room.vmf")),
+            );
+            let before = session.document.vmf().write(&Default::default());
+            let revision = session.document.revision();
+            assert_eq!(session.compile_settings()["lighting"], "fullbright");
+            let result = session.set_compile_settings(actor, "direct_ldr").unwrap();
+            assert_eq!(result["lighting"], "direct_ldr");
+            assert!(session.set_compile_settings(actor, "unsupported").is_err());
+            assert_eq!(session.document.vmf().write(&Default::default()), before);
+            assert_eq!(session.document.revision(), revision);
+            let request = session.begin_compile(actor, None).unwrap();
+            assert_eq!(
+                session.compile_status()["job"]["settings"]["lighting"],
+                "direct_ldr"
+            );
+            assert_eq!(session.compile_settings()["editable"], false);
+            assert!(session.set_compile_settings(actor, "fullbright").is_err());
+            session
+                .cancel_compile(actor, session.compile_token().unwrap())
+                .unwrap();
+            let result = request.run();
+            session.finish_compile(actor, &result);
+            assert!(result.is_err());
+            assert_eq!(session.compile_settings()["editable"], true);
+        }
+    }
+
+    #[test]
+    fn last_build_is_stale_only_while_lighting_settings_differ() {
+        let (directory, game, _) = game::tests::fixture(true);
+        let mut session = Session::new(Ok(game));
+        session.replace_document(
+            Document::new(crate::test_assets::room()),
+            Some(directory.path().join("room.vmf")),
+        );
+        let result = session.begin_compile(Actor::User, None).unwrap().run();
+        session.finish_compile(Actor::User, &result);
+        assert!(session.launch_readiness().is_ok());
+        let before = session.document.vmf().write(&Default::default());
+        session
+            .set_compile_settings(Actor::Agent, "direct_ldr")
+            .unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], true);
+        assert!(
+            session
+                .launch_readiness()
+                .unwrap_err()
+                .contains("Build settings changed")
+        );
+        session
+            .set_compile_settings(Actor::User, "fullbright")
+            .unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], false);
+        assert!(session.launch_readiness().is_ok());
+        session
+            .set_compile_settings(Actor::User, "direct_ldr")
+            .unwrap();
+        let result = session.begin_compile(Actor::Agent, None).unwrap().run();
+        session.finish_compile(Actor::Agent, &result);
+        assert!(result.as_ref().unwrap().output.bsp.is_some());
+        assert!(session.launch_readiness().is_ok());
+        assert_eq!(
+            session.compile_status()["job"]["result"]["stats"]["lighting_mode"],
+            "direct_ldr"
+        );
+        assert!(
+            session.compile_status()["job"]["result"]["stats"]["lighting_faces"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert_eq!(session.document.vmf().write(&Default::default()), before);
     }
 }

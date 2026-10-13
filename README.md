@@ -51,7 +51,7 @@ run without graphics initialization. Install Counter-Strike:
 Source to use its materials; HammeRR discovers the game through Steam.
 
 ```sh
-cargo build --release -p editor -j 8
+cargo build --release -p editor -p compiler -j 8
 ./target/release/editor path/to/map.vmf
 ```
 
@@ -1497,7 +1497,7 @@ hidden counts and the compiler's visibility policy.
 | --- | --- |
 | **Compile** | Build the current snapshot, including unsaved edits, into a BSP beside the VMF. Unsaved maps prompt for an output filename. |
 | **Run Map** | Compile and launch the snapshot in the installed Linux CS:S client with `-insecure`. |
-| **Build details…** | Choose build lighting and inspect stages, elapsed time, snapshot freshness and diagnostics. |
+| **Build details…** | Choose lighting and physics bodies; inspect stages, elapsed time, snapshot freshness and diagnostics. |
 | **Play built map** | Launch the last successful build from Build details without compiling again. |
 | **Cancel build** | Stop the active build while preserving previous output. |
 | **Game Log** | Read console and launcher output. |
@@ -1536,6 +1536,22 @@ shadows, smoothed/bump normals, bounced light, sky/ambient cubes, HDR, props and
 brush-model lighting remain unfinished. A private headless CS:S check loaded and
 rendered the red-light fixture with Fullbright off; playable collision and
 production lighting still need validation.
+
+**Physics bodies** offers **No physics bodies** (the default) and **CS:S engine
+physics**. Engine physics runs the verified installed Linux64 collision library
+in the bundled `hammerr-physics` worker. It emits checked world, player/NPC clip
+and brush-model bodies, preserving local pivots. Build details and MCP report
+the body, hull, model and byte counts. Keep `hammerr-physics` beside the editor or
+standalone compiler; the quick-start build produces all three executables.
+
+The worker checks its library build and generated geometry, bounds memory/work,
+and stops on cancellation or after 30 seconds. Missing or unverified libraries
+fail explicitly and retain previous output. Editing works without this backend.
+Bodies currently use default surface properties; brush models use a one-kilogram
+mass fallback. Material friction/density, authored masses, fluid, prop and terrain
+bodies remain unfinished. Private CS:S checks establish world body contact;
+live player movement, moving-brush behavior and broader collision still need
+validation. Builds without native bodies reproduce falling in the room fixture.
 
 Compilation requires finite brush geometry and entity origins within
 **±16,384 units**. Out-of-range objects produce diagnostics before BSP
@@ -1593,6 +1609,9 @@ Through MCP, `start_compile` returns immediately with a job token. Poll
 A map edit marks the build snapshot stale and prevents launching it.
 `get_compile_settings` lists modes and limitations. Use `set_compile_settings`
 with `{"lighting":"direct_ldr"}` or `{"lighting":"fullbright"}` before compiling.
+Add `"physics":"engine"` or `"physics":"none"` to the same call, or update just
+that field. Omitted fields retain their values; invalid combinations leave all
+settings unchanged.
 Settings apply to all build paths without editing the VMF or undo history; an
 active job freezes them. A previous build stays stale while its mode differs.
 `get_compile_status.launch` reports readiness, the BSP path or the reason play
@@ -1619,7 +1638,8 @@ cargo run --release -p compiler --bin hammerr-compile -- \
 ```
 
 Use `-o /path/to/map.bsp` to choose the output and `--lighting direct_ldr`
-to bake supported point lights; omit it for Fullbright. To generate a sealed room
+to bake supported point lights. Add `--physics engine` for native brush bodies;
+omit these flags for Fullbright and no physics bodies. To generate a sealed room
 with both player spawns:
 
 ```sh
@@ -1645,7 +1665,9 @@ Snapping and approximate plane reuse must preserve whole authored faces and
 supporting boundaries in working geometry and emitted BSP float records.
 Native sloped, near-axis, distant, reflected and thin-brush fixtures verify
 surface preservation and swept hulls against an independent geometric reference.
-CS:S collision runtime validation and physics output remain unfinished.
+Optional engine physics now emits bounded world/clip and brush-model records.
+World body contact has private CS:S evidence; live player movement, moving-body
+behavior and full collision validation remain unfinished.
 
 <details>
 <summary>Headless physics backend probe</summary>
@@ -1659,8 +1681,9 @@ This developer check verifies the inspected CS:S Linux64
 **VPhysicsCollision007** library: convex construction, guarded serialization,
 compound geometry/tags and length-prefixed solid loading. It runs in a timed
 child with a 24 GiB address-space limit and rejects unrecognized library builds.
-It does not launch the game. The compiler still emits no physics collision lump;
-an isolated backend adapter and in-game validation remain unfinished.
+It does not launch the game. The compiler's optional **CS:S engine physics** mode
+uses an isolated Rust worker to construct and verify owned brush bodies; the
+probe remains a developer check of the underlying installed library.
 
 The BSP reader/writer now checks native physics model/solid lengths, key data,
 model references and the end marker, with exact round trips across all 21

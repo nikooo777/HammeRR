@@ -3,12 +3,15 @@ import { Button, ComboBox, TextEdit } from "std-widgets.slint";
 export component CompileWindow inherits Window {
     title: "Build status - HammeRR";
     width: 720px;
-    height: 640px;
+    height: 760px;
     in property <int> lighting-choice;
     in property <bool> lighting-enabled;
     in property <string> lighting-description;
     in property <[string]> lighting-modes;
     in-out property <string> selected-lighting <=> lighting-selector.current-value;
+    in-out property <string> selected-physics <=> physics-selector.current-value;
+    in property <[string]> physics-modes;
+    in property <string> physics-description;
     in property <string> summary;
     in property <string> details;
     in property <string> diagnostics;
@@ -20,6 +23,7 @@ export component CompileWindow inherits Window {
     callback play-build();
     callback close-dialog();
     callback change-lighting(int);
+    callback change-physics(int);
     forward-focus: keys;
     keys := FocusScope {
         key-pressed(event) => {
@@ -37,6 +41,12 @@ export component CompileWindow inherits Window {
             lighting-selector := ComboBox { model: root.lighting-modes; enabled: root.lighting-enabled; selected(value) => { root.change-lighting(self.current-index); } }
         }
         Text { text: root.lighting-description; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            spacing: 12px;
+            Text { text: "Physics bodies"; vertical-alignment: center; }
+            physics-selector := ComboBox { model: root.physics-modes; enabled: root.lighting-enabled; selected(value) => { root.change-physics(self.current-index); } }
+        }
+        Text { text: root.physics-description; wrap: word-wrap; color: #bac2ce; }
         Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
         Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
         Text { text: "Diagnostics"; font-weight: 600; }

@@ -7408,11 +7408,45 @@ mod tests {
             ids: vec!["game".into()],
             mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
         });
+        let physics_root = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .map(|path| path.join(".local/share/Steam/steamapps/common/Counter-Strike Source"));
+        let native_physics = physics_root
+            .as_ref()
+            .is_some_and(|root| root.join("bin/linux64/vphysics.so").is_file())
+            && std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("hammerr-physics")
+                .is_file();
+        if native_physics {
+            game.base_dir = physics_root.unwrap();
+        }
         let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
         let controller = compile_ui::Controller::new(&shared).unwrap();
         controller.show(&lock(&shared)).unwrap();
         assert_eq!(controller.window.get_lighting_choice(), 0);
         assert_eq!(controller.window.get_selected_lighting(), "Fullbright");
+        assert_eq!(
+            controller.window.get_selected_physics(),
+            "No physics bodies"
+        );
+        controller.window.invoke_change_physics(1);
+        controller.refresh(&lock(&shared));
+        assert_eq!(
+            controller.window.get_selected_physics(),
+            "CS:S engine physics"
+        );
+        assert_eq!(lock(&shared).compile_settings()["physics"], "engine");
+        controller.window.invoke_change_physics(0);
+        controller.refresh(&lock(&shared));
+        assert_eq!(
+            controller.window.get_selected_physics(),
+            "No physics bodies"
+        );
         controller.window.invoke_change_lighting(1);
         assert_eq!(lock(&shared).compile_settings()["lighting"], "direct_ldr");
         controller.refresh(&lock(&shared));
@@ -7517,6 +7551,9 @@ mod tests {
         std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
         controller.window.invoke_change_lighting(1);
+        if native_physics {
+            controller.window.invoke_change_physics(1);
+        }
         let request = lock(&shared)
             .begin_compile(Actor::Agent, Some(&path))
             .unwrap();
@@ -7538,6 +7575,11 @@ mod tests {
         let stats = lock(&shared).compile_status()["job"]["result"]["stats"].clone();
         assert_eq!(stats["lighting_mode"], "direct_ldr");
         assert_eq!(stats["world_lights"], 1);
+        if native_physics {
+            assert_eq!(stats["physics_mode"], "engine");
+            assert!(stats["physics_convexes"].as_u64().unwrap() > 0);
+            assert!(controller.window.get_details().contains("brush hulls"));
+        }
         assert!(controller.window.get_details().contains("Baked lighting:"));
         assert!(stats["clusters"].as_u64().unwrap() > 1);
         assert_eq!(stats["water_regions"], 1);

@@ -9,6 +9,7 @@ use source_formats::bsp::{self, Bsp, Face, LightingKind, TexInfo};
 fn options() -> Options {
     Options {
         lighting: LightingMode::DirectLdr,
+        ..Options::default()
     }
 }
 

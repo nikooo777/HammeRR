@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use compiler::{Level, LightingMode, Options, compile_with_options};
+use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -20,6 +20,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Some("--lighting") => {
                 let name = args.next().ok_or(USAGE)?;
                 options.lighting = LightingMode::parse(name.to_str().ok_or(USAGE)?)?;
+            }
+            Some("--physics") => {
+                let name = args.next().ok_or(USAGE)?;
+                options.physics = PhysicsMode::parse(name.to_str().ok_or(USAGE)?)?;
             }
             Some("-h" | "--help") => {
                 println!("{USAGE}");
@@ -77,6 +81,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lightmap_samples,
         stats.world_lights,
         stats.lighting_bytes
+    );
+    println!(
+        "physics {}: {} models, {} bodies, {} convexes, {} bytes",
+        stats.physics_mode.label(),
+        stats.physics_models,
+        stats.physics_solids,
+        stats.physics_convexes,
+        stats.physics_bytes
     );
     Ok(())
 }

@@ -225,7 +225,15 @@ impl Controller {
                     .as_u64()
                     .unwrap_or_default();
                 let label = if count == 1 { "body" } else { "bodies" };
-                format!("\nPhysics: {count} {label} · {convexes} brush hulls")
+                let fluids = result["stats"]["physics_fluids"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let fluid_label = if fluids == 1 {
+                    "fluid region"
+                } else {
+                    "fluid regions"
+                };
+                format!("\nPhysics: {count} {label} · {convexes} hulls · {fluids} {fluid_label}")
             })
             .unwrap_or_default();
         self.window.set_details(

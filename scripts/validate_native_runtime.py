@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client
+from validate_face_lighting import ROOT, Client, detail
 from validate_visibility import ROOM
 
 OBSERVER = """
@@ -185,6 +186,22 @@ def compile_cases(args):
                 "create_block",
                 {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
             )
+        if args.fluid:
+            brush = client.call(
+                "create_block",
+                {
+                    "mins": [-32, -32, 0],
+                    "maxs": [224, 224, 64],
+                    "material": "tools/toolsnodraw",
+                },
+            )["id"]
+            source = detail(client, [brush])[0]
+            top = next(face for face in source["faces"] if face["normal"] == [0, 0, 1])
+            client.call(
+                "select_faces",
+                {"faces": [{"solid": source["solid"], "side": top["side"]}]},
+            )
+            client.call("edit_faces", {"material": "liquids/aztecwater"})
         client.call(
             "create_entity",
             {"classname": "info_player_terrorist", "origin": [-64, 0, 8]},
@@ -235,6 +252,26 @@ def compile_cases(args):
         client.close()
 
 
+def check_positions(results, fluid):
+    none, engine = results
+    assert none["prop_positions"][-1][2] < -512, none
+    if fluid:
+        positions = engine["prop_positions"]
+        assert 40 < positions[-1][2] < 96, engine
+        assert all(
+            -32 < point[0] < 224 and -32 < point[1] < 224 for point in positions[-3:]
+        )
+        assert any(b[2] - a[2] > 8 for a, b in itertools.pairwise(positions[1:])), (
+            positions
+        )
+    else:
+        assert 0 < engine["prop_positions"][-1][2] < 64, engine
+    assert max(
+        abs(a - b)
+        for a, b in zip(engine["prop_positions"][-1], engine["prop_positions"][-2])
+    ) < (2.0 if fluid else 0.1)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -248,6 +285,11 @@ def main():
         "--output", type=Path, default=Path("/tmp/hammerr-native-runtime-check")
     )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--fluid",
+        action="store_true",
+        help="Include a world pool and verify crate buoyancy",
+    )
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -292,16 +334,9 @@ def main():
         result = json.loads((output / "runtime.json").read_text())
         result.update({"mode": mode, "stats": stats})
         results.append(result)
-    none, engine = results
-    assert none["prop_positions"][-1][2] < -512, none
-    assert 0 < engine["prop_positions"][-1][2] < 64, engine
-    assert (
-        max(
-            abs(a - b)
-            for a, b in zip(engine["prop_positions"][-1], engine["prop_positions"][-2])
-        )
-        < 0.1
-    )
+    if args.fluid:
+        assert results[1]["stats"]["physics_fluids"] == 1
+    check_positions(results, args.fluid)
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     print(json.dumps({"cases": len(results), "output": str(args.output)}))
 

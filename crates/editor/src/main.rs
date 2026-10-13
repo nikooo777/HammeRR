@@ -7578,7 +7578,8 @@ mod tests {
         if native_physics {
             assert_eq!(stats["physics_mode"], "engine");
             assert!(stats["physics_convexes"].as_u64().unwrap() > 0);
-            assert!(controller.window.get_details().contains("brush hulls"));
+            assert_eq!(stats["physics_fluids"], 1);
+            assert!(controller.window.get_details().contains("1 fluid region"));
         }
         assert!(controller.window.get_details().contains("Baked lighting:"));
         assert!(stats["clusters"].as_u64().unwrap() > 1);
@@ -7595,7 +7596,7 @@ mod tests {
             controller
                 .window
                 .get_diagnostics()
-                .contains("physics fluid volumes")
+                .contains("depth-specific material")
         );
         let sky = stats["sky_clusters"].as_u64().unwrap();
         assert!(sky > 0);

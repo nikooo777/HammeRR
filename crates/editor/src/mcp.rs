@@ -203,7 +203,7 @@ write the FGD value; remove deletes the override. All targets apply in one undo 
 get_object_report searches names/classes/materials/types/visibility/bounds; select_object_report \
 selects all matches and can frame them. set_object_visibility hides/shows/isolates/restores \
 saved VMF visibility. Hidden objects and child brushes are OMITTED from compilation. \
-get_compile_settings and set_compile_settings select shared build lighting (fullbright/direct_ldr) and physics (none/engine). Engine physics uses the verified installed CS:S Linux64 library in an isolated worker for world, clip and brush-model bodies; fluid, prop and terrain bodies remain unfinished. \
+get_compile_settings and set_compile_settings select shared build lighting (fullbright/direct_ldr) and physics (none/engine). Engine physics uses the verified installed CS:S Linux64 library in an isolated worker for world, clip, brush-model and horizontal world-fluid bodies; prop/terrain bodies and authored material/mass properties remain unfinished. \
 Start asynchronous builds with start_compile; poll get_compile_status and cancel_compile using the job token. Compile synchronously with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
 in the viewport; set_view controls their visibility.";
@@ -2843,7 +2843,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Update shared build lighting (fullbright/direct_ldr) and/or physics (none/engine); omitted fields retain their values and all fields validate before changing anything. Engine physics needs hammerr-physics beside the editor and the verified installed Linux64 vphysics.so; no fluid, prop or terrain physics is emitted. Active builds freeze settings. Previous builds are stale while settings differ; VMF and undo history are unchanged."
+        description = "Update shared build lighting (fullbright/direct_ldr) and/or physics (none/engine); omitted fields retain their values and all fields validate before changing anything. Engine physics needs hammerr-physics beside the editor and the verified installed Linux64 vphysics.so. Horizontal structural-world liquids get clipped fluid bodies; detail/model liquids, prop/terrain bodies and authored material/mass properties remain unfinished. Active builds freeze settings. Previous builds are stale while settings differ; VMF and undo history are unchanged."
     )]
     fn set_compile_settings(
         &self,

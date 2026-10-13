@@ -83,11 +83,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lighting_bytes
     );
     println!(
-        "physics {}: {} models, {} bodies, {} convexes, {} bytes",
+        "physics {}: {} models, {} bodies, {} convexes, {} fluid regions, {} bytes",
         stats.physics_mode.label(),
         stats.physics_models,
         stats.physics_solids,
         stats.physics_convexes,
+        stats.physics_fluids,
         stats.physics_bytes
     );
     Ok(())

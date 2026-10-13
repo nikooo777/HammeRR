@@ -23,6 +23,7 @@ const MAX_CONVEXES: usize = 8192;
 const MAX_CORNERS: usize = 256;
 const MAX_PLANES: usize = 256;
 const MAX_VERTICES: usize = 1_000_000;
+const MAX_MESH_TRIANGLES: usize = 65_536;
 const WORKER_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MASK_SOLID: i32 =
@@ -44,6 +45,15 @@ struct Body {
     shapes: Vec<Shape>,
     #[serde(default)]
     surface: Option<f32>,
+    #[serde(default)]
+    mesh: Option<Mesh>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Mesh {
+    vertices: Vec<[f32; 3]>,
+    triangles: Vec<[u32; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +77,7 @@ pub(crate) struct Stats {
     pub convexes: usize,
     pub bytes: usize,
     pub fluids: usize,
+    pub mesh_triangles: usize,
 }
 
 fn hull(
@@ -117,6 +128,7 @@ fn plan(
     map: &Map,
     models: &[emit::Model],
     water: &crate::water::Water,
+    bsp: &Bsp,
     report: &mut Report,
     control: &Control,
 ) -> Result<Request, String> {
@@ -158,10 +170,46 @@ fn plan(
                     contents,
                     shapes,
                     surface: None,
+                    mesh: None,
                 })
             })
             .collect();
         if model_index == 0 {
+            let mut mesh = Mesh {
+                vertices: Vec::new(),
+                triangles: Vec::new(),
+            };
+            if let Some(data) = bsp.displacements().map_err(|e| e.to_string())? {
+                for (index, terrain) in map.terrains.iter().enumerate() {
+                    control.checkpoint()?;
+                    if terrain.info.flags().unwrap_or(0) & 2 != 0 {
+                        continue;
+                    }
+                    if mesh.triangles.len() + terrain.indices.len() > MAX_MESH_TRIANGLES {
+                        return Err("Terrain physics exceeds its 65,536-triangle budget".into());
+                    }
+                    let offset = mesh.vertices.len() as u32;
+                    let quad = terrain
+                        .base
+                        .map(|point| emit::stored_vertex(point).as_vec3().to_array());
+                    mesh.vertices
+                        .extend(data.positions(index, quad).map_err(|e| e.to_string())?);
+                    mesh.triangles.extend(
+                        terrain
+                            .indices
+                            .iter()
+                            .map(|triangle| triangle.map(|index| index as u32 + offset)),
+                    );
+                }
+            }
+            if !mesh.triangles.is_empty() {
+                bodies.push(Body {
+                    contents: MASK_SOLID,
+                    shapes: Vec::new(),
+                    surface: None,
+                    mesh: Some(mesh),
+                });
+            }
             let mut fluids = vec![Vec::new(); water.records.len()];
             for (index, node) in model.tree.nodes.iter().enumerate() {
                 control.checkpoint()?;
@@ -190,6 +238,7 @@ fn plan(
                     contents,
                     shapes,
                     surface: Some(record.surface_z),
+                    mesh: None,
                 });
             }
         }
@@ -214,6 +263,7 @@ fn validate(request: &Request) -> Result<(), String> {
     let mut seen_models = BTreeSet::new();
     let mut convexes = 0;
     let mut vertices = 0;
+    let mut mesh_triangles = 0;
     for model in &request.models {
         if model.index >= request.model_count
             || !seen_models.insert(model.index)
@@ -223,7 +273,50 @@ fn validate(request: &Request) -> Result<(), String> {
             return Err("Physics request has invalid or duplicate model records".into());
         }
         let mut seen_masks = BTreeSet::new();
+        let mut seen_mesh = false;
         for body in &model.bodies {
+            if let Some(mesh) = &body.mesh {
+                if model.index != 0
+                    || body.surface.is_some()
+                    || !body.shapes.is_empty()
+                    || body.contents != MASK_SOLID
+                    || seen_mesh
+                {
+                    return Err(
+                        "Terrain mesh physics requires one separate world solid body".into(),
+                    );
+                }
+                seen_mesh = true;
+                vertices += mesh.vertices.len();
+                mesh_triangles += mesh.triangles.len();
+                if mesh.vertices.len() < 3
+                    || vertices > MAX_VERTICES
+                    || mesh.triangles.is_empty()
+                    || mesh_triangles > MAX_MESH_TRIANGLES
+                {
+                    return Err("Terrain mesh physics counts exceed supported bounds".into());
+                }
+                if mesh.vertices.iter().any(|point| {
+                    let point = DVec3::from_array(point.map(f64::from));
+                    !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD
+                }) {
+                    return Err("Terrain mesh physics needs finite Source coordinates".into());
+                }
+                for triangle in &mesh.triangles {
+                    let [a, b, c] = triangle.map(|index| {
+                        mesh.vertices
+                            .get(index as usize)
+                            .map(|point| DVec3::from_array(point.map(f64::from)))
+                    });
+                    let (Some(a), Some(b), Some(c)) = (a, b, c) else {
+                        return Err("Terrain mesh triangle has a missing vertex".into());
+                    };
+                    if (b - a).cross(c - a).length_squared() < 1e-12 {
+                        return Err("Terrain mesh physics has a collapsed triangle".into());
+                    }
+                }
+                continue;
+            }
             let fluid = body.surface.is_some();
             let valid = if let Some(surface) = body.surface {
                 model.index == 0
@@ -399,7 +492,7 @@ pub(crate) fn bake(
     report: &mut Report,
     control: &Control,
 ) -> Result<Stats, String> {
-    let request = plan(map, models, water, report, control)?;
+    let request = plan(map, models, water, bsp, report, control)?;
     let directory = fs.base_dir.join("bin/linux64");
     if !directory.join("vphysics.so").is_file() {
         return Err(
@@ -475,13 +568,20 @@ pub(crate) fn bake(
             .flat_map(|model| &model.bodies)
             .filter(|body| body.surface.is_some())
             .count(),
+        mesh_triangles: request
+            .models
+            .iter()
+            .flat_map(|model| &model.bodies)
+            .filter_map(|body| body.mesh.as_ref())
+            .map(|mesh| mesh.triangles.len())
+            .sum(),
     };
     bsp.set_physics(&physics)
         .map_err(|error| error.to_string())?;
     if models.len() > 1 {
         report.diagnostics.push(Diagnostic::warning("Engine physics uses default surface properties and a one-kilogram brush-model mass; material density and authored mass controls are unfinished", None, None));
     } else {
-        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush and horizontal world-fluid hulls with default surface properties; authored friction/density/masses, props and terrain physics remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with default surface properties; authored friction/density/masses and broader collision validation remain unfinished", None, None));
     }
     Ok(stats)
 }
@@ -508,6 +608,42 @@ pub fn run_worker() -> Result<(), String> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terrain_mesh_requests_reject_bad_indices_bounds_counts_and_body_roles() {
+        let mesh = Mesh {
+            vertices: vec![[0.0, 0.0, 0.0], [32.0, 0.0, 0.0], [0.0, 32.0, 0.0]],
+            triangles: vec![[0, 1, 2]],
+        };
+        let request = Request {
+            model_count: 1,
+            models: vec![Model {
+                index: 0,
+                bodies: vec![Body {
+                    contents: MASK_SOLID,
+                    shapes: Vec::new(),
+                    surface: None,
+                    mesh: Some(mesh),
+                }],
+            }],
+        };
+        validate(&request).unwrap();
+        for case in 0..6 {
+            let mut invalid = request.clone();
+            let body = &mut invalid.models[0].bodies[0];
+            let mesh = body.mesh.as_mut().unwrap();
+            match case {
+                0 => mesh.triangles[0][2] = 3,
+                1 => mesh.vertices[0][0] = f32::NAN,
+                2 => mesh.triangles[0] = [0, 0, 0],
+                3 => mesh.triangles.resize(MAX_MESH_TRIANGLES + 1, [0, 1, 2]),
+                4 => body.surface = Some(32.0),
+                5 => body.contents = contents::PLAYERCLIP,
+                _ => unreachable!(),
+            }
+            assert!(validate(&invalid).is_err());
+        }
+    }
 
     fn sleeping_worker(pid: &Path) -> Command {
         let mut command = Command::new("sh");

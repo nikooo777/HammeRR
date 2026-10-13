@@ -18,6 +18,7 @@ pub struct Face {
     pub winding: Winding,
     pub node: Option<usize>,
     pub leaves: Vec<usize>,
+    pub displacement: Option<usize>,
 }
 
 pub fn lightmap_bounds(winding: &Winding, info: &TexInfo) -> ([i32; 2], [i32; 2]) {
@@ -79,6 +80,7 @@ fn subdivide(
             winding: front,
             node: face.node,
             leaves: face.leaves.clone(),
+            displacement: face.displacement,
         });
         pending.push(Face {
             winding: back,
@@ -135,6 +137,7 @@ pub fn build_controlled(
                             .entry((on_node, side.plane, side.texinfo, side.smoothing_groups))
                             .or_default()
                             .push(Face {
+                                displacement: None,
                                 plane: side.plane,
                                 texinfo: side.texinfo,
                                 smoothing_groups: side.smoothing_groups,

@@ -196,6 +196,21 @@ impl Controller {
                 format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label}")
             })
             .unwrap_or_default();
+        let terrain = result["stats"]["displacements"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let vertices = result["stats"]["displacement_vertices"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let triangles = result["stats"]["displacement_triangles"]
+                    .as_u64()
+                    .unwrap_or_default();
+                format!(
+                    "\nTerrain: {count} surfaces · Vertices: {vertices} · Triangles: {triangles}"
+                )
+            })
+            .unwrap_or_default();
         let water = result["stats"]["water_regions"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -243,17 +258,24 @@ impl Controller {
                 let fluids = result["stats"]["physics_fluids"]
                     .as_u64()
                     .unwrap_or_default();
+                let mesh = result["stats"]["physics_mesh_triangles"]
+                    .as_u64()
+                    .filter(|&count| count > 0)
+                    .map(|count| format!(" · Terrain triangles: {count}"))
+                    .unwrap_or_default();
                 let fluid_label = if fluids == 1 {
                     "fluid region"
                 } else {
                     "fluid regions"
                 };
-                format!("\nPhysics: {count} {label} · {convexes} hulls · {fluids} {fluid_label}")
+                format!(
+                    "\nPhysics: {count} {label} · {convexes} hulls · {fluids} {fluid_label}{mesh}"
+                )
             })
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{water}{sky}{lighting}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{terrain}{water}{sky}{lighting}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),

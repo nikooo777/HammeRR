@@ -87,12 +87,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.static_props, stats.static_prop_models, stats.static_prop_leaf_refs
     );
     println!(
-        "physics {}: {} models, {} bodies, {} convexes, {} fluid regions, {} bytes",
+        "terrain: {} surfaces, {} vertices, {} triangles",
+        stats.displacements, stats.displacement_vertices, stats.displacement_triangles
+    );
+    println!(
+        "physics {}: {} models, {} bodies, {} convexes, {} fluid regions, {} terrain triangles, {} bytes",
         stats.physics_mode.label(),
         stats.physics_models,
         stats.physics_solids,
         stats.physics_convexes,
         stats.physics_fluids,
+        stats.physics_mesh_triangles,
         stats.physics_bytes
     );
     Ok(())

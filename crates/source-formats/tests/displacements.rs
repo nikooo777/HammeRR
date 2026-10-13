@@ -58,6 +58,23 @@ fn native_displacement_layout_padding_inactive_neighbors_and_mesh_positions_roun
     assert_eq!(size_of::<DisplacementNeighbor>(), 6);
     assert_eq!(size_of::<DisplacementCorner>(), 10);
     let (mut bsp, data) = fixture();
+    assert_eq!(data.infos[0].flags(), Some(0));
+    assert_eq!(
+        DisplacementInfo {
+            min_tessellation: i32::MIN | 14,
+            ..data.infos[0]
+        }
+        .flags(),
+        Some(14)
+    );
+    assert_eq!(
+        DisplacementInfo {
+            min_tessellation: 0,
+            ..data.infos[0]
+        }
+        .flags(),
+        None
+    );
     bsp.set_displacements(&data).unwrap();
     let bsp = Bsp::parse(&bsp.to_bytes()).unwrap();
     assert_eq!(bsp.displacements().unwrap(), Some(data.clone()));

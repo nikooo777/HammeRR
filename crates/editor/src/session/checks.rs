@@ -444,7 +444,7 @@ impl Session {
             json!({"report":report.token.to_string(),"generation":report.generation,"revision":report.revision,"definitions_revision":report.definitions_revision,"elapsed_ms":report.elapsed_ms,
             "stale":self.map_checks_stale(), "total":report.result.issues.len(),"matching":matching.len(),"offset":offset,"issues":issues,"omitted":report.result.omitted,
             "counts":{"error":report.result.issues.iter().filter(|issue|issue.severity==Severity::Error).count(),"warning":report.result.issues.iter().filter(|issue|issue.severity==Severity::Warning).count(),"info":report.result.issues.iter().filter(|issue|issue.severity==Severity::Info).count()},
-            "fix_preview":self.map_fix_preview_json(),"notes":["Checks inspect applied map data, including hidden objects; pending edit previews are excluded.",spawns::SCOPE,"These checks do not prove the map is leak-free or playable. Compile and test in CS:S.","Native builds currently use fullbright lighting and a single visibility cluster. Asset checks verify material/model paths, not complete dependencies."]}),
+            "fix_preview":self.map_fix_preview_json(),"notes":["Checks inspect applied map data, including hidden objects; pending edit previews are excluded.",spawns::SCOPE,"These checks do not prove the map is leak-free or playable. Compile and test in CS:S.","Native builds use conservative visibility and shared Fullbright or Direct LDR lighting settings. Asset checks verify material/model paths, not complete dependencies."]}),
         )
     }
 

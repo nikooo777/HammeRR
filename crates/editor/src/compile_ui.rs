@@ -16,6 +16,29 @@ impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = CompileWindow::new()?;
         let token = Rc::new(Cell::new(None));
+        let settings = lock(shared).compile_settings();
+        let labels = settings["choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        window.set_lighting_modes(Rc::new(slint::VecModel::from(labels)).into());
+        window.on_change_lighting({
+            let (shared, window) = (shared.clone(), window.as_weak());
+            move |choice| {
+                let mut session = lock(&shared);
+                let settings = session.compile_settings();
+                let result = settings["choices"][choice as usize]["name"]
+                    .as_str()
+                    .ok_or_else(|| "Choose a supported lighting mode".to_string())
+                    .and_then(|mode| session.set_compile_settings(Actor::User, mode));
+                window.unwrap().set_message(match result {
+                    Ok(_) => "Build lighting updated. Compile again to use this mode.".into(),
+                    Err(error) => error.into(),
+                });
+            }
+        });
         window.on_play_build({
             let (shared, window) = (shared.clone(), window.as_weak());
             move || {
@@ -53,6 +76,27 @@ impl Controller {
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
+        let settings = &status["settings"];
+        let choices = settings["choices"].as_array().cloned().unwrap_or_default();
+        let choice = choices
+            .iter()
+            .position(|choice| choice["name"] == settings["lighting"])
+            .unwrap_or_default() as i32;
+        self.window.set_lighting_choice(choice);
+        self.window.set_selected_lighting(
+            choices[choice as usize]["label"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
+        );
+        self.window
+            .set_lighting_enabled(settings["editable"].as_bool().unwrap_or(false));
+        self.window.set_lighting_description(
+            settings["choices"][choice as usize]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
+        );
         let launch = &status["launch"];
         self.window
             .set_launch_ready(launch["ready"].as_bool().unwrap_or(false));
@@ -111,14 +155,33 @@ impl Controller {
                 format!("\nSky visible from: {count} {label}")
             })
             .unwrap_or_default();
+        let lighting = result["stats"]["lighting_faces"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let samples = result["stats"]["lightmap_samples"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let lights = result["stats"]["world_lights"].as_u64().unwrap_or_default();
+                let light_label = if lights == 1 {
+                    "point light"
+                } else {
+                    "point lights"
+                };
+                format!(
+                    "\nBaked lighting: {count} faces · {samples} samples · {lights} {light_label}"
+                )
+            })
+            .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}{sky}\n{}",
+                "Output: {}\nLighting: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}{sky}{lighting}\n{}",
                 job["path"].as_str().unwrap_or_default(),
+                compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,
                 if job["stale"].as_bool().unwrap_or(false) {
-                    "The map changed after this build started. Compile again before playing."
+                    "The map or build settings changed. Compile again before playing."
                 } else {
                     "This build uses the current map snapshot. Unsaved VMF edits are included."
                 }

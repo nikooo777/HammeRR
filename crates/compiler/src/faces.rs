@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use glam::DVec3;
 use source_formats::bsp::TexInfo;
@@ -9,9 +10,11 @@ use crate::tree::Tree;
 use crate::winding::{ON_EPSILON, Winding};
 
 const MAX_LIGHTMAP_EXTENT: i32 = 32;
+const MAX_PROVENANCE_WORK: usize = 4_000_000;
 
 #[derive(Debug)]
 pub struct Face {
+    pub source_sides: Arc<[u32]>,
     pub plane: usize,
     pub texinfo: usize,
     pub smoothing_groups: u32,
@@ -74,6 +77,7 @@ fn subdivide(
             continue;
         };
         pending.push(Face {
+            source_sides: face.source_sides.clone(),
             plane: face.plane,
             texinfo: face.texinfo,
             smoothing_groups: face.smoothing_groups,
@@ -102,6 +106,7 @@ pub fn build_controlled(
 ) -> Result<Vec<Face>, String> {
     control.checkpoint()?;
     let mut groups: BTreeMap<(Option<usize>, usize, usize, u32), Vec<Face>> = BTreeMap::new();
+    let mut provenance_work = 0;
     for &brush_index in &map.entities[entity].brushes {
         control.checkpoint()?;
         let brush = &map.brushes[brush_index];
@@ -109,6 +114,7 @@ pub fn build_controlled(
             let Some(winding) = &side.winding else {
                 continue;
             };
+            let source_sides: Arc<[u32]> = side.source_id.into_iter().collect::<Vec<_>>().into();
             let mut pending = vec![(0, winding.clone(), None)];
             while let Some((index, winding, on_node)) = pending.pop() {
                 control.checkpoint()?;
@@ -137,6 +143,7 @@ pub fn build_controlled(
                             .entry((on_node, side.plane, side.texinfo, side.smoothing_groups))
                             .or_default()
                             .push(Face {
+                                source_sides: source_sides.clone(),
                                 displacement: None,
                                 plane: side.plane,
                                 texinfo: side.texinfo,
@@ -160,7 +167,13 @@ pub fn build_controlled(
             while j < faces.len() {
                 control.checkpoint()?;
                 if let Some(winding) = faces[i].winding.merge(&faces[j].winding, normal) {
+                    let source_sides = merge_sources(
+                        &faces[i].source_sides,
+                        &faces[j].source_sides,
+                        &mut provenance_work,
+                    )?;
                     let other = faces.remove(j);
+                    faces[i].source_sides = source_sides;
                     faces[i].winding = winding;
                     faces[i].leaves.extend(other.leaves);
                     faces[i].leaves.sort_unstable();
@@ -177,4 +190,53 @@ pub fn build_controlled(
         }
     }
     Ok(output)
+}
+
+fn merge_sources(a: &Arc<[u32]>, b: &Arc<[u32]>, work: &mut usize) -> Result<Arc<[u32]>, String> {
+    if Arc::ptr_eq(a, b) {
+        return Ok(a.clone());
+    }
+    *work = work
+        .checked_add(a.len())
+        .and_then(|value| value.checked_add(b.len()))
+        .ok_or("Face provenance work count overflow")?;
+    if *work > MAX_PROVENANCE_WORK {
+        return Err("Face provenance exceeded its four-million work-unit limit".into());
+    }
+    if a == b {
+        return Ok(a.clone());
+    }
+    let mut sources = Vec::with_capacity(a.len() + b.len());
+    let (mut left, mut right) = (0, 0);
+    while left < a.len() || right < b.len() {
+        if right == b.len() || (left < a.len() && a[left] < b[right]) {
+            sources.push(a[left]);
+            left += 1;
+        } else if left == a.len() || b[right] < a[left] {
+            sources.push(b[right]);
+            right += 1;
+        } else {
+            sources.push(a[left]);
+            left += 1;
+            right += 1;
+        }
+    }
+    Ok(sources.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provenance_union_preserves_sorted_ids_shares_equal_scopes_and_bounds_work() {
+        let a: Arc<[u32]> = vec![1, 2].into();
+        let b: Arc<[u32]> = vec![2, 3].into();
+        let mut work = 0;
+        assert_eq!(&*merge_sources(&a, &b, &mut work).unwrap(), &[1, 2, 3]);
+        assert_eq!(work, 4);
+        assert!(Arc::ptr_eq(&a, &merge_sources(&a, &a, &mut work).unwrap()));
+        work = MAX_PROVENANCE_WORK;
+        assert!(merge_sources(&a, &b, &mut work).is_err());
+    }
 }

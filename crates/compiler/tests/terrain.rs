@@ -6,6 +6,104 @@ use map_core::{BrushGeometry, Document, ObjectId, edit};
 use source_formats::bsp::{self, Bsp, Leaf, Model, TexInfo};
 use source_formats::vmf::{DispInfo, Vmf};
 
+#[test]
+fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
+    for power in [2, 3] {
+        let (vmf, _) = fixture(power);
+        let mut document = Document::new(vmf);
+        document
+            .edit("terrain light", |tx| {
+                edit::create_entity(
+                    tx,
+                    "light",
+                    Some(DVec3::new(64.0, 64.0, 180.0)),
+                    &[
+                        ("_light".into(), "255 0 0 200".into()),
+                        ("_constant_attn".into(), "1".into()),
+                        ("_quadratic_attn".into(), "0".into()),
+                    ],
+                    Vec::new(),
+                )
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let output = compiler::compile_with_options(
+            document.vmf(),
+            &common::empty_game(),
+            compiler::Options {
+                lighting: compiler::LightingMode::DirectLdr,
+                ..Default::default()
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.lighting_faces, 7);
+        let bsp = output.bsp.unwrap();
+        let data = bsp.displacements().unwrap().unwrap();
+        let face = bsp.records::<bsp::Face>().unwrap()[usize::from(data.infos[0].face)];
+        assert_eq!(face.lightmap_size, [9, 9]);
+        let info = bsp.records::<TexInfo>().unwrap()[face.texinfo as usize];
+        assert_eq!(info.flags & bsp::surf::NOLIGHT, 0);
+        let positions = data
+            .positions(0, bsp.displacement_quad(0).unwrap())
+            .unwrap();
+        let triangles = data.infos[0].triangle_indices().unwrap();
+        let samples = bsp.displacement_lightmap_samples(0).unwrap().unwrap();
+        assert_eq!(samples.len(), 100);
+        let lighting = bsp.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
+        let colors = lighting.face(&face, &info).unwrap().unwrap();
+        let light = compiler::map::MapEntity {
+            id: 0,
+            classname: "light".into(),
+            origin: Some(DVec3::new(64.0, 64.0, 180.0)),
+            brushes: Vec::new(),
+            properties: vec![
+                ("_light".into(), "255 0 0 200".into()),
+                ("_constant_attn".into(), "1".into()),
+                ("_quadratic_attn".into(), "0".into()),
+            ],
+        };
+        let light = compiler::lighting::PointLight::from_entity(&light, 0).unwrap();
+        for (sample, color) in samples.iter().zip(colors.samples(0, 0).unwrap()) {
+            let surface = sample.surface(&triangles, &positions).unwrap().unwrap();
+            let point = DVec3::from_array(surface.position);
+            let normal = DVec3::from_array(surface.normal);
+            assert!(point.z > 19.0 && normal.x.abs() + normal.y.abs() > 0.01);
+            let expected =
+                compiler::lighting::encode_color(light.contribution(point, normal).unwrap())
+                    .unwrap();
+            assert_eq!(*color, expected);
+        }
+        assert_eq!(*document.vmf(), source);
+    }
+}
+
+#[test]
+fn unsupported_power_four_lighting_retains_fullbright_support_and_previous_output() {
+    let (vmf, _) = fixture(4);
+    assert!(compiler::compile(&vmf, &common::empty_game()).bsp.is_some());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("existing.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    let output = compiler::compile_with_options(
+        &vmf,
+        &common::empty_game(),
+        compiler::Options {
+            lighting: compiler::LightingMode::DirectLdr,
+            ..Default::default()
+        },
+    );
+    assert!(output.report.has_errors());
+    assert!(
+        output
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("triangle-511"))
+    );
+    assert!(!output.write(&path).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+}
+
 fn fixture(power: u32) -> (Vmf, u32) {
     let mut document = Document::new(common::room());
     let id = document

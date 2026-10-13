@@ -9,6 +9,7 @@ from pathlib import Path
 import validate_native_runtime as runtime
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
+from validate_direct_lighting import FACE_FORMAT, lightmaps
 from validate_face_lighting import ROOT, Client, detail
 from validate_visibility import ROOM
 
@@ -29,12 +30,13 @@ OBSERVER = runtime.OBSERVER.replace(
 ).replace("setpos -64 -64 32", "setpos 84 84 96")
 
 
-def displacement(flags):
+def displacement(flags, power=3):
+    size = (1 << power) + 1
     rows = []
-    for row in range(9):
+    for row in range(size):
         values = []
-        for col in range(9):
-            x, y = col * 28, row * 28
+        for col in range(size):
+            x, y = col * 224 / (size - 1), row * 224 / (size - 1)
             height = 64 if 56 <= x <= 168 and 56 <= y <= 168 else 16
             if (x, y) == (28, 196):
                 height = 48
@@ -42,9 +44,25 @@ def displacement(flags):
                 height = 32
             values.append(str(height - 16))
         rows.append(f'"row{row}" "{" ".join(values)}"')
-    normals = "\n".join(f'"row{row}" "{" ".join(["0 0 1"] * 9)}"' for row in range(9))
+    normals = "\n".join(
+        f'"row{row}" "{" ".join(["0 0 1"] * size)}"' for row in range(size)
+    )
     distances = "\n".join(rows)
-    return f'dispinfo {{ "power" "3" "startposition" "[0 0 16]" "flags" "{flags}" "elevation" "0" "subdiv" "0" normals {{ {normals} }} distances {{ {distances} }} }}'
+    return f'dispinfo {{ "power" "{power}" "startposition" "[0 0 16]" "flags" "{flags}" "elevation" "0" "subdiv" "0" normals {{ {normals} }} distances {{ {distances} }} }}'
+
+
+def check_lighting(data, info):
+    face = records(data, 7, FACE_FORMAT)[info[9]]
+    texinfo = records(data, 6, "<16f2i")[face[5]]
+    assert face[16:18] == (15, 15) and face[8:12] == (0, 255, 255, 255)
+    assert texinfo[16] & 0x400 == 0 and face[12] >= 4
+    colors = lightmaps(data)[face[12] : face[12] + 256 * 4]
+    assert len(colors) == 1024 and any(colors[index] for index in range(0, 1024, 4))
+    samples = records(data, 34, "<4B")
+    assert len(samples) == 256 and info[12] == 0
+    assert all(
+        index < 128 and sum(weights) in [253, 254, 255] for index, *weights in samples
+    )
 
 
 def fixtures(client, output):
@@ -147,6 +165,7 @@ def fixtures(client, output):
             stats["displacement_triangles"],
         ) == (1, 81, 128)
         assert stats["brushes"] == 6 and stats["world_lights"] == 1
+        assert stats["lighting_faces"] == 7
         assert stats["physics_mesh_triangles"] == (0 if flags & 2 else 128)
         assert stats["physics_solids"] == (1 if flags & 2 else 2)
         data = bsp.read_bytes()
@@ -157,6 +176,7 @@ def fixtures(client, output):
         assert (
             len(records(data, 33, "<5f")) == 81 and len(records(data, 48, "<H")) == 128
         )
+        check_lighting(data, infos[0])
         background = output / f"{name}-background.bsp"
         client.call("start_compile", {"path": str(background)})
         job = wait_job(client)
@@ -180,6 +200,20 @@ def fixtures(client, output):
     diagnostics = json.loads(failed["content"][0]["text"])["diagnostics"]
     assert destination.read_bytes() == before and any(
         "unknown displacement flags" in row["message"] for row in diagnostics
+    )
+    power_four = output / "power-four.vmf"
+    contents, count = re.subn(
+        pattern,
+        lambda match: match[1] + displacement(0, power=4) + "\n" + match[2],
+        text,
+    )
+    assert count == 1
+    power_four.write_text(contents)
+    client.call("open_map", {"path": str(power_four)})
+    failed = client.call("compile_map", {"path": str(destination)}, error=True)
+    diagnostics = json.loads(failed["content"][0]["text"])["diagnostics"]
+    assert destination.read_bytes() == before and any(
+        "triangle-511" in row["message"] for row in diagnostics
     )
     (output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
     return result

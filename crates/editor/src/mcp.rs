@@ -2836,7 +2836,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared build lighting/physics settings and limitations. Defaults are fullbright and no physics bodies. direct_ldr bakes static point/spot lights on world faces and power-2/3/4 terrain, including legacy/percentage falloff, shadows and smoothed terrain normals. Engine physics builds checked brush/fluid/terrain bodies using an isolated verified CS:S Linux64 worker. Settings leave VMF/undo unchanged."
+        description = "Inspect shared build lighting/physics settings and limitations. Defaults are fullbright and no physics bodies. direct_ldr bakes static point/spot/direct-sky lights on world faces and power-2/3/4 terrain, including legacy/percentage falloff, shadows and smoothed terrain normals. Engine physics builds checked brush/fluid/terrain bodies using an isolated verified CS:S Linux64 worker. Settings leave VMF/undo unchanged."
     )]
     fn get_compile_settings(&self) -> ToolResult {
         ok(self.session().compile_settings())
@@ -2895,7 +2895,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Compile the current snapshot using shared lighting/physics settings. direct_ldr bakes static point/spot lights, legacy/percentage falloff and world/terrain shadows. World power-2/3/4 terrain supports smooth patch normals and matching equal-power full-edge neighbors; diagnostics and statistics describe limits and deferred edges. Fullbright is default. Returns structured diagnostics/leak paths and preserves previous output on failure. Does not save the VMF; leaks write a .lin file. Brush entities use explicit origins or one visible origin volume, with checked local geometry and compensated UVs."
+        description = "Compile the current snapshot using shared lighting/physics settings. direct_ldr bakes static point/spot lights with legacy/percentage falloff and directional sun through sky surfaces, with world/terrain shadows. Sky ambient/soft sun remain unfinished. World power-2/3/4 terrain supports smooth patch normals and matching equal-power full-edge neighbors; diagnostics and statistics describe limits and deferred edges. Fullbright is default. Returns structured diagnostics/leak paths and preserves previous output on failure. Does not save the VMF; leaks write a .lin file. Brush entities use explicit origins or one visible origin volume, with checked local geometry and compensated UVs."
     )]
     async fn compile_map(&self, Parameters(args): Parameters<CompileArgs>) -> ToolResult {
         self.compile_snapshot(args, false).await

@@ -178,6 +178,16 @@ impl<T: ShadowObject> ShadowIndex<T> {
         end: DVec3,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<bool, String> {
+        self.visit(start, end, consume, &mut |hull| hull.intersects(start, end))
+    }
+
+    fn visit(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+        visitor: &mut impl FnMut(&T) -> Result<bool, String>,
+    ) -> Result<bool, String> {
         if !start.is_finite() || !end.is_finite() {
             return Err("Shadow ray must be finite".into());
         }
@@ -206,13 +216,39 @@ impl<T: ShadowObject> ShadowIndex<T> {
                 for &hull in &self.order[node.range.clone()] {
                     let hull = &self.hulls[hull];
                     consume(hull.work())?;
-                    if hull.intersects(start, end)? {
+                    if visitor(hull)? {
                         return Ok(true);
                     }
                 }
             }
         }
         Ok(false)
+    }
+}
+
+impl ShadowIndex<Occluder> {
+    pub(super) fn sky_fraction(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<Option<f64>, String> {
+        let mut first: Option<(f64, bool)> = None;
+        self.visit(start, end, consume, &mut |hull| {
+            if let Some((fraction, sky)) = hull.entry(start, end)? {
+                first = match first {
+                    Some((previous, visible))
+                        if (fraction - previous).abs() <= TRIANGLE_EPSILON =>
+                    {
+                        Some((previous.min(fraction), visible && sky))
+                    }
+                    Some((previous, _)) if previous < fraction => first,
+                    _ => Some((fraction, sky)),
+                };
+            }
+            Ok(false)
+        })?;
+        Ok(first.and_then(|(fraction, sky)| sky.then_some(fraction)))
     }
 }
 
@@ -236,6 +272,55 @@ mod tests {
             center + DVec3::splat(half),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn sky_visibility_uses_the_first_surface_and_opaque_ties_win() {
+        let sky = cube(DVec3::new(0.0, 0.0, 12.0), 4.0)
+            .with_sky(vec![false, false, false, false, false, true])
+            .unwrap();
+        let distant = cube(DVec3::new(0.0, 0.0, 24.0), 2.0);
+        let start = DVec3::ZERO;
+        let end = DVec3::Z * 32.0;
+        for hulls in [vec![sky.clone()], vec![sky.clone(), distant]] {
+            let index = ShadowIndex::new(hulls, &mut |_| Ok(())).unwrap();
+            assert_eq!(
+                index.sky_fraction(start, end, &mut |_| Ok(())).unwrap(),
+                Some(0.25)
+            );
+            assert_eq!(
+                index
+                    .sky_fraction(
+                        DVec3::new(8.0, 0.0, 12.0),
+                        DVec3::new(0.0, 0.0, 12.0),
+                        &mut |_| Ok(())
+                    )
+                    .unwrap(),
+                None
+            );
+            assert_eq!(
+                index
+                    .sky_fraction(
+                        DVec3::new(8.0, 0.0, 4.0),
+                        DVec3::new(0.0, 0.0, 12.0),
+                        &mut |_| Ok(())
+                    )
+                    .unwrap(),
+                None
+            );
+        }
+        let same = cube(DVec3::new(0.0, 0.0, 12.0), 4.0);
+        for hulls in [
+            vec![sky.clone(), same.clone()],
+            vec![same, sky.clone()],
+            vec![sky, cube(DVec3::Z * 4.0, 2.0)],
+        ] {
+            let index = ShadowIndex::new(hulls, &mut |_| Ok(())).unwrap();
+            assert_eq!(
+                index.sky_fraction(start, end, &mut |_| Ok(())).unwrap(),
+                None
+            );
+        }
     }
 
     #[test]

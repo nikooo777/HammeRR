@@ -2147,6 +2147,8 @@ pub struct CompileArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileSettingsArgs {
+    /// 0 (direct only, default) or 1 (one diffuse world/terrain bounce); Direct LDR only.
+    pub bounces: Option<u8>,
     /// fast (default conservative flood) or detailed (bounded portal separator clipping).
     pub visibility: Option<String>,
     pub sky_quality: Option<String>,
@@ -2846,7 +2848,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Update shared build lighting (fullbright/direct_ldr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 ambient directions) or visibility (fast/detailed: conservative flood/portal clipping); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. Detail/model fluids and authored material/mass properties remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
+        description = "Update shared build lighting (fullbright/direct_ldr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 sky/model ambient and bounce directions) visibility (fast/detailed: conservative flood/portal clipping) or bounces (0/1: direct only/one diffuse world-terrain bounce); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. Detail/model fluids and authored material/mass properties remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
     )]
     fn set_compile_settings(
         &self,
@@ -2859,6 +2861,7 @@ impl EditorServer {
                 args.physics.as_deref(),
                 args.sky_quality.as_deref(),
                 args.visibility.as_deref(),
+                args.bounces,
             )
         })
     }

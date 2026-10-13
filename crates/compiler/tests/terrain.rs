@@ -124,6 +124,38 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
             let color = colors.samples(0, 0).unwrap()[index.1 * width + index.0];
             assert_eq!(color.rgb == [0; 3], shadowed);
         }
+        let bounced = compiler::compile_with_options(
+            document.vmf(),
+            &common::empty_game(),
+            compiler::Options {
+                lighting: compiler::LightingMode::DirectLdr,
+                bounces: 1,
+                ..Default::default()
+            },
+        );
+        assert!(!bounced.report.has_errors(), "{:?}", bounced.report);
+        assert_eq!(bounced.stats.bounces, 1);
+        assert!(bounced.stats.bounce_samples > 0);
+        let bounced = bounced.bsp.unwrap();
+        for lump in [
+            bsp::lump::DISPINFO,
+            bsp::lump::DISP_VERTS,
+            bsp::lump::DISP_TRIS,
+            bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS,
+            bsp::lump::FACES,
+            bsp::lump::WORLDLIGHTS,
+        ] {
+            assert_eq!(bsp.lumps[lump], bounced.lumps[lump]);
+        }
+        let direct_colors = bsp.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
+        let bounced_colors = bounced.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
+        assert!(
+            direct_colors
+                .samples()
+                .iter()
+                .zip(bounced_colors.samples())
+                .all(|(direct, bounced)| bounced.linear()[0] >= direct.linear()[0])
+        );
         assert_eq!(*document.vmf(), source);
     }
 }

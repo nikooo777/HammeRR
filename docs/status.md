@@ -5,7 +5,7 @@
 HammeRR is in active development.
 
 - **The editor** is usable today for building, texturing and wiring up brush-based maps, by hand or with an AI agent.
-- **The compiler is experimental.** Compiled maps load and play in Counter-Strike: Source. Fast and Detailed visibility are available; lighting covers direct light and sky ambient only, without bounced light or HDR.
+- **The compiler is experimental.** Compiled maps load and play in Counter-Strike: Source. Fast and Detailed visibility are available; lighting covers direct light, sky ambient and one optional diffuse bounce; HDR remains unfinished.
 
 ## Editor
 
@@ -29,7 +29,7 @@ HammeRR is in active development.
 | Geometry and collision | BSP version 20, with checked brush planes and collision bevels | — |
 | Build settings | Lighting, physics, visibility and sky quality available before the first build; shared with agents and frozen during builds | — |
 | Visibility | Fast conservative sets or Detailed portal separator clipping with bounded parallel source rows; authored hint/skip cuts in open leaves; visible/audible sets, sky visibility, areaportals and distance-fading windows | Parallel base-facing work, hint priority during original plane selection, occluders and broader map coverage |
-| Lighting | Fullbright; Direct LDR for static point lights, spotlights, one sun and sky ambient; soft sun, Fast/Balanced/Detailed sampling, percentage falloff, opaque shadows and terrain | Adaptive sky/sun sampling, bounced world light, HDR, transparent shadows, smoothing groups and bump maps on brush faces, baked prop and moving-model lightmaps |
+| Lighting | Fullbright; Direct LDR for static point lights, spotlights, one sun and sky ambient; soft sun, Fast/Balanced/Detailed sampling, percentage falloff, opaque shadows, terrain and one optional diffuse world/terrain bounce | Adaptive sampling, multiple bounces, HDR, transparent shadows, smoothing groups and bump maps on brush faces, baked prop and moving-model lightmaps |
 | Model ambient | LDR cubes from filtered local world/terrain lightmaps and sky, with up to 1/4/8 safe probes per open leaf by quality; legacy and indexed LDR/HDR data preservation | Adaptive refinement, static-prop occlusion, probes below terrain sheets |
 | Physics | World, clips, brush entities, water and terrain, using CS:S's own collision library | Surface materials, authored masses, broader collision with moving bodies |
 | Brush entities | Explicit and origin-brush pivots; sliding and rotating doors, rotating brushes and triggers | Broader brush-entity behavior coverage |
@@ -43,4 +43,4 @@ HammeRR is in active development.
 
 **Editor:** free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, model rendering and broader map checks.
 
-**Compiler:** parallel base-facing work and hint priority, bounced light and HDR, broader physics collision, mixed-power terrain LOD, prop lighting, brush-model overlays and water transitions.
+**Compiler:** parallel base-facing work and hint priority, multiple light bounces and HDR, broader physics collision, mixed-power terrain LOD, prop lighting, brush-model overlays and water transitions.

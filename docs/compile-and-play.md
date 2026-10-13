@@ -11,7 +11,8 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Build lighting**: **Fullbright** for a geometry check, or **Direct LDR** to bake lights.
    - **Physics bodies**: **CS:S engine physics** if the map needs physics bodies.
    - **Visibility quality**: **Fast (conservative)** for a quick build, or **Detailed (portal clipping)** to remove more hidden areas from visible sets.
-   - **Sampling quality**, for Direct LDR sky and model ambient: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
+   - **Indirect light**: **Direct only** (default) or **One diffuse bounce** to reflect light from world brushes and terrain.
+   - **Sampling quality**, for Direct LDR sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
 
@@ -21,8 +22,8 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 | --- | --- | --- |
 | **Compile** | Toolbar | Builds the current map, including unsaved edits, into a BSP next to the VMF. Unsaved maps ask for an output file. |
 | **Run Map** | Toolbar | Compiles, then launches the map in the Linux CS:S client. |
-| **Build settings…** | Toolbar | Opens lighting, physics and sky settings before or after a build. |
-| **Build details…** | Bar below the toolbar, after the first build | Lighting, physics and sky settings, progress, timings, statistics and diagnostics. |
+| **Build settings…** | Toolbar | Opens lighting, physics, visibility and sampling settings before or after a build. |
+| **Build details…** | Bar below the toolbar, after the first build | Lighting, physics, visibility and sampling settings, progress, timings, statistics and diagnostics. |
 | **Play built map** | Build details | Launches the last successful build without compiling again. |
 | **Cancel build** | Bar below the toolbar and Build details | Stops the build and keeps the previous output. |
 | **Game Log** | Toolbar | Shows the game's console and launcher output. |
@@ -56,9 +57,14 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 
 Visibility quality applies to both lighting modes. It is separate from the light sampling quality below.
 
+**Indirect light** (Direct LDR only)
+
+- **Direct only** (default): bake direct emitters and sky ambient.
+- **One diffuse bounce**: reflect direct light from world/detail brushes and terrain into other surfaces. It also reaches model ambient through the resulting lightmaps.
+
 **Sampling quality** (Direct LDR only)
 
-- **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky), and [model ambient](#model-ambient-lighting). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
+- **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky), [model ambient](#model-ambient-lighting) and [bounced light](#bounced-light). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
 
 A previous build counts as out of date once its settings differ from the current ones.
 
@@ -135,6 +141,17 @@ With **Direct LDR**:
 
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
 
+#### Bounced light
+
+1. Open **Build settings…** and choose **Build lighting → Direct LDR**.
+2. Choose **Indirect light → One diffuse bounce**. Use **Direct only** to compare the direct lighting.
+3. Choose **Sampling quality**: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**. More directions reduce sampling variation and take longer.
+4. Click **Close**, then **Compile** or **Run Map**. **Build details…** reports **Indirect light**, rays and samples that received reflected light.
+
+![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png)
+
+Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows; props and brush models do not cast bounce shadows or supply reflected light. More bounces, HDR, emissive materials and baked prop/model lightmaps remain unfinished. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. **Fullbright** retains this setting but performs no lighting work.
+
 #### Falloff
 
 Lights use the classic constant/linear/quadratic attenuation unless you set a positive **50 percent falloff distance**:
@@ -173,7 +190,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Named or animated lights, invalid falloff values and invalid sun angles fail with a diagnostic that names the object.
 
-Not yet: other light types, transparent shadows, smoothing groups and bump maps on brush faces, bounced world light, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, smoothing groups and bump maps on brush faces, multiple light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 
@@ -190,7 +207,7 @@ Fast keeps one probe per open world leaf. Balanced and Detailed select up to fou
 
 Probes avoid detail solids and space below terrain. They gather reflected world and terrain lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby rays interpolate local lightmap samples; distant rays blend toward face averages. Terrain follows its displaced surface, including rotated patch origins. Diagnostics report leaves without a safe probe.
 
-Limits: adaptive refinement, static-prop occlusion and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. The bake is capped at 65,536 probes and the shared lighting work limit; exceeding either preserves the previous build. These probes do not add bounced lighting to world lightmaps.
+Limits: adaptive refinement, static-prop occlusion and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. The bake is capped at 65,536 probes and the shared lighting work limit; exceeding either preserves the previous build. These probes read the baked world lightmaps, including the optional diffuse bounce; they do not produce additional world bounces.
 
 ### Physics
 

@@ -97,7 +97,7 @@ impl Session {
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let sky_choices = [compiler::SkyQuality::Fast, compiler::SkyQuality::Balanced, compiler::SkyQuality::Detailed].map(|quality| json!({"name":quality.name(), "label":quality.label(), "directions":quality.directions()}));
         let visibility_choices = [compiler::VisibilityMode::Fast, compiler::VisibilityMode::Detailed].map(|mode| json!({"name":mode.name(), "label":mode.label(), "description":mode.description()}));
-        json!({"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+        json!({"bounces":self.compilation.options.bounces,"bounce_choices":[{"bounces":0,"label":"Direct only"},{"bounces":1,"label":"One diffuse bounce"}],"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
@@ -121,7 +121,7 @@ impl Session {
         physics: Option<&str>,
         sky_quality: Option<&str>,
     ) -> Result<Value, String> {
-        self.update_compile_options(actor, lighting, physics, sky_quality, None)
+        self.update_compile_options(actor, lighting, physics, sky_quality, None, None)
     }
 
     pub fn update_compile_options(
@@ -131,8 +131,14 @@ impl Session {
         physics: Option<&str>,
         sky_quality: Option<&str>,
         visibility: Option<&str>,
+        bounces: Option<u8>,
     ) -> Result<Value, String> {
+        let bounces = bounces.unwrap_or(self.compilation.options.bounces);
+        if bounces > 1 {
+            return Err("Light bounces must be 0 or 1".into());
+        }
         let options = compiler::Options {
+            bounces,
             visibility: visibility
                 .map(compiler::VisibilityMode::parse)
                 .transpose()?
@@ -163,10 +169,11 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces",
                     options.lighting.label(),
                     options.physics.label(),
-                    options.visibility.label()
+                    options.visibility.label(),
+                    options.bounces
                 ),
             );
         }
@@ -331,7 +338,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "settings":{"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "settings":{"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {
@@ -414,8 +421,19 @@ mod tests {
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
             assert_eq!(session.compile_settings()["sky_quality"], "fast");
             assert_eq!(session.compile_settings()["visibility"], "fast");
+            assert_eq!(session.compile_settings()["bounces"], 0);
             session
-                .update_compile_options(actor, None, None, None, Some("detailed"))
+                .update_compile_options(actor, None, None, None, None, Some(1))
+                .unwrap();
+            let selected = session.compile_settings();
+            assert!(
+                session
+                    .update_compile_options(actor, Some("direct_ldr"), None, None, None, Some(2))
+                    .is_err()
+            );
+            assert_eq!(session.compile_settings(), selected);
+            session
+                .update_compile_options(actor, None, None, None, Some("detailed"), None)
                 .unwrap();
             let settings = session.compile_settings();
             assert_eq!(settings["visibility"], "detailed");
@@ -426,7 +444,8 @@ mod tests {
                         Some("direct_ldr"),
                         Some("engine"),
                         Some("detailed"),
-                        Some("invalid")
+                        Some("invalid"),
+                        None
                     )
                     .is_err()
             );
@@ -466,13 +485,19 @@ mod tests {
             assert_eq!(session.document.vmf().write(&Default::default()), before);
             assert_eq!(session.document.revision(), revision);
             let request = session.begin_compile(actor, None).unwrap();
+            assert_eq!(session.compile_status()["job"]["settings"]["bounces"], 1);
+            assert!(
+                session
+                    .update_compile_options(actor, None, None, None, None, Some(0))
+                    .is_err()
+            );
             assert_eq!(
                 session.compile_status()["job"]["settings"]["visibility"],
                 "detailed"
             );
             assert!(
                 session
-                    .update_compile_options(actor, None, None, None, Some("fast"))
+                    .update_compile_options(actor, None, None, None, Some("fast"), None)
                     .is_err()
             );
             assert_eq!(
@@ -517,11 +542,19 @@ mod tests {
         session.finish_compile(Actor::User, &result);
         assert!(session.launch_readiness().is_ok());
         session
-            .update_compile_options(Actor::Agent, None, None, None, Some("detailed"))
+            .update_compile_options(Actor::Agent, None, None, None, None, Some(1))
             .unwrap();
         assert!(session.launch_readiness().is_err());
         session
-            .update_compile_options(Actor::User, None, None, None, Some("fast"))
+            .update_compile_options(Actor::User, None, None, None, None, Some(0))
+            .unwrap();
+        assert!(session.launch_readiness().is_ok());
+        session
+            .update_compile_options(Actor::Agent, None, None, None, Some("detailed"), None)
+            .unwrap();
+        assert!(session.launch_readiness().is_err());
+        session
+            .update_compile_options(Actor::User, None, None, None, Some("fast"), None)
             .unwrap();
         assert!(session.launch_readiness().is_ok());
         session

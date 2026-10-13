@@ -57,7 +57,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static point lights, spotlights, sun and sky ambient on world faces and power-2/3/4 terrain. Supports percentage falloff, soft sun, opaque shadows and smooth terrain normals sewn across matching full-edge neighbors. Model ambient gathers filtered world/terrain lightmaps and sky with up to 1/4/8 probes per open leaf at Fast/Balanced/Detailed quality. Bounced world light, HDR and baked prop lighting remain unfinished."
+                "Bakes static point lights, spotlights, sun and sky on world brushes and terrain, with shadows and model ambient. One diffuse bounce is optional. HDR and baked prop/model lightmaps remain unfinished."
             }
         }
     }
@@ -106,7 +106,7 @@ impl SkyQuality {
             "fast" => Ok(Self::Fast),
             "balanced" => Ok(Self::Balanced),
             "detailed" => Ok(Self::Detailed),
-            _ => Err("Sky quality must be fast, balanced or detailed".into()),
+            _ => Err("Sampling quality must be fast, balanced or detailed".into()),
         }
     }
 }
@@ -117,6 +117,7 @@ pub struct Options {
     pub physics: PhysicsMode,
     pub sky_quality: SkyQuality,
     pub visibility: VisibilityMode,
+    pub bounces: u8,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -191,7 +192,7 @@ impl PhysicsMode {
                 "Keeps BSP brush hulls and static-prop asset collisions; omits compiled brush/fluid bodies."
             }
             Self::Engine => {
-                "Uses the installed Linux64 CS:S library in an isolated worker. Builds world, clip, brush-model, world-fluid and terrain bodies with default surfaces. Static props use model assets. Material density and authored masses are unfinished."
+                "Adds world, clip, brush-model, water and terrain collision. Static props use model assets. Custom surface materials and masses remain unfinished."
             }
         }
     }
@@ -273,6 +274,10 @@ impl Report {
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
     pub lighting_mode: LightingMode,
+    pub bounces: u8,
+    pub bounce_rays: usize,
+    pub bounce_samples: usize,
+    pub bounce_work: usize,
     pub physics_mode: PhysicsMode,
     pub visibility_mode: VisibilityMode,
     pub brushes: usize,
@@ -389,6 +394,9 @@ fn build(
     options: Options,
     control: &Control,
 ) -> Result<(), String> {
+    if options.bounces > 1 {
+        return Err("Light bounces must be 0 or 1".into());
+    }
     control.advance(Stage::Loading)?;
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
@@ -570,7 +578,7 @@ fn build(
             &mut bsp,
             &mut output.report,
             control,
-            options.sky_quality,
+            options,
         )?;
         if output.report.has_errors() {
             return Ok(());
@@ -582,6 +590,10 @@ fn build(
         output.stats.lighting_work = stats.work;
         output.stats.ambient_samples = stats.ambient_samples;
         output.stats.ambient_bytes = stats.ambient_bytes;
+        output.stats.bounces = stats.bounces;
+        output.stats.bounce_rays = stats.bounce_rays;
+        output.stats.bounce_samples = stats.bounce_samples;
+        output.stats.bounce_work = stats.bounce_work;
     }
     if options.physics == PhysicsMode::Engine {
         control.advance(Stage::Physics)?;

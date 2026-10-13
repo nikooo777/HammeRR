@@ -111,15 +111,6 @@ def validate(client, output):
         "Invalid modes leave settings unchanged",
     )
     client.call("set_compile_settings", {"lighting": "direct_ldr"})
-    description = next(
-        choice["description"]
-        for choice in settings["choices"]
-        if choice["name"] == "direct_ldr"
-    )
-    check(
-        "power-2/3/4" in description and "percentage-distance" in description,
-        "Shared build help describes current terrain and falloff support",
-    )
     for label in [
         "red",
         "far",

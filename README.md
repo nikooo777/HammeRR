@@ -183,6 +183,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) |
 | Choose a quick conservative build or parallel portal clipping for tighter visibility. |
 
+| Bounced light |
+| --- |
+| ![Reflected light beneath a shelf in Counter-Strike: Source](docs/images/compiled-bounce.png) |
+| Add one diffuse light bounce from world surfaces and terrain. |
+
 | Hint planes |
 | --- |
 | ![Hint face and skip bounds in the editor](docs/images/hint-planes.png) |
@@ -206,7 +211,7 @@ The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: imported terrain displays and compiles, but can't be created or edited yet.
 - **Models**: static props compile but aren't drawn in the viewport yet.
-- **Compiler**: Fast and Detailed visibility are available; lighting covers direct light and sky ambient, without bounced light or HDR yet.
+- **Compiler**: Fast and Detailed visibility are available; lighting covers direct light, sky ambient and one optional diffuse bounce; HDR remains unfinished.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

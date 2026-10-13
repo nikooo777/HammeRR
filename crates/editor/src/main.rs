@@ -7511,11 +7511,20 @@ mod tests {
         controller.window.invoke_change_sky_quality(1);
         controller.refresh(&lock(&shared));
         assert_eq!(lock(&shared).compile_settings()["sky_quality"], "balanced");
+        assert_eq!(controller.window.get_selected_bounces(), "Direct only");
+        controller.window.invoke_change_bounces(1);
+        controller.refresh(&lock(&shared));
+        assert_eq!(
+            controller.window.get_selected_bounces(),
+            "One diffuse bounce"
+        );
+        assert_eq!(lock(&shared).compile_settings()["bounces"], 1);
         save_ui_snapshot(controller.window.window(), "build-settings");
         assert!(lock(&shared).compile_status()["job"].is_null());
         assert_eq!(lock(&shared).document().undo_labels().count(), 0);
         controller.window.invoke_change_sky_quality(0);
         controller.window.invoke_change_visibility(0);
+        controller.window.invoke_change_bounces(0);
         controller.window.invoke_change_lighting(0);
         controller.refresh(&lock(&shared));
         assert!(controller.window.get_summary().contains("No build"));
@@ -7683,6 +7692,9 @@ mod tests {
         if native_physics {
             controller.window.invoke_change_physics(1);
         }
+        lock(&shared)
+            .update_compile_options(Actor::User, None, None, None, None, Some(1))
+            .unwrap();
         let request = lock(&shared)
             .begin_compile(Actor::Agent, Some(&path))
             .unwrap();
@@ -7738,6 +7750,14 @@ mod tests {
                 .window
                 .get_details()
                 .contains("Terrain surfaces: 1")
+        );
+        assert_eq!(stats["bounces"], 1);
+        assert!(stats["bounce_rays"].as_u64().unwrap() > 0);
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Indirect light: 1 diffuse bounce")
         );
         assert_eq!(stats["lighting_mode"], "direct_ldr");
         assert_eq!(stats["world_lights"], 1);

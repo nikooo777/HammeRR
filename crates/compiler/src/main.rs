@@ -5,7 +5,7 @@ use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0|1]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -28,6 +28,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Some("--physics") => {
                 let name = args.next().ok_or(USAGE)?;
                 options.physics = PhysicsMode::parse(name.to_str().ok_or(USAGE)?)?;
+            }
+            Some("--bounces") => {
+                let value = args.next().ok_or(USAGE)?;
+                options.bounces = value.to_str().ok_or(USAGE)?.parse::<u8>()?;
+                if options.bounces > 1 {
+                    return Err("Light bounces must be 0 or 1".into());
+                }
             }
             Some("--visibility") => {
                 let name = args.next().ok_or(USAGE)?;
@@ -109,6 +116,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lightmap_samples,
         stats.world_lights,
         stats.lighting_bytes
+    );
+    println!(
+        "indirect light: {} bounces, {} rays, {} samples lit, {} work units",
+        stats.bounces, stats.bounce_rays, stats.bounce_samples, stats.bounce_work
     );
     println!(
         "model ambient: {} probes, {} bytes",

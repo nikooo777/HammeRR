@@ -187,11 +187,11 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         "boolean" | "bool" if matches!(result.value.as_str(), "0" | "1") => {
             result.control = Control::Boolean
         }
-        "origin" | "vector" | "angle" if lower == "angles" || kind != "angle" => {
+        "origin" | "vector" | "angle" if kind != "angle" || vector(&result.value, 3).is_some() => {
             if vector(&result.value, 3).is_some() {
                 result.control = Control::Vector;
                 result.components = result.value.split_whitespace().map(str::to_owned).collect();
-                result.component_labels = if lower == "angles" {
+                result.component_labels = if kind == "angle" || lower == "angles" {
                     ["Pitch", "Yaw", "Roll"]
                 } else {
                     ["X", "Y", "Z"]
@@ -298,6 +298,7 @@ mod tests {
             _light(color255) : "Brightness" : "255 220 180 400"
             _lightHDR(color255) : "HDR brightness" : "-1 -1 -1 1"
             angles(angle) : "Orientation" : "0 0 0"
+            movedir(angle) : "Move direction" : "0 90 0"
             _cone(integer) : "Outer angle" : 45
             enabled(boolean) : "Enabled" : 1
             material(material) : "Material" : "brick/wall"
@@ -326,6 +327,9 @@ mod tests {
         assert_eq!(field("_light").color, Some([255, 220, 180]));
         assert_eq!(field("origin").components, ["1.25", "2.500", "-30"]);
         assert_eq!(field("angles").component_labels, ["Pitch", "Yaw", "Roll"]);
+        assert_eq!(field("movedir").control, Control::Vector);
+        assert_eq!(field("movedir").component_labels, ["Pitch", "Yaw", "Roll"]);
+        assert_eq!(field("movedir").components, ["0", "90", "0"]);
         assert_eq!(field("_cone").control, Control::Slider);
         assert_eq!(field("enabled").control, Control::Boolean);
         assert_eq!(field("material").control, Control::Material);

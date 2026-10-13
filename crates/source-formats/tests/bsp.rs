@@ -44,6 +44,21 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let hdr_faces: Vec<Face> = bsp.values(bsp::lump::FACES_HDR).map_err(e)?;
     for kind in [LightingKind::Ldr, LightingKind::Hdr] {
         bsp.world_lights(kind).map_err(e)?;
+        if let Some(ambient) = bsp.leaf_ambient(kind).map_err(e)? {
+            let mut copy = bsp.clone();
+            copy.set_leaf_ambient(kind, &ambient).map_err(e)?;
+            for index in [
+                bsp::lump::LEAFS,
+                bsp::lump::LEAF_AMBIENT_INDEX,
+                bsp::lump::LEAF_AMBIENT_LIGHTING,
+                bsp::lump::LEAF_AMBIENT_INDEX_HDR,
+                bsp::lump::LEAF_AMBIENT_LIGHTING_HDR,
+            ] {
+                if copy.lumps[index] != bsp.lumps[index] {
+                    return Err("ambient payload does not round trip".into());
+                }
+            }
+        }
         if let Some(lighting) = bsp.lighting(kind).map_err(e)? {
             let lit_faces = if kind == LightingKind::Hdr && !hdr_faces.is_empty() {
                 &hdr_faces

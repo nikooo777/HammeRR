@@ -33,6 +33,14 @@ cargo test -p editor compile_controls_share_cancel_status_and_guard_replaced_job
 
 This software-rendered check opens **Build settings…** from a fresh session, changes lighting, physics and sky quality before a build, and checks cancellation and job replacement. It uses a private testing backend and sends no desktop input. Set `HAMMERR_UI_SNAPSHOTS` to an existing directory to save its window captures.
 
+### Ambient cube formats
+
+```sh
+cargo test -p source-formats --test ambient --test bsp
+```
+
+Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions and malformed records. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
+
 ## Validation scripts
 
 The `scripts/validate_<name>.py` scripts drive the editor through MCP and check features end to end. They need only Python 3.

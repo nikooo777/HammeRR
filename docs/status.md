@@ -28,7 +28,7 @@ HammeRR is in active development.
 | --- | --- | --- |
 | Geometry and collision | BSP version 20, with checked brush planes and collision bevels | — |
 | Build settings | Lighting, physics and sky quality available before the first build; shared with agents and frozen during builds | — |
-| Visibility | Conservative visible and audible sets from portals; sky visibility | Tight portal clipping (VVIS quality), areaportals |
+| Visibility | Conservative visible and audible sets from portals; sky visibility; compiled func_areaportal boundaries and runtime controls | Tight portal clipping (VVIS quality), window portals |
 | Lighting | Fullbright; Direct LDR for static point lights, spotlights, one sun and sky ambient; soft sun, Fast/Balanced/Detailed sampling, percentage falloff, opaque shadows and terrain | Adaptive sky/sun sampling, bounced world light, HDR, transparent shadows, smoothing groups and bump maps on brush faces, baked prop and moving-model lightmaps |
 | Model ambient | LDR cubes from filtered local world/terrain lightmaps and sky, with up to 1/4/8 safe probes per open leaf by quality; legacy and indexed LDR/HDR data preservation | Adaptive refinement, static-prop occlusion, probes below terrain sheets |
 | Physics | World, clips, brush entities, water and terrain, using CS:S's own collision library | Surface materials, authored masses, broader collision with moving bodies |
@@ -43,4 +43,4 @@ HammeRR is in active development.
 
 **Editor:** free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, model rendering and broader map checks.
 
-**Compiler:** tighter visibility, bounced light and HDR, broader physics collision, terrain sewing, prop lighting, areaportals and overlays.
+**Compiler:** tighter visibility, bounced light and HDR, broader physics collision, terrain sewing, prop lighting, window portals and overlays.

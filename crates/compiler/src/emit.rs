@@ -166,6 +166,7 @@ pub fn build(
     models: &[Model],
     visibility: &crate::visibility::Visibility,
     water: &crate::water::Water,
+    areas: &crate::areas::Areas,
     revision: i32,
     control: &crate::Control,
 ) -> Result<Bsp, String> {
@@ -233,7 +234,11 @@ pub fn build(
                     maxs,
                     first_face: index(start, "node face")?,
                     face_count: index(faces.len() - start, "node face count")?,
-                    area: 1,
+                    area: if model.entity == 0 {
+                        areas.indices[node_index]
+                    } else {
+                        1
+                    },
                     padding: 0,
                 };
             } else {
@@ -268,7 +273,11 @@ pub fn build(
                         } else {
                             0
                         };
-                        1 | (flags << 9)
+                        (if model.entity == 0 {
+                            areas.indices[node_index]
+                        } else {
+                            1
+                        }) | (flags << 9)
                     } else {
                         0
                     },
@@ -380,8 +389,8 @@ pub fn build(
     bsp.set_records(&bsp_models);
     bsp.set_records(&map.cubemaps);
     bsp.set_records(&water.records);
-    bsp.set_records(&[bsp::Area::default(); 2]);
-    bsp.set_records(&[bsp::AreaPortal::default()]);
+    bsp.set_area_data(&areas.data)
+        .map_err(|error| error.to_string())?;
     bsp.set_values(lump::VERTEXES, &geometry.vertices);
     bsp.set_records(&geometry.edges);
     bsp.set_values(lump::SURFEDGES, &geometry.surfedges);

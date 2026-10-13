@@ -146,7 +146,10 @@ fn unsupported_flags_and_hint_brushes_are_reported() {
     for (params, message) in [
         ("%compilehint 1", "hint visibility"),
         ("%compilefuture true", "%compilefuture"),
-        ("%compileareaportal 1", "areaportal brushes"),
+        (
+            "%compileareaportal 1",
+            "areaportal material requires func_areaportal",
+        ),
         ("%compilefog 1", "skip/fog"),
     ] {
         let (_directory, fs) = material_game(params);

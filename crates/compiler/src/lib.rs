@@ -1,5 +1,6 @@
 //! Compiles VMF brush maps into Source engine BSP files.
 
+mod areas;
 pub mod control;
 mod emit;
 pub mod faces;
@@ -241,6 +242,9 @@ pub struct Stats {
     pub clusters: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
+    pub areas: usize,
+    pub areaportals: usize,
+    pub areaportal_vertices: usize,
     pub water_regions: usize,
     pub water_leaves: usize,
     pub sky_clusters: usize,
@@ -367,6 +371,11 @@ fn build(
     if output.report.has_errors() {
         return Ok(());
     }
+    control.advance(Stage::Areas)?;
+    let areas = areas::build(&mut map, &tree, &portals, control)?;
+    output.stats.areas = areas.data.areas.len().saturating_sub(1);
+    output.stats.areaportals = map.area_portals.len();
+    output.stats.areaportal_vertices = areas.data.clip_vertices.len();
     control.advance(Stage::Water)?;
     let water = water::build(&map, &tree, &portals, &mut output.report, control)?;
     output.stats.water_regions = water.records.len();
@@ -438,7 +447,15 @@ fn build(
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     control.advance(Stage::Emitting)?;
-    let mut bsp = emit::build(&map, &models, &visibility, &water, revision, control)?;
+    let mut bsp = emit::build(
+        &map,
+        &models,
+        &visibility,
+        &water,
+        &areas,
+        revision,
+        control,
+    )?;
     control.advance(Stage::StaticProps)?;
     let prop_stats = static_props::bake(vmf, fs, &mut bsp, &mut output.report, control)?;
     if output.report.has_errors() {

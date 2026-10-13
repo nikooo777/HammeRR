@@ -10,10 +10,16 @@ use std::io;
 use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
+mod displacements;
 mod lighting;
 mod physics;
 mod static_props;
 mod visibility;
+pub use displacements::{
+    DisplacementCorner, DisplacementInfo, DisplacementNeighbor, DisplacementTriangle,
+    DisplacementVertex, Displacements, INVALID_DISPLACEMENT_NEIGHBOR, MAX_DISPLACEMENT_TRIANGLES,
+    MAX_DISPLACEMENT_VERTICES, MAX_DISPLACEMENTS,
+};
 pub use lighting::{
     FaceLighting, Lighting, LightingKind, MAX_LIGHTING_BYTES, MAX_WORLD_LIGHTS, RgbExp32,
     WorldLight, world_light_kind,

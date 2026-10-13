@@ -26,6 +26,21 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let texdata = bsp.records::<TexData>().map_err(e)?;
     let texinfo = bsp.records::<TexInfo>().map_err(e)?;
     let faces = bsp.records::<Face>().map_err(e)?;
+    if let Some(displacements) = bsp.displacements().map_err(e)? {
+        let mut copy = bsp.clone();
+        copy.set_displacements(&displacements).map_err(e)?;
+        for index in [
+            bsp::lump::DISPINFO,
+            bsp::lump::DISP_VERTS,
+            bsp::lump::DISP_TRIS,
+        ] {
+            if copy.lumps[index] != bsp.lumps[index] {
+                return Err("displacement payload does not round trip".into());
+            }
+        }
+        let quad = bsp.displacement_quad(0).map_err(e)?;
+        displacements.positions(0, quad).map_err(e)?;
+    }
     let hdr_faces: Vec<Face> = bsp.values(bsp::lump::FACES_HDR).map_err(e)?;
     for kind in [LightingKind::Ldr, LightingKind::Hdr] {
         bsp.world_lights(kind).map_err(e)?;

@@ -170,6 +170,21 @@ impl Controller {
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))
             .unwrap_or_default();
+        let props = result["stats"]["static_props"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let models = result["stats"]["static_prop_models"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let leaves = result["stats"]["static_prop_leaf_refs"]
+                    .as_u64()
+                    .unwrap_or_default();
+                format!(
+                    "\nStatic props: {count} · Model assets: {models} · Leaf references: {leaves}"
+                )
+            })
+            .unwrap_or_default();
         let visibility = result["stats"]["clusters"]
             .as_u64()
             .map(|count| {
@@ -238,7 +253,7 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}{sky}{lighting}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{water}{sky}{lighting}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),

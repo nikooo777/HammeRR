@@ -48,6 +48,11 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     }
     let nodes = bsp.records::<Node>().map_err(e)?;
     let leafs = bsp.records::<Leaf>().map_err(e)?;
+    if let Some(props) = bsp.static_props().map_err(e)?
+        && props.to_bytes(leafs.len()).map_err(e)? != bsp.game_lump(*b"sprp").unwrap().data
+    {
+        return Err("static-prop payload does not round trip".into());
+    }
     let edges = bsp.records::<Edge>().map_err(e)?;
     let models = bsp.records::<Model>().map_err(e)?;
     let brushes = bsp.records::<Brush>().map_err(e)?;

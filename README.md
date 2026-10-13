@@ -1524,8 +1524,8 @@ Closing Build details leaves the build running.
 
 **Build lighting** offers **Fullbright** (the default, for fast geometry checks)
 and **Direct LDR**. Direct LDR bakes unnamed, static **light** and **light_spot** entities into native
-world-face lightmaps, with colored light, constant/linear/quadratic attenuation
-and opaque world/detail brush shadows. Border samples clamp to the actual face;
+world-face lightmaps, with colored light, legacy constant/linear/quadratic
+attenuation or percentage-distance falloff, and opaque brush/terrain shadows. Border samples clamp to the actual face;
 fractional, rotated and mirrored texture projections retain their lightmap axes.
 Build details and MCP results report baked faces, samples, light sources and bytes.
 Spotlights support pitch/yaw or a visible compiled target, inner/outer cones up
@@ -1533,17 +1533,23 @@ to 90 degrees and focus falloff. Viewport helpers share the direction logic.
 Matching 180-degree cones become point lights; invalid cones and target
 references retain previous output.
 
+A positive **50% falloff distance** sets the half-bright reach and replaces legacy
+attenuation and distance normalization. **0% falloff distance** is a near-zero
+target; leaving it zero uses twice the half-bright reach. Enable **Hard falloff**
+for a smooth fade to black at that distance. The target must exceed the half-bright
+reach; without hard falloff, a dim tail can extend beyond it.
+
 World/detail brush shadows use a bounded spatial index and exact convex-hull
 tests. A 70-brush fixture produces the same BSP while using 70% fewer lighting
 work units. Large diagonal rays can still visit many candidates.
 
 Direct LDR limits lighting to 16 MiB, 8,192 light sources and bounded CPU work.
-Named/animated lights, percentage-distance falloff and invalid values fail with
+Named/animated lights and invalid falloff values fail with
 object diagnostics and preserve the previous BSP. Other light types, transparent
-shadows, smoothed/bump normals, bounced light, sky/ambient cubes, HDR, props
-and brush-model lighting remain unfinished. A private headless CS:S check loaded and
-rendered the red-light fixture with Fullbright off; playable collision and
-production lighting still need validation.
+shadows, brush-face smoothing/bump maps, bounced light, sky/ambient cubes, HDR,
+props and moving-model lighting remain unfinished. Terrain uses interpolated
+vertex normals. Private headless CS:S checks verify baked lighting, player
+grounding and native body contact; broader production lighting remains open.
 
 **Physics bodies** offers **No physics bodies** (the default) and **CS:S engine
 physics**. Engine physics runs the verified installed Linux64 collision library

@@ -1660,6 +1660,11 @@ export component AppWindow inherits Window {
                 }
 
                 Button {
+                    text: "Build settings…";
+                    clicked => { root.build-status(); }
+                }
+
+                Button {
                     text: root.compiling ? "Compiling…" : "Compile";
                     enabled: !root.compiling && !root.launching;
                     clicked => { root.compile-map(); }

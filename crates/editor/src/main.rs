@@ -7440,7 +7440,23 @@ mod tests {
         }
         let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
         let controller = compile_ui::Controller::new(&shared).unwrap();
-        controller.show(&lock(&shared)).unwrap();
+        controller.refresh(&lock(&shared));
+        let app = AppWindow::new().unwrap();
+        app.on_build_status({
+            let window = controller.window.as_weak();
+            move || window.unwrap().show().unwrap()
+        });
+        app.show().unwrap();
+        assert!(app.get_compile_label().is_empty());
+        save_ui_snapshot(app.window(), "build-settings-toolbar");
+        assert_dialog_button_visible(&app, "Build settings…");
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Build settings…")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(controller.window.window().is_visible());
+        assert!(lock(&shared).compile_status()["job"].is_null());
+        assert!(!controller.window.get_cancellable());
         assert_eq!(controller.window.get_lighting_choice(), 0);
         assert_eq!(controller.window.get_selected_lighting(), "Fullbright");
         assert_eq!(
@@ -7471,6 +7487,13 @@ mod tests {
                 .get_lighting_description()
                 .contains("static point lights")
         );
+        controller.window.invoke_change_sky_quality(1);
+        controller.refresh(&lock(&shared));
+        assert_eq!(lock(&shared).compile_settings()["sky_quality"], "balanced");
+        save_ui_snapshot(controller.window.window(), "build-settings");
+        assert!(lock(&shared).compile_status()["job"].is_null());
+        assert_eq!(lock(&shared).document().undo_labels().count(), 0);
+        controller.window.invoke_change_sky_quality(0);
         controller.window.invoke_change_lighting(0);
         controller.refresh(&lock(&shared));
         assert!(controller.window.get_summary().contains("No build"));

@@ -62,6 +62,19 @@ A previous build counts as out of date once its settings differ from the current
 - The world is split into visibility clusters, with visible and audible sets computed from portals. `func_detail` and brush entities don't split visibility.
 - Visibility is **conservative**: the game may draw more than it needs to, never less. Tighter portal clipping comes later.
 
+### Areaportals
+
+An areaportal controls visibility through a sealed opening between two areas.
+
+1. Create a convex brush that fills the opening between rooms. Seal the rest of the boundary with world brushes; detail brushes do not divide areas.
+2. Select the brush and click **Tie to entity…**. Choose **func_areaportal**, then **Tie selected brushes to entity**.
+3. Give it a **Name** and choose **Initial State**: **Open** or **Closed**. **Name of Linked Door** can name a door that controls it; connections can also send **Open**, **Close** or **Toggle**.
+4. Click **Compile** or **Run Map**. **Build details…** shows **Visibility areas**, **Areaportals** and **Clip vertices**.
+
+![Two rooms connected by an open areaportal](images/areaportal-open.png)
+
+Limits: one visible convex brush per portal, exactly two distinct areas, one planar interface, at most 511 portals and 255 open areas. Overlapping, touching or leaking portal boundaries fail without replacing the previous BSP. Hidden portals are omitted. Window portals and tighter VVIS clipping remain unfinished. A closed portal hides the other area; link it to a door or another opaque barrier when players could otherwise see through the opening.
+
 ### Sky
 
 - `tools/toolsskybox` marks 3D sky. Materials with `%compile2dsky` mark 2D sky.
@@ -72,7 +85,7 @@ A previous build counts as out of date once its settings differ from the current
 - Flags accept `1` or `true` to enable and `0` or `false` to disable, in any letter case.
 - Skip faces hide that surface but keep the rest of the brush.
 - Non-solid materials stay visible but don't seal the map.
-- Hint, areaportal and empty-content brushes are left out. Unsupported flags are listed in the build diagnostics.
+- Hint and empty-content brushes are left out. World areaportal materials need a **func_areaportal** entity. Unsupported flags are listed in the build diagnostics.
 
 ### Lighting
 

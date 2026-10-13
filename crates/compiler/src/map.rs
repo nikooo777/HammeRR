@@ -7,7 +7,7 @@ use map_core::Plane;
 use map_core::brush::BrushGeometry;
 use source_formats::bsp::{self, contents};
 use source_formats::gamefs::GameFs;
-use source_formats::vmf::{Side, Solid, Vmf};
+use source_formats::vmf::{Entity, Side, Solid, Vmf};
 
 use crate::materials::Materials;
 use crate::planes::PlaneSet;
@@ -55,7 +55,6 @@ const UNSUPPORTED: &[&str] = &[
     "info_overlay_transition",
     "func_viscluster",
     "func_occluder",
-    "func_areaportal",
     "func_areaportalwindow",
     "func_instance",
 ];
@@ -92,11 +91,15 @@ pub struct MapBrush {
 }
 
 impl MapBrush {
-    /// Brushes that split the world tree and seal the map.
+    /// Brushes whose planes split the world tree.
     pub fn structural(&self) -> bool {
         self.contents & contents::DETAIL == 0
             && self.contents
-                & (contents::SOLID | contents::WINDOW | contents::WATER | contents::SLIME)
+                & (contents::SOLID
+                    | contents::WINDOW
+                    | contents::WATER
+                    | contents::SLIME
+                    | contents::AREAPORTAL)
                 != 0
     }
 
@@ -160,6 +163,7 @@ pub struct Map<'a> {
     pub entities: Vec<MapEntity>,
     pub cubemaps: Vec<bsp::Cubemap>,
     pub terrains: Vec<Terrain>,
+    pub(crate) area_portals: Vec<crate::areas::PortalBrush>,
     brush_side_count: usize,
 }
 
@@ -184,6 +188,7 @@ impl<'a> Map<'a> {
             entities: Vec::new(),
             cubemaps: Vec::new(),
             terrains: Vec::new(),
+            area_portals: Vec::new(),
             brush_side_count: 0,
         };
         if let Err(error) = vmf.validate_ids() {
@@ -247,6 +252,10 @@ impl<'a> Map<'a> {
                     control.checkpoint()?;
                     map.add_brush(solid, 0, contents::DETAIL, report, control)?;
                 }
+                continue;
+            }
+            if classname.eq_ignore_ascii_case("func_areaportal") {
+                map.add_areaportal(entity, report, control)?;
                 continue;
             }
             if unsupported_entity_class(&classname) {
@@ -428,6 +437,12 @@ impl<'a> Map<'a> {
                 brush_contents |= contents::WINDOW;
             }
         }
+        if extra_contents & contents::AREAPORTAL != 0 {
+            brush_contents = contents::AREAPORTAL;
+            for side in &mut sides {
+                side.visible = false;
+            }
+        }
         if brush_contents == 0 {
             report.diagnostics.push(Diagnostic::warning(
                 "brush has only skip/fog surfaces and no compiled contents; brush left out",
@@ -436,9 +451,10 @@ impl<'a> Map<'a> {
             ));
             return Ok(());
         }
-        if brush_contents & contents::AREAPORTAL != 0 {
+        if brush_contents & contents::AREAPORTAL != 0 && extra_contents & contents::AREAPORTAL == 0
+        {
             report.diagnostics.push(Diagnostic::warning(
-                "areaportal brushes are not supported yet; brush left out",
+                "areaportal material requires func_areaportal; world brush left out",
                 Some(object),
                 Some(world_center),
             ));
@@ -446,13 +462,15 @@ impl<'a> Map<'a> {
         }
         brush_contents |= extra_contents;
 
-        if let Err(error) = bevels::add(
-            &mut sides,
-            &mut self.planes,
-            &geometry,
-            side_budget,
-            control,
-        ) {
+        if extra_contents & contents::AREAPORTAL == 0
+            && let Err(error) = bevels::add(
+                &mut sides,
+                &mut self.planes,
+                &geometry,
+                side_budget,
+                control,
+            )
+        {
             match error {
                 bevels::Error::Cancelled(message) => return Err(message),
                 bevels::Error::Limit(message) | bevels::Error::Invalid(message) => {
@@ -477,6 +495,62 @@ impl<'a> Map<'a> {
             maxs: geometry.maxs,
         });
         self.entities[entity].brushes.push(index);
+        Ok(())
+    }
+
+    fn add_areaportal(
+        &mut self,
+        entity: &Entity,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<(), String> {
+        let solids = entity
+            .solids
+            .iter()
+            .filter(|solid| !solid.hidden)
+            .collect::<Vec<_>>();
+        if solids.is_empty() {
+            return Ok(());
+        }
+        if solids.len() != 1
+            || self.area_portals.len() >= (source_formats::bsp::MAX_AREA_PORTALS - 1) / 2
+        {
+            report.diagnostics.push(Diagnostic::error("func_areaportal requires one visible convex brush, with at most 511 portals in a map", Some(format!("entity:{}", entity.id)), entity.origin()));
+            return Ok(());
+        }
+        let index = self.entities.len();
+        let mut properties = entity
+            .properties
+            .iter()
+            .filter(|(key, _)| {
+                !key.eq_ignore_ascii_case("model")
+                    && !key.eq_ignore_ascii_case("portalnumber")
+                    && !key.eq_ignore_ascii_case("PortalVersion")
+            })
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect::<Vec<_>>();
+        properties.push(("hammerid".into(), entity.id.to_string()));
+        properties.push(("PortalVersion".into(), "1".into()));
+        for connection in entity.connections.iter().flatten() {
+            properties.push((connection.output.clone(), connection.value.clone()));
+        }
+        self.entities.push(MapEntity {
+            id: entity.id,
+            classname: "func_areaportal".into(),
+            properties,
+            brushes: Vec::new(),
+            origin: None,
+        });
+        let brush = self.brushes.len();
+        self.add_brush(solids[0], 0, contents::AREAPORTAL, report, control)?;
+        if self.brushes.len() != brush {
+            self.area_portals.push(crate::areas::PortalBrush {
+                entity: index,
+                brush,
+            });
+        } else if !report.has_errors() {
+            report.diagnostics.push(Diagnostic::error("Areaportal brush could not be compiled; use a convex volume without hint, origin or displacement tooling", Some(format!("entity:{}", entity.id)), entity.origin()));
+        }
         Ok(())
     }
 

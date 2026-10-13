@@ -255,6 +255,19 @@ impl Controller {
                 )
             })
             .unwrap_or_default();
+        let areas = result["stats"]["areaportals"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let areas = result["stats"]["areas"].as_u64().unwrap_or_default();
+                let vertices = result["stats"]["areaportal_vertices"]
+                    .as_u64()
+                    .unwrap_or_default();
+                format!(
+                    "\nVisibility areas: {areas} · Areaportals: {count} · Clip vertices: {vertices}"
+                )
+            })
+            .unwrap_or_default();
         let water = result["stats"]["water_regions"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -321,7 +334,7 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{terrain}{water}{sky}{lighting}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{areas}{terrain}{water}{sky}{lighting}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),

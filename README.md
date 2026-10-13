@@ -1540,8 +1540,8 @@ work units. Large diagonal rays can still visit many candidates.
 Direct LDR limits lighting to 16 MiB, 8,192 light sources and bounded CPU work.
 Named/animated lights, percentage-distance falloff and invalid values fail with
 object diagnostics and preserve the previous BSP. Other light types, transparent
-shadows, smoothed/bump normals, bounced light, sky/ambient cubes, HDR, props,
-terrain and brush-model lighting remain unfinished. A private headless CS:S check loaded and
+shadows, smoothed/bump normals, bounced light, sky/ambient cubes, HDR, props
+and brush-model lighting remain unfinished. A private headless CS:S check loaded and
 rendered the red-light fixture with Fullbright off; playable collision and
 production lighting still need validation.
 
@@ -1634,13 +1634,16 @@ counts. Their parent volumes do not seal the map or become solid boxes. Engine
 physics adds checked terrain contact meshes and reports `physics_mesh_triangles`.
 Native no-physics, no-hull and no-ray flags are retained. Invalid grids, unsupported
 entity/detail terrain, subdivision and triangle removal retain previous output.
-Baked terrain lighting and neighbor sewing remain unfinished; these surfaces
-currently render without lightmaps. Terrain creation/editing controls remain
-roadmap work; use existing terrain in imported VMFs.
+**Direct LDR** bakes lit power-2/3 terrain using actual raised surface positions,
+native sample records and flat triangle normals, including brush shadows.
+Power 4 and unlit terrain materials require **Fullbright**, which keeps terrain
+without lightmaps. Terrain shadows, smoothed/sewn normals and neighbor LOD remain
+unfinished. Terrain creation/editing controls remain roadmap work; use existing
+terrain in imported VMFs.
 
 Native BSP inspection also validates terrain lightmap sample streams, triangle
-references and allocation bounds. Shared triangle ordering and recovered surface
-samples provide the next terrain-lighting prerequisite.
+references and allocation bounds. The compiler shares native triangle ordering
+and recovered surface samples with those readers.
 
 **Play built map** shows the BSP it will launch. It becomes available after a
 successful compile and again after the managed game stops. Map changes, missing

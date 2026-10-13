@@ -273,7 +273,7 @@ impl Map<'_> {
             });
         }
         if !self.terrains.is_empty() {
-            report.diagnostics.push(Diagnostic::warning("World displacement surfaces compiled without baked terrain lighting or neighbor sewing; they do not seal the map. CS:S engine physics adds terrain contact bodies", None, None));
+            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map; neighbor sewing is unfinished. CS:S engine physics adds terrain contact bodies", None, None));
         }
         Ok(faces)
     }

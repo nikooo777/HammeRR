@@ -80,7 +80,7 @@ python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 | Flat partitions | `component_partitions`, `partition_picking`, `saved_partitions`, `partition_material_metadata`, `partition_materials`, `partition_textures`, `adjusted_partition_ridges`, `boundary_partitions`, `polygon_partitions`, `partition_extrusion`, `partition_visibility` |
 | Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `surface_group`, `texture_strokes`, `texture_chain` |
 | Map checks | `spawn_clearance`, `audit_fixes` |
-| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `direct_lighting`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `static_props`, `terrain`, `terrain_normals` |
+| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `direct_lighting`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `static_props`, `terrain`, `terrain_normals` |
 | In game | `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
 ### Extra options
@@ -108,6 +108,7 @@ python3 -B scripts/validate_window_portals.py --output /tmp/hammerr-windows-chec
 python3 -B scripts/validate_overlay_capacity.py --output /tmp/hammerr-overlay-capacity-check
 python3 -B scripts/validate_portal_flow.py --output /tmp/hammerr-portal-flow-check
 python3 -B scripts/validate_hints.py --output /tmp/hammerr-hints-check
+python3 -B scripts/validate_parallel_visibility.py --output /tmp/hammerr-parallel-check
 ```
 
 `direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
@@ -132,7 +133,8 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `overlays --runtime` | Authored graffiti rendering against a control scene, distance fading and the named accessor's native overlay ID. |
 | `portal_flow --runtime` | Fast/Detailed settings, PVS/PAS rows, independent clear rays, exact MCP builds and paired native rendering through staggered openings. |
 | `hints --runtime` | Shared face/material authoring, intentional cuts, unchanged physics payload, atomic invalid-helper rejection, paired rendering and grounding inside/across the helper. |
-| `overlay_capacity --runtime` | Current-engine record capacity: 1,024 native records with only the last one drawing, checked against the same scene without overlays. This patches a private MCP-built BSP; authored overlay compilation is still unfinished. |
+| `parallel_visibility --runtime` | An authored 10×10 hint grid, all-cell PVS/PAS, deterministic worker work and exact shared builds, with native grounding/rendering. |
+| `overlay_capacity --runtime` | Current-engine record capacity: 1,024 native records with only the last one drawing, checked against the same scene without overlays. This patches a private MCP-built BSP to isolate capacity; `overlays` covers authored helper compilation. |
 | `terrain_seams --runtime` | Rotated curved neighbors share continuous baked lighting and retain seam contact heights. |
 | `terrain_normals --runtime` | A curved terrain ridge with smooth normals, shared with the viewport, keeps its collision height in game. |
 

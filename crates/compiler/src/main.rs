@@ -87,8 +87,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.areas, stats.areaportals, stats.areaportal_windows, stats.areaportal_vertices
     );
     println!(
-        "Visibility {}: {} cluster pairs removed · {} conservative fallbacks · {} work units",
+        "Visibility {}: workers {} · {} cluster pairs removed · {} conservative fallbacks · {} work units",
         stats.visibility_mode.label(),
+        stats.visibility_workers,
         stats.visibility_removed_pairs,
         stats.visibility_fallbacks,
         stats.visibility_work

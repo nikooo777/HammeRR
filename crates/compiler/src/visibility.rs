@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use map_core::Plane;
 use source_formats::bsp::MAX_VISIBILITY_BYTES;
@@ -9,7 +10,9 @@ use crate::portals::Portal;
 use crate::tree::Tree;
 use crate::winding::Winding;
 
+mod budget;
 mod flow;
+mod parallel;
 
 const MAX_CLUSTERS: usize = i16::MAX as usize + 1;
 const MAX_VISIBILITY_WORK: usize = 100_000_000;
@@ -24,6 +27,7 @@ pub(crate) struct Visibility {
     pub work: usize,
     pub removed_pairs: usize,
     pub fallbacks: usize,
+    pub workers: usize,
 }
 
 struct Solution {
@@ -31,6 +35,7 @@ struct Solution {
     work: usize,
     removed_pairs: usize,
     fallbacks: usize,
+    workers: usize,
 }
 
 struct DirectedPortal<'a> {
@@ -40,16 +45,31 @@ struct DirectedPortal<'a> {
     winding: &'a Winding,
 }
 
-struct Work {
-    remaining: usize,
+enum Work {
+    Local(usize),
+    Shared(budget::Lease),
 }
+
+const WORK_LIMIT: &str = "Visibility work limit exceeded; simplify structural geometry or use func_detail for non-sealing detail";
 
 impl Work {
     fn consume(&mut self, count: usize) -> Result<(), String> {
-        self.remaining = self.remaining.checked_sub(count).ok_or(
-            "Visibility work limit exceeded; simplify structural geometry or use func_detail for non-sealing detail",
-        )?;
+        match self {
+            Self::Local(remaining) => {
+                *remaining = remaining.checked_sub(count).ok_or(WORK_LIMIT)?
+            }
+            Self::Shared(remaining) => {
+                remaining.consume(count)?;
+            }
+        }
         Ok(())
+    }
+
+    fn remaining(&self) -> usize {
+        match self {
+            Self::Local(remaining) => *remaining,
+            Self::Shared(remaining) => remaining.remaining(),
+        }
     }
 }
 
@@ -117,6 +137,7 @@ pub(crate) fn build(
         work: solution.work,
         removed_pairs: solution.removed_pairs,
         fallbacks: solution.fallbacks,
+        workers: solution.workers,
     })
 }
 
@@ -183,8 +204,24 @@ fn solve(
     budget: usize,
     mode: VisibilityMode,
 ) -> Result<Solution, String> {
+    let workers = if portals.len() >= 64 && mode == VisibilityMode::Detailed {
+        std::thread::available_parallelism().map_or(1, |count| count.get().min(8))
+    } else {
+        1
+    };
+    solve_workers(count, portals, control, budget, mode, workers)
+}
+
+fn solve_workers(
+    count: usize,
+    portals: &[DirectedPortal<'_>],
+    control: &Control,
+    budget: usize,
+    mode: VisibilityMode,
+    requested_workers: usize,
+) -> Result<Solution, String> {
     control.checkpoint()?;
-    let mut work = Work { remaining: budget };
+    let mut work = Work::Local(budget);
     work.consume(
         portals
             .len()
@@ -210,7 +247,13 @@ fn solve(
     let mut eligible = vec![false; portals.len()];
     let mut reached = vec![false; count];
     let mut pending = Vec::new();
-    for source in portals {
+    let mut fronts = refined
+        .as_ref()
+        .map(|_| vec![vec![0; portals.len().div_ceil(8)]; portals.len()]);
+    let mut bounds = refined
+        .as_ref()
+        .map(|_| vec![vec![0; width]; portals.len()]);
+    for (source_index, source) in portals.iter().enumerate() {
         control.checkpoint()?;
         for (index, target) in portals.iter().enumerate() {
             control.checkpoint()?;
@@ -226,12 +269,22 @@ fn solve(
                     .iter()
                     .any(|&point| target.plane.distance_to(point) <= VISIBILITY_EPSILON);
         }
+        if let Some(fronts) = &mut fronts {
+            for (index, &eligible) in eligible.iter().enumerate() {
+                if eligible {
+                    set(&mut fronts[source_index], index);
+                }
+            }
+        }
         reached.fill(false);
         reached[source.to] = true;
         pending.push(source.to);
         while let Some(cluster) = pending.pop() {
             control.checkpoint()?;
             set(&mut rows[source.from], cluster);
+            if let Some(bounds) = &mut bounds {
+                set(&mut bounds[source_index], cluster);
+            }
             work.consume(edges[cluster].len())?;
             for &index in &edges[cluster] {
                 let target = &portals[index];
@@ -241,21 +294,34 @@ fn solve(
                 }
             }
         }
-        if let Some(refined) = &mut refined {
-            flow::refine(
-                source,
-                portals,
-                &edges,
-                &eligible,
-                &mut refined[source.from],
-                flow::Context {
-                    work: &mut work,
-                    fallbacks: &mut fallbacks,
-                    control,
-                },
-            )?;
+    }
+    let mut workers = 1;
+    if let (Some(refined), Some(fronts), Some(bounds)) = (&mut refined, fronts, bounds) {
+        let graph = parallel::Graph {
+            portals,
+            edges: &edges,
+            fronts: &fronts,
+            bounds: &bounds,
+            control,
+        };
+        workers = requested_workers.clamp(1, 8).min(
+            edges
+                .iter()
+                .filter(|edges| !edges.is_empty())
+                .count()
+                .max(1),
+        );
+        if workers == 1 {
+            for (cluster, row) in refined.iter_mut().enumerate() {
+                fallbacks += graph.refine(cluster, row, &mut work)?;
+            }
+        } else {
+            let remaining = Arc::new(budget::Budget::new(work.remaining(), control.clone()));
+            work = Work::Shared(budget::Lease::new(remaining.clone()));
+            fallbacks = graph.parallel(refined, workers, remaining)?;
         }
     }
+
     for a in 0..count {
         control.checkpoint()?;
         for b in a + 1..count {
@@ -311,9 +377,10 @@ fn solve(
     }
     Ok(Solution {
         data,
-        work: budget - work.remaining,
+        work: budget - work.remaining(),
         removed_pairs,
         fallbacks,
+        workers,
     })
 }
 
@@ -516,6 +583,115 @@ mod tests {
         store_row(&mut data, &mut stored, &[1], 8).unwrap();
         assert_eq!(data.len(), 13);
         assert_eq!(&data[4..8], &data[8..12]);
+    }
+
+    #[test]
+    fn detailed_open_grid_preserves_all_cells_within_the_global_budget() {
+        const SIZE: usize = 10;
+        let mut windings = Vec::new();
+        let mut links = Vec::new();
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let from = y * SIZE + x;
+                let low_x = x as f64 * 10.0;
+                let low_y = y as f64 * 10.0;
+                if x + 1 < SIZE {
+                    windings.push(Winding(vec![
+                        DVec3::new(low_x + 10.0, low_y, 0.0),
+                        DVec3::new(low_x + 10.0, low_y + 10.0, 0.0),
+                        DVec3::new(low_x + 10.0, low_y + 10.0, 10.0),
+                        DVec3::new(low_x + 10.0, low_y, 10.0),
+                    ]));
+                    links.push((
+                        from,
+                        from + 1,
+                        Plane {
+                            normal: DVec3::X,
+                            dist: low_x + 10.0,
+                        },
+                    ));
+                }
+                if y + 1 < SIZE {
+                    windings.push(Winding(vec![
+                        DVec3::new(low_x, low_y + 10.0, 0.0),
+                        DVec3::new(low_x + 10.0, low_y + 10.0, 0.0),
+                        DVec3::new(low_x + 10.0, low_y + 10.0, 10.0),
+                        DVec3::new(low_x, low_y + 10.0, 10.0),
+                    ]));
+                    links.push((
+                        from,
+                        from + SIZE,
+                        Plane {
+                            normal: DVec3::Y,
+                            dist: low_y + 10.0,
+                        },
+                    ));
+                }
+            }
+        }
+        let portals = links
+            .iter()
+            .zip(&windings)
+            .flat_map(|(&(from, to, plane), winding)| pair(from, to, plane, winding))
+            .collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+        let serial = solve_workers(
+            SIZE * SIZE,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Detailed,
+            1,
+        )
+        .unwrap();
+        let serial_time = started.elapsed();
+        let started = std::time::Instant::now();
+        let solution = solve_workers(
+            SIZE * SIZE,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Detailed,
+            8,
+        )
+        .unwrap();
+        eprintln!(
+            "open grid: {} work, serial {:?}, eight workers {:?}",
+            solution.work,
+            serial_time,
+            started.elapsed()
+        );
+        assert_eq!(solution.workers, 8);
+        assert_eq!(solution.work, serial.work);
+        assert_eq!(solution.data, serial.data);
+        assert_eq!(solution.fallbacks, serial.fallbacks);
+        let exact = solve_workers(
+            SIZE * SIZE,
+            &portals,
+            &Control::default(),
+            serial.work,
+            VisibilityMode::Detailed,
+            8,
+        )
+        .unwrap();
+        assert_eq!(exact.work, serial.work);
+        assert_eq!(exact.data, serial.data);
+        assert!(
+            solve_workers(
+                SIZE * SIZE,
+                &portals,
+                &Control::default(),
+                serial.work - 1,
+                VisibilityMode::Detailed,
+                8
+            )
+            .is_err()
+        );
+        let parsed = ParsedVisibility::parse(&solution.data).unwrap();
+        for source in 0..SIZE * SIZE {
+            let row = parsed.row(source, VisibilityKind::Visible).unwrap();
+            assert!((0..SIZE * SIZE).all(|target| bit(&row, target)));
+        }
     }
 
     #[test]

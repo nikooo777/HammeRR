@@ -281,7 +281,8 @@ impl Controller {
                 let portal_label = if portals == 1 { "portal" } else { "portals" };
                 let removed = result["stats"]["visibility_removed_pairs"].as_u64().unwrap_or_default();
                 let fallbacks = result["stats"]["visibility_fallbacks"].as_u64().unwrap_or_default();
-                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
+                let workers = result["stats"]["visibility_workers"].as_u64().unwrap_or(1);
+                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · Workers: {workers} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
             })
             .unwrap_or_default();
         let hints = result["stats"]["hint_surfaces"]

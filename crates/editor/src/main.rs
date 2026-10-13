@@ -7637,6 +7637,15 @@ mod tests {
             lock(&shared).compile_status()["job"]["result"]["stats"]["cubemap_samples"],
             1
         );
+        controller.window.invoke_change_sky_quality(1);
+        controller.refresh(&lock(&shared));
+        assert_eq!(lock(&shared).compile_settings()["sky_quality"], "balanced");
+        assert_eq!(
+            controller.window.get_selected_sky_quality().as_str(),
+            "Balanced (128 directions)"
+        );
+        controller.window.invoke_change_sky_quality(0);
+        controller.refresh(&lock(&shared));
         assert!(controller.window.get_details().contains("Visibility:"));
         let stats = lock(&shared).compile_status()["job"]["result"]["stats"].clone();
         assert_eq!(stats["static_props"], 1);

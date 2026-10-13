@@ -5,7 +5,7 @@ use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -20,6 +20,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Some("--lighting") => {
                 let name = args.next().ok_or(USAGE)?;
                 options.lighting = LightingMode::parse(name.to_str().ok_or(USAGE)?)?;
+            }
+            Some("--sky-quality") => {
+                let name = args.next().ok_or(USAGE)?;
+                options.sky_quality = compiler::SkyQuality::parse(name.to_str().ok_or(USAGE)?)?;
             }
             Some("--physics") => {
                 let name = args.next().ok_or(USAGE)?;

@@ -236,6 +236,87 @@ def validate(client, output, reference=None):
     (output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
 
 
+def quality_checks(client, output):
+    client.call("open_map", {"path": str(output / "ambient.vmf")})
+    client.call(
+        "set_compile_settings", {"lighting": "direct_ldr", "sky_quality": "fast"}
+    )
+    settings = client.call("get_compile_settings")
+    assert [choice["directions"] for choice in settings["sky_choices"]] == [
+        32,
+        128,
+        512,
+    ]
+    client.call(
+        "set_compile_settings",
+        {"lighting": "fullbright", "sky_quality": "unknown"},
+        error=True,
+    )
+    assert client.call("get_compile_settings") == settings
+    client.call("set_compile_settings", {"sky_quality": "balanced"})
+    client.call("set_compile_settings", {"lighting": "fullbright"})
+    assert client.call("get_compile_settings")["sky_quality"] == "balanced"
+    client.call("set_compile_settings", {"lighting": "direct_ldr"})
+    source = (output / "ambient.vmf").read_bytes()
+    history = client.call("get_map_info")["undo"]
+    results = []
+    for quality, rays in [("fast", 32), ("balanced", 128), ("detailed", 512)]:
+        client.call("set_compile_settings", {"sky_quality": quality})
+        destination = output / f"quality-{quality}.bsp"
+        result = client.call("compile_map", {"path": str(destination)})
+        assert result["success"], result
+        data = destination.read_bytes()
+        if quality == "fast":
+            assert data == (output / "ambient.bsp").read_bytes()
+        client.call(
+            "start_compile", {"path": str(output / f"quality-{quality}-background.bsp")}
+        )
+        client.call("set_compile_settings", {"sky_quality": "balanced"}, error=True)
+        job = wait_job(client)
+        assert job["settings"]["sky_quality"] == quality
+        assert (
+            job["status"] == "completed"
+            and (output / f"quality-{quality}-background.bsp").read_bytes() == data
+        )
+        results.append(
+            {
+                "quality": quality,
+                "directions": rays,
+                "center": center_sample(data),
+                "work": result["stats"]["lighting_work"],
+            }
+        )
+    assert (
+        source == (output / "ambient.vmf").read_bytes()
+        and history == client.call("get_map_info")["undo"]
+    )
+    assert results[0]["work"] < results[1]["work"] < results[2]["work"]
+    client.call("set_compile_settings", {"sky_quality": "fast"})
+    assert client.call("get_compile_status")["job"]["stale"]
+    assert not client.call("get_compile_status")["launch"]["ready"]
+    for low, high in [
+        ([-256, -256, 240], [-32, 256, 256]),
+        ([32, -256, 240], [256, 256, 256]),
+        ([-32, -256, 240], [32, -32, 256]),
+        ([-32, 32, 240], [32, 256, 256]),
+    ]:
+        client.call(
+            "create_block", {"mins": low, "maxs": high, "material": "tools/toolsnodraw"}
+        )
+    aperture = []
+    for quality in ["fast", "detailed"]:
+        client.call("set_compile_settings", {"sky_quality": quality})
+        destination = output / f"aperture-{quality}.bsp"
+        compiled = client.call("compile_map", {"path": str(destination)})
+        assert compiled["success"], compiled
+        aperture.append(center_sample(destination.read_bytes()))
+    assert (
+        aperture[0] == [200, 0, 0] and aperture[1][0] == 200 and aperture[1][2] > 0
+    ), aperture
+    (output / "aperture-results.json").write_text(json.dumps(aperture) + "\n")
+    (output / "quality-results.json").write_text(json.dumps(results, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
@@ -243,11 +324,18 @@ def main():
     parser.add_argument(
         "--reference", type=Path, help="Compare zero-ambient BSPs against a prior run"
     )
+    parser.add_argument(
+        "--quality-tests",
+        action="store_true",
+        help="Check shared sky quality, frozen jobs and deterministic output",
+    )
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)
     try:
         validate(client, args.output, args.reference)
+        if args.quality_tests:
+            quality_checks(client, args.output)
     finally:
         client.close()
     print(json.dumps({"output": str(args.output), "cases": 13}))

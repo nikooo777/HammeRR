@@ -129,7 +129,8 @@ impl Session {
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let physics_choices = [compiler::PhysicsMode::None, compiler::PhysicsMode::Engine]
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
-        json!({"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+        let sky_choices = [compiler::SkyQuality::Fast, compiler::SkyQuality::Balanced, compiler::SkyQuality::Detailed].map(|quality| json!({"name":quality.name(), "label":quality.label(), "directions":quality.directions()}));
+        json!({"sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
@@ -143,7 +144,21 @@ impl Session {
         lighting: Option<&str>,
         physics: Option<&str>,
     ) -> Result<Value, String> {
+        self.update_compile_settings_quality(actor, lighting, physics, None)
+    }
+
+    pub fn update_compile_settings_quality(
+        &mut self,
+        actor: Actor,
+        lighting: Option<&str>,
+        physics: Option<&str>,
+        sky_quality: Option<&str>,
+    ) -> Result<Value, String> {
         let options = compiler::Options {
+            sky_quality: sky_quality
+                .map(compiler::SkyQuality::parse)
+                .transpose()?
+                .unwrap_or(self.compilation.options.sky_quality),
             lighting: lighting
                 .map(compiler::LightingMode::parse)
                 .transpose()?
@@ -333,7 +348,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "settings":{"lighting":job.options.lighting.name(),"physics":job.options.physics.name()},
+                "settings":{"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {
@@ -414,6 +429,23 @@ mod tests {
             let before = session.document.vmf().write(&Default::default());
             let revision = session.document.revision();
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
+            assert_eq!(session.compile_settings()["sky_quality"], "fast");
+            let result = session
+                .update_compile_settings_quality(actor, None, None, Some("balanced"))
+                .unwrap();
+            assert_eq!(result["sky_quality"], "balanced");
+            assert!(
+                session
+                    .update_compile_settings_quality(
+                        actor,
+                        Some("direct_ldr"),
+                        None,
+                        Some("unknown")
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.compile_settings()["lighting"], "fullbright");
+            assert_eq!(session.compile_settings()["sky_quality"], "balanced");
             let result = session.set_compile_settings(actor, "direct_ldr").unwrap();
             assert_eq!(result["lighting"], "direct_ldr");
             assert!(
@@ -438,6 +470,15 @@ mod tests {
                 "direct_ldr"
             );
             assert_eq!(session.compile_settings()["editable"], false);
+            assert_eq!(
+                session.compile_status()["job"]["settings"]["sky_quality"],
+                "balanced"
+            );
+            assert!(
+                session
+                    .update_compile_settings_quality(actor, None, None, Some("detailed"))
+                    .is_err()
+            );
             assert!(session.set_compile_settings(actor, "fullbright").is_err());
             assert!(
                 session

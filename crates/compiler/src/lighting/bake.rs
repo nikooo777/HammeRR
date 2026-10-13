@@ -406,6 +406,7 @@ pub(crate) fn bake(
     bsp: &mut Bsp,
     report: &mut Report,
     control: &Control,
+    sky_quality: crate::SkyQuality,
 ) -> Result<BakeStats, String> {
     let lights = lights(map, tree, visibility, report, control)?;
     if report.has_errors() {
@@ -453,7 +454,7 @@ pub(crate) fn bake(
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
-    let ambient_directions = super::sky::ambient_directions();
+    let ambient_directions = super::sky::ambient_directions(sky_quality);
     for plan in &plans {
         budget.consume(1)?;
         let average = colors.len();
@@ -470,7 +471,7 @@ pub(crate) fn bake(
                     if let Emitter::Sky(light) = light
                         && light.has_ambient()
                     {
-                        budget.consume(super::sky::AMBIENT_DIRECTIONS)?;
+                        budget.consume(ambient_directions.len())?;
                         color += light.ambient_contribution(
                             normal,
                             &ambient_directions,

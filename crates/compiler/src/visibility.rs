@@ -4,9 +4,12 @@ use map_core::Plane;
 use source_formats::bsp::MAX_VISIBILITY_BYTES;
 
 use crate::Control;
+use crate::VisibilityMode;
 use crate::portals::Portal;
 use crate::tree::Tree;
 use crate::winding::Winding;
+
+mod flow;
 
 const MAX_CLUSTERS: usize = i16::MAX as usize + 1;
 const MAX_VISIBILITY_WORK: usize = 100_000_000;
@@ -18,6 +21,16 @@ pub(crate) struct Visibility {
     pub portals: usize,
     pub data: Vec<u8>,
     pub sky: Vec<i16>,
+    pub work: usize,
+    pub removed_pairs: usize,
+    pub fallbacks: usize,
+}
+
+struct Solution {
+    data: Vec<u8>,
+    work: usize,
+    removed_pairs: usize,
+    fallbacks: usize,
 }
 
 struct DirectedPortal<'a> {
@@ -44,6 +57,7 @@ pub(crate) fn build(
     tree: &Tree,
     portals: &[Portal],
     control: &Control,
+    mode: VisibilityMode,
 ) -> Result<Visibility, String> {
     let mut clusters = vec![None; tree.nodes.len()];
     let mut count = 0;
@@ -93,13 +107,16 @@ pub(crate) fn build(
             winding: &portal.winding,
         });
     }
-    let data = solve(count, &directed, control, MAX_VISIBILITY_WORK)?;
+    let solution = solve(count, &directed, control, MAX_VISIBILITY_WORK, mode)?;
     Ok(Visibility {
         clusters,
         count,
         portals: directed.len() / 2,
-        data,
+        data: solution.data,
         sky: vec![0; count],
+        work: solution.work,
+        removed_pairs: solution.removed_pairs,
+        fallbacks: solution.fallbacks,
     })
 }
 
@@ -164,7 +181,8 @@ fn solve(
     portals: &[DirectedPortal<'_>],
     control: &Control,
     budget: usize,
-) -> Result<Vec<u8>, String> {
+    mode: VisibilityMode,
+) -> Result<Solution, String> {
     control.checkpoint()?;
     let mut work = Work { remaining: budget };
     work.consume(
@@ -187,6 +205,8 @@ fn solve(
     for (index, row) in rows.iter_mut().enumerate() {
         set(row, index);
     }
+    let mut refined = (mode == VisibilityMode::Detailed).then(|| rows.clone());
+    let mut fallbacks = 0;
     let mut eligible = vec![false; portals.len()];
     let mut reached = vec![false; count];
     let mut pending = Vec::new();
@@ -194,6 +214,7 @@ fn solve(
         control.checkpoint()?;
         for (index, target) in portals.iter().enumerate() {
             control.checkpoint()?;
+            work.consume(source.winding.0.len() + target.winding.0.len())?;
             eligible[index] = target
                 .winding
                 .0
@@ -220,6 +241,20 @@ fn solve(
                 }
             }
         }
+        if let Some(refined) = &mut refined {
+            flow::refine(
+                source,
+                portals,
+                &edges,
+                &eligible,
+                &mut refined[source.from],
+                flow::Context {
+                    work: &mut work,
+                    fallbacks: &mut fallbacks,
+                    control,
+                },
+            )?;
+        }
     }
     for a in 0..count {
         control.checkpoint()?;
@@ -228,8 +263,30 @@ fn solve(
                 set(&mut rows[a], b);
                 set(&mut rows[b], a);
             }
+            if let Some(refined) = &mut refined
+                && (bit(&refined[a], b) || bit(&refined[b], a))
+            {
+                set(&mut refined[a], b);
+                set(&mut refined[b], a);
+            }
         }
     }
+    let removed_pairs = if let Some(refined) = refined {
+        let removed = rows
+            .iter()
+            .flatten()
+            .map(|byte| byte.count_ones() as usize)
+            .sum::<usize>()
+            - refined
+                .iter()
+                .flatten()
+                .map(|byte| byte.count_ones() as usize)
+                .sum::<usize>();
+        rows = refined;
+        removed
+    } else {
+        0
+    };
     let header = 4 + count * 8;
     let mut data = vec![0; header];
     data[..4].copy_from_slice(&(count as i32).to_le_bytes());
@@ -252,7 +309,12 @@ fn solve(
         }
         store_row(&mut data, &mut stored, &audible, 8 + index * 8)?;
     }
-    Ok(data)
+    Ok(Solution {
+        data,
+        work: budget - work.remaining,
+        removed_pairs,
+        fallbacks,
+    })
 }
 
 fn compress(row: &[u8]) -> Vec<u8> {
@@ -352,7 +414,15 @@ mod tests {
                 winding,
             ));
         }
-        let data = solve(5, &portals, &Control::default(), MAX_VISIBILITY_WORK).unwrap();
+        let data = solve(
+            5,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Fast,
+        )
+        .unwrap()
+        .data;
         let visibility = ParsedVisibility::parse(&data).unwrap();
         for cluster in 0..4 {
             assert_eq!(
@@ -406,7 +476,15 @@ mod tests {
             },
             &third,
         ));
-        let data = solve(4, &portals, &Control::default(), MAX_VISIBILITY_WORK).unwrap();
+        let data = solve(
+            4,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Fast,
+        )
+        .unwrap()
+        .data;
         let visibility = ParsedVisibility::parse(&data).unwrap();
         let first = visibility.row(0, VisibilityKind::Visible).unwrap();
         assert!(!bit(&first, 3));
@@ -441,11 +519,122 @@ mod tests {
     }
 
     #[test]
+    fn separator_flow_culls_offset_openings_and_retains_alternate_and_narrow_routes() {
+        let winding = [
+            rectangle_x(0.0, 0.0, 2.0),
+            rectangle_x(10.0, 8.0, 10.0),
+            rectangle_x(20.0, 0.0, 2.0),
+        ];
+        let mut portals = Vec::new();
+        for (index, winding) in winding.iter().enumerate() {
+            portals.extend(pair(
+                index,
+                index + 1,
+                Plane {
+                    normal: DVec3::X,
+                    dist: index as f64 * 10.0,
+                },
+                winding,
+            ));
+        }
+        let fast = solve(
+            4,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Fast,
+        )
+        .unwrap();
+        let detailed = solve(
+            4,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Detailed,
+        )
+        .unwrap();
+        let fast = ParsedVisibility::parse(&fast.data).unwrap();
+        let parsed = ParsedVisibility::parse(&detailed.data).unwrap();
+        assert!(bit(&fast.row(0, VisibilityKind::Visible).unwrap(), 3));
+        assert!(!bit(&parsed.row(0, VisibilityKind::Visible).unwrap(), 3));
+        assert!(detailed.removed_pairs >= 2 && detailed.work > 0);
+        let alternate = rectangle_x(10.0, 0.0, 2.0);
+        portals.extend(pair(
+            1,
+            2,
+            Plane {
+                normal: DVec3::X,
+                dist: 10.0,
+            },
+            &alternate,
+        ));
+        let data = solve(
+            4,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Detailed,
+        )
+        .unwrap()
+        .data;
+        assert!(bit(
+            &ParsedVisibility::parse(&data)
+                .unwrap()
+                .row(0, VisibilityKind::Visible)
+                .unwrap(),
+            3
+        ));
+        let narrow = [
+            rectangle_x(0.0, 0.0, 0.0001),
+            rectangle_x(0.00001, 0.0, 0.0001),
+            rectangle_x(10.0, 0.0, 0.0001),
+        ];
+        let mut portals = Vec::new();
+        for (index, winding) in narrow.iter().enumerate() {
+            portals.extend(pair(
+                index,
+                index + 1,
+                Plane {
+                    normal: DVec3::X,
+                    dist: winding.0[0].x,
+                },
+                winding,
+            ));
+        }
+        let data = solve(
+            4,
+            &portals,
+            &Control::default(),
+            MAX_VISIBILITY_WORK,
+            VisibilityMode::Detailed,
+        )
+        .unwrap()
+        .data;
+        assert!(bit(
+            &ParsedVisibility::parse(&data)
+                .unwrap()
+                .row(0, VisibilityKind::Visible)
+                .unwrap(),
+            3
+        ));
+        assert!(
+            solve(
+                4,
+                &portals,
+                &Control::default(),
+                100,
+                VisibilityMode::Detailed
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn work_and_output_limits_fail_before_unbounded_work_and_cancellation_is_checked() {
-        assert!(solve(100, &[], &Control::default(), 99).is_err());
+        assert!(solve(100, &[], &Control::default(), 99, VisibilityMode::Fast).is_err());
         let control = Control::default();
         control.cancel().unwrap();
-        assert!(solve(1, &[], &control, MAX_VISIBILITY_WORK).is_err());
+        assert!(solve(1, &[], &control, MAX_VISIBILITY_WORK, VisibilityMode::Fast).is_err());
         let mut data = vec![0; MAX_VISIBILITY_BYTES];
         assert!(store_row(&mut data, &mut HashMap::new(), &[1], 4).is_err());
     }

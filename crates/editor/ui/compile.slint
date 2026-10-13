@@ -3,7 +3,7 @@ import { Button, ComboBox, TextEdit } from "std-widgets.slint";
 export component CompileWindow inherits Window {
     title: "Build status - HammeRR";
     width: 720px;
-    height: 840px;
+    height: 920px;
     in property <int> lighting-choice;
     in property <bool> lighting-enabled;
     in property <string> lighting-description;
@@ -16,6 +16,10 @@ export component CompileWindow inherits Window {
     in-out property <string> selected-sky-quality <=> sky-selector.current-value;
     in property <bool> sky-enabled;
     callback change-sky-quality(int);
+    in property <[string]> visibility-modes;
+    in-out property <string> selected-visibility <=> visibility-selector.current-value;
+    in property <string> visibility-description;
+    callback change-visibility(int);
     in property <string> summary;
     in property <string> details;
     in property <string> diagnostics;
@@ -51,6 +55,12 @@ export component CompileWindow inherits Window {
             physics-selector := ComboBox { model: root.physics-modes; enabled: root.lighting-enabled; selected(value) => { root.change-physics(self.current-index); } }
         }
         Text { text: root.physics-description; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            spacing: 12px;
+            Text { text: "Visibility quality"; vertical-alignment: center; }
+            visibility-selector := ComboBox { model: root.visibility-modes; enabled: root.lighting-enabled; selected(value) => { root.change-visibility(self.current-index); } }
+        }
+        Text { text: root.visibility-description; wrap: word-wrap; color: #bac2ce; }
         HorizontalLayout {
             spacing: 12px;
             Text { text: "Sampling quality"; vertical-alignment: center; }

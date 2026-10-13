@@ -57,6 +57,76 @@ fn contains(row: &[u8], cluster: usize) -> bool {
     row[cluster / 8] & (1 << (cluster % 8)) != 0
 }
 
+#[test]
+fn detailed_visibility_removes_broad_false_positives_without_losing_clear_sightlines() {
+    let mut walls = Vec::new();
+    for (x, opening) in [
+        (-160.0, [-224.0, -128.0]),
+        (0.0, [128.0, 224.0]),
+        (160.0, [-224.0, -128.0]),
+    ] {
+        walls.push(([x - 8.0, -256.0, 0.0], [x + 8.0, opening[0], 256.0]));
+        walls.push(([x - 8.0, opening[1], 0.0], [x + 8.0, 256.0, 256.0]));
+    }
+    let vmf = fixture(&walls, [[-224.0, -176.0, 8.0], [224.0, -176.0, 8.0]]);
+    let fast = compile(&vmf).bsp.unwrap();
+    let output = compiler::compile_with_options(
+        &vmf,
+        &common::empty_game(),
+        compiler::Options {
+            visibility: compiler::VisibilityMode::Detailed,
+            ..Default::default()
+        },
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.stats.visibility_removed_pairs >= 2);
+    assert_eq!(
+        output.stats.visibility_mode,
+        compiler::VisibilityMode::Detailed
+    );
+    let detailed = output.bsp.unwrap();
+    let fast_vis = fast.visibility().unwrap().unwrap();
+    let detailed_vis = detailed.visibility().unwrap().unwrap();
+    let a = cluster(&detailed, DVec3::new(-224.0, -176.0, 64.0));
+    let b = cluster(&detailed, DVec3::new(224.0, -176.0, 64.0));
+    assert!(contains(
+        &fast_vis.row(a, VisibilityKind::Visible).unwrap(),
+        b
+    ));
+    assert!(!contains(
+        &detailed_vis.row(a, VisibilityKind::Visible).unwrap(),
+        b
+    ));
+    let points = [-224.0, -96.0, 96.0, 224.0]
+        .into_iter()
+        .flat_map(|x| {
+            [-224.0, -176.0, -96.0, 0.0, 96.0, 176.0, 224.0]
+                .into_iter()
+                .flat_map(move |y| {
+                    [16.0, 128.0, 240.0]
+                        .into_iter()
+                        .map(move |z| DVec3::new(x, y, z))
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut clear = 0;
+    for &a in &points {
+        let row = detailed_vis
+            .row(cluster(&detailed, a), VisibilityKind::Visible)
+            .unwrap();
+        for &b in &points {
+            if !blocked(&vmf, a, b) {
+                clear += 1;
+                assert!(
+                    contains(&row, cluster(&detailed, b)),
+                    "clear {a:?} -> {b:?}"
+                );
+            }
+        }
+    }
+    assert!(clear > 1000);
+}
+
 fn blocked(vmf: &Vmf, a: DVec3, b: DVec3) -> bool {
     vmf.world.solids.iter().any(|solid| {
         let mut enter: f64 = 0.0;
@@ -221,7 +291,13 @@ fn detail_and_brush_entity_geometry_do_not_create_world_visibility_clusters() {
 
 #[test]
 fn oblique_and_reflected_structural_portals_preserve_sampled_clear_sightlines() {
-    for reflection in [false, true] {
+    for (reflection, mode) in [false, true].into_iter().flat_map(|reflection| {
+        [
+            compiler::VisibilityMode::Fast,
+            compiler::VisibilityMode::Detailed,
+        ]
+        .map(|mode| (reflection, mode))
+    }) {
         let vmf = fixture(
             &[
                 ([-8.0, -256.0, 0.0], [8.0, 128.0, 256.0]),
@@ -259,7 +335,15 @@ fn oblique_and_reflected_structural_portals_preserve_sampled_clear_sightlines() 
                     .set("origin", source_formats::vmf::format_vec3(linear * origin));
             }
         }
-        let output = compile(&vmf);
+        let output = compiler::compile_with_options(
+            &vmf,
+            &common::empty_game(),
+            compiler::Options {
+                visibility: mode,
+                ..Default::default()
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
         let bsp = output.bsp.unwrap();
         let visibility = bsp.visibility().unwrap().unwrap();
         let points: Vec<_> = [-192.0, -64.0, 64.0, 192.0]

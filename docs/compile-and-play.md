@@ -10,6 +10,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 2. Choose the build settings:
    - **Build lighting**: **Fullbright** for a geometry check, or **Direct LDR** to bake lights.
    - **Physics bodies**: **CS:S engine physics** if the map needs physics bodies.
+   - **Visibility quality**: **Fast (conservative)** for a quick build, or **Detailed (portal clipping)** to remove more hidden areas from visible sets.
    - **Sampling quality**, for Direct LDR sky and model ambient: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
@@ -48,6 +49,13 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 - **No physics bodies** (default).
 - **CS:S engine physics**: builds collision bodies with the game's own Linux collision library, run inside the `hammerr-physics` helper. See [Physics](#physics).
 
+**Visibility quality**
+
+- **Fast (conservative)** (default): uses portal-facing bounds and keeps some occluded areas in visible sets.
+- **Detailed (portal clipping)**: clips sight volumes through portal paths to remove more hidden areas. This takes longer; complex or degenerate apertures use conservative fallbacks.
+
+Visibility quality applies to both lighting modes. It is separate from the light sampling quality below.
+
 **Sampling quality** (Direct LDR only)
 
 - **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky), and [model ambient](#model-ambient-lighting). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
@@ -60,7 +68,8 @@ A previous build counts as out of date once its settings differ from the current
 
 - Brushes become BSP geometry. Out-of-range or invalid objects are reported before building starts.
 - The world is split into visibility clusters, with visible and audible sets computed from portals. `func_detail` and brush entities don't split visibility.
-- Visibility is **conservative**: the game may draw more than it needs to, never less. Tighter portal clipping comes later.
+- **Detailed** visibility refines the conservative sets with portal separator clipping. **Build details…** reports **cluster pairs removed** and **conservative fallbacks**. A removed pair counts one directed cluster-to-cluster entry; reciprocal entries are counted separately.
+- Visibility work is bounded. Exceeded work or stack limits keep the previous BSP; choose **Fast (conservative)** or use `func_detail` for non-sealing decoration to simplify structural geometry. Hint/skip controls, occluders and parallel flow remain unfinished.
 
 ### Areaportals
 
@@ -73,7 +82,7 @@ An areaportal controls visibility through a sealed opening between two areas.
 
 ![Two rooms connected by an open areaportal](images/areaportal-open.png)
 
-Limits: one visible convex brush per portal, exactly two distinct areas, one planar interface, at most 511 portals and 255 open areas. Overlapping, touching or leaking portal boundaries fail without replacing the previous BSP. Hidden portals are omitted. Tighter VVIS clipping remains unfinished. A closed portal hides the other area; link it to a door or another opaque barrier when players could otherwise see through the opening.
+Limits: one visible convex brush per portal, exactly two distinct areas, one planar interface, at most 511 portals and 255 open areas. Overlapping, touching or leaking portal boundaries fail without replacing the previous BSP. Hidden portals are omitted. A closed portal hides the other area; link it to a door or another opaque barrier when players could otherwise see through the opening.
 
 ### Distance-fading windows
 

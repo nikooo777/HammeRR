@@ -5,7 +5,7 @@ use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -28,6 +28,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Some("--physics") => {
                 let name = args.next().ok_or(USAGE)?;
                 options.physics = PhysicsMode::parse(name.to_str().ok_or(USAGE)?)?;
+            }
+            Some("--visibility") => {
+                let name = args.next().ok_or(USAGE)?;
+                options.visibility = compiler::VisibilityMode::parse(name.to_str().ok_or(USAGE)?)?;
             }
             Some("-h" | "--help") => {
                 println!("{USAGE}");
@@ -81,6 +85,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "Visibility areas: {} · areaportals: {} · window portals: {} · clip vertices: {}",
         stats.areas, stats.areaportals, stats.areaportal_windows, stats.areaportal_vertices
+    );
+    println!(
+        "Visibility {}: {} cluster pairs removed · {} conservative fallbacks · {} work units",
+        stats.visibility_mode.label(),
+        stats.visibility_removed_pairs,
+        stats.visibility_fallbacks,
+        stats.visibility_work
     );
     println!(
         "overlays: {} · face references: {}",

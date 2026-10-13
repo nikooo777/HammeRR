@@ -178,6 +178,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |
 | Matching full edges share smooth lighting normals in the viewport and compiled map. |
 
+| Visibility quality |
+| --- |
+| ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) |
+| Choose a quick conservative build or tighter visibility through portal openings. |
+
 | Imported overlays |
 | --- |
 | ![Graffiti projected onto the floor in Counter-Strike: Source](docs/images/overlays.png) |
@@ -196,7 +201,7 @@ The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: imported terrain displays and compiles, but can't be created or edited yet.
 - **Models**: static props compile but aren't drawn in the viewport yet.
-- **Compiler**: visibility is conservative; lighting covers direct light and sky ambient, without bounced light or HDR yet.
+- **Compiler**: Fast and Detailed visibility are available; lighting covers direct light and sky ambient, without bounced light or HDR yet.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

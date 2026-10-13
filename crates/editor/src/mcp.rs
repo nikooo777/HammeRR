@@ -2147,6 +2147,8 @@ pub struct CompileArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileSettingsArgs {
+    /// fast (default conservative flood) or detailed (bounded portal separator clipping).
+    pub visibility: Option<String>,
     pub sky_quality: Option<String>,
     /// fullbright or direct_ldr; shared by synchronous, background and compile-and-play builds.
     pub lighting: Option<String>,
@@ -2844,18 +2846,19 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Update shared build lighting (fullbright/direct_ldr), physics (none/engine) or sky_quality (fast/balanced/detailed: 32/128/512 ambient directions); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. Detail/model fluids and authored material/mass properties remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
+        description = "Update shared build lighting (fullbright/direct_ldr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 ambient directions) or visibility (fast/detailed: conservative flood/portal clipping); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. Detail/model fluids and authored material/mass properties remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
     )]
     fn set_compile_settings(
         &self,
         Parameters(args): Parameters<CompileSettingsArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session().update_compile_settings_quality(
+            self.session().update_compile_options(
                 Actor::Agent,
                 args.lighting.as_deref(),
                 args.physics.as_deref(),
                 args.sky_quality.as_deref(),
+                args.visibility.as_deref(),
             )
         })
     }

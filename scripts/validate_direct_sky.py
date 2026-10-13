@@ -19,7 +19,7 @@ def sample(data, target):
     )
 
 
-def validate(client, output):
+def validate(client, output, reference=None):
     results = []
     for name in [
         "clear",
@@ -28,9 +28,13 @@ def validate(client, output):
         "tilted",
         "terrain-shade",
         "hidden",
-        "ambient",
         "spread",
         "duplicate",
+        "ambient",
+        "ambient-shade",
+        "ambient-enclosed",
+        "ambient-only",
+        "ambient-fallback",
     ]:
         client.call("new_map", {"discard_changes": True})
         walls = [
@@ -40,7 +44,7 @@ def validate(client, output):
             )["id"]
             for low, high in ROOM
         ]
-        if name != "enclosed":
+        if name not in ["enclosed", "ambient-enclosed"]:
             ceiling = detail(client, [walls[1]])[0]
             bottom = next(
                 face for face in ceiling["faces"] if face["normal"][2] < -0.99
@@ -78,8 +82,8 @@ def validate(client, output):
             },
         )
         properties = {
-            "_light": "255 0 0 200",
-            "_ambient": "255 255 255 20" if name == "ambient" else "0 0 0 0",
+            "_light": "0 0 0 0" if name == "ambient-only" else "255 0 0 200",
+            "_ambient": "0 0 255 100" if name.startswith("ambient") else "0 0 0 0",
             "SunSpreadAngle": "1" if name == "spread" else "0",
             "pitch": "-45" if name == "tilted" else "-90",
         }
@@ -91,6 +95,8 @@ def validate(client, output):
                 "properties": properties,
             },
         )["id"]
+        if name == "ambient-fallback":
+            client.call("set_entity_properties", {"id": sun, "remove": ["_ambient"]})
         if name == "duplicate":
             client.call(
                 "create_entity",
@@ -103,7 +109,7 @@ def validate(client, output):
         if name == "hidden":
             client.call("set_object_visibility", {"ids": [sun], "action": "hide"})
         terrain_side = None
-        if name == "shade":
+        if name in ["shade", "ambient-shade"]:
             client.call(
                 "create_block",
                 {
@@ -151,7 +157,7 @@ def validate(client, output):
         history = client.call("get_map_info")["undo"]
         source = vmf.read_bytes()
         bsp = output / f"{name}.bsp"
-        if name in ["ambient", "spread", "duplicate"]:
+        if name in ["spread", "duplicate"]:
             bsp.write_bytes(b"previous BSP")
             failed = client.call("compile_map", {"path": str(bsp)}, error=True)
             value = json.loads(failed["content"][0]["text"])
@@ -174,7 +180,19 @@ def validate(client, output):
                 0,
                 0,
             ]
+            ambient_expected = {
+                "ambient": [200, 0, 60],
+                "ambient-shade": [0, 0, 37.5],
+                "ambient-enclosed": [0, 0, 0],
+                "ambient-only": [0, 0, 60.75],
+                "ambient-fallback": [260, 0, 0],
+            }
+            expected = ambient_expected.get(name, expected)
             assert center_sample(data) == expected, (name, center_sample(data))
+            if reference and not name.startswith("ambient"):
+                assert data == (reference / f"{name}.bsp").read_bytes(), (
+                    f"{name}: zero-ambient BSP changed"
+                )
             if name == "tilted":
                 assert sample(data, [-128, 0, 0]) == [0, 0, 0]
                 assert sample(data, [128, 0, 0]) == [141, 0, 0]
@@ -184,7 +202,7 @@ def validate(client, output):
             assert (
                 len(lights)
                 == compiled["stats"]["world_lights"]
-                == (0 if name == "hidden" else 1)
+                == (0 if name == "hidden" else 2 if name.startswith("ambient") else 1)
             )
             if lights:
                 light = lights[0]
@@ -198,7 +216,11 @@ def validate(client, output):
                     abs(a - b) < 1e-6
                     for a, b in zip(light[6:9], direction, strict=True)
                 )
-                assert abs(light[3] - 200 / 255) < 1e-6
+                assert (
+                    abs(light[3] - (0 if name == "ambient-only" else 200 / 255)) < 1e-6
+                )
+                if name.startswith("ambient"):
+                    assert lights[1][10] == 5 and lights[1][6:9] == (0, 0, 0)
             background = output / f"{name}-background.bsp"
             client.call("start_compile", {"path": str(background)})
             job = wait_job(client)
@@ -218,14 +240,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
     parser.add_argument("--output", type=Path, default=Path("/tmp/hammerr-direct-sky"))
+    parser.add_argument(
+        "--reference", type=Path, help="Compare zero-ambient BSPs against a prior run"
+    )
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)
     try:
-        validate(client, args.output)
+        validate(client, args.output, args.reference)
     finally:
         client.close()
-    print(json.dumps({"output": str(args.output), "cases": 9}))
+    print(json.dumps({"output": str(args.output), "cases": 13}))
 
 
 if __name__ == "__main__":

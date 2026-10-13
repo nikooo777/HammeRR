@@ -255,7 +255,9 @@ fn rejected_sky_ambient_spread_and_duplicate_emitters_preserve_previous_output()
                         .find(|entity| entity.classname() == Some("light_environment"))
                         .unwrap()
                         .id;
-                    tx.entity_mut(id)?.properties.set(field, "1");
+                    tx.entity_mut(id)?
+                        .properties
+                        .set(field, if field == "_ambient" { "NaN" } else { "1" });
                 }
                 Ok(())
             })
@@ -264,6 +266,41 @@ fn rejected_sky_ambient_spread_and_duplicate_emitters_preserve_previous_output()
         assert!(output.report.has_errors(), "{field}: {:?}", output.report);
         assert!(!output.write(&path).unwrap());
         assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    }
+}
+
+#[test]
+fn sampled_sky_ambient_matches_open_closed_and_shaded_hemispheres() {
+    for (sky, shade, expected) in [
+        (true, false, [200.0, 0.0, 60.0]),
+        (true, true, [0.0, 0.0, 37.5]),
+        (false, false, [0.0; 3]),
+    ] {
+        let (_directory, game, mut document) = sky_fixture(sky, shade);
+        document
+            .edit("blue sky ambient", |tx| {
+                let id = tx
+                    .vmf()
+                    .entities
+                    .iter()
+                    .find(|entity| entity.classname() == Some("light_environment"))
+                    .unwrap()
+                    .id;
+                tx.entity_mut(id)?.properties.set("_ambient", "0 0 255 100");
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let output = compiler::compile_with_options(document.vmf(), &game, options());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.world_lights, 2);
+        let bsp = output.bsp.unwrap();
+        assert_eq!(floor_sample(&bsp, DVec3::ZERO), DVec3::from_array(expected));
+        let lights = bsp.world_lights(LightingKind::Ldr).unwrap();
+        assert_eq!(lights[1].kind, bsp::world_light_kind::SKY_AMBIENT);
+        assert_eq!(lights[1].normal, [0.0; 3]);
+        assert!((lights[1].intensity[2] as f64 - 100.0 / 255.0).abs() < 1e-7);
+        assert_eq!(*document.vmf(), source);
     }
 }
 

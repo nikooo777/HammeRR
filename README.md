@@ -1542,9 +1542,10 @@ reach; without hard falloff, a dim tail can extend beyond it.
 
 Direct sun requires a sky surface in the lighting direction. Opaque brushes and
 terrain cast shadows; a closed room stays dark. Sun direction shares angle/pitch
-or target handling with spotlights. This initial sky mode needs **Ambient** set
-to zero and **Sun spread** set to zero; duplicate visible sky emitters fail with
-an object diagnostic.
+or target handling with spotlights. Sky **Ambient** adds diffuse illumination from visible sky, using 32 fixed
+directions and normal-weighted visibility. Zero disables it; missing ambient uses
+half the sun radiance. **Sun spread** remains zero; duplicate visible sky emitters
+fail with an object diagnostic. Narrow openings can need higher sampling quality.
 
 World/detail brush shadows use a bounded spatial index and exact convex-hull
 tests. A 70-brush fixture produces the same BSP while using 70% fewer lighting
@@ -1553,7 +1554,7 @@ work units. Large diagonal rays can still visit many candidates.
 Direct LDR limits lighting to 16 MiB, 8,192 light sources and bounded CPU work.
 Named/animated lights and invalid falloff values fail with
 object diagnostics and preserve the previous BSP. Other light types, transparent
-shadows, brush-face smoothing/bump maps, bounced light, sky ambient/cubes, soft sun, HDR,
+shadows, brush-face smoothing/bump maps, bounced light, ambient cubes, soft sun, HDR,
 props and moving-model lighting remain unfinished. Terrain uses interpolated
 vertex normals. Private headless CS:S checks verify baked lighting, player
 grounding and native body contact; broader production lighting remains open.
@@ -1790,8 +1791,9 @@ limit game checks to those two fixtures, or `--runtime-cases neighbors` for the
 connected-edge fixture.
 `scripts/validate_terrain_normals.py --runtime` checks a curved ridge, shared
 viewport rendering, unchanged native contact data and both MCP build paths.
-`scripts/validate_direct_sky.py` checks directional sky eligibility, brush/terrain
-shadows, native records, both MCP paths and rejected sky settings.
+`scripts/validate_direct_sky.py` checks directional/ambient sky eligibility, brush/terrain shadows, native records,
+both MCP paths and rejected sky settings. `--reference` compares zero-ambient
+BSPs against an earlier sun-only run.
 `scripts/validate_spotlights.py` checks native cones, target aiming and both MCP
 build paths, including hidden lights and rejected output preservation.
 `scripts/validate_shadow_index.py` checks a dense mixed-light fixture through

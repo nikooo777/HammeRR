@@ -132,10 +132,10 @@ enum Emitter {
 }
 
 impl Emitter {
-    fn world_light(&self) -> bsp::WorldLight {
+    fn world_lights(&self) -> [Option<bsp::WorldLight>; 2] {
         match self {
-            Self::Point(light) => light.world_light(),
-            Self::Sky(light) => light.world_light(),
+            Self::Point(light) => [Some(light.world_light()), None],
+            Self::Sky(light) => [Some(light.world_light()), light.ambient_world_light()],
         }
     }
 }
@@ -377,6 +377,28 @@ fn terrain_shadows(map: &Map, budget: &mut Budget<'_>) -> Result<ShadowIndex<Tri
     ShadowIndex::new(triangles, &mut |amount| budget.consume(amount))
 }
 
+fn sky_visible(
+    direction: DVec3,
+    origin: DVec3,
+    shadows: &ShadowIndex<Occluder>,
+    terrain: &ShadowIndex<Triangle>,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    budget.consume(1)?;
+    let end = origin + direction * super::sky::TRACE_LENGTH;
+    if let Some(fraction) =
+        shadows.sky_fraction(origin, end, &mut |amount| budget.consume(amount))?
+    {
+        Ok(!terrain.blocked(
+            origin,
+            origin.lerp(end, fraction) + direction * super::sky::SKY_HIT_BIAS,
+            &mut |amount| budget.consume(amount),
+        )?)
+    } else {
+        Ok(false)
+    }
+}
+
 pub(crate) fn bake(
     map: &Map,
     tree: &Tree,
@@ -388,6 +410,16 @@ pub(crate) fn bake(
     let lights = lights(map, tree, visibility, report, control)?;
     if report.has_errors() {
         return Ok(BakeStats::default());
+    }
+    let world_lights = lights
+        .iter()
+        .flat_map(Emitter::world_lights)
+        .flatten()
+        .collect::<Vec<_>>();
+    if world_lights.len() > MAX_WORLD_LIGHTS {
+        return Err(
+            "Direct lighting exceeds the 8,192 world-light limit including sky ambient".into(),
+        );
     }
     let occluders = occluders(map, report, control)?;
     let mut faces = bsp.records::<Face>().map_err(|error| error.to_string())?;
@@ -416,11 +448,12 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with interpolated vertex normals and indexed opaque brush/terrain shadows; cross-patch normal sewing and neighbor LOD remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot/direct-sky lights with indexed opaque brush/terrain shadows; bounced light, sky ambient/cubes, soft sun, HDR, props and moving-model lighting remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot/direct-sky lights and sampled sky ambient with indexed opaque brush/terrain shadows; bounced light, ambient cubes, soft sun, HDR, props and moving-model lighting remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
+    let ambient_directions = super::sky::ambient_directions();
     for plan in &plans {
         budget.consume(1)?;
         let average = colors.len();
@@ -434,6 +467,24 @@ pub(crate) fn bake(
                 let mut color = DVec3::ZERO;
                 for light in &lights {
                     budget.consume(1)?;
+                    if let Emitter::Sky(light) = light
+                        && light.has_ambient()
+                    {
+                        budget.consume(super::sky::AMBIENT_DIRECTIONS)?;
+                        color += light.ambient_contribution(
+                            normal,
+                            &ambient_directions,
+                            &mut |direction| {
+                                sky_visible(
+                                    direction,
+                                    origin,
+                                    &shadows,
+                                    &terrain_shadows,
+                                    &mut budget,
+                                )
+                            },
+                        )?;
+                    }
                     let contribution = match light {
                         Emitter::Point(light) => light.contribution(point, normal)?,
                         Emitter::Sky(light) => light.contribution(normal)?,
@@ -449,24 +500,13 @@ pub(crate) fn bake(
                                 budget.consume(amount)
                             })?
                         }
-                        Emitter::Sky(light) => {
-                            let direction = -light.direction;
-                            let end = origin + direction * super::sky::TRACE_LENGTH;
-                            if let Some(fraction) =
-                                shadows.sky_fraction(origin, end, &mut |amount| {
-                                    budget.consume(amount)
-                                })?
-                            {
-                                terrain_shadows.blocked(
-                                    origin,
-                                    origin.lerp(end, fraction)
-                                        + direction * super::sky::SKY_HIT_BIAS,
-                                    &mut |amount| budget.consume(amount),
-                                )?
-                            } else {
-                                true
-                            }
-                        }
+                        Emitter::Sky(light) => !sky_visible(
+                            -light.direction,
+                            origin,
+                            &shadows,
+                            &terrain_shadows,
+                            &mut budget,
+                        )?,
                     };
                     if !blocked {
                         color += contribution;
@@ -483,11 +523,8 @@ pub(crate) fn bake(
     control.checkpoint()?;
     bsp.set_lighting(LightingKind::Ldr, &colors)
         .map_err(|error| error.to_string())?;
-    bsp.set_world_lights(
-        LightingKind::Ldr,
-        &lights.iter().map(Emitter::world_light).collect::<Vec<_>>(),
-    )
-    .map_err(|error| error.to_string())?;
+    bsp.set_world_lights(LightingKind::Ldr, &world_lights)
+        .map_err(|error| error.to_string())?;
     bsp.set_records(&faces);
     bsp.set_records(&infos);
     if !map.terrains.is_empty() {
@@ -534,7 +571,7 @@ pub(crate) fn bake(
             .map_err(|error| error.to_string())?;
     }
     Ok(BakeStats {
-        lights: lights.len(),
+        lights: world_lights.len(),
         faces: plans.len(),
         samples: count - plans.len(),
         bytes: colors.len() * size_of::<RgbExp32>(),

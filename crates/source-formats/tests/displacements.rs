@@ -490,3 +490,45 @@ fn geometric_sampler_covers_all_triangles_without_aliasing_native_record_511() {
         assert!(DisplacementSurfaceSampler::new(info, &vec![[0.0; 3]; positions.len()]).is_err());
     }
 }
+
+#[test]
+fn smoothed_terrain_normals_preserve_curvature_and_continuity_at_grid_boundaries() {
+    use glam::DVec3;
+    let info = DisplacementInfo::default();
+    let positions = (0..25)
+        .map(|i| {
+            let x = (i % 5) as f32;
+            let y = (i / 5) as f32;
+            [x, y, (x - 2.0).powi(2) + (y - 2.0).powi(2)]
+        })
+        .collect::<Vec<_>>();
+    let normals = info
+        .vertex_normals(
+            &positions
+                .iter()
+                .map(|p| p.map(f64::from))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    assert_eq!(normals[12], [0.0, 0.0, 1.0]);
+    assert!(DVec3::from_array(normals[11]).distance(DVec3::new(2.0, 0.0, 1.0).normalize()) < 1e-12);
+    let sampler = bsp::DisplacementSurfaceSampler::new(info, &positions).unwrap();
+    let center = sampler.sample_smoothed([0.5, 0.5]).unwrap();
+    let flat = sampler.sample([0.5, 0.5]).unwrap();
+    assert_eq!(center.surface.normal, [0.0, 0.0, 1.0]);
+    assert_ne!(flat.surface.normal, center.surface.normal);
+    assert_eq!(flat.surface.position, center.surface.position);
+    assert_eq!(flat.lightmap_record(), center.lightmap_record());
+    let left = sampler.sample_smoothed([0.5 - 1e-8, 0.5]).unwrap();
+    let right = sampler.sample_smoothed([0.5 + 1e-8, 0.5]).unwrap();
+    assert!(
+        DVec3::from_array(left.surface.normal).distance(DVec3::from_array(right.surface.normal))
+            < 1e-6
+    );
+    for uv in [[0.0, 0.0], [1.0, 1.0], [0.25, 0.75]] {
+        let normal = DVec3::from_array(sampler.sample_smoothed(uv).unwrap().surface.normal);
+        assert!((normal.length() - 1.0).abs() < 1e-12 && normal.z > 0.0);
+    }
+    assert!(info.vertex_normals(&[[f64::NAN; 3]; 25]).is_err());
+    assert!(info.vertex_normals(&[[0.0; 3]; 24]).is_err());
+}

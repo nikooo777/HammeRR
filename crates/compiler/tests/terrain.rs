@@ -219,6 +219,68 @@ fn mixed_power_terrain_keeps_sample_offsets_and_explicit_missing_records() {
     assert_eq!(vmf, source);
 }
 
+#[test]
+fn terrain_ridge_receives_interpolated_lighting_without_changing_contact_geometry() {
+    let (mut vmf, id) = fixture(2);
+    let side = vmf
+        .world
+        .solids
+        .iter_mut()
+        .find(|solid| solid.id == id)
+        .unwrap()
+        .sides
+        .iter_mut()
+        .find(|side| side.displacement.is_some())
+        .unwrap();
+    side.lightmap_scale = 18;
+    let disp = side.displacement.as_mut().unwrap();
+    disp.elevation = 0.0;
+    disp.offsets = None;
+    disp.distances = Some(vec![vec![0.0, 0.0, 16.0, 0.0, 0.0]; 5]);
+    let fullbright = compiler::compile(&vmf, &common::empty_game()).bsp.unwrap();
+    let mut document = Document::new(vmf);
+    document
+        .edit("ridge light", |tx| {
+            edit::create_entity(
+                tx,
+                "light",
+                Some(DVec3::new(64.125, 64.25, 180.0)),
+                &[
+                    ("_light".into(), "0 255 0 200".into()),
+                    ("_constant_attn".into(), "1".into()),
+                    ("_quadratic_attn".into(), "0".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let source = document.vmf().clone();
+    let output = compiler::compile_with_options(
+        document.vmf(),
+        &common::empty_game(),
+        compiler::Options {
+            lighting: compiler::LightingMode::DirectLdr,
+            ..Default::default()
+        },
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let bsp = output.bsp.unwrap();
+    for lump in [bsp::lump::DISP_VERTS, bsp::lump::DISP_TRIS] {
+        assert_eq!(bsp.lumps[lump].data, fullbright.lumps[lump].data);
+    }
+    let data = bsp.displacements().unwrap().unwrap();
+    let face = bsp.records::<bsp::Face>().unwrap()[usize::from(data.infos[0].face)];
+    assert_eq!(face.lightmap_size, [8, 8]);
+    let info = bsp.records::<TexInfo>().unwrap()[face.texinfo as usize];
+    let lighting = bsp.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
+    let colors = lighting.face(&face, &info).unwrap().unwrap();
+    assert_eq!(
+        colors.samples(0, 0).unwrap()[4 * 9 + 4],
+        compiler::lighting::encode_color(DVec3::new(0.0, 200.0, 0.0)).unwrap()
+    );
+    assert_eq!(*document.vmf(), source);
+}
+
 fn fixture(power: u32) -> (Vmf, u32) {
     let mut document = Document::new(common::room());
     let id = document

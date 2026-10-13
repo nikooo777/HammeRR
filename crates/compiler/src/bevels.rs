@@ -41,6 +41,7 @@ fn append_side(sides: &mut Vec<MapSide>, plane: usize, side_budget: usize) -> Re
     }
     let first = &sides[0];
     sides.push(MapSide {
+        source_id: None,
         plane,
         material: first.material,
         texinfo: first.texinfo,
@@ -172,6 +173,7 @@ mod tests {
             .faces
             .iter()
             .map(|face| MapSide {
+                source_id: None,
                 plane: planes.find(face.plane.normal, face.plane.dist),
                 material: face.side,
                 texinfo: face.side,

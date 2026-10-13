@@ -41,6 +41,15 @@ cargo test -p source-formats --test ambient --test areas --test overlays --test 
 
 Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions, native area/areaportal/clip geometry, overlay projections/fades and malformed records. Overlay checks include packed render order, zero-face records, inactive face slots and negative fade sentinels. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
 
+### Compiler face provenance
+
+```sh
+cargo test -p compiler --test face_provenance
+cargo test -p compiler --lib faces::tests
+```
+
+Checks source side IDs through merged and subdivided faces, shared metadata, hidden source exclusion and the compiler's bounded provenance work budget.
+
 ## Validation scripts
 
 The `scripts/validate_<name>.py` scripts drive the editor through MCP and check features end to end. They need only Python 3.

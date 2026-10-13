@@ -66,6 +66,7 @@ pub fn unsupported_entity_class(classname: &str) -> bool {
 
 #[derive(Debug, Clone)]
 pub struct MapSide {
+    pub source_id: Option<u32>,
     /// Outward-facing plane.
     pub plane: usize,
     pub material: usize,
@@ -415,6 +416,7 @@ impl<'a> Map<'a> {
             }
             let texinfo = self.texinfo(side, material, origin);
             sides.push(MapSide {
+                source_id: Some(side.id),
                 plane,
                 material,
                 texinfo,

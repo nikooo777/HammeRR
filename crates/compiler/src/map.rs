@@ -55,7 +55,6 @@ const UNSUPPORTED: &[&str] = &[
     "info_overlay_transition",
     "func_viscluster",
     "func_occluder",
-    "func_areaportalwindow",
     "func_instance",
 ];
 
@@ -254,7 +253,9 @@ impl<'a> Map<'a> {
                 }
                 continue;
             }
-            if classname.eq_ignore_ascii_case("func_areaportal") {
+            if classname.eq_ignore_ascii_case("func_areaportal")
+                || classname.eq_ignore_ascii_case("func_areaportalwindow")
+            {
                 map.add_areaportal(entity, report, control)?;
                 continue;
             }
@@ -305,6 +306,7 @@ impl<'a> Map<'a> {
                 });
             }
         }
+        crate::areas::windows::validate(&map, report, control)?;
         if !map.cubemaps.is_empty() {
             report.diagnostics.push(Diagnostic::warning(
                 "Cubemap sample records compiled; reflection material binding and texture capture are not implemented yet",
@@ -515,7 +517,11 @@ impl<'a> Map<'a> {
         if solids.len() != 1
             || self.area_portals.len() >= (source_formats::bsp::MAX_AREA_PORTALS - 1) / 2
         {
-            report.diagnostics.push(Diagnostic::error("func_areaportal requires one visible convex brush, with at most 511 portals in a map", Some(format!("entity:{}", entity.id)), entity.origin()));
+            report.diagnostics.push(Diagnostic::error(
+                "Areaportals require one visible convex brush, with at most 511 portals in a map",
+                Some(format!("entity:{}", entity.id)),
+                entity.origin(),
+            ));
             return Ok(());
         }
         let index = self.entities.len();
@@ -526,17 +532,30 @@ impl<'a> Map<'a> {
                 !key.eq_ignore_ascii_case("model")
                     && !key.eq_ignore_ascii_case("portalnumber")
                     && !key.eq_ignore_ascii_case("PortalVersion")
+                    && !key.eq_ignore_ascii_case("classname")
             })
             .map(|(key, value)| (key.to_owned(), value.to_owned()))
             .collect::<Vec<_>>();
         properties.push(("hammerid".into(), entity.id.to_string()));
         properties.push(("PortalVersion".into(), "1".into()));
+        let window = entity
+            .classname()
+            .is_some_and(|name| name.eq_ignore_ascii_case("func_areaportalwindow"));
+        let classname = if window {
+            "func_areaportalwindow"
+        } else {
+            "func_areaportal"
+        };
+        properties.push(("classname".into(), classname.into()));
+        if window {
+            crate::areas::windows::normalize(&mut properties, entity.id, report);
+        }
         for connection in entity.connections.iter().flatten() {
             properties.push((connection.output.clone(), connection.value.clone()));
         }
         self.entities.push(MapEntity {
             id: entity.id,
-            classname: "func_areaportal".into(),
+            classname: classname.into(),
             properties,
             brushes: Vec::new(),
             origin: None,

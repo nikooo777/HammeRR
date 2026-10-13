@@ -260,11 +260,12 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 let areas = result["stats"]["areas"].as_u64().unwrap_or_default();
+                let windows = result["stats"]["areaportal_windows"].as_u64().unwrap_or_default();
                 let vertices = result["stats"]["areaportal_vertices"]
                     .as_u64()
                     .unwrap_or_default();
                 format!(
-                    "\nVisibility areas: {areas} · Areaportals: {count} · Clip vertices: {vertices}"
+                    "\nVisibility areas: {areas} · Areaportals: {count} · Window portals: {windows} · Clip vertices: {vertices}"
                 )
             })
             .unwrap_or_default();

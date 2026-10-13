@@ -11,6 +11,8 @@ use crate::portals::Portal;
 use crate::tree::Tree;
 use crate::winding::Winding;
 
+pub(crate) mod windows;
+
 const MAX_WORK: usize = 4_000_000;
 const MAX_CLIP_POINTS: usize = 4096;
 const PLANE_TOLERANCE: f64 = 0.02;

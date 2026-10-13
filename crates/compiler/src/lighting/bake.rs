@@ -15,7 +15,7 @@ use crate::visibility::Visibility;
 use crate::{Control, Diagnostic, Report};
 
 const MAX_LIGHTING_WORK: usize = 100_000_000;
-const SAMPLE_BIAS: f64 = 0.5;
+pub(super) const SAMPLE_BIAS: f64 = 0.5;
 
 #[derive(Debug, Default)]
 pub(crate) struct BakeStats {
@@ -26,10 +26,14 @@ pub(crate) struct BakeStats {
     pub work: usize,
     pub ambient_samples: usize,
     pub ambient_bytes: usize,
+    pub bounces: u8,
+    pub bounce_rays: usize,
+    pub bounce_samples: usize,
+    pub bounce_work: usize,
 }
 
-struct Plan {
-    face: usize,
+pub(super) struct Plan {
+    pub face: usize,
     surface: Surface,
 }
 
@@ -43,19 +47,19 @@ enum Surface {
 }
 
 impl Plan {
-    fn dimensions(&self) -> [usize; 2] {
+    pub(super) fn dimensions(&self) -> [usize; 2] {
         match &self.surface {
             Surface::Plane { frame, .. } => frame.dimensions(),
             Surface::Terrain(plan) => plan.dimensions,
         }
     }
 
-    fn sample_count(&self) -> usize {
+    pub(super) fn sample_count(&self) -> usize {
         let [width, height] = self.dimensions();
         width * height
     }
 
-    fn sample(
+    pub(super) fn sample(
         &self,
         s: usize,
         t: usize,
@@ -415,8 +419,9 @@ pub(crate) fn bake(
     bsp: &mut Bsp,
     report: &mut Report,
     control: &Control,
-    sky_quality: crate::SkyQuality,
+    options: crate::Options,
 ) -> Result<BakeStats, String> {
+    let sky_quality = options.sky_quality;
     let lights = lights(map, tree, visibility, report, control)?;
     if report.has_errors() {
         return Ok(BakeStats::default());
@@ -458,7 +463,7 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; bounced world light, HDR and baked prop/model lightmaps remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; multiple bounces, HDR and baked prop/model lightmaps remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
@@ -553,6 +558,31 @@ pub(crate) fn bake(
         .map_err(|error| error.to_string())?;
     bsp.set_records(&faces);
     bsp.set_records(&infos);
+    let bounce_start = budget.work;
+    let bounce = if options.bounces == 1 {
+        let stats = super::bounce::bake(
+            &super::bounce::Context {
+                map,
+                plans: &plans,
+                faces: &faces,
+                infos: &infos,
+                shadows: &shadows,
+                quality: sky_quality,
+            },
+            bsp,
+            &mut colors,
+            &mut budget,
+        )?;
+        bsp.set_lighting(LightingKind::Ldr, &colors)
+            .map_err(|error| error.to_string())?;
+        stats
+    } else {
+        super::bounce::Stats {
+            rays: 0,
+            samples: 0,
+        }
+    };
+    let bounce_work = budget.work - bounce_start;
     if !map.terrains.is_empty() {
         let mut data = bsp
             .displacements()
@@ -626,6 +656,10 @@ pub(crate) fn bake(
         work: budget.work,
         ambient_samples: ambient.samples,
         ambient_bytes: ambient.bytes,
+        bounces: options.bounces,
+        bounce_rays: bounce.rays,
+        bounce_samples: bounce.samples,
+        bounce_work,
     })
 }
 

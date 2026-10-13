@@ -4,8 +4,10 @@ use source_formats::bsp::{MAX_LIGHTING_BYTES, RgbExp32, TexInfo, WorldLight, wor
 
 use crate::map::MapEntity;
 mod bake;
+mod bounce;
 mod falloff;
 mod probes;
+mod radiance;
 mod shadows;
 mod sky;
 mod terrain;

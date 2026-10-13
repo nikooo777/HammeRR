@@ -45,6 +45,38 @@ impl Controller {
             .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
             .collect::<Vec<_>>();
         window.set_visibility_modes(Rc::new(slint::VecModel::from(visibility_labels)).into());
+        let bounce_labels = settings["bounce_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        window.set_bounce_modes(Rc::new(slint::VecModel::from(bounce_labels)).into());
+        window.on_change_bounces({
+            let (shared, window) = (shared.clone(), window.as_weak());
+            move |choice| {
+                let mut session = lock(&shared);
+                let settings = session.compile_settings();
+                let result = settings["bounce_choices"][choice as usize]["bounces"]
+                    .as_u64()
+                    .and_then(|count| u8::try_from(count).ok())
+                    .ok_or_else(|| "Choose a supported indirect lighting mode".to_string())
+                    .and_then(|count| {
+                        session.update_compile_options(
+                            Actor::User,
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(count),
+                        )
+                    });
+                window.unwrap().set_message(match result {
+                    Ok(_) => "Indirect light updated. The next build will use this setting.".into(),
+                    Err(error) => error.into(),
+                });
+            }
+        });
         window.on_change_visibility({
             let (shared, window) = (shared.clone(), window.as_weak());
             move |choice| {
@@ -54,7 +86,14 @@ impl Controller {
                     .as_str()
                     .ok_or_else(|| "Choose a supported visibility quality".to_string())
                     .and_then(|mode| {
-                        session.update_compile_options(Actor::User, None, None, None, Some(mode))
+                        session.update_compile_options(
+                            Actor::User,
+                            None,
+                            None,
+                            None,
+                            Some(mode),
+                            None,
+                        )
                     });
                 window.unwrap().set_message(match result {
                     Ok(_) => {
@@ -210,6 +249,17 @@ impl Controller {
         self.window.set_sky_enabled(
             settings["editable"].as_bool().unwrap_or(false) && settings["lighting"] == "direct_ldr",
         );
+        let bounce_choice = settings["bounce_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|choice| choice["bounces"] == settings["bounces"]);
+        self.window.set_selected_bounces(
+            bounce_choice
+                .and_then(|choice| choice["label"].as_str())
+                .unwrap_or_default()
+                .into(),
+        );
         let visibility_choice = settings["visibility_choices"]
             .as_array()
             .into_iter()
@@ -283,6 +333,19 @@ impl Controller {
                 let fallbacks = result["stats"]["visibility_fallbacks"].as_u64().unwrap_or_default();
                 let workers = result["stats"]["visibility_workers"].as_u64().unwrap_or(1);
                 format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · Workers: {workers} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
+            })
+            .unwrap_or_default();
+        let bounce = result["stats"]["bounces"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                format!(
+                    "\nIndirect light: {count} diffuse bounce · {} rays · {} samples lit",
+                    result["stats"]["bounce_rays"].as_u64().unwrap_or_default(),
+                    result["stats"]["bounce_samples"]
+                        .as_u64()
+                        .unwrap_or_default()
+                )
             })
             .unwrap_or_default();
         let hints = result["stats"]["hint_surfaces"]
@@ -399,12 +462,13 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{areas}{terrain}{overlays}{water}{sky}{lighting}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::VisibilityMode::parse(job["settings"]["visibility"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::SkyQuality::parse(job["settings"]["sky_quality"].as_str().unwrap_or_default()).unwrap_or_default().label(),
+                if job["settings"]["bounces"] == 1 { "One diffuse bounce" } else { "Direct only" },
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,
                 if job["stale"].as_bool().unwrap_or(false) {

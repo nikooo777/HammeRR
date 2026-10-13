@@ -8,6 +8,32 @@ const LEAF_SIZE: usize = 4;
 const STACK_SIZE: usize = usize::BITS as usize;
 const TRIANGLE_EPSILON: f64 = 1e-9;
 
+enum Visit {
+    Continue(f64),
+    Stop,
+}
+
+fn ray_box(start: DVec3, delta: DVec3, mins: DVec3, maxs: DVec3, limit: f64) -> bool {
+    let mut near: f64 = 0.0;
+    let mut far = limit + TRIANGLE_EPSILON;
+    for axis in 0..3 {
+        if delta[axis] == 0.0 {
+            if start[axis] < mins[axis] || start[axis] > maxs[axis] {
+                return false;
+            }
+        } else {
+            let a = (mins[axis] - start[axis]) / delta[axis];
+            let b = (maxs[axis] - start[axis]) / delta[axis];
+            near = near.max(a.min(b));
+            far = far.min(a.max(b));
+            if near > far {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub(super) trait ShadowObject {
     const MAX_OBJECTS: usize;
     fn bounds(&self) -> (DVec3, DVec3);
@@ -191,7 +217,13 @@ impl<T: ShadowObject> ShadowIndex<T> {
         end: DVec3,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<bool, String> {
-        self.visit(start, end, consume, &mut |hull| hull.intersects(start, end))
+        self.visit(start, end, consume, &mut |hull| {
+            Ok(if hull.intersects(start, end)? {
+                Visit::Stop
+            } else {
+                Visit::Continue(1.0)
+            })
+        })
     }
 
     pub(super) fn nearest<R>(
@@ -210,7 +242,9 @@ impl<T: ShadowObject> ShadowIndex<T> {
             {
                 first = Some(candidate);
             }
-            Ok(false)
+            Ok(Visit::Continue(
+                first.as_ref().map_or(1.0, |(fraction, _)| *fraction),
+            ))
         })?;
         Ok(first)
     }
@@ -220,7 +254,7 @@ impl<T: ShadowObject> ShadowIndex<T> {
         start: DVec3,
         end: DVec3,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
-        visitor: &mut impl FnMut(&T) -> Result<bool, String>,
+        visitor: &mut impl FnMut(&T) -> Result<Visit, String>,
     ) -> Result<bool, String> {
         if !start.is_finite() || !end.is_finite() {
             return Err("Shadow ray must be finite".into());
@@ -228,15 +262,18 @@ impl<T: ShadowObject> ShadowIndex<T> {
         if self.nodes.is_empty() {
             return Ok(false);
         }
-        let mins = start.min(end);
-        let maxs = start.max(end);
+        let delta = end - start;
+        if !delta.is_finite() {
+            return Err("Shadow ray arithmetic must be finite".into());
+        }
+        let mut limit = 1.0;
         let mut pending = [0; STACK_SIZE];
         let mut count = 1;
         while count != 0 {
             count -= 1;
             let node = &self.nodes[pending[count]];
             consume(1)?;
-            if mins.cmpgt(node.maxs).any() || maxs.cmplt(node.mins).any() {
+            if !ray_box(start, delta, node.mins, node.maxs, limit) {
                 continue;
             }
             if let Some([left, right]) = node.children {
@@ -249,9 +286,15 @@ impl<T: ShadowObject> ShadowIndex<T> {
             } else {
                 for &hull in &self.order[node.range.clone()] {
                     let hull = &self.hulls[hull];
+                    consume(1)?;
+                    let (mins, maxs) = hull.bounds();
+                    if !ray_box(start, delta, mins, maxs, limit) {
+                        continue;
+                    }
                     consume(hull.work())?;
-                    if visitor(hull)? {
-                        return Ok(true);
+                    match visitor(hull)? {
+                        Visit::Stop => return Ok(true),
+                        Visit::Continue(fraction) => limit = limit.min(fraction),
                     }
                 }
             }
@@ -280,7 +323,9 @@ impl ShadowIndex<Occluder> {
                     _ => Some((fraction, sky)),
                 };
             }
-            Ok(false)
+            Ok(Visit::Continue(
+                first.as_ref().map_or(1.0, |(fraction, _)| *fraction),
+            ))
         })?;
         Ok(first.and_then(|(fraction, sky)| sky.then_some(fraction)))
     }

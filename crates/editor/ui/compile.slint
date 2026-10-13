@@ -12,6 +12,9 @@ export component CompileWindow inherits Window {
     in-out property <string> selected-physics <=> physics-selector.current-value;
     in property <[string]> physics-modes;
     in property <string> physics-description;
+    in property <[string]> bounce-modes;
+    in-out property <string> selected-bounces <=> bounce-selector.current-value;
+    callback change-bounces(int);
     in property <[string]> sky-qualities;
     in-out property <string> selected-sky-quality <=> sky-selector.current-value;
     in property <bool> sky-enabled;
@@ -63,10 +66,16 @@ export component CompileWindow inherits Window {
         Text { text: root.visibility-description; wrap: word-wrap; color: #bac2ce; }
         HorizontalLayout {
             spacing: 12px;
+            Text { text: "Indirect light"; vertical-alignment: center; }
+            bounce-selector := ComboBox { model: root.bounce-modes; enabled: root.sky-enabled; selected(value) => { root.change-bounces(self.current-index); } }
+        }
+        Text { text: "One bounce reflects light from world brushes and terrain into shaded surfaces. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            spacing: 12px;
             Text { text: "Sampling quality"; vertical-alignment: center; }
             sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
         }
-        Text { text: "More directions improve sky visibility, soft sun shadows and model ambient lighting, and take longer. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+        Text { text: "More directions improve soft sun shadows, sky/model ambient and bounced light, and take longer. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
         Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
         Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
         Text { text: "Diagnostics"; font-weight: 600; }

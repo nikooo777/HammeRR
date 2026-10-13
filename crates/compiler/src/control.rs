@@ -16,6 +16,7 @@ pub enum Stage {
     SkyVisibility,
     Emitting,
     Lighting,
+    Physics,
     Writing,
 }
 
@@ -34,6 +35,7 @@ impl Stage {
             Self::SkyVisibility => "sky_visibility",
             Self::Emitting => "bsp_records",
             Self::Lighting => "direct_lighting",
+            Self::Physics => "physics_collision",
             Self::Writing => "writing",
         }
     }
@@ -52,6 +54,7 @@ impl Stage {
             Self::SkyVisibility => "Finding sky-visible space",
             Self::Emitting => "Assembling BSP records",
             Self::Lighting => "Baking static point lights",
+            Self::Physics => "Building physics bodies",
             Self::Writing => "Writing compiled map",
         }
     }

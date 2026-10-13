@@ -24,6 +24,30 @@ impl Controller {
             .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
             .collect::<Vec<_>>();
         window.set_lighting_modes(Rc::new(slint::VecModel::from(labels)).into());
+        let physics_labels = settings["physics_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        window.set_physics_modes(Rc::new(slint::VecModel::from(physics_labels)).into());
+        window.on_change_physics({
+            let (shared, window) = (shared.clone(), window.as_weak());
+            move |choice| {
+                let mut session = lock(&shared);
+                let settings = session.compile_settings();
+                let result = settings["physics_choices"][choice as usize]["name"]
+                    .as_str()
+                    .ok_or_else(|| "Choose a supported physics mode".to_string())
+                    .and_then(|mode| {
+                        session.update_compile_settings(Actor::User, None, Some(mode))
+                    });
+                window.unwrap().set_message(match result {
+                    Ok(_) => "Physics mode updated. Compile again to use this mode.".into(),
+                    Err(error) => error.into(),
+                });
+            }
+        });
         window.on_change_lighting({
             let (shared, window) = (shared.clone(), window.as_weak());
             move |choice| {
@@ -93,6 +117,26 @@ impl Controller {
             .set_lighting_enabled(settings["editable"].as_bool().unwrap_or(false));
         self.window.set_lighting_description(
             settings["choices"][choice as usize]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
+        );
+        let physics_choices = settings["physics_choices"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let physics_choice = physics_choices
+            .iter()
+            .position(|choice| choice["name"] == settings["physics"])
+            .unwrap_or_default();
+        self.window.set_selected_physics(
+            physics_choices[physics_choice]["label"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
+        );
+        self.window.set_physics_description(
+            physics_choices[physics_choice]["description"]
                 .as_str()
                 .unwrap_or_default()
                 .into(),
@@ -173,11 +217,23 @@ impl Controller {
                 )
             })
             .unwrap_or_default();
+        let physics = result["stats"]["physics_solids"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let convexes = result["stats"]["physics_convexes"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let label = if count == 1 { "body" } else { "bodies" };
+                format!("\nPhysics: {count} {label} · {convexes} brush hulls")
+            })
+            .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nLighting: {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}{sky}{lighting}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nStage: {} · {:.2}s elapsed{samples}{visibility}{water}{sky}{lighting}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
+                compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,
                 if job["stale"].as_bool().unwrap_or(false) {

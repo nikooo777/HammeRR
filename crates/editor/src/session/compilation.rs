@@ -69,6 +69,7 @@ impl CompileRequest {
 pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
     json!({
         "lighting_mode": stats.lighting_mode.name(),
+        "physics_mode": stats.physics_mode.name(),
         "brushes": stats.brushes,
         "nodes": stats.nodes,
         "leaves": stats.leaves,
@@ -86,6 +87,10 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "lightmap_samples": stats.lightmap_samples,
         "lighting_bytes": stats.lighting_bytes,
         "lighting_work": stats.lighting_work,
+        "physics_models": stats.physics_models,
+        "physics_solids": stats.physics_solids,
+        "physics_convexes": stats.physics_convexes,
+        "physics_bytes": stats.physics_bytes,
         "elapsed_ms": stats.elapsed.as_millis(),
     })
 }
@@ -113,12 +118,32 @@ impl Session {
     pub fn compile_settings(&self) -> Value {
         let choices = [compiler::LightingMode::Fullbright, compiler::LightingMode::DirectLdr]
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
-        json!({"lighting":self.compilation.options.lighting.name(),"editable":!self.compiling && !self.closing,
-            "choices":choices})
+        let physics_choices = [compiler::PhysicsMode::None, compiler::PhysicsMode::Engine]
+            .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
+        json!({"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+            "editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
     pub fn set_compile_settings(&mut self, actor: Actor, lighting: &str) -> Result<Value, String> {
-        let lighting = compiler::LightingMode::parse(lighting)?;
+        self.update_compile_settings(actor, Some(lighting), None)
+    }
+
+    pub fn update_compile_settings(
+        &mut self,
+        actor: Actor,
+        lighting: Option<&str>,
+        physics: Option<&str>,
+    ) -> Result<Value, String> {
+        let options = compiler::Options {
+            lighting: lighting
+                .map(compiler::LightingMode::parse)
+                .transpose()?
+                .unwrap_or(self.compilation.options.lighting),
+            physics: physics
+                .map(compiler::PhysicsMode::parse)
+                .transpose()?
+                .unwrap_or(self.compilation.options.physics),
+        };
         if self.closing {
             return Err("The editor is closing".into());
         }
@@ -127,9 +152,16 @@ impl Session {
                 "Wait for the active compile to finish before changing build settings".into(),
             );
         }
-        if lighting != self.compilation.options.lighting {
-            self.compilation.options.lighting = lighting;
-            self.log(actor, format!("Build lighting: {}", lighting.label()));
+        if options != self.compilation.options {
+            self.compilation.options = options;
+            self.log(
+                actor,
+                format!(
+                    "Build settings: {} · {}",
+                    options.lighting.label(),
+                    options.physics.label()
+                ),
+            );
         }
         Ok(self.compile_settings())
     }
@@ -292,7 +324,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "settings":{"lighting":job.options.lighting.name()},
+                "settings":{"lighting":job.options.lighting.name(),"physics":job.options.physics.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {
@@ -375,6 +407,19 @@ mod tests {
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
             let result = session.set_compile_settings(actor, "direct_ldr").unwrap();
             assert_eq!(result["lighting"], "direct_ldr");
+            assert!(
+                session
+                    .update_compile_settings(actor, Some("fullbright"), Some("unknown"))
+                    .is_err()
+            );
+            assert_eq!(session.compile_settings()["lighting"], "direct_ldr");
+            let result = session
+                .update_compile_settings(actor, None, Some("engine"))
+                .unwrap();
+            assert_eq!(result["physics"], "engine");
+            session
+                .update_compile_settings(actor, None, Some("none"))
+                .unwrap();
             assert!(session.set_compile_settings(actor, "unsupported").is_err());
             assert_eq!(session.document.vmf().write(&Default::default()), before);
             assert_eq!(session.document.revision(), revision);
@@ -385,6 +430,11 @@ mod tests {
             );
             assert_eq!(session.compile_settings()["editable"], false);
             assert!(session.set_compile_settings(actor, "fullbright").is_err());
+            assert!(
+                session
+                    .update_compile_settings(actor, None, Some("engine"))
+                    .is_err()
+            );
             session
                 .cancel_compile(actor, session.compile_token().unwrap())
                 .unwrap();
@@ -405,6 +455,15 @@ mod tests {
         );
         let result = session.begin_compile(Actor::User, None).unwrap().run();
         session.finish_compile(Actor::User, &result);
+        assert!(session.launch_readiness().is_ok());
+        session
+            .update_compile_settings(Actor::Agent, None, Some("engine"))
+            .unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], true);
+        assert!(session.launch_readiness().is_err());
+        session
+            .update_compile_settings(Actor::User, None, Some("none"))
+            .unwrap();
         assert!(session.launch_readiness().is_ok());
         let before = session.document.vmf().write(&Default::default());
         session

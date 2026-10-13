@@ -1557,7 +1557,7 @@ impl Session {
             );
         }
         if compiled.options != self.compile_options() {
-            return Err("Build settings changed since compilation; compile again or restore the previous lighting mode before launching".into());
+            return Err("Build settings changed since compilation; compile again or restore the previous settings before launching".into());
         }
         if !compiled.path.is_file() {
             return Err("the compiled BSP is missing; compile the map again".into());

@@ -6,6 +6,7 @@ pub mod faces;
 pub mod lighting;
 pub mod map;
 pub mod materials;
+pub mod physics;
 pub mod planes;
 pub mod portals;
 pub mod tree;
@@ -68,6 +69,49 @@ impl LightingMode {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Options {
     pub lighting: LightingMode,
+    pub physics: PhysicsMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PhysicsMode {
+    #[default]
+    None,
+    Engine,
+}
+
+impl PhysicsMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Engine => "engine",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "No physics bodies",
+            Self::Engine => "CS:S engine physics",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::None => {
+                "Keeps brush BSP hulls; omits physics bodies for props and moving brushes."
+            }
+            Self::Engine => {
+                "Uses the verified installed Linux64 CS:S library in an isolated worker. Builds world, clip and brush-model hulls with default surfaces. Fluid, prop and terrain bodies and material density are unfinished."
+            }
+        }
+    }
+
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "engine" => Ok(Self::Engine),
+            _ => Err("Physics must be none or engine".into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +182,7 @@ impl Report {
 #[derive(Debug, Default)]
 pub struct Stats {
     pub lighting_mode: LightingMode,
+    pub physics_mode: PhysicsMode,
     pub brushes: usize,
     pub nodes: usize,
     pub leaves: usize,
@@ -155,6 +200,10 @@ pub struct Stats {
     pub lightmap_samples: usize,
     pub lighting_bytes: usize,
     pub lighting_work: usize,
+    pub physics_models: usize,
+    pub physics_solids: usize,
+    pub physics_convexes: usize,
+    pub physics_bytes: usize,
     pub elapsed: Duration,
 }
 
@@ -340,6 +389,14 @@ fn build(
         output.stats.lighting_bytes = stats.bytes;
         output.stats.lighting_work = stats.work;
     }
+    if options.physics == PhysicsMode::Engine {
+        control.advance(Stage::Physics)?;
+        let stats = physics::bake(&map, &models, fs, &mut bsp, &mut output.report, control)?;
+        output.stats.physics_models = stats.models;
+        output.stats.physics_solids = stats.solids;
+        output.stats.physics_convexes = stats.convexes;
+        output.stats.physics_bytes = stats.bytes;
+    }
     control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
@@ -375,6 +432,7 @@ pub fn compile_with_options_controlled(
         stats: Stats::default(),
     };
     output.stats.lighting_mode = options.lighting;
+    output.stats.physics_mode = options.physics;
     if let Err(message) = build(vmf, fs, &mut output, options, control) {
         output
             .report

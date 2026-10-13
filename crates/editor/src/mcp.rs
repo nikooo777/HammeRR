@@ -203,7 +203,7 @@ write the FGD value; remove deletes the override. All targets apply in one undo 
 get_object_report searches names/classes/materials/types/visibility/bounds; select_object_report \
 selects all matches and can frame them. set_object_visibility hides/shows/isolates/restores \
 saved VMF visibility. Hidden objects and child brushes are OMITTED from compilation. \
-get_compile_settings and set_compile_settings select shared build lighting: fullbright (default) or direct_ldr for bounded static point-light baking and opaque brush shadows; sky, bounced light, HDR, props and model lighting remain unfinished. \
+get_compile_settings and set_compile_settings select shared build lighting (fullbright/direct_ldr) and physics (none/engine). Engine physics uses the verified installed CS:S Linux64 library in an isolated worker for world, clip and brush-model bodies; fluid, prop and terrain bodies remain unfinished. \
 Start asynchronous builds with start_compile; poll get_compile_status and cancel_compile using the job token. Compile synchronously with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
 in the viewport; set_view controls their visibility.";
@@ -2148,7 +2148,9 @@ pub struct CompileArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileSettingsArgs {
     /// fullbright or direct_ldr; shared by synchronous, background and compile-and-play builds.
-    pub lighting: String,
+    pub lighting: Option<String>,
+    /// none (default) or engine; engine uses the verified installed CS:S Linux64 library in an isolated worker.
+    pub physics: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2834,22 +2836,25 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared build lighting settings, available modes and their limitations. Fullbright is the default; direct_ldr bakes static point lights and opaque brush shadows with bounded CPU work. Settings are independent of VMF edits and undo history."
+        description = "Inspect shared build lighting/physics settings and available modes with limitations. Fullbright and no physics bodies are the defaults. direct_ldr bakes static point lights; engine physics builds checked brush bodies through an isolated worker using the verified installed CS:S Linux64 library. Settings are independent of VMF edits and undo history."
     )]
     fn get_compile_settings(&self) -> ToolResult {
         ok(self.session().compile_settings())
     }
 
     #[tool(
-        description = "Set the same build lighting mode used by the editor: fullbright or direct_ldr. An active build freezes its settings, so wait for it to finish before changing them. A previous build is stale while its lighting mode differs; map data and undo history are unchanged."
+        description = "Update shared build lighting (fullbright/direct_ldr) and/or physics (none/engine); omitted fields retain their values and all fields validate before changing anything. Engine physics needs hammerr-physics beside the editor and the verified installed Linux64 vphysics.so; no fluid, prop or terrain physics is emitted. Active builds freeze settings. Previous builds are stale while settings differ; VMF and undo history are unchanged."
     )]
     fn set_compile_settings(
         &self,
         Parameters(args): Parameters<CompileSettingsArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session()
-                .set_compile_settings(Actor::Agent, &args.lighting)
+            self.session().update_compile_settings(
+                Actor::Agent,
+                args.lighting.as_deref(),
+                args.physics.as_deref(),
+            )
         })
     }
 

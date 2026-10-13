@@ -14,6 +14,8 @@ mod ambient;
 pub use ambient::{
     LeafAmbient, LeafAmbientIndex, LeafAmbientSample, LightCube, MAX_LEAF_AMBIENT_SAMPLES,
 };
+mod areas;
+pub use areas::{AreaData, MAX_AREA_PORTALS, MAX_AREAS, MAX_CLIP_PORTAL_VERTICES};
 mod displacements;
 mod lighting;
 mod physics;
@@ -308,14 +310,14 @@ pub struct BrushSide {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct Area {
     pub portal_count: i32,
     pub first_portal: i32,
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct AreaPortal {
     pub portal_key: u16,
     pub other_area: u16,

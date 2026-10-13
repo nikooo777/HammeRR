@@ -65,7 +65,7 @@ python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 - **`partition_extrusion --adjusted`** extrudes pieces from a moved dividing line.
 - **`water_metadata --physics engine`** also checks fluid bodies.
 - **`shadow_index --reference <dir>`** compares the BSP and lighting work against an earlier run's output directory.
-- **`direct_sky --reference <dir>`** compares zero-ambient BSPs against an earlier sun-only run. **`--quality-tests`** checks every sky quality, settings frozen during a build, and a narrow sky opening.
+- **`direct_sky --reference <dir>`** compares zero-ambient BSPs against an earlier sun-only run. **`--quality-tests`** checks every sky quality, settings frozen during a build, and a narrow sky opening. **`--soft-sun-tests`** checks clear, enclosed, brush-shadow and terrain-shadow cases at every quality through both build paths.
 
 ### Lighting and terrain checks
 

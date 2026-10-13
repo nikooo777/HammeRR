@@ -158,8 +158,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Native compiler | Play in CS:S |
 | --- | --- |
-| ![Build settings, statistics and diagnostics](docs/images/build-status.png) | ![Baked lighting in Counter-Strike: Source](docs/images/compiled-terrain.png) |
-| Baked light from point lights, spotlights, sun and sky, plus CS:S engine physics, water, cubemaps, static props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
+| ![Build settings, statistics and diagnostics](docs/images/build-status.png) | ![Soft sun shadows in Counter-Strike: Source](docs/images/soft-sun.png) |
+| Baked light from point lights, spotlights, sun and sky, with soft sun shadows, plus CS:S engine physics, water, cubemaps, static props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
 
 [Compile and play →](docs/compile-and-play.md)
 

@@ -50,7 +50,7 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 
 **Sky quality** (Direct LDR only)
 
-- **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many sky directions are sampled for [sky ambient](#sun-and-sky). More directions improve visibility sampling near narrow windows and openings, and take longer. This setting does not soften the sun's shadows.
+- **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
 
 A previous build counts as out of date once its settings differ from the current ones.
 
@@ -109,18 +109,21 @@ A `light_environment` adds sunlight and soft sky light:
 2. Click **Entity…**, search for `light_environment`, select it and click **Place entity**. Use one visible sun entity per map.
 3. Set the sunlight color and intensity under **Brightness**. Aim it with **Pitch Yaw Roll (Y Z X)** and **Pitch**; `-90` for **Pitch** shines straight down.
 4. Set the sky color and intensity under **Ambient**. Set its brightness to zero to turn sky ambient off. An absent or empty ambient property uses half the sun's brightness; a newly placed entity uses its FGD default.
-5. Leave **SunSpreadAngle** at `0`, then open **Build settings…**, choose **Direct LDR** and select a **Sky quality**.
+5. Leave **SunSpreadAngle** at `0` for hard shadows, or enter an angle in degrees to soften them; try `5` as a starting point. Open **Build settings…**, choose **Direct LDR** and select a **Sky quality**.
 6. Click **Close**, then **Run Map** to inspect the baked result in CS:S.
 
-Sunlight requires a sky face in the sun's direction, while ambient samples all visible sky directions. A closed room stays dark, and opaque brushes and terrain block both. Higher sky quality takes longer and can reach the compiler's lighting-work limit. Soft sun shadows remain unsupported.
+![Soft sun shadow on the floor in Counter-Strike: Source](images/soft-sun.png)
+
+Sunlight requires sky in the sampled sun directions, while ambient samples all visible sky directions. A closed room stays dark, and opaque brushes and terrain block both. Larger sun angles widen the transition from shadow to light; higher quality reduces stepping in that transition. The sun's central direction still determines surface brightness. Higher sky quality takes longer and can reach the compiler's lighting-work limit.
 
 #### Limits and errors
 
 - Up to 16 MiB of lighting data and 8,192 baked light records.
 - One visible `light_environment` per map.
-- Named or animated lights, invalid falloff values and a non-zero **SunSpreadAngle** (soft sun) fail with a diagnostic that names the object.
+- **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
+- Named or animated lights, invalid falloff values and invalid sun angles fail with a diagnostic that names the object.
 
-Not yet: other light types, transparent shadows, smoothing groups and bump maps on brush faces, bounced light, ambient cubes, soft sun, HDR, and lighting for props and moving brush entities.
+Not yet: other light types, transparent shadows, smoothing groups and bump maps on brush faces, bounced light, ambient cubes, HDR, and lighting for props and moving brush entities. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 ### Physics
 

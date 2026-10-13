@@ -56,7 +56,7 @@ export component CompileWindow inherits Window {
             Text { text: "Sky quality"; vertical-alignment: center; }
             sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
         }
-        Text { text: "More directions improve diffuse sky visibility near windows and openings, and take longer. Used by Direct LDR sky ambient."; wrap: word-wrap; color: #bac2ce; }
+        Text { text: "More directions improve diffuse sky visibility and soft sun shadows, and take longer. Used by Direct LDR sky ambient and nonzero SunSpreadAngle."; wrap: word-wrap; color: #bac2ce; }
         Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
         Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
         Text { text: "Diagnostics"; font-weight: 600; }

@@ -7,16 +7,19 @@ use crate::map::MapEntity;
 pub(super) const TRACE_LENGTH: f64 = crate::map::MAX_COMPILE_COORD * 4.0;
 pub(super) const SKY_HIT_BIAS: f64 = 0.0001;
 const GOLDEN_ANGLE: f64 = 2.399963229728653;
+const MAX_SUN_SPREAD_ANGLE: f64 = 90.0;
+
+fn sphere_direction(index: usize, count: usize) -> DVec3 {
+    let z = 1.0 - 2.0 * (index as f64 + 0.5) / count as f64;
+    let radius = (1.0 - z * z).sqrt();
+    let angle = index as f64 * GOLDEN_ANGLE;
+    DVec3::new(radius * angle.cos(), radius * angle.sin(), z)
+}
 
 pub(super) fn ambient_directions(quality: crate::SkyQuality) -> Vec<DVec3> {
     let count = quality.directions();
     (0..count)
-        .map(|index| {
-            let z = 1.0 - 2.0 * (index as f64 + 0.5) / count as f64;
-            let radius = (1.0 - z * z).sqrt();
-            let angle = index as f64 * GOLDEN_ANGLE;
-            DVec3::new(radius * angle.cos(), radius * angle.sin(), z)
-        })
+        .map(|index| sphere_direction(index, count))
         .collect()
 }
 
@@ -26,6 +29,7 @@ pub(super) struct SkyLight {
     intensity: DVec3,
     ambient: DVec3,
     origin: DVec3,
+    spread: f64,
 }
 
 impl SkyLight {
@@ -33,10 +37,9 @@ impl SkyLight {
         entity: &MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
-        if number(entity, "SunSpreadAngle")? != 0.0 {
-            return Err(
-                "Direct LDR soft sun spread is unfinished; set SunSpreadAngle to zero".into(),
-            );
+        let spread = number(entity, "SunSpreadAngle")?;
+        if spread > MAX_SUN_SPREAD_ANGLE {
+            return Err("SunSpreadAngle must be between 0 and 90 degrees".into());
         }
         for key in [
             "_fifty_percent_distance",
@@ -84,7 +87,50 @@ impl SkyLight {
             intensity: point.intensity,
             ambient,
             origin,
+            spread: spread.to_radians().sin(),
         })
+    }
+
+    pub(super) fn sun_directions(self, quality: crate::SkyQuality) -> Vec<DVec3> {
+        let center = -self.direction;
+        if self.spread == 0.0 {
+            return vec![center];
+        }
+        let axis = if center.z.abs() < 0.9 {
+            DVec3::Z
+        } else {
+            DVec3::X
+        };
+        let right = axis.cross(center).normalize();
+        let up = center.cross(right);
+        let count = quality.directions();
+        std::iter::once(center)
+            .chain((0..count - 1).map(|index| {
+                let offset = sphere_direction(index, count - 1);
+                let offset = right * offset.x + up * offset.y + center * offset.z;
+                (center + offset * self.spread).normalize()
+            }))
+            .collect()
+    }
+
+    pub(super) fn sun_contribution(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        visible: &mut impl FnMut(DVec3) -> Result<bool, String>,
+    ) -> Result<DVec3, String> {
+        let color = self.contribution(normal)?;
+        if color == DVec3::ZERO {
+            return Ok(color);
+        }
+        if directions.is_empty() {
+            return Err("Sun visibility needs at least one direction".into());
+        }
+        let mut received = 0;
+        for &direction in directions {
+            received += usize::from(visible(direction)?);
+        }
+        Ok(color * (received as f64 / directions.len() as f64))
     }
 
     pub(super) fn contribution(self, normal: DVec3) -> Result<DVec3, String> {
@@ -148,5 +194,65 @@ impl SkyLight {
             return Err("Sky ambient hemisphere has no valid directions".into());
         }
         Ok(self.ambient * (received / total))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SkyQuality;
+
+    #[test]
+    fn sun_sampling_stays_in_its_angular_bound_and_preserves_central_brightness() {
+        for direction in [
+            DVec3::NEG_Z,
+            DVec3::X,
+            DVec3::new(1.0, 2.0, -3.0).normalize(),
+        ] {
+            for angle in [0.0_f64, 0.001, 5.0, 45.0, 90.0] {
+                let light = SkyLight {
+                    direction,
+                    intensity: DVec3::new(200.0, 100.0, 50.0),
+                    ambient: DVec3::ZERO,
+                    origin: DVec3::ZERO,
+                    spread: angle.to_radians().sin(),
+                };
+                for quality in [SkyQuality::Fast, SkyQuality::Balanced, SkyQuality::Detailed] {
+                    let directions = light.sun_directions(quality);
+                    assert_eq!(directions[0], -direction);
+                    assert_eq!(
+                        directions.len(),
+                        if angle == 0.0 {
+                            1
+                        } else {
+                            quality.directions()
+                        }
+                    );
+                    assert_eq!(directions, light.sun_directions(quality));
+                    for ray in &directions {
+                        assert!(ray.is_finite());
+                        assert!((ray.length() - 1.0).abs() < 1e-12);
+                        assert!(ray.dot(-direction) + 1e-12 >= angle.to_radians().cos());
+                    }
+                    let color = light
+                        .sun_contribution(-direction, &directions, &mut |_| Ok(true))
+                        .unwrap();
+                    assert_eq!(color, light.contribution(-direction).unwrap());
+                    assert_eq!(
+                        light
+                            .sun_contribution(-direction, &directions, &mut |_| Ok(false))
+                            .unwrap(),
+                        DVec3::ZERO
+                    );
+                    assert!(
+                        light
+                            .sun_contribution(-direction, &directions, &mut |_| Err(
+                                "cancelled".into()
+                            ))
+                            .is_err()
+                    );
+                }
+            }
+        }
     }
 }

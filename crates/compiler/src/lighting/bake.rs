@@ -449,12 +449,22 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with interpolated vertex normals and indexed opaque brush/terrain shadows; cross-patch normal sewing and neighbor LOD remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot/direct-sky lights and sampled sky ambient with indexed opaque brush/terrain shadows; bounced light, ambient cubes, soft sun, HDR, props and moving-model lighting remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights, sampled soft sun and sky ambient with indexed opaque brush/terrain shadows; bounced light, ambient cubes, HDR, props and moving-model lighting remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
     let ambient_directions = super::sky::ambient_directions(sky_quality);
+    let sun_directions = lights
+        .iter()
+        .find_map(|light| match light {
+            Emitter::Sky(light) => Some(light.sun_directions(sky_quality)),
+            Emitter::Point(_) => None,
+        })
+        .unwrap_or_default();
+    if sun_directions.len() > 1 {
+        budget.consume(sun_directions.len())?;
+    }
     for plan in &plans {
         budget.consume(1)?;
         let average = colors.len();
@@ -486,31 +496,37 @@ pub(crate) fn bake(
                             },
                         )?;
                     }
-                    let contribution = match light {
-                        Emitter::Point(light) => light.contribution(point, normal)?,
-                        Emitter::Sky(light) => light.contribution(normal)?,
-                    };
-                    if contribution == DVec3::ZERO {
-                        continue;
-                    }
-                    let blocked = match light {
+                    match light {
                         Emitter::Point(light) => {
-                            shadows.blocked(origin, light.origin, &mut |amount| {
-                                budget.consume(amount)
-                            })? || terrain_shadows.blocked(origin, light.origin, &mut |amount| {
-                                budget.consume(amount)
-                            })?
+                            let contribution = light.contribution(point, normal)?;
+                            if contribution != DVec3::ZERO
+                                && !shadows.blocked(origin, light.origin, &mut |amount| {
+                                    budget.consume(amount)
+                                })?
+                                && !terrain_shadows.blocked(
+                                    origin,
+                                    light.origin,
+                                    &mut |amount| budget.consume(amount),
+                                )?
+                            {
+                                color += contribution;
+                            }
                         }
-                        Emitter::Sky(light) => !sky_visible(
-                            -light.direction,
-                            origin,
-                            &shadows,
-                            &terrain_shadows,
-                            &mut budget,
-                        )?,
-                    };
-                    if !blocked {
-                        color += contribution;
+                        Emitter::Sky(light) => {
+                            color += light.sun_contribution(
+                                normal,
+                                &sun_directions,
+                                &mut |direction| {
+                                    sky_visible(
+                                        direction,
+                                        origin,
+                                        &shadows,
+                                        &terrain_shadows,
+                                        &mut budget,
+                                    )
+                                },
+                            )?;
+                        }
                     }
                 }
                 total += color;

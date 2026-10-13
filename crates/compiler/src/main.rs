@@ -75,7 +75,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.elapsed
     );
     println!(
-        "lighting {}: {} baked faces, {} samples, {} point lights, {} bytes",
+        "lighting {}: {} baked faces, {} samples, {} light sources, {} bytes",
         stats.lighting_mode.label(),
         stats.lighting_faces,
         stats.lightmap_samples,

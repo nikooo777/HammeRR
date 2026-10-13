@@ -6,6 +6,7 @@ use crate::map::MapEntity;
 mod bake;
 mod falloff;
 mod shadows;
+mod sky;
 mod terrain;
 pub(crate) use bake::bake;
 
@@ -318,6 +319,7 @@ pub fn encode_color(color: DVec3) -> Result<RgbExp32, String> {
 #[derive(Debug, Clone)]
 pub struct Occluder {
     planes: Vec<Plane>,
+    sky: Vec<bool>,
     mins: DVec3,
     maxs: DVec3,
 }
@@ -337,7 +339,12 @@ impl Occluder {
         {
             return Err("Shadow hull needs finite convex planes and positive bounds".into());
         }
-        Ok(Self { planes, mins, maxs })
+        Ok(Self {
+            sky: vec![false; planes.len()],
+            planes,
+            mins,
+            maxs,
+        })
     }
 
     pub fn plane_count(&self) -> usize {
@@ -345,36 +352,55 @@ impl Occluder {
     }
 
     pub fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
+        Ok(self.entry(start, end)?.is_some())
+    }
+
+    pub(super) fn with_sky(mut self, flags: Vec<bool>) -> Result<Self, String> {
+        if flags.len() != self.planes.len() {
+            return Err("Sky flags must match shadow hull planes".into());
+        }
+        self.sky = flags;
+        Ok(self)
+    }
+
+    pub(super) fn entry(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, bool)>, String> {
         if !start.is_finite() || !end.is_finite() {
             return Err("Shadow ray must be finite".into());
         }
         if start.min(end).cmpgt(self.maxs).any() || start.max(end).cmplt(self.mins).any() {
-            return Ok(false);
+            return Ok(None);
         }
         let mut entering: f64 = 0.0;
         let mut leaving: f64 = 1.0;
-        for plane in &self.planes {
+        let mut sky = false;
+        for (index, plane) in self.planes.iter().enumerate() {
+            let is_sky = self.sky.get(index).copied().unwrap_or(false);
             let a = plane.distance_to(start);
             let b = plane.distance_to(end);
             if !a.is_finite() || !b.is_finite() {
                 return Err("Shadow-plane distance is nonfinite".into());
             }
             if a > 0.0 && b > 0.0 {
-                return Ok(false);
+                return Ok(None);
             }
             if a <= 0.0 && b <= 0.0 {
                 continue;
             }
             let fraction = a / (a - b);
             if a > 0.0 {
+                if fraction > entering {
+                    sky = is_sky;
+                } else if fraction == entering {
+                    sky &= is_sky;
+                }
                 entering = entering.max(fraction);
             } else {
                 leaving = leaving.min(fraction);
             }
             if entering > leaving {
-                return Ok(false);
+                return Ok(None);
             }
         }
-        Ok(entering < leaving && leaving > 0.0 && entering < 1.0)
+        Ok((entering < leaving && leaving > 0.0 && entering < 1.0).then_some((entering, sky)))
     }
 }

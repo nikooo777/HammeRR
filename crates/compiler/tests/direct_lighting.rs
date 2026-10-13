@@ -141,6 +141,132 @@ fn percentage_light_bakes_half_intensity_and_hard_cutoff_without_source_edits() 
     assert_eq!(std::fs::read(path).unwrap(), b"previous BSP");
 }
 
+fn sky_fixture(
+    material: bool,
+    shade: bool,
+) -> (tempfile::TempDir, source_formats::gamefs::GameFs, Document) {
+    use source_formats::gamefs::{Mount, MountedPath};
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("materials")).unwrap();
+    std::fs::write(
+        directory.path().join("materials/sky.vmt"),
+        "UnlitGeneric { %compilesky 1 }",
+    )
+    .unwrap();
+    let mut game = common::empty_game();
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().to_owned()),
+    });
+    let mut vmf = common::room();
+    if material {
+        let ceiling = vmf
+            .world
+            .solids
+            .iter_mut()
+            .find(|solid| solid.sides.iter().all(|side| side.plane.0[0].z >= 256.0))
+            .unwrap();
+        let side = ceiling
+            .sides
+            .iter_mut()
+            .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z < -0.99)
+            .unwrap();
+        side.material = "sky".into();
+    }
+    let mut document = Document::new(vmf);
+    document
+        .edit("sun", |tx| {
+            edit::create_entity(
+                tx,
+                "light_environment",
+                Some(DVec3::new(0.0, 0.0, 128.0)),
+                &[
+                    ("_light".into(), "255 0 0 200".into()),
+                    ("_ambient".into(), "0".into()),
+                    ("pitch".into(), "-90".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    if shade {
+        document
+            .edit("shade", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(-16.0, -16.0, 32.0),
+                    DVec3::new(16.0, 16.0, 48.0),
+                    "dev/dev_measuregeneric01",
+                )
+            })
+            .unwrap();
+    }
+    (directory, game, document)
+}
+
+#[test]
+fn native_direct_sun_requires_sky_and_preserves_opaque_shadows() {
+    for (sky, shade, expected) in [(true, false, 200.0), (true, true, 0.0), (false, false, 0.0)] {
+        let (_directory, game, document) = sky_fixture(sky, shade);
+        let source = document.vmf().clone();
+        let output = compiler::compile_with_options(document.vmf(), &game, options());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.world_lights, 1);
+        let bsp = output.bsp.unwrap();
+        assert_eq!(
+            floor_sample(&bsp, DVec3::ZERO),
+            DVec3::new(expected, 0.0, 0.0)
+        );
+        assert_eq!(
+            floor_sample(&bsp, DVec3::new(128.0, 0.0, 0.0)),
+            DVec3::new(if sky { 200.0 } else { 0.0 }, 0.0, 0.0)
+        );
+        let light = bsp.world_lights(LightingKind::Ldr).unwrap()[0];
+        assert_eq!(light.kind, bsp::world_light_kind::SKY);
+        assert!((DVec3::from_array(light.normal.map(f64::from)) + DVec3::Z).length() < 1e-6);
+        assert!((light.intensity[0] as f64 - 200.0 / 255.0).abs() < 1e-7);
+        assert_eq!(light.cluster, -1);
+        assert_eq!(*document.vmf(), source);
+    }
+}
+
+#[test]
+fn rejected_sky_ambient_spread_and_duplicate_emitters_preserve_previous_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("old.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    for field in ["_ambient", "SunSpreadAngle", "duplicate"] {
+        let (_directory, game, mut document) = sky_fixture(true, false);
+        document
+            .edit("invalid sun", |tx| {
+                if field == "duplicate" {
+                    edit::create_entity(
+                        tx,
+                        "light_environment",
+                        Some(DVec3::new(0.0, 0.0, 100.0)),
+                        &[("_light".into(), "255".into())],
+                        Vec::new(),
+                    )?;
+                } else {
+                    let id = tx
+                        .vmf()
+                        .entities
+                        .iter()
+                        .find(|entity| entity.classname() == Some("light_environment"))
+                        .unwrap()
+                        .id;
+                    tx.entity_mut(id)?.properties.set(field, "1");
+                }
+                Ok(())
+            })
+            .unwrap();
+        let output = compiler::compile_with_options(document.vmf(), &game, options());
+        assert!(output.report.has_errors(), "{field}: {:?}", output.report);
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    }
+}
+
 #[test]
 fn native_spotlights_bake_inside_the_cone_and_keep_outside_samples_dark() {
     let document = room(

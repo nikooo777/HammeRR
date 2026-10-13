@@ -1,15 +1,16 @@
-use glam::{DVec2, DVec3};
-use source_formats::bsp::{DisplacementLightmapSample, Displacements, TexInfo};
+use glam::DVec3;
+use source_formats::bsp::{
+    DisplacementLightmapSample, DisplacementSurfaceSampler, Displacements, TexInfo,
+};
 
 use crate::map::Terrain;
 
 const MAX_EXTENT: usize = 125;
-const BARYCENTRIC_EPSILON: f64 = 1e-9;
 
 pub(super) struct TerrainSample {
     pub point: DVec3,
     pub normal: DVec3,
-    pub record: DisplacementLightmapSample,
+    pub record: Option<DisplacementLightmapSample>,
 }
 
 pub(super) struct TerrainPlan {
@@ -37,9 +38,6 @@ pub(super) fn positions(terrain: &Terrain) -> Result<Vec<[f32; 3]>, String> {
 
 impl TerrainPlan {
     pub(super) fn dimensions(terrain: &Terrain, info: &TexInfo) -> Result<[usize; 2], String> {
-        if terrain.info.power == 4 {
-            return Err("Direct LDR terrain currently supports powers 2 and 3; power 4 needs a verified native triangle-511 sample strategy. Use Fullbright for this patch".into());
-        }
         let scale = DVec3::from_array(
             [
                 info.lightmap_vecs[0][0],
@@ -74,54 +72,25 @@ impl TerrainPlan {
         dimensions: [usize; 2],
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<Self, String> {
-        let size = terrain.mesh.size;
-        let cells = (size - 1) as f64;
+        consume(terrain.vertices.len() + terrain.triangles.len())?;
         let positions = positions(terrain)?;
-        let indices = terrain
-            .info
-            .lightmap_triangle_indices()
+        let sampler = DisplacementSurfaceSampler::new(terrain.info, &positions)
             .map_err(|error| error.to_string())?;
-        let coordinates = indices
-            .iter()
-            .map(|indices| {
-                indices.map(|index| DVec2::new((index % size) as f64, (index / size) as f64))
-            })
-            .collect::<Vec<_>>();
         let mut samples = Vec::with_capacity(dimensions[0] * dimensions[1]);
         for t in 0..dimensions[1] {
             for s in 0..dimensions[0] {
-                let uv = DVec2::new(
-                    s as f64 * cells / (dimensions[0] - 1) as f64,
-                    t as f64 * cells / (dimensions[1] - 1) as f64,
-                );
-                let mut found = None;
-                for (triangle, &[a, b, c]) in coordinates.iter().enumerate() {
-                    consume(1)?;
-                    let determinant = (b - a).perp_dot(c - a);
-                    let u = (uv - a).perp_dot(c - a) / determinant;
-                    let v = (b - a).perp_dot(uv - a) / determinant;
-                    let weights = [1.0 - u - v, u, v];
-                    if weights.iter().any(|&weight| {
-                        weight < -BARYCENTRIC_EPSILON || weight > 1.0 + BARYCENTRIC_EPSILON
-                    }) {
-                        continue;
-                    }
-                    let record = DisplacementLightmapSample {
-                        triangle: triangle as u16,
-                        weights: weights.map(|weight| (weight.clamp(0.0, 1.0) * 255.9) as u8),
-                    };
-                    let sample = record
-                        .surface(&indices, &positions)
-                        .map_err(|error| error.to_string())?
-                        .ok_or("Terrain luxel unexpectedly has no surface sample")?;
-                    found = Some(TerrainSample {
-                        point: DVec3::from_array(sample.position),
-                        normal: DVec3::from_array(sample.normal),
-                        record,
-                    });
-                    break;
-                }
-                samples.push(found.ok_or("Terrain luxel does not resolve to a native triangle")?);
+                consume(DisplacementSurfaceSampler::MAX_SAMPLE_WORK)?;
+                let sample = sampler
+                    .sample([
+                        s as f64 / (dimensions[0] - 1) as f64,
+                        t as f64 / (dimensions[1] - 1) as f64,
+                    ])
+                    .map_err(|error| error.to_string())?;
+                samples.push(TerrainSample {
+                    point: DVec3::from_array(sample.surface.position),
+                    normal: DVec3::from_array(sample.surface.normal),
+                    record: sample.lightmap_record(),
+                });
             }
         }
         Ok(Self {

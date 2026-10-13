@@ -8,7 +8,7 @@ use source_formats::vmf::{DispInfo, Vmf};
 
 #[test]
 fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
-    for power in [2, 3] {
+    for power in [2, 3, 4] {
         let (vmf, _) = fixture(power);
         let mut document = Document::new(vmf);
         document
@@ -46,7 +46,7 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
         let positions = data
             .positions(0, bsp.displacement_quad(0).unwrap())
             .unwrap();
-        let triangles = data.infos[0].lightmap_triangle_indices().unwrap();
+        let sampler = bsp::DisplacementSurfaceSampler::new(data.infos[0], &positions).unwrap();
         let samples = bsp.displacement_lightmap_samples(0).unwrap().unwrap();
         assert_eq!(samples.len(), 100);
         let lighting = bsp.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
@@ -63,10 +63,25 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
             ],
         };
         let light = compiler::lighting::PointLight::from_entity(&light, 0).unwrap();
-        for (sample, color) in samples.iter().zip(colors.samples(0, 0).unwrap()) {
-            let surface = sample.surface(&triangles, &positions).unwrap().unwrap();
-            let point = DVec3::from_array(surface.position);
-            let normal = DVec3::from_array(surface.normal);
+        for (index, (sample, color)) in samples
+            .iter()
+            .zip(colors.samples(0, 0).unwrap())
+            .enumerate()
+        {
+            let geometric = sampler
+                .sample([(index % 10) as f64 / 9.0, (index / 10) as f64 / 9.0])
+                .unwrap();
+            assert_eq!(
+                *sample,
+                geometric
+                    .lightmap_record()
+                    .unwrap_or(bsp::DisplacementLightmapSample {
+                        triangle: 0,
+                        weights: [0; 3]
+                    })
+            );
+            let point = DVec3::from_array(geometric.surface.position);
+            let normal = DVec3::from_array(geometric.surface.normal);
             assert!(point.z > 19.0 && normal.x.abs() + normal.y.abs() > 0.01);
             let expected =
                 compiler::lighting::encode_color(light.contribution(point, normal).unwrap())
@@ -113,12 +128,33 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
 }
 
 #[test]
-fn unsupported_power_four_lighting_retains_fullbright_support_and_previous_output() {
-    let (vmf, _) = fixture(4);
-    assert!(compiler::compile(&vmf, &common::empty_game()).bsp.is_some());
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("existing.bsp");
-    std::fs::write(&path, b"previous BSP").unwrap();
+fn mixed_power_terrain_keeps_sample_offsets_and_explicit_missing_records() {
+    let mut vmf = common::room();
+    for (index, power) in [2, 4, 3].into_iter().enumerate() {
+        let (patch, id) = fixture(power);
+        let mut solid = patch
+            .world
+            .solids
+            .into_iter()
+            .find(|solid| solid.id == id)
+            .unwrap();
+        solid.id = 1000 + index as u32;
+        let offset = DVec3::new(
+            if index == 0 { -160.0 } else { 0.0 },
+            if index == 2 { 0.0 } else { -160.0 },
+            0.0,
+        );
+        for (side, face) in solid.sides.iter_mut().enumerate() {
+            face.id = 2000 + (index * 6 + side) as u32;
+            face.plane.0 = face.plane.0.map(|point| point + offset);
+            if let Some(disp) = &mut face.displacement {
+                disp.start_position += offset;
+            }
+            face.lightmap_scale = 4;
+        }
+        vmf.world.solids.push(solid);
+    }
+    let source = vmf.clone();
     let output = compiler::compile_with_options(
         &vmf,
         &common::empty_game(),
@@ -127,16 +163,60 @@ fn unsupported_power_four_lighting_retains_fullbright_support_and_previous_outpu
             ..Default::default()
         },
     );
-    assert!(output.report.has_errors());
-    assert!(
-        output
-            .report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("triangle-511"))
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.displacements, 3);
+    let bsp = Bsp::parse(&output.bsp.unwrap().to_bytes()).unwrap();
+    let data = bsp.displacements().unwrap().unwrap();
+    let faces = bsp.records::<bsp::Face>().unwrap();
+    let mut cursor = 0;
+    let mut missing = 0;
+    for (index, info) in data.infos.iter().enumerate() {
+        assert_eq!(info.lightmap_sample_start as usize, cursor);
+        let samples = bsp.displacement_lightmap_samples(index).unwrap().unwrap();
+        let face = faces[usize::from(info.face)];
+        let width = face.lightmap_size[0] as usize + 1;
+        let height = face.lightmap_size[1] as usize + 1;
+        assert_eq!(samples.len(), width * height);
+        let positions = data
+            .positions(index, bsp.displacement_quad(index).unwrap())
+            .unwrap();
+        let sampler = bsp::DisplacementSurfaceSampler::new(*info, &positions).unwrap();
+        for (i, sample) in samples.iter().enumerate() {
+            let geometry = sampler
+                .sample([
+                    (i % width) as f64 / (width - 1) as f64,
+                    (i / width) as f64 / (height - 1) as f64,
+                ])
+                .unwrap();
+            if geometry.triangle == 511 {
+                missing += 1;
+                assert_eq!(
+                    *sample,
+                    bsp::DisplacementLightmapSample {
+                        triangle: 0,
+                        weights: [0; 3]
+                    }
+                );
+                assert!(
+                    sample
+                        .surface(&info.lightmap_triangle_indices().unwrap(), &positions)
+                        .unwrap()
+                        .is_none()
+                );
+            } else {
+                assert_eq!(*sample, geometry.lightmap_record().unwrap());
+            }
+        }
+        cursor += info.encode_lightmap_samples(&samples).unwrap().len();
+    }
+    assert!(missing > 0);
+    assert_eq!(
+        cursor,
+        bsp.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS]
+            .data
+            .len()
     );
-    assert!(!output.write(&path).unwrap());
-    assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    assert_eq!(vmf, source);
 }
 
 fn fixture(power: u32) -> (Vmf, u32) {

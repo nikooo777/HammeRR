@@ -322,7 +322,10 @@ fn terrain_shadows(map: &Map, budget: &mut Budget<'_>) -> Result<ShadowIndex<Tri
         for indices in &terrain.indices {
             budget.consume(1)?;
             if triangles.len() == Triangle::MAX_OBJECTS {
-                return Err("Direct LDR exceeds its 262,144 terrain-shadow triangle limit".into());
+                return Err(format!(
+                    "Direct LDR exceeds its {} terrain-shadow triangle limit",
+                    Triangle::MAX_OBJECTS
+                ));
             }
             triangles.push(Triangle::new(
                 indices.map(|index| DVec3::from_array(points[index].map(f64::from))),
@@ -428,24 +431,38 @@ pub(crate) fn bake(
             .map_err(|error| error.to_string())?
             .ok_or("Terrain records are missing")?;
         let mut bytes = Vec::new();
+        let mut missing = 0;
         for plan in &plans {
             let Surface::Terrain(terrain) = &plan.surface else {
                 continue;
             };
             budget.consume(terrain.samples.len())?;
+            missing += terrain
+                .samples
+                .iter()
+                .filter(|sample| sample.record.is_none())
+                .count();
             let index = faces[plan.face].dispinfo as usize;
             data.infos[index].lightmap_sample_start = i32::try_from(bytes.len())
                 .map_err(|_| "Terrain sample offset exceeds native limits")?;
             let records = terrain
                 .samples
                 .iter()
-                .map(|sample| sample.record)
+                .map(|sample| {
+                    sample.record.unwrap_or(bsp::DisplacementLightmapSample {
+                        triangle: 0,
+                        weights: [0; 3],
+                    })
+                })
                 .collect::<Vec<_>>();
             bytes.extend(
                 data.infos[index]
                     .encode_lightmap_samples(&records)
                     .map_err(|error| error.to_string())?,
             );
+        }
+        if missing != 0 {
+            report.diagnostics.push(Diagnostic::info(format!("{missing} power-4 terrain luxels use missing auxiliary records because native triangle 511 is unrepresentable; their lighting uses full-precision surface geometry"), None, None));
         }
         bsp.lumps[bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS].data = bytes;
         bsp.set_displacements(&data)

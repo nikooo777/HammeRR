@@ -51,7 +51,6 @@ fn bounds_error(object: String) -> Diagnostic {
 const CONSUMED: &[&str] = &["func_detail"];
 /// Entities whose compile support doesn't exist yet; dropped with a warning.
 const UNSUPPORTED: &[&str] = &[
-    "info_overlay",
     "info_overlay_transition",
     "func_viscluster",
     "func_occluder",
@@ -164,6 +163,7 @@ pub struct Map<'a> {
     pub cubemaps: Vec<bsp::Cubemap>,
     pub terrains: Vec<Terrain>,
     pub(crate) area_portals: Vec<crate::areas::PortalBrush>,
+    pub(crate) overlays: crate::overlays::Plan,
     brush_side_count: usize,
 }
 
@@ -189,6 +189,7 @@ impl<'a> Map<'a> {
             cubemaps: Vec::new(),
             terrains: Vec::new(),
             area_portals: Vec::new(),
+            overlays: crate::overlays::Plan::default(),
             brush_side_count: 0,
         };
         if let Err(error) = vmf.validate_ids() {
@@ -240,6 +241,9 @@ impl<'a> Map<'a> {
             }
             if classname.eq_ignore_ascii_case("env_cubemap") {
                 map.add_cubemap(entity, report);
+                continue;
+            }
+            if classname.eq_ignore_ascii_case("info_overlay") {
                 continue;
             }
             if classname.eq_ignore_ascii_case("prop_static")
@@ -308,6 +312,7 @@ impl<'a> Map<'a> {
             }
         }
         crate::areas::windows::validate(&map, report, control)?;
+        crate::overlays::load(vmf, &mut map, report, control)?;
         if !map.cubemaps.is_empty() {
             report.diagnostics.push(Diagnostic::warning(
                 "Cubemap sample records compiled; reflection material binding and texture capture are not implemented yet",
@@ -576,14 +581,8 @@ impl<'a> Map<'a> {
     }
 
     fn texinfo(&mut self, side: &Side, material: usize, origin: DVec3) -> usize {
-        let info = self.materials.get(material);
-        let texdata = match self.texdata.iter().position(|&m| m == material) {
-            Some(i) => i,
-            None => {
-                self.texdata.push(material);
-                self.texdata.len() - 1
-            }
-        };
+        let flags = self.materials.get(material).surface;
+        let texdata = self.texture_data(material);
         let lightmap_scale = if side.lightmap_scale == 0 {
             DEFAULT_LIGHTMAP_SCALE
         } else {
@@ -611,9 +610,19 @@ impl<'a> Map<'a> {
         self.texinfos.add(bsp::TexInfo {
             texture_vecs: [vec(&side.u_axis), vec(&side.v_axis)],
             lightmap_vecs: [lightmap_vec(&side.u_axis), lightmap_vec(&side.v_axis)],
-            flags: info.surface,
+            flags,
             texdata: texdata as i32,
         })
+    }
+
+    pub(crate) fn texture_data(&mut self, material: usize) -> usize {
+        match self.texdata.iter().position(|&m| m == material) {
+            Some(i) => i,
+            None => {
+                self.texdata.push(material);
+                self.texdata.len() - 1
+            }
+        }
     }
 
     pub(crate) fn model_bounds(&self, entity: usize) -> (DVec3, DVec3) {

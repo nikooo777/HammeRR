@@ -16,6 +16,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Vertices, edges and faces](components.md) | Moving, scaling, rotating, welding, splitting and roof ridges |
 | [Flat partitions](partitions.md) | Dividing a face into pieces to raise, extrude or restyle them |
 | [Materials and textures](textures.md) | Material browser, texture editing, sampling, wrapping, painting, replacement, face lighting |
+| [Overlays](overlays.md) | Compiling imported surface projections, material, render order and distance fading |
 | [Entities and logic](entities.md) | Placing entities, lights, brush entities, inputs/outputs, safe renaming, editing many entities |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, lighting, physics, leaks, launching Counter-Strike: Source |

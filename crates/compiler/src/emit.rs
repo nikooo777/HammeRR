@@ -146,19 +146,30 @@ fn entity_text(map: &Map, models: &[Model]) -> Result<String, String> {
             properties.retain(|(key, _)| key != "model");
             properties.push(("model".into(), format!("*{model}")));
         }
-        text.push_str("{\n");
-        for (key, value) in properties {
-            if key.contains(['"', '\0']) || value.contains(['"', '\0']) {
-                return Err(format!(
-                    "entity:{} contains an invalid key/value",
-                    entity.id
-                ));
-            }
-            text.push_str(&format!("\"{key}\" \"{value}\"\n"));
+        append_entity(&mut text, &properties, entity.id)?;
+    }
+    for definition in &map.overlays.definitions {
+        if let Some(properties) = &definition.accessor {
+            append_entity(&mut text, properties, definition.entity)?;
         }
-        text.push_str("}\n");
     }
     Ok(text)
+}
+
+fn append_entity(
+    text: &mut String,
+    properties: &[(String, String)],
+    id: u32,
+) -> Result<(), String> {
+    text.push_str("{\n");
+    for (key, value) in properties {
+        if key.contains(['"', '\0']) || value.contains(['"', '\0']) {
+            return Err(format!("entity:{} contains an invalid key/value", id));
+        }
+        text.push_str(&format!("\"{key}\" \"{value}\"\n"));
+    }
+    text.push_str("}\n");
+    Ok(())
 }
 
 pub fn build(
@@ -203,6 +214,7 @@ pub fn build(
         ..Geometry::default()
     };
     let mut faces = Vec::new();
+    let mut overlay_bindings = crate::overlays::Bindings::default();
     let mut bsp_models = Vec::new();
     let mut water_distances = vec![u16::MAX; leaves.len()];
     let mut leaf_faces = vec![Vec::<u16>::new(); leaves.len()];
@@ -221,6 +233,7 @@ pub fn build(
                 let start = faces.len();
                 for face in groups.remove(&Some(node_index)).unwrap_or_default() {
                     let id = index(faces.len(), "leaf face")?;
+                    overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
                     faces.push(geometry.face(face, map, faces.len(), model, water)?);
                     for &leaf in &face.leaves {
                         let leaf = (-1 - mapping[leaf]) as usize;
@@ -290,6 +303,7 @@ pub fn build(
         }
         for face in groups.remove(&None).unwrap_or_default() {
             let id = index(faces.len(), "leaf face")?;
+            overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
             faces.push(geometry.face(face, map, faces.len(), model, water)?);
             for &leaf in &face.leaves {
                 leaf_faces[(-1 - mapping[leaf]) as usize].push(id);
@@ -383,6 +397,8 @@ pub fn build(
     bsp.set_records(&nodes);
     bsp.set_records(&leaves);
     bsp.set_records(&faces);
+    bsp.set_overlay_data(&map.overlays.data(&overlay_bindings, control)?)
+        .map_err(|error| error.to_string())?;
     bsp.set_values(lump::ORIGINALFACES, &faces);
     bsp.set_records(&brushes);
     bsp.set_records(&sides);

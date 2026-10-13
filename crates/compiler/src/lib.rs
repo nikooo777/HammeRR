@@ -7,6 +7,7 @@ pub mod faces;
 pub mod lighting;
 pub mod map;
 pub mod materials;
+mod overlays;
 pub mod physics;
 pub mod planes;
 pub mod portals;
@@ -246,6 +247,8 @@ pub struct Stats {
     pub areaportals: usize,
     pub areaportal_windows: usize,
     pub areaportal_vertices: usize,
+    pub overlays: usize,
+    pub overlay_face_refs: usize,
     pub water_regions: usize,
     pub water_leaves: usize,
     pub sky_clusters: usize,
@@ -462,6 +465,14 @@ fn build(
         revision,
         control,
     )?;
+    if let Some(data) = bsp.overlay_data().map_err(|error| error.to_string())? {
+        output.stats.overlays = data.overlays.len();
+        output.stats.overlay_face_refs = data
+            .overlays
+            .iter()
+            .map(|overlay| overlay.face_count())
+            .sum();
+    }
     control.advance(Stage::StaticProps)?;
     let prop_stats = static_props::bake(vmf, fs, &mut bsp, &mut output.report, control)?;
     if output.report.has_errors() {

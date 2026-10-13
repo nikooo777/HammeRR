@@ -50,6 +50,15 @@ cargo test -p compiler --lib faces::tests
 
 Checks source side IDs through merged and subdivided faces, shared metadata, hidden source exclusion and the compiler's bounded provenance work budget.
 
+### Authored overlays
+
+```sh
+cargo test -p compiler --test overlays
+python3 -B scripts/validate_overlays.py --output /tmp/hammerr-overlays-check
+```
+
+Checks imported projection fields, overlay-aware face merging, final native face indices, terrain bindings, fade packing, accessors, hidden sources and previous-output preservation. The MCP validator compares foreground/background builds and preserved source/history; `--runtime` adds private CS:S rendering, distance fade and named-accessor checks.
+
 ## Validation scripts
 
 The `scripts/validate_<name>.py` scripts drive the editor through MCP and check features end to end. They need only Python 3.
@@ -118,6 +127,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `terrain --runtime` | Terrain with uneven heights, power-4 and mixed-size lighting, player collision, ray flags and moving objects. `--runtime-cases power-four mixed` limits the game checks to those two fixtures; `--runtime-cases neighbors` runs the linked-edge fixture. |
 | `areaportals --runtime` | Native area/portal bindings, hidden and invalid boundaries, exact MCP build output, and visible-area/client portal bits through close/reopen from both sides. |
 | `window_portals --runtime` | Rendered and foreground brush models, distance closing, fade-distance inputs, and server/client visibility bits. |
+| `overlays --runtime` | Authored graffiti rendering against a control scene, distance fading and the named accessor's native overlay ID. |
 | `overlay_capacity --runtime` | Current-engine record capacity: 1,024 native records with only the last one drawing, checked against the same scene without overlays. This patches a private MCP-built BSP; authored overlay compilation is still unfinished. |
 | `terrain_seams --runtime` | Rotated curved neighbors share continuous baked lighting and retain seam contact heights. |
 | `terrain_normals --runtime` | A curved terrain ridge with smooth normals, shared with the viewport, keeps its collision height in game. |

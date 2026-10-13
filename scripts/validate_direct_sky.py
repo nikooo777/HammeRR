@@ -84,7 +84,7 @@ def validate(client, output, reference=None):
         properties = {
             "_light": "0 0 0 0" if name == "ambient-only" else "255 0 0 200",
             "_ambient": "0 0 255 100" if name.startswith("ambient") else "0 0 0 0",
-            "SunSpreadAngle": "1" if name == "spread" else "0",
+            "SunSpreadAngle": "91" if name == "spread" else "0",
             "pitch": "-45" if name == "tilted" else "-90",
         }
         sun = client.call(
@@ -317,6 +317,70 @@ def quality_checks(client, output):
     (output / "quality-results.json").write_text(json.dumps(results, indent=2) + "\n")
 
 
+def soft_sun_checks(client, output):
+    results = []
+    for name in ["clear", "shade", "terrain-shade", "enclosed"]:
+        fixture = "clear" if name == "shade" else name
+        client.call(
+            "open_map",
+            {"path": str(output / f"{fixture}.vmf"), "discard_changes": True},
+        )
+        sun = client.call("find_objects", {"classname": "light_environment"})[
+            "objects"
+        ][0]["id"]
+        client.call(
+            "set_entity_properties", {"id": sun, "set": {"SunSpreadAngle": "20"}}
+        )
+        if name == "shade":
+            client.call(
+                "create_block",
+                {
+                    "mins": [-32, -128, 96],
+                    "maxs": [32, 128, 112],
+                    "material": "dev/dev_measuregeneric01",
+                },
+            )
+        vmf = output / f"soft-{name}.vmf"
+        client.call("save_map", {"path": str(vmf)})
+        original = vmf.read_bytes()
+        source = detail(client, [sun])
+        history = client.call("get_map_info")["undo"]
+        last_work = 0
+        for quality in ["fast", "balanced", "detailed"]:
+            client.call("set_compile_settings", {"sky_quality": quality})
+            destination = output / f"soft-{name}-{quality}.bsp"
+            built = client.call("compile_map", {"path": str(destination)})
+            assert built["success"], built
+            data = destination.read_bytes()
+            center = center_sample(data)
+            if name == "clear":
+                assert center == [200, 0, 0], center
+            elif name == "enclosed":
+                assert center == [0, 0, 0], center
+            else:
+                assert 0 < center[0] < 200 and center[1:] == [0, 0], (
+                    name,
+                    quality,
+                    center,
+                )
+            assert built["stats"]["lighting_work"] > last_work
+            last_work = built["stats"]["lighting_work"]
+            background = output / f"soft-{name}-{quality}-background.bsp"
+            client.call("start_compile", {"path": str(background)})
+            job = wait_job(client)
+            assert job["status"] == "completed" and background.read_bytes() == data
+            assert job["settings"]["sky_quality"] == quality
+            assert (
+                source == detail(client, [sun])
+                and history == client.call("get_map_info")["undo"]
+            )
+            assert vmf.read_bytes() == original
+            results.append(
+                {"case": name, "quality": quality, "center": center, "work": last_work}
+            )
+    (output / "soft-sun-results.json").write_text(json.dumps(results, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
@@ -329,6 +393,11 @@ def main():
         action="store_true",
         help="Check shared sky quality, frozen jobs and deterministic output",
     )
+    parser.add_argument(
+        "--soft-sun-tests",
+        action="store_true",
+        help="Check soft sun on brush and terrain shadows at every quality",
+    )
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)
@@ -336,6 +405,8 @@ def main():
         validate(client, args.output, args.reference)
         if args.quality_tests:
             quality_checks(client, args.output)
+        if args.soft_sun_tests:
+            soft_sun_checks(client, args.output)
     finally:
         client.close()
     print(json.dumps({"output": str(args.output), "cases": 13}))

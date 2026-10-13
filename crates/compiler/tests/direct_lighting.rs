@@ -231,11 +231,18 @@ fn native_direct_sun_requires_sky_and_preserves_opaque_shadows() {
 }
 
 #[test]
-fn rejected_sky_ambient_spread_and_duplicate_emitters_preserve_previous_output() {
+fn rejected_sky_parameters_and_duplicate_emitters_preserve_previous_output() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("old.bsp");
     std::fs::write(&path, b"previous BSP").unwrap();
-    for field in ["_ambient", "SunSpreadAngle", "duplicate"] {
+    for (field, value) in [
+        ("_ambient", "NaN"),
+        ("SunSpreadAngle", "91"),
+        ("SunSpreadAngle", "-0.1"),
+        ("SunSpreadAngle", "NaN"),
+        ("SunSpreadAngle", "inf"),
+        ("duplicate", "1"),
+    ] {
         let (_directory, game, mut document) = sky_fixture(true, false);
         document
             .edit("invalid sun", |tx| {
@@ -255,9 +262,7 @@ fn rejected_sky_ambient_spread_and_duplicate_emitters_preserve_previous_output()
                         .find(|entity| entity.classname() == Some("light_environment"))
                         .unwrap()
                         .id;
-                    tx.entity_mut(id)?
-                        .properties
-                        .set(field, if field == "_ambient" { "NaN" } else { "1" });
+                    tx.entity_mut(id)?.properties.set(field, value);
                 }
                 Ok(())
             })
@@ -266,6 +271,79 @@ fn rejected_sky_ambient_spread_and_duplicate_emitters_preserve_previous_output()
         assert!(output.report.has_errors(), "{field}: {:?}", output.report);
         assert!(!output.write(&path).unwrap());
         assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    }
+}
+
+#[test]
+fn soft_sun_bakes_a_penumbra_without_changing_native_light_direction() {
+    let (_directory, game, mut document) = sky_fixture(true, false);
+    document
+        .edit("high shadow caster", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-32.0, -128.0, 96.0),
+                DVec3::new(32.0, 128.0, 112.0),
+                "dev/dev_measuregeneric01",
+            )
+        })
+        .unwrap();
+    let hard = compiler::compile_with_options(document.vmf(), &game, options());
+    assert!(!hard.report.has_errors(), "{:?}", hard.report);
+    let hard = hard.bsp.unwrap();
+    assert_eq!(floor_sample(&hard, DVec3::ZERO), DVec3::ZERO);
+    let id = document
+        .vmf()
+        .entities
+        .iter()
+        .find(|entity| entity.classname() == Some("light_environment"))
+        .unwrap()
+        .id;
+    document
+        .edit("soft sun", |tx| {
+            tx.entity_mut(id)?.properties.set("SunSpreadAngle", "20");
+            Ok(())
+        })
+        .unwrap();
+    let source = document.vmf().clone();
+    let mut previous_work = 0;
+    for quality in [compiler::SkyQuality::Fast, compiler::SkyQuality::Detailed] {
+        let soft = compiler::compile_with_options(
+            document.vmf(),
+            &game,
+            Options {
+                sky_quality: quality,
+                ..options()
+            },
+        );
+        assert!(!soft.report.has_errors(), "{:?}", soft.report);
+        assert!(soft.stats.lighting_work > previous_work);
+        previous_work = soft.stats.lighting_work;
+        let soft = soft.bsp.unwrap();
+        let center = floor_sample(&soft, DVec3::ZERO);
+        assert!(center.x > 0.0 && center.x < 200.0, "{quality:?}: {center}");
+        assert_eq!(
+            floor_sample(&soft, DVec3::new(128.0, 0.0, 0.0)),
+            DVec3::new(200.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            soft.world_lights(LightingKind::Ldr).unwrap(),
+            hard.world_lights(LightingKind::Ldr).unwrap()
+        );
+        assert_eq!(*document.vmf(), source);
+    }
+    document
+        .edit("hard sun", |tx| {
+            tx.entity_mut(id)?.properties.set("SunSpreadAngle", "0");
+            Ok(())
+        })
+        .unwrap();
+    let zero = compiler::compile_with_options(document.vmf(), &game, options())
+        .bsp
+        .unwrap();
+    for (index, lump) in hard.lumps.iter().enumerate() {
+        if index != bsp::lump::ENTITIES {
+            assert_eq!(zero.lumps[index].data, lump.data, "lump {index}");
+        }
     }
 }
 

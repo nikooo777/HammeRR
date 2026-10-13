@@ -53,7 +53,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static point lights, spotlights, direct sun and sampled sky ambient on world faces and power-2/3/4 terrain. Supports legacy and percentage-distance falloff, spot cones and opaque shadows, with smooth normals within terrain patches. Ambient cubes, soft sun, bounced light, HDR, props and moving-model lighting remain unfinished."
+                "Bakes static point lights, spotlights, sun and sky ambient on world faces and power-2/3/4 terrain. Supports legacy and percentage-distance falloff, spot cones, soft sun and opaque shadows, with smooth normals within terrain patches. Ambient cubes, bounced light, HDR, props and moving-model lighting remain unfinished."
             }
         }
     }

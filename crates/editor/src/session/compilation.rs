@@ -90,6 +90,8 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "areaportals": stats.areaportals,
         "areaportal_windows": stats.areaportal_windows,
         "areaportal_vertices": stats.areaportal_vertices,
+        "overlays": stats.overlays,
+        "overlay_face_refs": stats.overlay_face_refs,
         "water_regions": stats.water_regions,
         "water_leaves": stats.water_leaves,
         "sky_clusters": stats.sky_clusters,

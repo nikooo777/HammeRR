@@ -231,6 +231,10 @@ Connected terrain can keep its lighting continuous across patch seams.
 
 Not yet: creating or editing terrain in HammeRR, subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles, LOD between different powers or partial edges, and neighbors that touch only at a corner.
 
+## Overlays
+
+Imported `info_overlay` projections compile on world, detail and terrain surfaces. Set their material, render order and fades in the entity inspector, then inspect **Overlays** and **Surface references** in Build details. See [Overlays](overlays.md) for the workflow and limits.
+
 ## Coordinate limits
 
 Brush geometry and entity origins must stay within **±16,384 units**. Objects outside that range are reported before building, and the existing output is kept. The editor itself allows larger coordinates for editing, but the playable Source world doesn't extend further.

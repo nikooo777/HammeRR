@@ -15,7 +15,7 @@ HammeRR opens and saves Hammer's VMF files, renders your map with the game's own
 
 - **Native on Linux.** Written in Rust and rendered with Vulkan. No Wine and no Windows compile tools.
 - **AI-first.** Every feature has an MCP tool. Agents see what you see, edit what you edit and share your undo history.
-- **Hammer-compatible.** Reads and writes VMF. Files you open and save without changes come back byte for byte.
+- **Hammer-compatible.** Reads and writes VMF, retaining imported properties and extra blocks.
 - **Preview before you commit.** Tools show their result before changing anything. Apply is one undo step; Cancel leaves the map untouched.
 - **Build and play in one click.** A native BSP compiler with lighting, physics, water, props and terrain, and a direct launch into CS:S.
 
@@ -178,6 +178,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |
 | Matching full edges share smooth lighting normals in the viewport and compiled map. |
 
+| Imported overlays |
+| --- |
+| ![Graffiti projected onto the floor in Counter-Strike: Source](docs/images/overlays.png) |
+| Compile surface markings with material, render order, distance fade and preserved face bindings. |
+
+[Overlays →](docs/overlays.md)
+
 | Model ambient lighting |
 | --- |
 | ![Sky and surface tint on a weapon model in Counter-Strike: Source](docs/images/model-ambient.png) |
@@ -189,7 +196,7 @@ The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: imported terrain displays and compiles, but can't be created or edited yet.
 - **Models**: static props compile but aren't drawn in the viewport yet.
-- **Compiler**: visibility is conservative; lighting covers direct light and sky ambient, without bounced light or HDR yet; overlays aren't supported.
+- **Compiler**: visibility is conservative; lighting covers direct light and sky ambient, without bounced light or HDR yet.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

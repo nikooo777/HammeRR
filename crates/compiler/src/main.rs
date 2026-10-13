@@ -83,6 +83,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.areas, stats.areaportals, stats.areaportal_windows, stats.areaportal_vertices
     );
     println!(
+        "overlays: {} · face references: {}",
+        stats.overlays, stats.overlay_face_refs
+    );
+    println!(
         "lighting {}: {} baked faces, {} samples, {} light sources, {} bytes",
         stats.lighting_mode.label(),
         stats.lighting_faces,

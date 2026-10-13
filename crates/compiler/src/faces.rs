@@ -105,7 +105,8 @@ pub fn build_controlled(
     control: &Control,
 ) -> Result<Vec<Face>, String> {
     control.checkpoint()?;
-    let mut groups: BTreeMap<(Option<usize>, usize, usize, u32), Vec<Face>> = BTreeMap::new();
+    type Group = (Option<usize>, usize, usize, u32, Arc<[usize]>);
+    let mut groups: BTreeMap<Group, Vec<Face>> = BTreeMap::new();
     let mut provenance_work = 0;
     for &brush_index in &map.entities[entity].brushes {
         control.checkpoint()?;
@@ -140,7 +141,13 @@ pub fn build_controlled(
                     }
                     None if !node.solid() && winding.area() > ON_EPSILON * ON_EPSILON => {
                         groups
-                            .entry((on_node, side.plane, side.texinfo, side.smoothing_groups))
+                            .entry((
+                                on_node,
+                                side.plane,
+                                side.texinfo,
+                                side.smoothing_groups,
+                                map.overlays.membership(side.source_id),
+                            ))
                             .or_default()
                             .push(Face {
                                 source_sides: source_sides.clone(),

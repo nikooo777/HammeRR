@@ -11,7 +11,7 @@ HammeRR is in active development.
 
 | Area | State |
 | --- | --- |
-| Opening and saving VMFs | Works. Unmodified files are saved back byte for byte. Round trips through other editors haven't been verified yet. |
+| Opening and saving VMFs | Works. Imported properties and extra blocks are retained; saves increment the map version and use standard VMF formatting. Round trips through other editors haven't been verified yet. |
 | Brushes, transforms and shapes | Works. |
 | Hollow, carve and clip | Works for brushes. Terrain is rejected. |
 | Vertices, edges and faces | Works for brushes. Terrain is rejected. |
@@ -37,10 +37,10 @@ HammeRR is in active development.
 | Cubemaps | Sample positions and sizes | Baked reflections |
 | Static props | Models, transforms, collision, skins, fading | Prop lighting and shadows, exact placement in the BSP tree |
 | Terrain | Power 2/3/4 surfaces, collision, lighting normals sewn across matching equal-power full edges, neighbor links | Authored smoothing angles, LOD between different powers or partial edges, corner neighbors, subdivision, removed triangles |
-| Overlays | — | Not started |
+| Overlays | Imported `info_overlay` projections on world, detail and terrain surfaces; materials, render order, distance fading and named accessors | Placement, corner editing, viewport projection, geometry-edit rebinding, brush-model targets, water transitions and decals |
 
 ## Next
 
 **Editor:** free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, model rendering and broader map checks.
 
-**Compiler:** tighter visibility, bounced light and HDR, broader physics collision, mixed-power terrain LOD, prop lighting, hint controls and overlays.
+**Compiler:** tighter visibility, bounced light and HDR, broader physics collision, mixed-power terrain LOD, prop lighting, hint controls, brush-model overlays and water transitions.

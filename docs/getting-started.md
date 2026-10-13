@@ -31,6 +31,8 @@ This produces three programs in `target/release/`:
 
 Leave out the filename to start with an empty map. HammeRR finds Counter-Strike: Source through Steam and loads its materials and SDK entity definitions automatically.
 
+Saving increments the VMF's map version and uses standard VMF formatting while retaining imported properties and extra blocks. Round trips through other editors haven't been verified yet.
+
 | Option | Purpose |
 | --- | --- |
 | `--game <gameinfo.txt>` | Load content from a specific game installation instead of the one found through Steam. |

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{Control, DirectedPortal, Plane, VISIBILITY_EPSILON, Winding, Work, set};
+use super::{Control, DirectedPortal, Plane, VISIBILITY_EPSILON, Winding, Work, bit, set};
 
 const MAX_APERTURE_POINTS: usize = 128;
 const MAX_STACK_POINTS: usize = 262_144;
@@ -16,6 +16,8 @@ pub(super) struct Context<'a> {
     pub work: &'a mut Work,
     pub fallbacks: &'a mut usize,
     pub control: &'a Control,
+    pub possible: &'a [u8],
+    pub bounds: &'a [Vec<u8>],
 }
 
 impl Frame {
@@ -28,7 +30,7 @@ pub(super) fn refine(
     base: &DirectedPortal,
     portals: &[DirectedPortal],
     edges: &[Vec<usize>],
-    eligible: &[bool],
+    eligible: &[u8],
     row: &mut [u8],
     context: Context,
 ) -> Result<(), String> {
@@ -36,11 +38,18 @@ pub(super) fn refine(
         work,
         fallbacks,
         control,
+        possible,
+        bounds,
     } = context;
+    control.checkpoint()?;
+    set(row, base.to);
+    work.consume(row.len().div_ceil(8))?;
+    if complete(row, possible) {
+        return Ok(());
+    }
     let mut on_path = vec![false; edges.len()];
     on_path[base.from] = true;
     on_path[base.to] = true;
-    set(row, base.to);
     let mut stack = vec![Frame {
         cluster: base.to,
         next: 0,
@@ -50,6 +59,10 @@ pub(super) fn refine(
     let mut stack_points = stack[0].points();
     while let Some(frame) = stack.last_mut() {
         control.checkpoint()?;
+        work.consume(row.len().div_ceil(8))?;
+        if complete(row, possible) {
+            break;
+        }
         let Some(&index) = edges[frame.cluster].get(frame.next) else {
             let frame = stack.pop().unwrap();
             on_path[frame.cluster] = false;
@@ -59,7 +72,7 @@ pub(super) fn refine(
         frame.next += 1;
         work.consume(1)?;
         let target = &portals[index];
-        if !eligible[index] || on_path[target.to] {
+        if !bit(eligible, index) || on_path[target.to] {
             continue;
         }
         let Some(mut pass) = clip(target.winding, base.plane, work, fallbacks)? else {
@@ -86,6 +99,11 @@ pub(super) fn refine(
             };
             pass = clipped;
         }
+        set(row, target.to);
+        work.consume(row.len().div_ceil(8))?;
+        if complete_intersection(row, possible, &bounds[index]) {
+            continue;
+        }
         let frame = Frame {
             cluster: target.to,
             next: 0,
@@ -97,11 +115,23 @@ pub(super) fn refine(
             return Err("Visibility portal stack exceeds its 262,144-point allocation budget; use Fast visibility or simplify structural geometry".into());
         }
         stack_points += points;
-        set(row, target.to);
         on_path[target.to] = true;
         stack.push(frame);
     }
     Ok(())
+}
+
+fn complete(row: &[u8], possible: &[u8]) -> bool {
+    row.iter()
+        .zip(possible)
+        .all(|(visible, candidates)| visible & candidates == *candidates)
+}
+
+fn complete_intersection(row: &[u8], source: &[u8], target: &[u8]) -> bool {
+    row.iter()
+        .zip(source)
+        .zip(target)
+        .all(|((visible, source), target)| visible & (source & target) == source & target)
 }
 
 fn clip(
@@ -230,7 +260,7 @@ mod tests {
                 })
                 .collect(),
         );
-        let mut work = Work { remaining: 10_000 };
+        let mut work = Work::Local(10_000);
         let mut fallbacks = 0;
         let clipped = clip(
             &winding,
@@ -264,7 +294,7 @@ mod tests {
             .unwrap(),
             tiny
         );
-        let mut exhausted = Work { remaining: 0 };
+        let mut exhausted = Work::Local(0);
         assert!(
             clip(
                 &winding,

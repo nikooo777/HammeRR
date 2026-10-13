@@ -148,7 +148,7 @@ impl VisibilityMode {
                 "Quickly builds conservative visible and audible sets. Some hidden areas remain visible."
             }
             Self::Detailed => {
-                "Clips sight volumes through portal paths to remove hidden areas. Takes longer and uses bounded conservative fallbacks. Parallel flow and broader map coverage are unfinished."
+                "Clips sight volumes through portal paths to remove hidden areas. Uses up to eight CPU workers on larger maps, with conservative fallbacks. Original hint priority, occluders and broader map coverage remain unfinished."
             }
         }
     }
@@ -294,6 +294,7 @@ pub struct Stats {
     pub visibility_work: usize,
     pub visibility_removed_pairs: usize,
     pub visibility_fallbacks: usize,
+    pub visibility_workers: usize,
     pub hint_surfaces: usize,
     pub hint_splits: usize,
     pub hint_work: usize,
@@ -490,10 +491,11 @@ fn build(
     output.stats.visibility_work = visibility.work;
     output.stats.visibility_removed_pairs = visibility.removed_pairs;
     output.stats.visibility_fallbacks = visibility.fallbacks;
+    output.stats.visibility_workers = visibility.workers;
     output.report.diagnostics.push(Diagnostic::info(
         match options.visibility {
             VisibilityMode::Fast => "Visibility uses conservative portal bounds; choose Detailed for portal separator clipping",
-            VisibilityMode::Detailed => "Visibility uses bounded portal separator clipping; hint priority and parallel flow remain unfinished",
+            VisibilityMode::Detailed => "Visibility uses bounded portal separator clipping and source-cluster tasks; hint priority and occluders remain unfinished",
         },
         None,
         None,

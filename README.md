@@ -181,7 +181,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Visibility quality |
 | --- |
 | ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) |
-| Choose a quick conservative build or tighter visibility through portal openings. |
+| Choose a quick conservative build or parallel portal clipping for tighter visibility. |
 
 | Hint planes |
 | --- |

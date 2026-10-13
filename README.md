@@ -1662,6 +1662,11 @@ child with a 24 GiB address-space limit and rejects unrecognized library builds.
 It does not launch the game. The compiler still emits no physics collision lump;
 an isolated backend adapter and in-game validation remain unfinished.
 
+The BSP reader/writer now checks native physics model/solid lengths, key data,
+model references and the end marker, with exact round trips across all 21
+installed maps. Unknown VPHY types remain opaque. Checked outer records do not
+make arbitrary compact-body internals safe for the engine loader.
+
 </details>
 
 Tighter VVIS portal flow, VRAD, physics collision, compiled displacements,

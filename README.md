@@ -168,6 +168,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Two rooms connected by an open areaportal](docs/images/areaportal-open.png) |
 | Control visibility between areas through named portals and door connections. |
 
+| Distance-fading windows |
+| --- |
+| ![Opaque distance-fading window](docs/images/areaportal-window-closed.png) |
+| Fade rendered windows to opaque with distance and hide the area beyond. |
+
 | Connected terrain lighting |
 | --- |
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |
@@ -184,7 +189,7 @@ The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: imported terrain displays and compiles, but can't be created or edited yet.
 - **Models**: static props compile but aren't drawn in the viewport yet.
-- **Compiler**: visibility is conservative; lighting covers direct light and sky ambient, without bounced light or HDR yet; window portals and overlays aren't supported.
+- **Compiler**: visibility is conservative; lighting covers direct light and sky ambient, without bounced light or HDR yet; overlays aren't supported.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

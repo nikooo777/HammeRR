@@ -298,7 +298,7 @@ impl Map<'_> {
             });
         }
         if !self.terrains.is_empty() {
-            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map. Native neighbor metadata supports matching equal-power full edges; mixed powers, partial spans, corner-only neighbors and cross-patch normal sewing remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
+            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map. Native neighbor metadata supports matching equal-power full edges; mixed powers, partial spans and corner-only neighbors remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
         }
         Ok(faces)
     }

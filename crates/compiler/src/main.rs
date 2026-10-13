@@ -79,8 +79,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.elapsed
     );
     println!(
-        "Visibility areas: {} · areaportals: {} · clip vertices: {}",
-        stats.areas, stats.areaportals, stats.areaportal_vertices
+        "Visibility areas: {} · areaportals: {} · window portals: {} · clip vertices: {}",
+        stats.areas, stats.areaportals, stats.areaportal_windows, stats.areaportal_vertices
     );
     println!(
         "lighting {}: {} baked faces, {} samples, {} light sources, {} bytes",

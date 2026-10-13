@@ -244,6 +244,7 @@ pub struct Stats {
     pub visibility_bytes: usize,
     pub areas: usize,
     pub areaportals: usize,
+    pub areaportal_windows: usize,
     pub areaportal_vertices: usize,
     pub water_regions: usize,
     pub water_leaves: usize,
@@ -375,6 +376,11 @@ fn build(
     let areas = areas::build(&mut map, &tree, &portals, control)?;
     output.stats.areas = areas.data.areas.len().saturating_sub(1);
     output.stats.areaportals = map.area_portals.len();
+    output.stats.areaportal_windows = map
+        .area_portals
+        .iter()
+        .filter(|portal| map.entities[portal.entity].classname == "func_areaportalwindow")
+        .count();
     output.stats.areaportal_vertices = areas.data.clip_vertices.len();
     control.advance(Stage::Water)?;
     let water = water::build(&map, &tree, &portals, &mut output.report, control)?;

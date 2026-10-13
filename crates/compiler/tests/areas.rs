@@ -225,3 +225,201 @@ fn overlapping_portal_volumes_fail_instead_of_emitting_ambiguous_area_keys() {
     assert!(output.bsp.is_none());
     assert_eq!(vmf, original);
 }
+
+fn window_room(foreground: bool) -> (Vmf, u32, u32, Option<u32>) {
+    let (vmf, portal) = room(true);
+    let mut document = Document::new(vmf);
+    let mut models = Vec::new();
+    for name in ["rendered_window", "window_foreground"]
+        .into_iter()
+        .take(if foreground { 2 } else { 1 })
+    {
+        document
+            .edit("window model", |tx| {
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::new(-8.0, -64.0, 0.0),
+                    DVec3::new(8.0, 64.0, 192.0),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let ObjectId::Entity(id) = edit::tie_to_entity(
+                    tx,
+                    &[id],
+                    "func_brush",
+                    &[
+                        ("targetname".into(), name.into()),
+                        ("origin".into(), "0.5 -0.25 96.25".into()),
+                        ("Solidity".into(), "1".into()),
+                    ],
+                )?
+                else {
+                    unreachable!()
+                };
+                models.push(id);
+                Ok(())
+            })
+            .unwrap();
+    }
+    document
+        .edit("window portal", |tx| {
+            let entity = tx.entity_mut(portal)?;
+            entity.properties.set("classname", "func_areaportalwindow");
+            entity.properties.set("target", "rendered_window");
+            if foreground {
+                entity
+                    .properties
+                    .set("BackgroundBModel", "window_foreground");
+            }
+            Ok(())
+        })
+        .unwrap();
+    (
+        document.vmf().clone(),
+        portal,
+        models[0],
+        models.get(1).copied(),
+    )
+}
+
+#[test]
+fn window_portals_keep_render_targets_pivots_defaults_and_native_area_geometry() {
+    for foreground in [false, true] {
+        let (mut vmf, id, _, _) = window_room(foreground);
+        let portal = vmf
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        portal.properties.set("PortalVersion", "0");
+        portal.properties.set("model", "*99");
+        portal.properties.set("portalnumber", "999");
+        let original = vmf.clone();
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.areas, 2);
+        assert_eq!(output.stats.areaportals, 1);
+        assert_eq!(output.stats.areaportal_windows, 1);
+        let bsp = output.bsp.unwrap();
+        assert_eq!(
+            bsp.records::<Model>().unwrap().len(),
+            if foreground { 3 } else { 2 }
+        );
+        assert_eq!(bsp.area_data().unwrap().unwrap().portals.len(), 3);
+        let entities = bsp.entities().unwrap();
+        let window = entities
+            .split("{\n")
+            .find(|entity| entity.contains("\"classname\" \"func_areaportalwindow\""))
+            .unwrap();
+        for field in [
+            "\"target\" \"rendered_window\"",
+            "\"PortalVersion\" \"1\"",
+            "\"FadeStartDist\" \"128\"",
+            "\"FadeDist\" \"512\"",
+            "\"TranslucencyLimit\" \"0.2\"",
+        ] {
+            assert!(window.contains(field), "{window}");
+        }
+        assert!(!window.contains("\"model\""));
+        assert!(entities.contains("\"origin\" \"0.5 -0.25 96.25\""));
+        assert_eq!(vmf, original);
+    }
+}
+
+#[test]
+fn window_portals_reject_unsafe_fades_and_missing_ambiguous_or_undersized_models() {
+    for case in 0..11 {
+        let (mut vmf, id, target, foreground) = window_room(true);
+        let portal = vmf
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        match case {
+            0 => portal.properties.set("target", "missing_model"),
+            1 => portal.properties.set("FadeDist", "NaN"),
+            2 => portal.properties.set("FadeStartDist", "-1"),
+            3 => portal.properties.set("FadeDist", "64"),
+            4 => portal.properties.set("TranslucencyLimit", "1.1"),
+            5 => portal
+                .properties
+                .set("BackgroundBModel", "missing_foreground"),
+            6 => {
+                vmf.entities
+                    .iter_mut()
+                    .find(|entity| entity.id == target)
+                    .unwrap()
+                    .hidden = true
+            }
+            7 => vmf
+                .entities
+                .iter_mut()
+                .find(|entity| entity.id == target)
+                .unwrap()
+                .solids
+                .clear(),
+            8 => vmf
+                .entities
+                .iter_mut()
+                .find(|entity| entity.id == foreground.unwrap())
+                .unwrap()
+                .properties
+                .set("targetname", "rendered_window"),
+            9 => vmf
+                .entities
+                .iter_mut()
+                .find(|entity| entity.id == foreground.unwrap())
+                .unwrap()
+                .properties
+                .set("origin", "0 0 0"),
+            10 => {
+                let entity = vmf
+                    .entities
+                    .iter_mut()
+                    .find(|entity| entity.id == target)
+                    .unwrap();
+                for side in &mut entity.solids[0].sides {
+                    for point in &mut side.plane.0 {
+                        point.y *= 0.5;
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+        let original = vmf.clone();
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(
+            output.report.has_errors(),
+            "case {case}: {:?}",
+            output.report
+        );
+        assert!(output.bsp.is_none());
+        assert_eq!(vmf, original);
+    }
+}
+
+#[test]
+fn hidden_window_portals_leave_their_render_models_and_equal_fades_are_valid() {
+    let (mut vmf, id, _, _) = window_room(false);
+    let portal = vmf
+        .entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap();
+    portal.properties.set("FadeStartDist", "128");
+    portal.properties.set("FadeDist", "128");
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .hidden = true;
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.areaportal_windows, 0);
+    assert_eq!(output.stats.areaportals, 0);
+    assert_eq!(output.bsp.unwrap().records::<Model>().unwrap().len(), 2);
+}

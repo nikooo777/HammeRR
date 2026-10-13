@@ -26,6 +26,19 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let texdata = bsp.records::<TexData>().map_err(e)?;
     let texinfo = bsp.records::<TexInfo>().map_err(e)?;
     let faces = bsp.records::<Face>().map_err(e)?;
+    if let Some(areas) = bsp.area_data().map_err(e)? {
+        let mut copy = bsp.clone();
+        copy.set_area_data(&areas).map_err(e)?;
+        for index in [
+            bsp::lump::AREAS,
+            bsp::lump::AREAPORTALS,
+            bsp::lump::CLIPPORTALVERTS,
+        ] {
+            if copy.lumps[index] != bsp.lumps[index] {
+                return Err("area payload does not round trip".into());
+            }
+        }
+    }
     if let Some(displacements) = bsp.displacements().map_err(e)? {
         let mut copy = bsp.clone();
         copy.set_displacements(&displacements).map_err(e)?;

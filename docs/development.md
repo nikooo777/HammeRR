@@ -36,10 +36,10 @@ This software-rendered check opens **Build settings…** from a fresh session, c
 ### Ambient cube formats
 
 ```sh
-cargo test -p source-formats --test ambient --test bsp
+cargo test -p source-formats --test ambient --test areas --test bsp
 ```
 
-Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions and malformed records. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
+Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions, native area/areaportal/clip geometry and malformed records. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
 
 ## Validation scripts
 

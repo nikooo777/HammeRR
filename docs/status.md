@@ -43,4 +43,4 @@ HammeRR is in active development.
 
 **Editor:** free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, model rendering and broader map checks.
 
-**Compiler:** tighter visibility, bounced light and HDR, broader physics collision, terrain sewing, prop lighting, hint controls and overlays.
+**Compiler:** tighter visibility, bounced light and HDR, broader physics collision, mixed-power terrain LOD, prop lighting, hint controls and overlays.

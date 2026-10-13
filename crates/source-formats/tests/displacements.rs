@@ -225,6 +225,107 @@ fn native_triangle_order_keeps_clockwise_coverage_for_every_supported_power() {
 }
 
 #[test]
+fn power_info_lightmap_order_is_distinct_from_contact_order() {
+    for power in 2..=4 {
+        let info = DisplacementInfo {
+            power,
+            ..Default::default()
+        };
+        let size = info.grid_size().unwrap();
+        let triangles = info.lightmap_triangle_indices().unwrap();
+        assert_eq!(
+            triangles[0],
+            [
+                (size - 3) * size + size - 1,
+                (size - 3) * size + size - 2,
+                (size - 2) * size + size - 2
+            ]
+        );
+        assert_ne!(triangles, info.triangle_indices().unwrap());
+    }
+    let info = DisplacementInfo {
+        power: 4,
+        ..Default::default()
+    };
+    assert_eq!(info.lightmap_triangle_indices().unwrap()[337][1], 0);
+}
+
+#[test]
+fn stock_power_four_samples_match_power_info_uvs_except_native_triangle_511_aliases() {
+    let root = std::env::var_os("CSS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
+                .join(".local/share/Steam/steamapps/common/Counter-Strike Source")
+        });
+    let maps = root.join("cstrike/maps");
+    if !maps.is_dir() {
+        return;
+    }
+    let mut checked = 0;
+    let mut aliases = 0;
+    for path in std::fs::read_dir(maps)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+    {
+        if path.extension().is_none_or(|extension| extension != "bsp")
+            || path.metadata().unwrap().len() == 0
+        {
+            continue;
+        }
+        let bsp = Bsp::read(&path).unwrap();
+        let Some(data) = bsp.displacements().unwrap() else {
+            continue;
+        };
+        let faces = if bsp.lumps[bsp::lump::FACES].data.is_empty() {
+            bsp.values::<Face>(bsp::lump::FACES_HDR).unwrap()
+        } else {
+            bsp.records::<Face>().unwrap()
+        };
+        for (index, info) in data
+            .infos
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.power == 4)
+        {
+            let triangles = info.lightmap_triangle_indices().unwrap();
+            let positions = (0..289)
+                .map(|i| [(i % 17) as f32, (i / 17) as f32, 0.0])
+                .collect::<Vec<_>>();
+            let face = faces[usize::from(info.face)];
+            let Some(samples) = bsp.displacement_lightmap_samples(index).unwrap() else {
+                continue;
+            };
+            let width = face.lightmap_size[0] as usize + 1;
+            for (index, sample) in samples.into_iter().enumerate() {
+                let Some(surface) = sample.surface(&triangles, &positions).unwrap() else {
+                    continue;
+                };
+                let expected = [
+                    (index % width) as f64 * 16.0 / f64::from(face.lightmap_size[0]),
+                    (index / width) as f64 * 16.0 / f64::from(face.lightmap_size[1]),
+                ];
+                let difference = [
+                    surface.position[0] - expected[0],
+                    surface.position[1] - expected[1],
+                ];
+                checked += 1;
+                if difference.iter().any(|value| value.abs() > 0.025) {
+                    assert_eq!(sample.triangle, 255, "{}", path.display());
+                    assert!(
+                        (difference[0] + 8.0).abs() < 0.025 && (difference[1] - 8.0).abs() < 0.025,
+                        "{difference:?} in {}",
+                        path.display()
+                    );
+                    aliases += 1;
+                }
+            }
+        }
+    }
+    eprintln!("{checked} power-4 samples checked; {aliases} native triangle-511 aliases");
+}
+
+#[test]
 fn native_lightmap_samples_preserve_escapes_weights_and_missing_samples() {
     let (mut bsp, mut data) = fixture();
     data.infos[0].power = 4;
@@ -301,9 +402,9 @@ fn compressed_sample_weights_recover_raised_sloped_surfaces_and_outward_normals(
     let positions = data
         .positions(0, bsp.displacement_quad(0).unwrap())
         .unwrap();
-    let triangles = data.infos[0].triangle_indices().unwrap();
+    let triangles = data.infos[0].lightmap_triangle_indices().unwrap();
     let sample = DisplacementLightmapSample {
-        triangle: 0,
+        triangle: 18,
         weights: [64, 63, 127],
     };
     let result = sample.surface(&triangles, &positions).unwrap().unwrap();

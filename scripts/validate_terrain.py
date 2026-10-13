@@ -9,7 +9,7 @@ from pathlib import Path
 import validate_native_runtime as runtime
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
-from validate_direct_lighting import FACE_FORMAT, lightmaps
+from validate_direct_lighting import FACE_FORMAT, floor_samples, lightmaps
 from validate_face_lighting import ROOT, Client, detail
 from validate_visibility import ROOM
 
@@ -63,6 +63,14 @@ def check_lighting(data, info):
     assert all(
         index < 128 and sum(weights) in [253, 254, 255] for index, *weights in samples
     )
+    floor = floor_samples(data)
+    for target, shadowed in [([80, 80, 0], True), ([-64, -64, 0], False)]:
+        color = next(
+            color
+            for point, color, _, _ in floor
+            if all(abs(a - b) < 0.001 for a, b in zip(point, target, strict=True))
+        )
+        assert (color == [0, 0, 0]) == shadowed, (target, color)
 
 
 def fixtures(client, output):

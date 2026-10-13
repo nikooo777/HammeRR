@@ -5,7 +5,7 @@ use source_formats::bsp::{
     TexInfo, contents, surf,
 };
 
-use super::shadows::ShadowIndex;
+use super::shadows::{ShadowIndex, ShadowObject, Triangle};
 use super::terrain::TerrainPlan;
 use super::{LuxelFrame, Occluder, PointLight, encode_color};
 use crate::map::Map;
@@ -314,6 +314,24 @@ fn plans(
     Ok(plans)
 }
 
+fn terrain_shadows(map: &Map, budget: &mut Budget<'_>) -> Result<ShadowIndex<Triangle>, String> {
+    let mut triangles = Vec::new();
+    for terrain in &map.terrains {
+        budget.consume(terrain.vertices.len())?;
+        let points = super::terrain::positions(terrain)?;
+        for indices in &terrain.indices {
+            budget.consume(1)?;
+            if triangles.len() == Triangle::MAX_OBJECTS {
+                return Err("Direct LDR exceeds its 262,144 terrain-shadow triangle limit".into());
+            }
+            triangles.push(Triangle::new(
+                indices.map(|index| DVec3::from_array(points[index].map(f64::from))),
+            )?);
+        }
+    }
+    ShadowIndex::new(triangles, &mut |amount| budget.consume(amount))
+}
+
 pub(crate) fn bake(
     map: &Map,
     tree: &Tree,
@@ -351,12 +369,13 @@ pub(crate) fn bake(
         report.diagnostics.push(Diagnostic::warning("Direct LDR does not smooth lighting normals across smoothing groups yet; authored masks remain in the BSP", None, None));
     }
     if !map.terrains.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with flat native triangle normals and opaque brush shadows; terrain shadows and smoothed/sewn normals remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with flat native triangle normals and indexed opaque brush/terrain shadows; smoothed/sewn normals remain unfinished", None, None));
     }
     report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights and indexed opaque brush shadows; bounced light, sky/ambient cubes, HDR, props and moving-model lighting remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
+    let terrain_shadows = terrain_shadows(map, &mut budget)?;
     for plan in &plans {
         budget.consume(1)?;
         let average = colors.len();
@@ -375,7 +394,9 @@ pub(crate) fn bake(
                         continue;
                     }
                     let blocked = shadows
-                        .blocked(origin, light.origin, &mut |amount| budget.consume(amount))?;
+                        .blocked(origin, light.origin, &mut |amount| budget.consume(amount))?
+                        || terrain_shadows
+                            .blocked(origin, light.origin, &mut |amount| budget.consume(amount))?;
                     if !blocked {
                         color += contribution;
                     }

@@ -1,4 +1,4 @@
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use source_formats::bsp::{
     Bsp, Edge, Face, Leaf, LeafAmbient, LeafAmbientIndex, LeafAmbientSample, LightingKind, Model,
     RgbExp32, TexInfo, contents, surf,
@@ -43,6 +43,7 @@ pub(super) struct Stats {
 struct Surface {
     triangle: Triangle,
     source: usize,
+    coordinates: Option<[DVec2; 3]>,
 }
 
 struct Radiance {
@@ -56,7 +57,7 @@ struct Radiance {
 }
 
 impl Radiance {
-    fn at(&self, point: DVec3, distance: f64, cone: f64) -> DVec3 {
+    fn at(&self, point: DVec3, uv: Option<DVec2>, distance: f64, cone: f64) -> DVec3 {
         let blend = ((distance * cone - LOCAL_FILTER_START)
             / (LOCAL_FILTER_END - LOCAL_FILTER_START))
             .clamp(0.0, 1.0);
@@ -64,11 +65,15 @@ impl Radiance {
             return self.average;
         }
         let coordinates: [f64; 2] = std::array::from_fn(|axis| {
-            let row = self.projection[axis];
-            (DVec3::from_array([row[0], row[1], row[2]].map(f64::from)).dot(point)
-                + f64::from(row[3])
-                - f64::from(self.mins[axis]))
-            .clamp(0.0, (self.dimensions[axis] - 1) as f64)
+            let coordinate = if let Some(uv) = uv {
+                uv[axis] * (self.dimensions[axis] - 1) as f64
+            } else {
+                let row = self.projection[axis];
+                DVec3::from_array([row[0], row[1], row[2]].map(f64::from)).dot(point)
+                    + f64::from(row[3])
+                    - f64::from(self.mins[axis])
+            };
+            coordinate.clamp(0.0, (self.dimensions[axis] - 1) as f64)
         });
         let lower = coordinates.map(|value| value.floor() as usize);
         let upper: [usize; 2] =
@@ -108,6 +113,7 @@ fn add_surface(
     surfaces: &mut Vec<Surface>,
     points: [DVec3; 3],
     source: usize,
+    coordinates: Option<[DVec2; 3]>,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
     budget.consume(1)?;
@@ -124,6 +130,7 @@ fn add_surface(
     surfaces.push(Surface {
         triangle: Triangle::new(points)?,
         source,
+        coordinates,
     });
     Ok(())
 }
@@ -185,7 +192,7 @@ fn surfaces(ctx: &Context<'_>, bsp: &Bsp, budget: &mut Budget<'_>) -> Result<Sur
         if !average.is_finite() || average.min_element() < 0.0 {
             return Err("Model ambient surface radiance is nonfinite or negative".into());
         }
-        let samples = if !sky && face.dispinfo < 0 {
+        let samples = if !sky {
             light
                 .as_ref()
                 .and_then(|light| light.samples(0, 0))
@@ -208,11 +215,18 @@ fn surfaces(ctx: &Context<'_>, bsp: &Bsp, budget: &mut Budget<'_>) -> Result<Sur
             let terrain = &ctx.map.terrains[face.dispinfo as usize];
             budget.consume(terrain.vertices.len())?;
             let points = terrain.native_positions()?;
+            let size = terrain
+                .info
+                .grid_size()
+                .map_err(|error| error.to_string())?;
             for indices in &terrain.indices {
                 add_surface(
                     &mut surfaces,
                     indices.map(|index| DVec3::from_array(points[index].map(f64::from))),
                     source,
+                    Some(indices.map(|index| {
+                        DVec2::new((index % size) as f64, (index / size) as f64) / (size - 1) as f64
+                    })),
                     budget,
                 )?;
             }
@@ -231,6 +245,7 @@ fn surfaces(ctx: &Context<'_>, bsp: &Bsp, budget: &mut Budget<'_>) -> Result<Sur
                     &mut surfaces,
                     [points[0], points[index], points[index + 1]],
                     source,
+                    None,
                     budget,
                 )?;
             }
@@ -405,11 +420,20 @@ pub(super) fn bake(
                 &mut |surface| {
                     Ok(surface
                         .triangle
-                        .fraction(point, end)?
-                        .map(|fraction| (fraction, surface.source)))
+                        .intersection(point, end)?
+                        .map(|(fraction, weights)| {
+                            let uv = surface.coordinates.map(|coordinates| {
+                                coordinates
+                                    .into_iter()
+                                    .zip(weights)
+                                    .map(|(point, weight)| point * weight)
+                                    .sum::<DVec2>()
+                            });
+                            (fraction, (surface.source, uv))
+                        }))
                 },
             )?;
-            let Some((fraction, source)) = surface else {
+            let Some((fraction, (source, uv))) = surface else {
                 return Ok(DVec3::ZERO);
             };
             let radiance = &surfaces.radiance[source];
@@ -433,7 +457,7 @@ pub(super) fn bake(
                 return Ok(DVec3::ZERO);
             }
             let distance = fraction * super::sky::TRACE_LENGTH;
-            Ok(radiance.at(point + direction * distance, distance, cone))
+            Ok(radiance.at(point + direction * distance, uv, distance, cone))
         })?;
         for (slot, color) in sample.cube.iter_mut().zip(colors) {
             *slot = encode_color(color)?;
@@ -458,7 +482,7 @@ pub(super) fn bake(
         &LeafAmbient::Indexed { indices, samples },
     )
     .map_err(|error| error.to_string())?;
-    report.diagnostics.push(Diagnostic::info("Model ambient uses one quantized probe per open world leaf, sampled from filtered local world lightmaps and sky radiance; terrain uses face averages. Adaptive probe placement, local terrain sampling, static-prop shadows and bounced world lighting remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Model ambient uses one quantized probe per open world leaf, sampled from filtered local world/terrain lightmaps and sky radiance. Adaptive probe placement, static-prop shadows and bounced world lighting remain unfinished", None, None));
     Ok(stats)
 }
 
@@ -481,19 +505,40 @@ mod tests {
             mins: [0, 0],
             sky: false,
         };
-        assert_eq!(field.at(DVec3::ZERO, 10.0, 0.1), DVec3::ZERO);
+        assert_eq!(field.at(DVec3::ZERO, None, 10.0, 0.1), DVec3::ZERO);
         assert_eq!(
-            field.at(DVec3::new(0.5, 0.5, 0.0), 10.0, 0.1),
+            field.at(DVec3::new(0.5, 0.5, 0.0), None, 10.0, 0.1),
             field.average
         );
-        assert_eq!(field.at(DVec3::ONE, 10.0, 0.1).x, 192.0 / 255.0);
+        assert_eq!(field.at(DVec3::ONE, None, 10.0, 0.1).x, 192.0 / 255.0);
         assert_eq!(
-            field.at(DVec3::new(-100.0, 100.0, 0.0), 10.0, 0.1).x,
+            field.at(DVec3::new(-100.0, 100.0, 0.0), None, 10.0, 0.1).x,
             128.0 / 255.0
         );
-        assert_eq!(field.at(DVec3::ONE, 1000.0, 0.1), field.average);
-        let middle = field.at(DVec3::ZERO, 300.0, 0.1);
+        assert_eq!(field.at(DVec3::ONE, None, 1000.0, 0.1), field.average);
+        let middle = field.at(DVec3::ZERO, None, 300.0, 0.1);
         assert_eq!(middle, field.average * 0.5);
+        let triangle = Triangle::new([
+            DVec3::new(0.0, 0.0, 16.0),
+            DVec3::new(128.0, 0.0, 32.0),
+            DVec3::new(0.0, 128.0, 16.0),
+        ])
+        .unwrap();
+        let (_, weights) = triangle
+            .intersection(DVec3::new(32.0, 32.0, 128.0), DVec3::new(32.0, 32.0, -64.0))
+            .unwrap()
+            .unwrap();
+        let coordinates = [DVec2::ZERO, DVec2::X, DVec2::Y];
+        let uv = coordinates
+            .into_iter()
+            .zip(weights)
+            .map(|(point, weight)| point * weight)
+            .sum::<DVec2>();
+        assert_eq!(uv, DVec2::splat(0.25));
+        assert_eq!(
+            field.at(DVec3::splat(1000.0), Some(uv), 10.0, 0.1).x,
+            48.0 / 255.0
+        );
     }
 
     #[test]

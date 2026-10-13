@@ -54,6 +54,14 @@ impl Triangle {
     }
 
     pub(super) fn fraction(&self, start: DVec3, end: DVec3) -> Result<Option<f64>, String> {
+        Ok(self.intersection(start, end)?.map(|(fraction, _)| fraction))
+    }
+
+    pub(super) fn intersection(
+        &self,
+        start: DVec3,
+        end: DVec3,
+    ) -> Result<Option<(f64, [f64; 3])>, String> {
         let [a, b, c] = self.points;
         let delta = end - start;
         let edges = [b - a, c - a];
@@ -76,7 +84,7 @@ impl Triangle {
             && u + v <= 1.0 + TRIANGLE_EPSILON
             && t > TRIANGLE_EPSILON
             && t < 1.0 - TRIANGLE_EPSILON)
-            .then_some(t))
+            .then_some((t, [1.0 - u - v, u, v])))
     }
 }
 

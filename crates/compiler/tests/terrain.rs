@@ -36,6 +36,7 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
             },
         );
         assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert!(output.stats.ambient_samples > 0);
         assert_eq!(output.stats.lighting_faces, 7);
         let bsp = output.bsp.unwrap();
         let data = bsp.displacements().unwrap().unwrap();

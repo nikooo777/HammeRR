@@ -1,6 +1,6 @@
 //! Converts a VMF into GPU-ready triangle batches, one per material.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use glam::{DVec3, Vec3};
 use map_core::query::POINT_ENTITY_HALF_SIZE;
@@ -98,6 +98,82 @@ struct Builder<'a> {
     tool_wire_lines: Vec<LineVertex>,
     stats: SceneStats,
     light_targets: map_core::light::Targets<'a>,
+    displacements: HashMap<FaceId, Displacement>,
+}
+
+struct Displacement {
+    mesh: DisplacementMesh,
+    normals: Vec<[f64; 3]>,
+}
+
+fn local_normals(mesh: &DisplacementMesh) -> Vec<[f64; 3]> {
+    source_formats::bsp::DisplacementInfo {
+        power: (mesh.size - 1).ilog2() as i32,
+        ..Default::default()
+    }
+    .vertex_normals(
+        &mesh
+            .positions
+            .iter()
+            .map(|point| point.to_array())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| vec![[0.0; 3]; mesh.positions.len()])
+}
+
+fn world_displacements(vmf: &Vmf) -> HashMap<FaceId, Displacement> {
+    use map_core::displacement::neighbors::{self, SurfaceGrid};
+    let mut meshes = Vec::new();
+    for solid in
+        vmf.world.solids.iter().filter(|solid| {
+            !solid.hidden && solid.sides.iter().any(|side| side.displacement.is_some())
+        })
+    {
+        let Ok(brush) = BrushGeometry::from_solid(solid) else {
+            continue;
+        };
+        for face in &brush.faces {
+            let side = &solid.sides[face.side];
+            if let Some(disp) = &side.displacement
+                && let Ok(mesh) = DisplacementMesh::build(face, disp)
+            {
+                if meshes.len() == source_formats::bsp::MAX_DISPLACEMENTS {
+                    return HashMap::new();
+                }
+                meshes.push((
+                    FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    },
+                    mesh,
+                ));
+            }
+        }
+    }
+    let grids = meshes
+        .iter()
+        .map(|(_, mesh)| SurfaceGrid {
+            power: (mesh.size - 1).ilog2(),
+            corners: [
+                0,
+                (mesh.size - 1) * mesh.size,
+                mesh.size * mesh.size - 1,
+                mesh.size - 1,
+            ]
+            .map(|index| mesh.base_positions[index]),
+            positions: &mesh.positions,
+        })
+        .collect::<Vec<_>>();
+    let normals = neighbors::find(&grids, &mut |_| Ok(()))
+        .and_then(|links| neighbors::vertex_normals(&grids, &links.pairs, &mut |_| Ok(())));
+    let mut normals = normals.unwrap_or_default().into_iter();
+    meshes
+        .into_iter()
+        .map(|(face, mesh)| {
+            let normals = normals.next().unwrap_or_else(|| local_normals(&mesh));
+            (face, Displacement { mesh, normals })
+        })
+        .collect()
 }
 
 impl Builder<'_> {
@@ -151,11 +227,23 @@ impl Builder<'_> {
 
             match (&side.displacement, has_displacement) {
                 (Some(disp), _) => {
-                    let Ok(mesh) = DisplacementMesh::build(face, disp) else {
+                    let displacement = self
+                        .displacements
+                        .remove(&FaceId {
+                            solid: solid.id,
+                            side: side.id,
+                        })
+                        .or_else(|| {
+                            DisplacementMesh::build(face, disp).ok().map(|mesh| {
+                                let normals = local_normals(&mesh);
+                                Displacement { mesh, normals }
+                            })
+                        });
+                    let Some(Displacement { mesh, normals }) = displacement else {
                         continue;
                     };
                     self.stats.displacements += 1;
-                    self.add_displacement(material, &mesh, uv, tint, side);
+                    self.add_displacement(material, &mesh, &normals, uv, tint, side);
                     self.push_displacement_wire(&mesh, tool);
                     if selected {
                         self.push_loop(
@@ -283,23 +371,12 @@ impl Builder<'_> {
         &mut self,
         material: MaterialId,
         mesh: &DisplacementMesh,
+        normals: &[[f64; 3]],
         uv: impl Fn(DVec3) -> [f32; 2],
         tint: [u8; 3],
         side: &source_formats::vmf::Side,
     ) {
         let triangles: Vec<[usize; 3]> = mesh.triangles().collect();
-        let normals = source_formats::bsp::DisplacementInfo {
-            power: (mesh.size - 1).ilog2() as i32,
-            ..Default::default()
-        }
-        .vertex_normals(
-            &mesh
-                .positions
-                .iter()
-                .map(|point| point.to_array())
-                .collect::<Vec<_>>(),
-        )
-        .unwrap_or_else(|_| vec![[0.0; 3]; mesh.positions.len()]);
         // Texture coordinates come from the undisplaced face, as in the engine,
         // so they're computed from the flat grid position.
         let first = self.vertices.len() as u32;
@@ -672,6 +749,7 @@ impl SceneMesh {
             wire_lines: Vec::new(),
             tool_wire_lines: Vec::new(),
             stats: SceneStats::default(),
+            displacements: world_displacements(vmf),
             light_targets: {
                 let mut targets = map_core::light::Targets::new();
                 for entity in vmf.entities.iter().filter(|entity| !entity.hidden) {
@@ -752,6 +830,85 @@ impl SceneMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn curved_world_neighbors_share_normals_and_hidden_patches_do_not_contribute() {
+        let mut document = map_core::Document::empty();
+        for x in [0.0, 128.0] {
+            document
+                .edit("terrain", |tx| {
+                    map_core::edit::create_block(
+                        tx,
+                        DVec3::new(x, 0.0, 0.0),
+                        DVec3::new(x + 128.0, 128.0, 16.0),
+                        "brick/test",
+                    )
+                })
+                .unwrap();
+        }
+        let mut vmf = document.vmf().clone();
+        for (rotation, solid) in vmf.world.solids.iter_mut().enumerate() {
+            let brush = BrushGeometry::from_solid(solid).unwrap();
+            let face = brush
+                .faces
+                .iter()
+                .find(|face| face.plane.normal == DVec3::Z)
+                .unwrap();
+            let side = &mut solid.sides[face.side];
+            let mut disp = source_formats::vmf::DispInfo {
+                power: 2,
+                start_position: face.vertices[rotation * 2],
+                flags: None,
+                elevation: 0.0,
+                subdivided: false,
+                normals: None,
+                distances: None,
+                offsets: None,
+                offset_normals: None,
+                alphas: None,
+                triangle_tags: None,
+                allowed_verts: None,
+                extra_properties: Default::default(),
+                extra: Vec::new(),
+            };
+            let mesh = DisplacementMesh::build(face, &disp).unwrap();
+            disp.normals = Some(vec![vec![DVec3::Z; mesh.size]; mesh.size]);
+            disp.distances = Some(
+                mesh.positions
+                    .chunks(mesh.size)
+                    .map(|row| {
+                        row.iter()
+                            .map(|point| (point.x - 128.0).powi(2) / 512.0)
+                            .collect()
+                    })
+                    .collect(),
+            );
+            side.displacement = Some(disp);
+        }
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        let mut materials = MaterialLibrary::default();
+        let mesh = SceneMesh::build(&vmf, &fs, &mut materials, &HashSet::new());
+        let seam = mesh
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position == [128.0, 64.0, 16.0])
+            .collect::<Vec<_>>();
+        assert_eq!(seam.len(), 2);
+        assert_eq!(seam[0].normal, [0.0, 0.0, 1.0]);
+        assert_eq!(seam[0].normal, seam[1].normal);
+        vmf.world.solids[1].hidden = true;
+        let mesh = SceneMesh::build(&vmf, &fs, &mut materials, &HashSet::new());
+        let seam = mesh
+            .vertices
+            .iter()
+            .find(|vertex| vertex.position == [128.0, 64.0, 16.0])
+            .unwrap();
+        assert!(seam.normal[0].abs() > 0.01);
+    }
 
     #[test]
     fn displacement_wireframe_includes_raised_internal_edges_once() {

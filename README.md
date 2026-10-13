@@ -163,6 +163,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Compile and play →](docs/compile-and-play.md)
 
+| Connected terrain lighting |
+| --- |
+| ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |
+| Matching full edges share smooth lighting normals in the viewport and compiled map. |
+
 | Model ambient lighting |
 | --- |
 | ![Sky and surface tint on a weapon model in Counter-Strike: Source](docs/images/model-ambient.png) |

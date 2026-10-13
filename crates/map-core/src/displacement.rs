@@ -3,6 +3,8 @@ use source_formats::vmf::DispInfo;
 
 use crate::brush::Face;
 
+pub mod neighbors;
+
 /// The surface of a displaced face: a `size` x `size` vertex grid.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplacementMesh {

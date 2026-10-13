@@ -279,6 +279,8 @@ fn plans(
     let surfedges = bsp.surfedges().map_err(|error| error.to_string())?;
     let mut plans = Vec::new();
     let mut sample_records: usize = 0;
+    let mut terrain_fields =
+        super::terrain::fields(&map.terrains, &mut |amount| budget.consume(amount))?;
     for (index, face) in faces
         .iter_mut()
         .enumerate()
@@ -303,8 +305,13 @@ fn plans(
                 .checked_add(dimensions[0] * dimensions[1] + 1)
                 .filter(|&count| count <= MAX_LIGHTING_BYTES / size_of::<RgbExp32>())
                 .ok_or("Direct LDR lighting exceeds Source's 16 MiB limit")?;
-            let terrain =
-                TerrainPlan::new(terrain, dimensions, &mut |amount| budget.consume(amount))?;
+            let terrain = TerrainPlan::new(
+                terrain,
+                &terrain_fields.positions[face.dispinfo as usize],
+                std::mem::take(&mut terrain_fields.normals[face.dispinfo as usize]),
+                dimensions,
+                &mut |amount| budget.consume(amount),
+            )?;
             let texinfo = i16::try_from(infos.len())
                 .map_err(|_| "Terrain lighting texinfo count exceeds native short limits")?;
             infos.push(TexInfo {
@@ -449,7 +456,7 @@ pub(crate) fn bake(
         report.diagnostics.push(Diagnostic::warning("Direct LDR does not smooth lighting normals across smoothing groups yet; authored masks remain in the BSP", None, None));
     }
     if !map.terrains.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with interpolated vertex normals and indexed opaque brush/terrain shadows; cross-patch normal sewing and neighbor LOD remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
     report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; bounced world light, HDR and baked prop/model lightmaps remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();

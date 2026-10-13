@@ -36,7 +36,7 @@ HammeRR is in active development.
 | Water | Flat world water, fog regions, floating objects | Depth and below-water materials, currents, water in detail brushes or brush entities |
 | Cubemaps | Sample positions and sizes | Baked reflections |
 | Static props | Models, transforms, collision, skins, fading | Prop lighting and shadows, exact placement in the BSP tree |
-| Terrain | Power 2/3/4 surfaces, collision, lighting with smooth normals within each patch, links between matching neighbors | Normal sewing across patches, LOD between different powers or partial edges, corner neighbors, subdivision, removed triangles |
+| Terrain | Power 2/3/4 surfaces, collision, lighting normals sewn across matching equal-power full edges, neighbor links | Authored smoothing angles, LOD between different powers or partial edges, corner neighbors, subdivision, removed triangles |
 | Overlays | — | Not started |
 
 ## Next

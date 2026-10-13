@@ -1523,17 +1523,21 @@ Output is published atomically, and a build cannot be cancelled after publicatio
 Closing Build details leaves the build running.
 
 **Build lighting** offers **Fullbright** (the default, for fast geometry checks)
-and **Direct LDR**. Direct LDR bakes unnamed, static **light** entities into native
+and **Direct LDR**. Direct LDR bakes unnamed, static **light** and **light_spot** entities into native
 world-face lightmaps, with colored light, constant/linear/quadratic attenuation
 and opaque world/detail brush shadows. Border samples clamp to the actual face;
 fractional, rotated and mirrored texture projections retain their lightmap axes.
-Build details and MCP results report baked faces, samples, point lights and bytes.
+Build details and MCP results report baked faces, samples, light sources and bytes.
+Spotlights support pitch/yaw or a visible compiled target, inner/outer cones up
+to 90 degrees and focus falloff. Viewport helpers share the direction logic.
+Matching 180-degree cones become point lights; invalid cones and target
+references retain previous output.
 
-Direct LDR limits lighting to 16 MiB, 8,192 point lights and bounded CPU work.
+Direct LDR limits lighting to 16 MiB, 8,192 light sources and bounded CPU work.
 Named/animated lights, percentage-distance falloff and invalid values fail with
 object diagnostics and preserve the previous BSP. Other light types, transparent
-shadows, smoothed/bump normals, bounced light, sky/ambient cubes, HDR, props and
-brush-model lighting remain unfinished. A private headless CS:S check loaded and
+shadows, smoothed/bump normals, bounced light, sky/ambient cubes, HDR, props,
+terrain and brush-model lighting remain unfinished. A private headless CS:S check loaded and
 rendered the red-light fixture with Fullbright off; playable collision and
 production lighting still need validation.
 
@@ -1671,7 +1675,7 @@ cargo run --release -p compiler --bin hammerr-compile -- \
 ```
 
 Use `-o /path/to/map.bsp` to choose the output and `--lighting direct_ldr`
-to bake supported point lights. Add `--physics engine` for native brush bodies;
+to bake supported point/spot lights. Add `--physics engine` for native brush bodies;
 omit these flags for Fullbright and no physics bodies. To generate a sealed room
 with both player spawns:
 
@@ -1689,7 +1693,7 @@ player spawned inside and fullbright rendering enabled by the engine.
 
 **The compiler is experimental.** It produces BSP v20 maps with conservative
 portal-based visible/audible sets and a shared Fullbright/Direct LDR choice.
-Direct LDR emits bounded static point-light samples and world-light records;
+Direct LDR emits bounded static point/spot samples and world-light records;
 production lighting and tight portal clipping remain unfinished. The expanded
 visibility and lighting pipelines need CS:S runtime validation.
 
@@ -1745,6 +1749,8 @@ direction accept Pitch/Yaw/Roll through both the inspector and MCP.
 paths; add `--runtime` to verify their collision choices in private CS:S.
 `scripts/validate_terrain.py --runtime` checks imported terrain through both MCP
 build paths, asymmetric heights, player hulls, ray flags and dynamic contact.
+`scripts/validate_spotlights.py` checks native cones, target aiming and both MCP
+build paths, including hidden lights and rejected output preservation.
 
 </details>
 

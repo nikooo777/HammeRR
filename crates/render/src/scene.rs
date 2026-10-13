@@ -97,6 +97,7 @@ struct Builder<'a> {
     wire_lines: Vec<LineVertex>,
     tool_wire_lines: Vec<LineVertex>,
     stats: SceneStats,
+    light_targets: map_core::light::Targets<'a>,
 }
 
 impl Builder<'_> {
@@ -514,7 +515,7 @@ impl Builder<'_> {
         }
         let center = entity.origin().expect("point entity origin").as_vec3();
         let color = light_color(entity);
-        let direction = light_direction(entity);
+        let direction = light_direction(entity, &self.light_targets);
         if class == "light_spot" || class == "light_dynamic" {
             self.lathe(
                 center,
@@ -611,21 +612,19 @@ fn light_color(entity: &Entity) -> [u8; 3] {
         })
 }
 
-fn light_direction(entity: &Entity) -> Vec3 {
-    let angles = entity
-        .properties
-        .get("angles")
-        .and_then(|value| source_formats::fgd::vector(value, 3))
-        .unwrap_or_else(|| vec![0.0; 3]);
-    let pitch = light_number(entity, "pitch", -angles[0].rem_euclid(360.0) as f32)
-        .rem_euclid(360.0)
-        .to_radians();
-    let yaw = (angles[1].rem_euclid(360.0) as f32).to_radians();
-    Vec3::new(
-        pitch.cos() * yaw.cos(),
-        pitch.cos() * yaw.sin(),
-        pitch.sin(),
-    )
+fn light_direction(entity: &Entity, targets: &map_core::light::Targets<'_>) -> Vec3 {
+    map_core::light::target(entity.properties.get("target"), targets)
+        .and_then(|target| {
+            map_core::light::direction(
+                entity.properties.get("angles"),
+                entity.properties.get("angle"),
+                entity.properties.get("pitch"),
+                entity.origin().unwrap_or(DVec3::ZERO),
+                target,
+            )
+        })
+        .unwrap_or(DVec3::X)
+        .as_vec3()
 }
 
 impl SceneMesh {
@@ -669,6 +668,21 @@ impl SceneMesh {
             wire_lines: Vec::new(),
             tool_wire_lines: Vec::new(),
             stats: SceneStats::default(),
+            light_targets: {
+                let mut targets = map_core::light::Targets::new();
+                for entity in vmf.entities.iter().filter(|entity| !entity.hidden) {
+                    if let (Some(name), Some(origin)) = (
+                        entity
+                            .properties
+                            .get("targetname")
+                            .filter(|name| !name.is_empty()),
+                        entity.origin(),
+                    ) {
+                        targets.entry(name).or_default().push(origin);
+                    }
+                }
+                targets
+            },
         };
         for solid in vmf.world.solids.iter().filter(|s| !s.hidden) {
             builder.add_solid(solid, selected.contains(&ObjectId::Solid(solid.id)));
@@ -952,10 +966,13 @@ mod tests {
         assert!(unselected.lines.is_empty());
         let mut entity = Entity::new(1, "light_spot");
         entity.properties.set("angles", "0 90 0");
-        let direction = light_direction(&entity);
+        let direction = light_direction(&entity, &Default::default());
         assert!((direction - Vec3::Y).length() < 0.001);
         entity.properties.set("pitch", "-90");
-        assert!((light_direction(&entity) - Vec3::NEG_Z).length() < 0.001);
+        assert!((light_direction(&entity, &Default::default()) - Vec3::NEG_Z).length() < 0.001);
+        entity.properties.set("target", "aim");
+        let targets = [("aim", vec![DVec3::Y])].into();
+        assert!((light_direction(&entity, &targets) - Vec3::Y).length() < 0.001);
         entity.properties.set("_light", "garbage");
         assert_eq!(light_color(&entity), [255, 240, 200]);
     }

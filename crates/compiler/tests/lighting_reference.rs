@@ -144,6 +144,104 @@ fn unsupported_and_nonfinite_light_settings_are_explicit() {
 }
 
 #[test]
+fn spotlights_match_source_cones_focus_direction_and_native_records() {
+    let source = entity(&[
+        ("_light", "255 255 255 200"),
+        ("_constant_attn", "1"),
+        ("pitch", "-90"),
+        ("_inner_cone", "20"),
+        ("_cone", "45"),
+        ("_exponent", "2"),
+    ]);
+    let light = PointLight::from_entity(&source, 7)
+        .unwrap()
+        .with_spotlight(&source, &Default::default())
+        .unwrap();
+    let record = light.world_light();
+    assert_eq!(record.kind, source_formats::bsp::world_light_kind::SPOT);
+    assert_eq!(record.cluster, 7);
+    assert!((DVec3::from_array(record.normal.map(f64::from)) - DVec3::NEG_Z).length() < 1e-6);
+    assert!((f64::from(record.stop_dot) - 20_f64.to_radians().cos()).abs() < 1e-6);
+    assert!((f64::from(record.stop_dot2) - 45_f64.to_radians().cos()).abs() < 1e-6);
+    assert_eq!(record.exponent, 2.0);
+    for degrees in [0_f64, 10.0, 35.0, 60.0] {
+        let angle = degrees.to_radians();
+        let point = light.origin + DVec3::new(angle.sin(), 0.0, -angle.cos()) * 100.0;
+        let dot = angle.cos();
+        let fringe = if degrees > 45.0 {
+            0.0
+        } else if degrees <= 20.0 {
+            1.0
+        } else {
+            ((dot - 45_f64.to_radians().cos())
+                / (20_f64.to_radians().cos() - 45_f64.to_radians().cos()))
+            .powi(2)
+        };
+        let expected = DVec3::splat(200.0 * dot * dot * fringe);
+        assert!(
+            light
+                .contribution(point, DVec3::Z)
+                .unwrap()
+                .distance(expected)
+                < 1e-8
+        );
+    }
+}
+
+#[test]
+fn spotlight_targets_override_angles_and_invalid_cones_or_references_reject() {
+    let source = entity(&[
+        ("_light", "255"),
+        ("_inner_cone", "20"),
+        ("_cone", "45"),
+        ("target", "aim"),
+        ("angles", "broken"),
+    ]);
+    let targets = [("aim", vec![source.origin.unwrap() + DVec3::X])].into();
+    let light = PointLight::from_entity(&source, 0)
+        .unwrap()
+        .with_spotlight(&source, &targets)
+        .unwrap();
+    assert_eq!(light.world_light().normal, [1.0, 0.0, 0.0]);
+    let duplicate = [("aim", vec![DVec3::X, DVec3::Y])].into();
+    assert!(
+        PointLight::from_entity(&source, 0)
+            .unwrap()
+            .with_spotlight(&source, &duplicate)
+            .is_err()
+    );
+    for fields in [
+        vec![("_inner_cone", "50"), ("_cone", "20")],
+        vec![("_cone", "91")],
+        vec![("pitch", "NaN")],
+        vec![("target", "missing")],
+    ] {
+        let mut source = entity(&[("_light", "255")]);
+        source.properties.extend(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
+        assert!(
+            PointLight::from_entity(&source, 0)
+                .unwrap()
+                .with_spotlight(&source, &Default::default())
+                .is_err()
+        );
+    }
+    let point = entity(&[("_light", "255"), ("_inner_cone", "180"), ("_cone", "180")]);
+    assert_eq!(
+        PointLight::from_entity(&point, 0)
+            .unwrap()
+            .with_spotlight(&point, &Default::default())
+            .unwrap()
+            .world_light()
+            .kind,
+        source_formats::bsp::world_light_kind::POINT
+    );
+}
+
+#[test]
 fn rgbexp_encoding_preserves_energy_and_rejects_invalid_colors() {
     for color in [
         DVec3::ZERO,

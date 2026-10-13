@@ -207,7 +207,7 @@ impl Controller {
                     .as_u64()
                     .unwrap_or_default();
                 format!(
-                    "\nTerrain: {count} surfaces · Vertices: {vertices} · Triangles: {triangles}"
+                    "\nTerrain surfaces: {count} · Vertices: {vertices} · Triangles: {triangles}"
                 )
             })
             .unwrap_or_default();
@@ -238,9 +238,9 @@ impl Controller {
                     .unwrap_or_default();
                 let lights = result["stats"]["world_lights"].as_u64().unwrap_or_default();
                 let light_label = if lights == 1 {
-                    "point light"
+                    "light source"
                 } else {
-                    "point lights"
+                    "light sources"
                 };
                 format!(
                     "\nBaked lighting: {count} faces · {samples} samples · {lights} {light_label}"

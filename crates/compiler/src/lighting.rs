@@ -95,6 +95,15 @@ pub struct PointLight {
     attenuation: [f64; 3],
     radius: f64,
     cluster: i32,
+    cone: Option<SpotCone>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SpotCone {
+    direction: DVec3,
+    inner: f64,
+    outer: f64,
+    exponent: f64,
 }
 
 fn property<'a>(entity: &'a MapEntity, name: &str) -> Option<&'a str> {
@@ -129,7 +138,7 @@ impl PointLight {
         if number(entity, "style")? != 0.0
             || property(entity, "targetname").is_some_and(|value| !value.is_empty())
         {
-            return Err("Direct LDR supports static style-0 point lights; named or animated lights need light-style baking".into());
+            return Err("Direct LDR supports static style-0 lights; named or animated lights need light-style baking".into());
         }
         if number(entity, "_fifty_percent_distance")? != 0.0
             || number(entity, "_zero_percent_distance")? != 0.0
@@ -195,7 +204,51 @@ impl PointLight {
             attenuation,
             radius,
             cluster,
+            cone: None,
         })
+    }
+
+    pub fn with_spotlight(
+        mut self,
+        entity: &MapEntity,
+        targets: &map_core::light::Targets<'_>,
+    ) -> Result<Self, String> {
+        let inner = if property(entity, "_inner_cone").is_none() {
+            10.0
+        } else {
+            number(entity, "_inner_cone")?
+        };
+        let inner = if inner == 0.0 { 10.0 } else { inner };
+        let outer = number(entity, "_cone")?;
+        let outer = if outer == 0.0 { inner } else { outer };
+        if inner == 180.0 && outer == 180.0 {
+            return Ok(self);
+        }
+        if inner > 90.0 || outer > 90.0 || outer < inner {
+            return Err(
+                "Spotlight cones need inner ≤ outer ≤ 90 degrees, or both 180 for a point light"
+                    .into(),
+            );
+        }
+        let exponent = number(entity, "_exponent")?;
+        if exponent > f64::from(f32::MAX) {
+            return Err("Spotlight focus exceeds native float limits".into());
+        }
+        let target = map_core::light::target(property(entity, "target"), targets)?;
+        let direction = map_core::light::direction(
+            property(entity, "angles"),
+            property(entity, "angle"),
+            property(entity, "pitch"),
+            self.origin,
+            target,
+        )?;
+        self.cone = Some(SpotCone {
+            direction,
+            inner: inner.to_radians().cos(),
+            outer: outer.to_radians().cos(),
+            exponent,
+        });
+        Ok(self)
     }
 
     pub fn contribution(&self, point: DVec3, normal: DVec3) -> Result<DVec3, String> {
@@ -218,7 +271,25 @@ impl PointLight {
         let divisor = self.attenuation[0]
             + distance * self.attenuation[1]
             + distance * distance * self.attenuation[2];
-        let result = self.intensity * (dot / divisor);
+        let cone = if let Some(cone) = self.cone {
+            let angle = cone.direction.dot(-offset / offset.length());
+            if angle <= cone.outer {
+                0.0
+            } else if angle >= cone.inner {
+                angle
+            } else {
+                let fringe = ((angle - cone.outer) / (cone.inner - cone.outer)).clamp(0.0, 1.0);
+                angle
+                    * if cone.exponent == 0.0 || cone.exponent == 1.0 {
+                        fringe
+                    } else {
+                        fringe.powf(cone.exponent)
+                    }
+            }
+        } else {
+            1.0
+        };
+        let result = self.intensity * (dot * cone / divisor);
         if !result.is_finite() {
             return Err("Point-light contribution is nonfinite".into());
         }
@@ -226,7 +297,7 @@ impl PointLight {
     }
 
     pub fn world_light(&self) -> WorldLight {
-        WorldLight {
+        let mut light = WorldLight {
             origin: self.origin.as_vec3().to_array(),
             intensity: (self.intensity / 255.0).as_vec3().to_array(),
             cluster: self.cluster,
@@ -239,7 +310,15 @@ impl PointLight {
             texinfo: -1,
             owner: -1,
             ..WorldLight::default()
+        };
+        if let Some(cone) = self.cone {
+            light.kind = world_light_kind::SPOT;
+            light.normal = cone.direction.as_vec3().to_array();
+            light.stop_dot = cone.inner as f32;
+            light.stop_dot2 = cone.outer as f32;
+            light.exponent = cone.exponent as f32;
         }
+        light
     }
 }
 

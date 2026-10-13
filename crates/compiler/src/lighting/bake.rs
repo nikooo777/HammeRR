@@ -84,9 +84,24 @@ fn lights(
     control: &Control,
 ) -> Result<Vec<PointLight>, String> {
     let mut lights = Vec::new();
+    let mut targets = map_core::light::Targets::new();
     for entity in &map.entities {
         control.checkpoint()?;
-        if entity.classname.eq_ignore_ascii_case("light") {
+        if let (Some((_, name)), Some(origin)) = (
+            entity
+                .properties
+                .iter()
+                .find(|(key, value)| key.eq_ignore_ascii_case("targetname") && !value.is_empty()),
+            entity.origin,
+        ) {
+            targets.entry(name.as_str()).or_default().push(origin);
+        }
+    }
+    for entity in &map.entities {
+        control.checkpoint()?;
+        if entity.classname.eq_ignore_ascii_case("light")
+            || entity.classname.eq_ignore_ascii_case("light_spot")
+        {
             if lights.len() == MAX_WORLD_LIGHTS {
                 return Err("Direct lighting exceeds the 8,192 world-light limit".into());
             }
@@ -94,7 +109,16 @@ fn lights(
                 .origin
                 .map(|origin| tree.leaf_at(origin, &map.planes));
             let cluster = leaf.and_then(|leaf| visibility.clusters[leaf]);
-            match PointLight::from_entity(entity, cluster.map(|value| value as i32).unwrap_or(-1)) {
+            let light =
+                PointLight::from_entity(entity, cluster.map(|value| value as i32).unwrap_or(-1))
+                    .and_then(|light| {
+                        if entity.classname.eq_ignore_ascii_case("light_spot") {
+                            light.with_spotlight(entity, &targets)
+                        } else {
+                            Ok(light)
+                        }
+                    });
+            match light {
                 Ok(light) if cluster.is_some() => lights.push(light),
                 Ok(_) => report.diagnostics.push(Diagnostic::warning("Point light is inside solid or unreachable space and does not illuminate the world", Some(format!("entity:{}", entity.id)), entity.origin)),
                 Err(error) => report.diagnostics.push(Diagnostic::error(error, Some(format!("entity:{}", entity.id)), entity.origin)),
@@ -102,7 +126,7 @@ fn lights(
         } else if entity.classname.to_ascii_lowercase().starts_with("light_") {
             report.diagnostics.push(Diagnostic::warning(
                 format!(
-                    "Direct LDR does not bake {} yet; only static point lights are supported",
+                    "Direct LDR does not bake {} yet; only static point/spot lights are supported",
                     entity.classname
                 ),
                 Some(format!("entity:{}", entity.id)),

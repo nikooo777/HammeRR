@@ -144,6 +144,12 @@ def worker(args):
                     raise RuntimeError(f"CS:S exited early: {process.returncode}")
                 time.sleep(1)
             subprocess.run(["grim", str(output / "game.png")], check=True, timeout=10)
+            if getattr(args, "capture_ppm", False):
+                subprocess.run(
+                    ["grim", "-t", "ppm", str(output / "game.ppm")],
+                    check=True,
+                    timeout=10,
+                )
             text = (game / "hammerr-runtime.log").read_text(errors="replace")
             players = [
                 list(map(float, match))

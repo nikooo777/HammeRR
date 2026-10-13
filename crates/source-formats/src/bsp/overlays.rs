@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 
 use super::{Bsp, Face, TexInfo, invalid, lump};
 
-pub const MAX_OVERLAYS: usize = 512;
+pub const MAX_OVERLAYS: usize = 1024;
 pub const MAX_OVERLAY_FACES: usize = 64;
 const MAX_FACES: usize = 65_536;
 const MAX_TEXINFOS: usize = 32_768;
@@ -81,13 +81,15 @@ pub struct OverlayData {
 impl OverlayData {
     pub fn validate(&self, face_count: usize, texinfo_count: usize) -> io::Result<()> {
         if self.overlays.len() > MAX_OVERLAYS || self.fades.len() > MAX_OVERLAYS {
-            return Err(invalid("overlay arrays exceed their 512-record limit"));
+            return Err(invalid(format!(
+                "overlay arrays exceed their {MAX_OVERLAYS}-record allocation cap"
+            )));
         }
         if !self.fades.is_empty() && self.fades.len() != self.overlays.len() {
             return Err(invalid("overlay fade count must match the overlay count"));
         }
         if face_count > MAX_FACES || texinfo_count > MAX_TEXINFOS {
-            return Err(invalid("overlay reference arrays exceed native bounds"));
+            return Err(invalid("overlay reference arrays exceed bounded limits"));
         }
         let mut ids = BTreeSet::new();
         for overlay in &self.overlays {
@@ -150,7 +152,7 @@ fn bounded_data<T: Pod>(bsp: &Bsp, slot: usize, maximum: usize) -> io::Result<&[
     }
     if metadata.data.len() / size_of::<T>() > maximum {
         return Err(invalid(format!(
-            "overlay-related lump {slot} exceeds its native count limit"
+            "overlay-related lump {slot} exceeds its allocation cap"
         )));
     }
     bsp.checked(slot, size_of::<T>())

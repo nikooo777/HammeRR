@@ -5,6 +5,9 @@ use glam::DVec3;
 
 use super::{Bsp, Edge, Face, Record, invalid, lump};
 
+mod samples;
+pub use samples::{DisplacementLightmapSample, DisplacementSurfaceSample};
+
 pub const MAX_DISPLACEMENTS: usize = 2048;
 pub const MAX_DISPLACEMENT_VERTICES: usize = MAX_DISPLACEMENTS * 289;
 pub const MAX_DISPLACEMENT_TRIANGLES: usize = MAX_DISPLACEMENTS * 512;
@@ -103,6 +106,38 @@ impl DisplacementInfo {
         let cells = self.grid_size()? - 1;
         Ok(cells * cells * 2)
     }
+
+    pub fn triangle_indices(self) -> io::Result<Vec<[usize; 3]>> {
+        let size = self.grid_size()?;
+        let mut pending = vec![(0, 0, size - 1)];
+        let mut triangles = Vec::with_capacity(self.triangle_count()?);
+        while let Some((x, y, cells)) = pending.pop() {
+            if cells > 2 {
+                let half = cells / 2;
+                for (dx, dy) in [(half, half), (0, half), (half, 0), (0, 0)] {
+                    pending.push((x + dx, y + dy, half));
+                }
+            } else {
+                let center = (y + 1) * size + x + 1;
+                let ring = [
+                    (0, 1),
+                    (0, 0),
+                    (1, 0),
+                    (2, 0),
+                    (2, 1),
+                    (2, 2),
+                    (1, 2),
+                    (0, 2),
+                    (0, 1),
+                ]
+                .map(|(dx, dy)| (y + dy) * size + x + dx);
+                for pair in ring.windows(2) {
+                    triangles.push([pair[1], pair[0], center]);
+                }
+            }
+        }
+        Ok(triangles)
+    }
 }
 
 #[repr(C)]
@@ -192,6 +227,7 @@ impl Displacements {
             ));
         }
         let faces = faces(bsp)?;
+        let mut sample_work = 0usize;
         for (index, info) in self.infos.iter().enumerate() {
             let face = faces
                 .get(usize::from(info.face))
@@ -245,6 +281,17 @@ impl Displacements {
                 lump::DISP_LIGHTMAP_SAMPLE_POSITIONS,
                 info.lightmap_sample_start,
             )?;
+            if let Some(mut samples) = samples::stream(bsp, *info, face)? {
+                sample_work = sample_work
+                    .checked_add(samples.count())
+                    .filter(|&work| work <= MAX_AUXILIARY_BYTES / 4)
+                    .ok_or_else(|| {
+                        invalid("displacement sample validation exceeds its work limit")
+                    })?;
+                while samples.remaining() != 0 {
+                    samples.read()?;
+                }
+            }
         }
         if self.vertices.iter().any(|vertex| {
             vertex

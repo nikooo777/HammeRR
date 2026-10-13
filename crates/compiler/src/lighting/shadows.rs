@@ -55,7 +55,7 @@ impl Triangle {
 }
 
 impl ShadowObject for Triangle {
-    const MAX_OBJECTS: usize = source_formats::bsp::MAX_DISPLACEMENTS * 128;
+    const MAX_OBJECTS: usize = source_formats::bsp::MAX_DISPLACEMENT_TRIANGLES;
     fn bounds(&self) -> (DVec3, DVec3) {
         (self.mins, self.maxs)
     }

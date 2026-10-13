@@ -7,6 +7,8 @@ use super::{Bsp, Edge, Face, Record, invalid, lump};
 
 mod samples;
 pub use samples::{DisplacementLightmapSample, DisplacementSurfaceSample};
+mod surface;
+pub use surface::{DisplacementGeometricSample, DisplacementSurfaceSampler};
 
 pub const MAX_DISPLACEMENTS: usize = 2048;
 pub const MAX_DISPLACEMENT_VERTICES: usize = MAX_DISPLACEMENTS * 289;

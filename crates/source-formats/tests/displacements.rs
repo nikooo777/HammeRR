@@ -425,3 +425,68 @@ fn compressed_sample_weights_recover_raised_sloped_surfaces_and_outward_normals(
     assert!(sample.surface(&triangles, &[[f32::NAN; 3]; 25]).is_err());
     assert!(sample.surface(&triangles, &[[0.0; 3]; 25]).is_err());
 }
+
+#[test]
+fn geometric_sampler_covers_all_triangles_without_aliasing_native_record_511() {
+    use bsp::DisplacementSurfaceSampler;
+    use glam::{DVec2, DVec3};
+    for power in 2..=4 {
+        let info = DisplacementInfo {
+            power,
+            ..Default::default()
+        };
+        let size = info.grid_size().unwrap();
+        let positions = (0..size * size)
+            .map(|i| {
+                let x = (i % size) as f32;
+                let y = (i / size) as f32;
+                [x, y, 8.0 + 0.5 * x - 0.25 * y]
+            })
+            .collect::<Vec<_>>();
+        let sampler = DisplacementSurfaceSampler::new(info, &positions).unwrap();
+        let triangles = info.lightmap_triangle_indices().unwrap();
+        for (index, triangle) in triangles.iter().enumerate() {
+            let uv = triangle
+                .iter()
+                .map(|&i| DVec2::new((i % size) as f64, (i / size) as f64))
+                .sum::<DVec2>()
+                / (3.0 * (size - 1) as f64);
+            let sample = sampler.sample(uv.to_array()).unwrap();
+            assert_eq!(sample.triangle as usize, index);
+            assert!(
+                sample
+                    .weights
+                    .iter()
+                    .all(|&w| (w - 1.0 / 3.0).abs() < 1e-12)
+            );
+            let point = DVec3::from_array(sample.surface.position);
+            assert!((point.z - (8.0 + point.x * 0.5 - point.y * 0.25)).abs() < 1e-12);
+            assert!(
+                DVec3::from_array(sample.surface.normal)
+                    .distance(DVec3::new(-0.5, 0.25, 1.0).normalize())
+                    < 1e-12
+            );
+            if index == 511 {
+                assert!(sample.lightmap_record().is_none());
+            } else {
+                assert_eq!(sample.lightmap_record().unwrap().triangle as usize, index);
+            }
+        }
+        for uv in [[0.0, 0.0], [1.0, 1.0], [0.5, 0.5], [0.25, 0.75]] {
+            let result = sampler.sample(uv).unwrap();
+            let point = DVec3::from_array(result.surface.position);
+            assert!((point.x - uv[0] * (size - 1) as f64).abs() < 1e-12);
+            assert!((point.y - uv[1] * (size - 1) as f64).abs() < 1e-12);
+        }
+        for uv in [
+            [f64::NAN, 0.0],
+            [0.0, f64::INFINITY],
+            [-0.1, 0.0],
+            [0.0, 1.1],
+        ] {
+            assert!(sampler.sample(uv).is_err());
+        }
+        assert!(DisplacementSurfaceSampler::new(info, &positions[..positions.len() - 1]).is_err());
+        assert!(DisplacementSurfaceSampler::new(info, &vec![[0.0; 3]; positions.len()]).is_err());
+    }
+}

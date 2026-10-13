@@ -86,7 +86,7 @@ python3 -B scripts/validate_terrain.py --output /tmp/hammerr-terrain-check
 python3 -B scripts/validate_terrain_normals.py --output /tmp/hammerr-normals-check
 ```
 
-`direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion and shared sky-quality settings. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
+`direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
 
 ## In-game checks
 

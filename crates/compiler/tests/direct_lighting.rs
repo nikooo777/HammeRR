@@ -348,6 +348,86 @@ fn soft_sun_bakes_a_penumbra_without_changing_native_light_direction() {
 }
 
 #[test]
+fn model_ambient_probes_reflect_world_light_and_avoid_detail_solids() {
+    use source_formats::bsp::{Leaf, LeafAmbient, Model, Node};
+    let mut document = room(
+        DVec3::new(0.0, 0.0, 220.0),
+        &[("_light", "255 0 0 200"), ("_constant_attn", "1")],
+    );
+    document
+        .edit("central detail solid", |tx| {
+            let map_core::ObjectId::Solid(id) = edit::create_block(
+                tx,
+                DVec3::new(-32.0, -32.0, 64.0),
+                DVec3::new(32.0, 32.0, 192.0),
+                "dev/dev_measuregeneric01",
+            )?
+            else {
+                unreachable!()
+            };
+            edit::tie_to_entity(tx, &[id], "func_detail", &[])?;
+            Ok(())
+        })
+        .unwrap();
+    let source = document.vmf().clone();
+    let output = compiler::compile_with_options(document.vmf(), &common::empty_game(), options());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.stats.ambient_samples > 0);
+    let bsp = output.bsp.unwrap();
+    let LeafAmbient::Indexed { indices, samples } =
+        bsp.leaf_ambient(LightingKind::Ldr).unwrap().unwrap()
+    else {
+        unreachable!()
+    };
+    let leaves = bsp.records::<Leaf>().unwrap();
+    let nodes = bsp.records::<Node>().unwrap();
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let model = bsp.records::<Model>().unwrap()[0];
+    assert_eq!(samples.len(), output.stats.ambient_samples);
+    assert_eq!(
+        output.stats.ambient_bytes,
+        indices.len() * 4 + samples.len() * 28
+    );
+    for (owner, index) in indices
+        .iter()
+        .enumerate()
+        .filter(|(_, index)| index.sample_count != 0)
+    {
+        let sample = samples[usize::from(index.first_sample)];
+        let point = DVec3::from_array(sample.world_position(&leaves[owner]).unwrap());
+        assert!(
+            !point.cmpge(DVec3::new(-32.0, -32.0, 64.0)).all()
+                || !point.cmple(DVec3::new(32.0, 32.0, 192.0)).all()
+        );
+        let mut cursor = model.head_node;
+        while cursor >= 0 {
+            let node = nodes[cursor as usize];
+            let plane = planes[node.plane as usize];
+            let distance =
+                DVec3::from_array(plane.normal.map(f64::from)).dot(point) - f64::from(plane.dist);
+            cursor = node.children[usize::from(distance < 0.0)];
+        }
+        assert_eq!((-1 - cursor) as usize, owner);
+        assert!(sample.cube.iter().any(|color| color.linear()[0] > 0.0));
+        assert!(
+            sample
+                .cube
+                .iter()
+                .all(|color| color.linear()[1..] == [0.0, 0.0])
+        );
+    }
+    assert_eq!(*document.vmf(), source);
+    let fullbright =
+        compiler::compile_with_options(document.vmf(), &common::empty_game(), Options::default());
+    assert_eq!(fullbright.stats.ambient_samples, 0);
+    assert!(
+        fullbright.bsp.unwrap().lumps[bsp::lump::LEAF_AMBIENT_LIGHTING]
+            .data
+            .is_empty()
+    );
+}
+
+#[test]
 fn sampled_sky_ambient_matches_open_closed_and_shaded_hemispheres() {
     for (sky, shade, expected) in [
         (true, false, [200.0, 0.0, 60.0]),

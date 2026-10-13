@@ -169,6 +169,10 @@ impl SkyLight {
         self.ambient != DVec3::ZERO
     }
 
+    pub(super) fn ambient_radiance(self) -> DVec3 {
+        self.ambient / 255.0
+    }
+
     pub(super) fn ambient_contribution(
         self,
         normal: DVec3,

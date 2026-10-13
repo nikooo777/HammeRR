@@ -287,7 +287,9 @@ impl Controller {
                     "light sources"
                 };
                 format!(
-                    "\nBaked lighting: {count} faces · {samples} samples · {lights} {light_label}"
+                    "\nBaked lighting: {count} faces · {samples} samples · {lights} {light_label}\nModel ambient: {} probes · {} bytes",
+                    result["stats"]["ambient_samples"].as_u64().unwrap_or_default(),
+                    result["stats"]["ambient_bytes"].as_u64().unwrap_or_default(),
                 )
             })
             .unwrap_or_default();

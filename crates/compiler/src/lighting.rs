@@ -5,6 +5,7 @@ use source_formats::bsp::{MAX_LIGHTING_BYTES, RgbExp32, TexInfo, WorldLight, wor
 use crate::map::MapEntity;
 mod bake;
 mod falloff;
+mod probes;
 mod shadows;
 mod sky;
 mod terrain;

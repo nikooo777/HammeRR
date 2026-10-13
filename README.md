@@ -163,6 +163,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Compile and play →](docs/compile-and-play.md)
 
+| Model ambient lighting |
+| --- |
+| ![Sky and surface tint on a weapon model in Counter-Strike: Source](docs/images/model-ambient.png) |
+| Models pick up reflected light from nearby world surfaces and visible sky. |
+
 ## Status
 
 The editor covers most everyday brush work. Notable gaps:

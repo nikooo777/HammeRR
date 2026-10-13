@@ -10,7 +10,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 2. Choose the build settings:
    - **Build lighting**: **Fullbright** for a geometry check, or **Direct LDR** to bake lights.
    - **Physics bodies**: **CS:S engine physics** if the map needs physics bodies.
-   - **Sky quality**, for Direct LDR sky ambient: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
+   - **Sampling quality**, for Direct LDR sky and model ambient: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
 
@@ -48,9 +48,9 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 - **No physics bodies** (default).
 - **CS:S engine physics**: builds collision bodies with the game's own Linux collision library, run inside the `hammerr-physics` helper. See [Physics](#physics).
 
-**Sky quality** (Direct LDR only)
+**Sampling quality** (Direct LDR only)
 
-- **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
+- **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky), and [model ambient](#model-ambient-lighting). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
 
 A previous build counts as out of date once its settings differ from the current ones.
 
@@ -109,7 +109,7 @@ A `light_environment` adds sunlight and soft sky light:
 2. Click **Entity…**, search for `light_environment`, select it and click **Place entity**. Use one visible sun entity per map.
 3. Set the sunlight color and intensity under **Brightness**. Aim it with **Pitch Yaw Roll (Y Z X)** and **Pitch**; `-90` for **Pitch** shines straight down.
 4. Set the sky color and intensity under **Ambient**. Set its brightness to zero to turn sky ambient off. An absent or empty ambient property uses half the sun's brightness; a newly placed entity uses its FGD default.
-5. Leave **SunSpreadAngle** at `0` for hard shadows, or enter an angle in degrees to soften them; try `5` as a starting point. Open **Build settings…**, choose **Direct LDR** and select a **Sky quality**.
+5. Leave **SunSpreadAngle** at `0` for hard shadows, or enter an angle in degrees to soften them; try `5` as a starting point. Open **Build settings…**, choose **Direct LDR** and select a **Sampling quality**.
 6. Click **Close**, then **Run Map** to inspect the baked result in CS:S.
 
 ![Soft sun shadow on the floor in Counter-Strike: Source](images/soft-sun.png)
@@ -123,7 +123,22 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Named or animated lights, invalid falloff values and invalid sun angles fail with a diagnostic that names the object.
 
-Not yet: other light types, transparent shadows, smoothing groups and bump maps on brush faces, bounced light, ambient cubes, HDR, and lighting for props and moving brush entities. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, smoothing groups and bump maps on brush faces, bounced world light, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+
+#### Model ambient lighting
+
+Ambient probes let models pick up reflected light from world surfaces and the sky.
+
+1. Set up point lights, spotlights or a sun and sky as above.
+2. Open **Build settings…**, choose **Direct LDR**, and choose **Sampling quality**.
+3. Click **Close**, then **Run Map**. Models receive the compiled ambient light; the editor viewport still does not render model assets.
+4. Open **Build details…** to see **Model ambient** probe counts and diagnostics.
+
+![Sky and surface ambient tint on the weapon model in Counter-Strike: Source](images/model-ambient.png)
+
+The compiler places one quantized probe in each open world leaf, avoiding detail solids and space below terrain. It gathers reflected face-average lighting and visible sky radiance, without adding direct point/spot lights twice. Narrow or occupied leaves can lack a safe probe; diagnostics report those omissions.
+
+Limits: face averages smooth over local lighting detail; adaptive probe placement, static-prop occlusion and baked prop lightmaps remain unfinished. These probes do not add bounced lighting to world lightmaps.
 
 ### Physics
 

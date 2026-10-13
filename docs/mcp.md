@@ -173,8 +173,9 @@ These details aren't obvious from the tool list.
 **Compiling**
 
 - `set_compile_settings` takes `lighting` (`fullbright` or `direct_ldr`), `physics` (`none` or `engine`) and `sky_quality` (`fast`, `balanced` or `detailed`). It changes only the fields you pass, and invalid combinations leave every setting unchanged.
-- `get_compile_settings` returns the current choices, including `sky_choices` with their labels and direction counts (32, 128 and 512). These tools work before the first build, like the toolbar's **Build settings…**. Sky quality affects Direct LDR sky ambient and soft sun visibility.
+- `get_compile_settings` returns the current choices, including `sky_choices` with their labels and direction counts (32, 128 and 512). These tools work before the first build, like the toolbar's **Build settings…**. The UI calls `sky_quality` **Sampling quality**; it affects Direct LDR sky ambient, soft sun and model ambient.
 - Settings cannot change while a build runs. Each job reports its captured `settings`; changing settings after a build makes that output out of date for launching.
 - Create and edit baked lights with `create_entity` and `set_entity_properties`. For `light_environment`, `_light` is sunlight and `_ambient` is sky ambient; color values use `R G B brightness`. Set ambient brightness to zero with a value such as `255 255 255 0`. Set `SunSpreadAngle` from 0 to 90 degrees: zero keeps hard shadows, positive values soften them using the selected sky quality.
 - `get_compile_status.launch` says whether the last build can be played, or why not.
+- Build statistics include `ambient_samples` and `ambient_bytes`, shown as **Model ambient** in Build details. Direct LDR writes one safe probe per open world leaf from world-face averages and sky radiance; skipped leaves are reported in diagnostics.
 - `run_map` and `launch_game` always launch CS:S with `-insecure`.

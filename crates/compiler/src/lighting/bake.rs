@@ -372,7 +372,7 @@ pub(crate) fn bake(
         report.diagnostics.push(Diagnostic::warning("Direct LDR does not smooth lighting normals across smoothing groups yet; authored masks remain in the BSP", None, None));
     }
     if !map.terrains.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with flat native triangle normals and indexed opaque brush/terrain shadows; smoothed/sewn normals remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with interpolated vertex normals and indexed opaque brush/terrain shadows; cross-patch normal sewing and neighbor LOD remain unfinished", None, None));
     }
     report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights and indexed opaque brush shadows; bounced light, sky/ambient cubes, HDR, props and moving-model lighting remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();

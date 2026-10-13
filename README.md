@@ -1635,14 +1635,14 @@ physics adds checked terrain contact meshes and reports `physics_mesh_triangles`
 Native no-physics, no-hull and no-ray flags are retained. Invalid grids, unsupported
 entity/detail terrain, subdivision and triangle removal retain previous output.
 **Direct LDR** bakes lit power-2/3/4 terrain using full-precision raised surface
-positions and flat triangle normals, including indexed opaque brush/terrain
-shadows. Native auxiliary records retain representable triangles; triangle 511
+positions and interpolated vertex normals shared with the viewport, including
+indexed opaque brush/terrain shadows. Native auxiliary records retain representable triangles; triangle 511
 uses an explicit missing record while its luxel still receives baked lighting.
 Raised terrain can shade the world faces beneath it.
 Unlit terrain materials require **Fullbright**, which keeps terrain without
-lightmaps. Smoothed/sewn normals and neighbor LOD remain
-unfinished. Terrain creation/editing controls remain roadmap work; use existing
-terrain in imported VMFs.
+lightmaps. Cross-patch normal sewing and neighbor LOD remain unfinished. Terrain
+creation/editing controls remain roadmap work; use existing terrain in imported
+VMFs.
 
 Native BSP inspection also validates terrain lightmap sample streams, triangle
 references and allocation bounds. The compiler shares native triangle ordering
@@ -1770,6 +1770,8 @@ paths; add `--runtime` to verify their collision choices in private CS:S.
 build paths, power-4 and mixed-power sample streams, asymmetric heights, player
 hulls, ray flags and dynamic contact. Use `--runtime-cases power-four mixed` to
 limit game checks to those two fixtures.
+`scripts/validate_terrain_normals.py --runtime` checks a curved ridge, shared
+viewport rendering, unchanged native contact data and both MCP build paths.
 `scripts/validate_spotlights.py` checks native cones, target aiming and both MCP
 build paths, including hidden lights and rejected output preservation.
 `scripts/validate_shadow_index.py` checks a dense mixed-light fixture through

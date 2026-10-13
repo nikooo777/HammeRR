@@ -23,7 +23,33 @@ impl DisplacementGeometricSample {
     }
 }
 
+impl DisplacementInfo {
+    pub fn vertex_normals(self, positions: &[[f64; 3]]) -> io::Result<Vec<[f64; 3]>> {
+        if positions.len() != self.vertex_count()?
+            || positions.iter().flatten().any(|x| !x.is_finite())
+        {
+            return Err(invalid("displacement normal grid is invalid"));
+        }
+        let mut normals = vec![DVec3::ZERO; positions.len()];
+        for indices in self.lightmap_triangle_indices()? {
+            let [a, b, c] = indices.map(|index| DVec3::from_array(positions[index]));
+            let normal = (c - a).cross(b - a);
+            if !normal.is_finite() {
+                return Err(invalid("displacement normal exceeds finite arithmetic"));
+            }
+            for index in indices {
+                normals[index] += normal;
+            }
+        }
+        Ok(normals
+            .into_iter()
+            .map(|normal| normal.normalize_or_zero().to_array())
+            .collect())
+    }
+}
+
 struct Triangle {
+    indices: [usize; 3],
     coordinates: [DVec2; 3],
     points: [DVec3; 3],
     normal: DVec3,
@@ -33,6 +59,7 @@ pub struct DisplacementSurfaceSampler {
     cells: usize,
     triangles: Vec<Triangle>,
     lookup: Vec<[u16; 2]>,
+    normals: Vec<[f64; 3]>,
 }
 
 impl DisplacementSurfaceSampler {
@@ -43,6 +70,12 @@ impl DisplacementSurfaceSampler {
         if positions.len() != size * size || positions.iter().flatten().any(|x| !x.is_finite()) {
             return Err(invalid("displacement surface grid is invalid"));
         }
+        let normals = info.vertex_normals(
+            &positions
+                .iter()
+                .map(|point| point.map(f64::from))
+                .collect::<Vec<_>>(),
+        )?;
         let indices = info.lightmap_triangle_indices()?;
         let mut triangles = Vec::with_capacity(indices.len());
         let mut lookup = vec![[u16::MAX; 2]; cells * cells];
@@ -58,6 +91,7 @@ impl DisplacementSurfaceSampler {
             let slot = entry.iter_mut().find(|i| **i == u16::MAX).unwrap();
             *slot = index as u16;
             triangles.push(Triangle {
+                indices,
                 coordinates,
                 points,
                 normal,
@@ -67,6 +101,7 @@ impl DisplacementSurfaceSampler {
             cells,
             triangles,
             lookup,
+            normals,
         })
     }
 
@@ -133,5 +168,19 @@ impl DisplacementSurfaceSampler {
             }
         }
         found.ok_or_else(|| invalid("displacement UV does not resolve to a native triangle"))
+    }
+
+    pub fn sample_smoothed(&self, uv: [f64; 2]) -> io::Result<DisplacementGeometricSample> {
+        let mut sample = self.sample(uv)?;
+        let normal = self.triangles[usize::from(sample.triangle)]
+            .indices
+            .iter()
+            .zip(sample.weights)
+            .map(|(&index, weight)| DVec3::from_array(self.normals[index]) * weight)
+            .sum::<DVec3>()
+            .try_normalize()
+            .ok_or_else(|| invalid("displacement interpolated normal is undefined"))?;
+        sample.surface.normal = normal.to_array();
+        Ok(sample)
     }
 }

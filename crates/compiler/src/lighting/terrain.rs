@@ -72,7 +72,7 @@ impl TerrainPlan {
         dimensions: [usize; 2],
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<Self, String> {
-        consume(terrain.vertices.len() + terrain.triangles.len())?;
+        consume(terrain.vertices.len() + 2 * terrain.triangles.len())?;
         let positions = positions(terrain)?;
         let sampler = DisplacementSurfaceSampler::new(terrain.info, &positions)
             .map_err(|error| error.to_string())?;
@@ -81,7 +81,7 @@ impl TerrainPlan {
             for s in 0..dimensions[0] {
                 consume(DisplacementSurfaceSampler::MAX_SAMPLE_WORK)?;
                 let sample = sampler
-                    .sample([
+                    .sample_smoothed([
                         s as f64 / (dimensions[0] - 1) as f64,
                         t as f64 / (dimensions[1] - 1) as f64,
                     ])

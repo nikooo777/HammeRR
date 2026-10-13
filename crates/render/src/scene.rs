@@ -288,14 +288,18 @@ impl Builder<'_> {
         side: &source_formats::vmf::Side,
     ) {
         let triangles: Vec<[usize; 3]> = mesh.triangles().collect();
-        let mut normals = vec![DVec3::ZERO; mesh.positions.len()];
-        for &[a, b, c] in &triangles {
-            let (pa, pb, pc) = (mesh.positions[a], mesh.positions[b], mesh.positions[c]);
-            let n = (pa - pb).cross(pc - pb);
-            for i in [a, b, c] {
-                normals[i] += n;
-            }
+        let normals = source_formats::bsp::DisplacementInfo {
+            power: (mesh.size - 1).ilog2() as i32,
+            ..Default::default()
         }
+        .vertex_normals(
+            &mesh
+                .positions
+                .iter()
+                .map(|point| point.to_array())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| vec![[0.0; 3]; mesh.positions.len()]);
         // Texture coordinates come from the undisplaced face, as in the engine,
         // so they're computed from the flat grid position.
         let first = self.vertices.len() as u32;
@@ -303,7 +307,7 @@ impl Builder<'_> {
             let alpha = mesh.alphas[i].clamp(0.0, 255.0) as u8;
             self.push_vertex(Vertex {
                 position: p.as_vec3().to_array(),
-                normal: normals[i].normalize_or_zero().as_vec3().to_array(),
+                normal: normals[i].map(|value| value as f32),
                 uv: uv(mesh.base_positions[i]),
                 color: [tint[0], tint[1], tint[2], alpha],
                 lightmap: lightmap_vertex(side, mesh.base_positions[i]),
@@ -792,6 +796,12 @@ mod tests {
         assert_eq!(mesh.wire_lines.len(), 112);
         assert!(mesh.wire_lines.iter().any(|line| line.position[2] == 96.0));
         assert!(mesh.tool_wire_lines.is_empty());
+        let peak = mesh
+            .vertices
+            .iter()
+            .find(|vertex| vertex.position == [32.0, 32.0, 96.0])
+            .unwrap();
+        assert_eq!(peak.normal, [0.0, 0.0, 1.0]);
         for side in &mut vmf.world.solids[0].sides {
             side.material = "tools/toolsnodraw".into();
         }

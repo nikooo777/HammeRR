@@ -53,7 +53,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static point lights, spotlights, sun and sky ambient on world faces and power-2/3/4 terrain. Supports legacy and percentage-distance falloff, spot cones, soft sun and opaque shadows, with smooth normals within terrain patches. Ambient cubes, bounced light, HDR, props and moving-model lighting remain unfinished."
+                "Bakes static point lights, spotlights, sun and sky ambient on world faces and power-2/3/4 terrain. Supports percentage falloff, soft sun, opaque shadows and smooth terrain normals. Model ambient gathers reflected world surfaces and sky with one probe per open leaf. Bounced world light, HDR and baked prop lighting remain unfinished."
             }
         }
     }
@@ -249,6 +249,8 @@ pub struct Stats {
     pub lightmap_samples: usize,
     pub lighting_bytes: usize,
     pub lighting_work: usize,
+    pub ambient_samples: usize,
+    pub ambient_bytes: usize,
     pub physics_models: usize,
     pub physics_solids: usize,
     pub physics_convexes: usize,
@@ -464,6 +466,8 @@ fn build(
         output.stats.lightmap_samples = stats.samples;
         output.stats.lighting_bytes = stats.bytes;
         output.stats.lighting_work = stats.work;
+        output.stats.ambient_samples = stats.ambient_samples;
+        output.stats.ambient_bytes = stats.ambient_bytes;
     }
     if options.physics == PhysicsMode::Engine {
         control.advance(Stage::Physics)?;

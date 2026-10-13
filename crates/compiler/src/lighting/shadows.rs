@@ -52,6 +52,32 @@ impl Triangle {
             maxs: a.max(b).max(c) + DVec3::splat(0.0001),
         })
     }
+
+    pub(super) fn fraction(&self, start: DVec3, end: DVec3) -> Result<Option<f64>, String> {
+        let [a, b, c] = self.points;
+        let delta = end - start;
+        let edges = [b - a, c - a];
+        let cross = delta.cross(edges[1]);
+        let determinant = edges[0].dot(cross);
+        let scale = edges[0].length() * edges[1].length() * delta.length();
+        if !delta.is_finite() || !determinant.is_finite() || !scale.is_finite() {
+            return Err("Terrain shadow ray arithmetic must be finite".into());
+        }
+        if scale == 0.0 || determinant.abs() <= scale * 1e-12 {
+            return Ok(None);
+        }
+        let offset = start - a;
+        let u = offset.dot(cross) / determinant;
+        let q = offset.cross(edges[0]);
+        let v = delta.dot(q) / determinant;
+        let t = edges[1].dot(q) / determinant;
+        Ok((u >= -TRIANGLE_EPSILON
+            && v >= -TRIANGLE_EPSILON
+            && u + v <= 1.0 + TRIANGLE_EPSILON
+            && t > TRIANGLE_EPSILON
+            && t < 1.0 - TRIANGLE_EPSILON)
+            .then_some(t))
+    }
 }
 
 impl ShadowObject for Triangle {
@@ -63,28 +89,7 @@ impl ShadowObject for Triangle {
         8
     }
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
-        let [a, b, c] = self.points;
-        let delta = end - start;
-        let edges = [b - a, c - a];
-        let cross = delta.cross(edges[1]);
-        let determinant = edges[0].dot(cross);
-        let scale = edges[0].length() * edges[1].length() * delta.length();
-        if !delta.is_finite() || !determinant.is_finite() || !scale.is_finite() {
-            return Err("Terrain shadow ray arithmetic must be finite".into());
-        }
-        if scale == 0.0 || determinant.abs() <= scale * 1e-12 {
-            return Ok(false);
-        }
-        let offset = start - a;
-        let u = offset.dot(cross) / determinant;
-        let q = offset.cross(edges[0]);
-        let v = delta.dot(q) / determinant;
-        let t = edges[1].dot(q) / determinant;
-        Ok(u >= -TRIANGLE_EPSILON
-            && v >= -TRIANGLE_EPSILON
-            && u + v <= 1.0 + TRIANGLE_EPSILON
-            && t > TRIANGLE_EPSILON
-            && t < 1.0 - TRIANGLE_EPSILON)
+        Ok(self.fraction(start, end)?.is_some())
     }
 }
 
@@ -179,6 +184,27 @@ impl<T: ShadowObject> ShadowIndex<T> {
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<bool, String> {
         self.visit(start, end, consume, &mut |hull| hull.intersects(start, end))
+    }
+
+    pub(super) fn nearest<R>(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+        hit: &mut impl FnMut(&T) -> Result<Option<(f64, R)>, String>,
+    ) -> Result<Option<(f64, R)>, String> {
+        let mut first = None;
+        self.visit(start, end, consume, &mut |object| {
+            if let Some(candidate) = hit(object)?
+                && first
+                    .as_ref()
+                    .is_none_or(|(fraction, _)| candidate.0 < *fraction)
+            {
+                first = Some(candidate);
+            }
+            Ok(false)
+        })?;
+        Ok(first)
     }
 
     fn visit(
@@ -392,6 +418,38 @@ mod tests {
                 .unwrap()
         );
         assert!(work < hulls.len() * 7 / 8, "{work} index work units");
+    }
+
+    #[test]
+    fn nearest_surface_keeps_the_closest_payload_and_checks_cancellation() {
+        let triangles = [3.0, 2.0].map(|z| {
+            Triangle::new([
+                DVec3::new(-1.0, -1.0, z),
+                DVec3::new(1.0, -1.0, z),
+                DVec3::new(0.0, 1.0, z),
+            ])
+            .unwrap()
+        });
+        let index = ShadowIndex::new(triangles.to_vec(), &mut |_| Ok(())).unwrap();
+        let end = DVec3::Z * 10.0;
+        let nearest = index
+            .nearest(DVec3::ZERO, end, &mut |_| Ok(()), &mut |triangle| {
+                Ok(triangle
+                    .fraction(DVec3::ZERO, end)?
+                    .map(|fraction| (fraction, triangle.points[0].z)))
+            })
+            .unwrap();
+        assert_eq!(nearest, Some((0.2, 2.0)));
+        assert!(
+            index
+                .nearest(
+                    DVec3::ZERO,
+                    end,
+                    &mut |_| Err("cancelled".into()),
+                    &mut |_| Ok(Some((0.2, 2.0)))
+                )
+                .is_err()
+        );
     }
 
     #[test]

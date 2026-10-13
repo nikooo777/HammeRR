@@ -87,6 +87,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lighting_bytes
     );
     println!(
+        "model ambient: {} probes, {} bytes",
+        stats.ambient_samples, stats.ambient_bytes
+    );
+    println!(
         "static props: {}, model assets: {}, leaf references: {}",
         stats.static_props, stats.static_prop_models, stats.static_prop_leaf_refs
     );

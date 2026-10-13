@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import re
+import struct
 from pathlib import Path
 
 from validate_authored_planes import records
@@ -17,6 +18,32 @@ def sample(data, target):
         for point, color, _, _ in floor_samples(data)
         if all(abs(a - b) < 0.001 for a, b in zip(point, target, strict=True))
     )
+
+
+def ambient_probes(data, stats):
+    indices = records(data, 52, "<2H")
+    samples = records(data, 56, "<24s4B", expected_version=1)
+    leaves = records(data, 10, "<ihh6h4Hhh", expected_version=1)
+    assert len(indices) == len(leaves)
+    assert len(samples) == stats["ambient_samples"] > 0
+    assert stats["ambient_bytes"] == len(indices) * 4 + len(samples) * 28
+    colors = []
+    for owner, (count, first) in enumerate(indices):
+        if not count:
+            assert first < len(leaves)
+            continue
+        assert count == 1 and first < len(samples) and leaves[owner][1] >= 0
+        cube, x, y, z, padding = samples[first]
+        assert padding == 0
+        for axis, fraction in enumerate([x, y, z]):
+            point = (
+                leaves[owner][3 + axis]
+                + (leaves[owner][6 + axis] - leaves[owner][3 + axis]) * fraction / 255
+            )
+            assert leaves[owner][3 + axis] <= point <= leaves[owner][6 + axis]
+        for red, green, blue, exponent in struct.iter_unpack("<3Bb", cube):
+            colors.append([channel * 2**exponent for channel in (red, green, blue)])
+    return colors
 
 
 def validate(client, output, reference=None):
@@ -171,6 +198,12 @@ def validate(client, output, reference=None):
             compiled = client.call("compile_map", {"path": str(bsp)})
             assert compiled["success"], compiled
             data = bsp.read_bytes()
+            cubes = ambient_probes(data, compiled["stats"])
+            if name in ["enclosed", "ambient-enclosed", "hidden"]:
+                assert all(color == [0, 0, 0] for color in cubes), (name, cubes)
+            elif name.startswith("ambient"):
+                channel = 0 if name == "ambient-fallback" else 2
+                assert any(color[channel] > 0 for color in cubes), (name, cubes)
             expected = [
                 0
                 if name in ["shade", "enclosed", "terrain-shade", "hidden"]
@@ -352,6 +385,7 @@ def soft_sun_checks(client, output):
             built = client.call("compile_map", {"path": str(destination)})
             assert built["success"], built
             data = destination.read_bytes()
+            ambient_probes(data, built["stats"])
             center = center_sample(data)
             if name == "clear":
                 assert center == [200, 0, 0], center

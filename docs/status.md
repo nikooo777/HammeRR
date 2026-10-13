@@ -29,8 +29,8 @@ HammeRR is in active development.
 | Geometry and collision | BSP version 20, with checked brush planes and collision bevels | — |
 | Build settings | Lighting, physics and sky quality available before the first build; shared with agents and frozen during builds | — |
 | Visibility | Conservative visible and audible sets from portals; sky visibility | Tight portal clipping (VVIS quality), areaportals |
-| Lighting | Fullbright; Direct LDR for static point lights, spotlights, one sun and sky ambient; soft sun, Fast/Balanced/Detailed sky sampling, percentage falloff, opaque shadows and terrain | Adaptive sky/sun sampling, bounced light, ambient cubes, HDR, transparent shadows, smoothing groups and bump maps on brush faces, prop and moving-model lighting |
-| Ambient cube data | Existing embedded, dense legacy and indexed LDR/HDR records are preserved by the BSP format library | Baking ambient cubes for newly compiled maps |
+| Lighting | Fullbright; Direct LDR for static point lights, spotlights, one sun and sky ambient; soft sun, Fast/Balanced/Detailed sampling, percentage falloff, opaque shadows and terrain | Adaptive sky/sun sampling, bounced world light, HDR, transparent shadows, smoothing groups and bump maps on brush faces, baked prop and moving-model lightmaps |
+| Model ambient | LDR cubes from reflected world-face averages and sky, with one safe probe per open leaf; legacy and indexed LDR/HDR data preservation | Local lightmap sampling, adaptive probe placement, static-prop occlusion |
 | Physics | World, clips, brush entities, water and terrain, using CS:S's own collision library | Surface materials, authored masses, broader collision with moving bodies |
 | Brush entities | Explicit and origin-brush pivots; sliding and rotating doors, rotating brushes and triggers | Broader brush-entity behavior coverage |
 | Water | Flat world water, fog regions, floating objects | Depth and below-water materials, currents, water in detail brushes or brush entities |

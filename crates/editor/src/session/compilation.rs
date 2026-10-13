@@ -94,6 +94,8 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
         "lightmap_samples": stats.lightmap_samples,
         "lighting_bytes": stats.lighting_bytes,
         "lighting_work": stats.lighting_work,
+        "ambient_samples": stats.ambient_samples,
+        "ambient_bytes": stats.ambient_bytes,
         "physics_models": stats.physics_models,
         "physics_solids": stats.physics_solids,
         "physics_convexes": stats.physics_convexes,

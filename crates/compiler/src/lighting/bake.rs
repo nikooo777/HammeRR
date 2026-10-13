@@ -24,6 +24,8 @@ pub(crate) struct BakeStats {
     pub samples: usize,
     pub bytes: usize,
     pub work: usize,
+    pub ambient_samples: usize,
+    pub ambient_bytes: usize,
 }
 
 struct Plan {
@@ -80,13 +82,13 @@ impl Plan {
     }
 }
 
-struct Budget<'a> {
+pub(super) struct Budget<'a> {
     work: usize,
     control: &'a Control,
 }
 
 impl Budget<'_> {
-    fn consume(&mut self, amount: usize) -> Result<(), String> {
+    pub(super) fn consume(&mut self, amount: usize) -> Result<(), String> {
         self.control.checkpoint()?;
         self.work = self
             .work
@@ -449,7 +451,7 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR lights terrain with interpolated vertex normals and indexed opaque brush/terrain shadows; cross-patch normal sewing and neighbor LOD remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights, sampled soft sun and sky ambient with indexed opaque brush/terrain shadows; bounced light, ambient cubes, HDR, props and moving-model lighting remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static point/spot lights, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; bounced world light, HDR and baked prop/model lightmaps remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
@@ -587,12 +589,35 @@ pub(crate) fn bake(
         bsp.set_displacements(&data)
             .map_err(|error| error.to_string())?;
     }
+    let sky_radiance = lights
+        .iter()
+        .find_map(|light| match light {
+            Emitter::Sky(light) => Some(light.ambient_radiance()),
+            Emitter::Point(_) => None,
+        })
+        .unwrap_or(DVec3::ZERO);
+    let ambient = super::probes::bake(
+        &super::probes::Context {
+            map,
+            tree,
+            visibility,
+            shadows: &shadows,
+            terrain: &terrain_shadows,
+            directions: &ambient_directions,
+            sky_radiance,
+        },
+        bsp,
+        report,
+        &mut budget,
+    )?;
     Ok(BakeStats {
         lights: world_lights.len(),
         faces: plans.len(),
         samples: count - plans.len(),
         bytes: colors.len() * size_of::<RgbExp32>(),
         work: budget.work,
+        ambient_samples: ambient.samples,
+        ambient_bytes: ambient.bytes,
     })
 }
 

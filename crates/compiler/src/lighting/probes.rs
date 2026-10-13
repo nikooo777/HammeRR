@@ -15,6 +15,8 @@ use crate::{Diagnostic, Report};
 const SURFACE_HIT_BIAS: f64 = 0.05;
 const LOCAL_FILTER_START: f64 = 20.0;
 const LOCAL_FILTER_END: f64 = 40.0;
+const MIN_PROBE_SPACING: f64 = 128.0;
+const MAX_AMBIENT_SAMPLES: usize = u16::MAX as usize + 1;
 const CANDIDATE_FRACTIONS: [u8; 4] = [64, 128, 192, 224];
 const CUBE_AXES: [DVec3; 6] = [
     DVec3::X,
@@ -32,6 +34,7 @@ pub(super) struct Context<'a> {
     pub shadows: &'a ShadowIndex<Occluder>,
     pub terrain: &'a ShadowIndex<Triangle>,
     pub directions: &'a [DVec3],
+    pub quality: crate::SkyQuality,
     pub sky_radiance: DVec3,
 }
 
@@ -257,12 +260,12 @@ fn surfaces(ctx: &Context<'_>, bsp: &Bsp, budget: &mut Budget<'_>) -> Result<Sur
     })
 }
 
-fn candidate(
+fn candidates(
     ctx: &Context<'_>,
     node: usize,
     leaf: &Leaf,
     budget: &mut Budget<'_>,
-) -> Result<Option<LeafAmbientSample>, String> {
+) -> Result<Vec<LeafAmbientSample>, String> {
     let volume = &ctx.tree.nodes[node].volume;
     let count = volume
         .sides
@@ -271,7 +274,7 @@ fn candidate(
         .sum::<usize>();
     budget.consume(count + 1)?;
     if count == 0 {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let center = volume
         .sides
@@ -298,6 +301,12 @@ fn candidate(
                     % CANDIDATE_FRACTIONS.len()]
             })
         }));
+    let limit = match ctx.quality {
+        crate::SkyQuality::Fast => 1,
+        crate::SkyQuality::Balanced => 4,
+        crate::SkyQuality::Detailed => 8,
+    };
+    let mut valid = Vec::new();
     for position in candidates {
         budget.consume(volume.sides.len() + 1)?;
         let sample = LeafAmbientSample {
@@ -344,9 +353,33 @@ fn candidate(
         {
             continue;
         }
-        return Ok(Some(sample));
+        valid.push((sample, point));
+        if limit == 1 {
+            break;
+        }
     }
-    Ok(None)
+    let mut selected = Vec::new();
+    if !valid.is_empty() {
+        selected.push(valid.remove(0));
+    }
+    while selected.len() < limit {
+        let mut best = None;
+        let mut distance = MIN_PROBE_SPACING * MIN_PROBE_SPACING;
+        for (index, (_, point)) in valid.iter().enumerate() {
+            budget.consume(selected.len())?;
+            let separation = selected
+                .iter()
+                .map(|(_, chosen)| point.distance_squared(*chosen))
+                .fold(f64::INFINITY, f64::min);
+            if separation > distance {
+                best = Some(index);
+                distance = separation;
+            }
+        }
+        let Some(index) = best else { break };
+        selected.push(valid.remove(index));
+    }
+    Ok(selected.into_iter().map(|(sample, _)| sample).collect())
 }
 
 fn gather(
@@ -401,73 +434,81 @@ pub(super) fn bake(
             .copied()
             .flatten()
             .ok_or("Model ambient leaf has no world volume")?;
-        let Some(mut sample) = candidate(ctx, node, leaf, budget)? else {
+        let probes = candidates(ctx, node, leaf, budget)?;
+        if probes.is_empty() {
             missing += 1;
             continue;
-        };
-        let point = DVec3::from_array(
-            sample
-                .world_position(leaf)
-                .map_err(|error| error.to_string())?,
-        );
-        let colors = gather(ctx.directions, &mut |direction| {
-            budget.consume(11)?;
-            let end = point + direction * super::sky::TRACE_LENGTH;
-            let surface = surfaces.geometry.nearest(
-                point,
-                end,
-                &mut |work| budget.consume(work),
-                &mut |surface| {
-                    Ok(surface
-                        .triangle
-                        .intersection(point, end)?
-                        .map(|(fraction, weights)| {
-                            let uv = surface.coordinates.map(|coordinates| {
-                                coordinates
-                                    .into_iter()
-                                    .zip(weights)
-                                    .map(|(point, weight)| point * weight)
-                                    .sum::<DVec2>()
-                            });
-                            (fraction, (surface.source, uv))
-                        }))
-                },
-            )?;
-            let Some((fraction, (source, uv))) = surface else {
-                return Ok(DVec3::ZERO);
-            };
-            let radiance = &surfaces.radiance[source];
-            let blocker = if radiance.sky {
-                let Some(hit) = ctx
-                    .shadows
-                    .sky_fraction(point, end, &mut |work| budget.consume(work))?
-                else {
-                    return Ok(DVec3::ZERO);
-                };
-                Some((hit, ()))
-            } else {
-                ctx.shadows
-                    .nearest(point, end, &mut |work| budget.consume(work), &mut |hull| {
-                        Ok(hull.entry(point, end)?.map(|hit| (hit.0, ())))
-                    })?
-            };
-            if blocker.is_some_and(|(blocked, _)| {
-                (fraction - blocked) * super::sky::TRACE_LENGTH > SURFACE_HIT_BIAS
-            }) {
-                return Ok(DVec3::ZERO);
-            }
-            let distance = fraction * super::sky::TRACE_LENGTH;
-            Ok(radiance.at(point + direction * distance, uv, distance, cone))
-        })?;
-        for (slot, color) in sample.cube.iter_mut().zip(colors) {
-            *slot = encode_color(color)?;
+        }
+        if samples.len() + probes.len() > MAX_AMBIENT_SAMPLES {
+            return Err("Model ambient sample count exceeds the bounded Source index limit".into());
         }
         indices[index] = LeafAmbientIndex {
-            sample_count: 1,
+            sample_count: probes.len() as u16,
             first_sample: u16::try_from(samples.len())
                 .map_err(|_| "Model ambient sample offset exceeds Source limits")?,
         };
-        samples.push(sample);
+        for mut sample in probes {
+            let point = DVec3::from_array(
+                sample
+                    .world_position(leaf)
+                    .map_err(|error| error.to_string())?,
+            );
+            let colors = gather(ctx.directions, &mut |direction| {
+                budget.consume(11)?;
+                let end = point + direction * super::sky::TRACE_LENGTH;
+                let surface = surfaces.geometry.nearest(
+                    point,
+                    end,
+                    &mut |work| budget.consume(work),
+                    &mut |surface| {
+                        Ok(surface
+                            .triangle
+                            .intersection(point, end)?
+                            .map(|(fraction, weights)| {
+                                let uv = surface.coordinates.map(|coordinates| {
+                                    coordinates
+                                        .into_iter()
+                                        .zip(weights)
+                                        .map(|(point, weight)| point * weight)
+                                        .sum::<DVec2>()
+                                });
+                                (fraction, (surface.source, uv))
+                            }))
+                    },
+                )?;
+                let Some((fraction, (source, uv))) = surface else {
+                    return Ok(DVec3::ZERO);
+                };
+                let radiance = &surfaces.radiance[source];
+                let blocker = if radiance.sky {
+                    let Some(hit) = ctx
+                        .shadows
+                        .sky_fraction(point, end, &mut |work| budget.consume(work))?
+                    else {
+                        return Ok(DVec3::ZERO);
+                    };
+                    Some((hit, ()))
+                } else {
+                    ctx.shadows.nearest(
+                        point,
+                        end,
+                        &mut |work| budget.consume(work),
+                        &mut |hull| Ok(hull.entry(point, end)?.map(|hit| (hit.0, ()))),
+                    )?
+                };
+                if blocker.is_some_and(|(blocked, _)| {
+                    (fraction - blocked) * super::sky::TRACE_LENGTH > SURFACE_HIT_BIAS
+                }) {
+                    return Ok(DVec3::ZERO);
+                }
+                let distance = fraction * super::sky::TRACE_LENGTH;
+                Ok(radiance.at(point + direction * distance, uv, distance, cone))
+            })?;
+            for (slot, color) in sample.cube.iter_mut().zip(colors) {
+                *slot = encode_color(color)?;
+            }
+            samples.push(sample);
+        }
     }
     if missing != 0 {
         report.diagnostics.push(Diagnostic::warning(format!("{missing} open leaves have no safe quantized ambient probe; model ambient lighting there is missing"), None, None));
@@ -482,7 +523,7 @@ pub(super) fn bake(
         &LeafAmbient::Indexed { indices, samples },
     )
     .map_err(|error| error.to_string())?;
-    report.diagnostics.push(Diagnostic::info("Model ambient uses one quantized probe per open world leaf, sampled from filtered local world/terrain lightmaps and sky radiance. Adaptive probe placement, static-prop shadows and bounced world lighting remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Adaptive refinement, static-prop shadows and bounced world lighting remain unfinished", None, None));
     Ok(stats)
 }
 

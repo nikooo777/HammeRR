@@ -32,17 +32,21 @@ def ambient_probes(data, stats):
         if not count:
             assert first < len(leaves)
             continue
-        assert count == 1 and first < len(samples) and leaves[owner][1] >= 0
-        cube, x, y, z, padding = samples[first]
-        assert padding == 0
-        for axis, fraction in enumerate([x, y, z]):
-            point = (
+        assert (
+            1 <= count <= 8 and first + count <= len(samples) and leaves[owner][1] >= 0
+        )
+        positions = []
+        for cube, x, y, z, padding in samples[first : first + count]:
+            assert padding == 0
+            point = [
                 leaves[owner][3 + axis]
                 + (leaves[owner][6 + axis] - leaves[owner][3 + axis]) * fraction / 255
-            )
-            assert leaves[owner][3 + axis] <= point <= leaves[owner][6 + axis]
-        for red, green, blue, exponent in struct.iter_unpack("<3Bb", cube):
-            colors.append([channel * 2**exponent for channel in (red, green, blue)])
+                for axis, fraction in enumerate([x, y, z])
+            ]
+            assert all(math.dist(point, earlier) > 128 for earlier in positions)
+            positions.append(point)
+            for red, green, blue, exponent in struct.iter_unpack("<3Bb", cube):
+                colors.append([channel * 2**exponent for channel in (red, green, blue)])
     return colors
 
 
@@ -437,13 +441,18 @@ def local_ambient_checks(client, output):
     source = vmf.read_bytes()
     history = client.call("get_map_info")["undo"]
     cases = []
-    for quality in ["fast", "detailed"]:
+    counts = []
+    for quality in ["fast", "balanced", "detailed"]:
         client.call("set_compile_settings", {"sky_quality": quality})
         path = output / f"local-gradient-{quality}.bsp"
         built = client.call("compile_map", {"path": str(path)})
         assert built["success"], built
         data = path.read_bytes()
         colors = ambient_probes(data, built["stats"])
+        counts.append(built["stats"]["ambient_samples"])
+        cap = {"fast": 1, "balanced": 4, "detailed": 8}[quality]
+        indices = records(data, 52, "<2H")
+        assert all(count <= cap for count, _ in indices)
         assert any(color[0] > 0 for color in colors)
         background = output / f"local-gradient-{quality}-background.bsp"
         client.call("start_compile", {"path": str(background)})
@@ -456,7 +465,8 @@ def local_ambient_checks(client, output):
             and history == client.call("get_map_info")["undo"]
         )
         cases.append(data)
-    assert lightmaps(cases[0]) == lightmaps(cases[1])
+    assert counts[0] < counts[1] <= counts[2], counts
+    assert lightmaps(cases[0]) == lightmaps(cases[1]) == lightmaps(cases[2])
     samples = []
     for data in cases:
         offset, length, _, _ = struct.unpack_from("<4i", data, 8 + 56 * 16)

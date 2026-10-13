@@ -53,7 +53,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static point lights, spotlights, sun and sky ambient on world faces and power-2/3/4 terrain. Supports percentage falloff, soft sun, opaque shadows and smooth terrain normals. Model ambient gathers filtered world lightmaps and sky with one probe per open leaf. Bounced world light, HDR and baked prop lighting remain unfinished."
+                "Bakes static point lights, spotlights, sun and sky ambient on world faces and power-2/3/4 terrain. Supports percentage falloff, soft sun, opaque shadows and smooth terrain normals. Model ambient gathers filtered world/terrain lightmaps and sky with up to 1/4/8 probes per open leaf at Fast/Balanced/Detailed quality. Bounced world light, HDR and baked prop lighting remain unfinished."
             }
         }
     }

@@ -10,6 +10,10 @@ use std::io;
 use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
+mod ambient;
+pub use ambient::{
+    LeafAmbient, LeafAmbientIndex, LeafAmbientSample, LightCube, MAX_LEAF_AMBIENT_SAMPLES,
+};
 mod displacements;
 mod lighting;
 mod physics;

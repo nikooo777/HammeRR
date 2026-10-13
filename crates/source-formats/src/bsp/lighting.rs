@@ -15,7 +15,7 @@ pub struct RgbExp32 {
 }
 
 impl RgbExp32 {
-    /// Linear RGB on Source's unnormalized 0–255 scale.
+    /// Decode linear RGB; units depend on the containing lighting record.
     pub fn linear(self) -> [f64; 3] {
         let scale = 2.0_f64.powi(i32::from(self.exponent));
         self.rgb.map(|channel| f64::from(channel) * scale)

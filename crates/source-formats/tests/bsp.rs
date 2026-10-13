@@ -77,6 +77,12 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     bsp.entities().map_err(e)?;
 
     let ensure = |ok: bool, what: &str| if ok { Ok(()) } else { Err(what.to_owned()) };
+    if let Some(physics) = bsp.physics().map_err(e)? {
+        ensure(
+            physics.to_bytes(models.len()).map_err(e)? == bsp.lump(bsp::lump::PHYSCOLLIDE).data,
+            "physics rewrite differs",
+        )?;
+    }
     for region in &water {
         ensure(
             region.surface_texinfo >= 0 && (region.surface_texinfo as usize) < texinfo.len(),

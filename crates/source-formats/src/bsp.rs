@@ -11,10 +11,15 @@ use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
 mod lighting;
+mod physics;
 mod visibility;
 pub use lighting::{
     FaceLighting, Lighting, LightingKind, MAX_LIGHTING_BYTES, MAX_WORLD_LIGHTS, RgbExp32,
     WorldLight, world_light_kind,
+};
+pub use physics::{
+    CollisionHeader, MAX_COLLISION_BYTES, MAX_PHYSICS_BYTES, MAX_PHYSICS_KEY_BYTES,
+    MAX_PHYSICS_MODELS, MAX_PHYSICS_SOLIDS, PhysicsCollision, PhysicsModel, PhysicsSolid,
 };
 pub use visibility::{MAX_VISIBILITY_BYTES, MAX_VISIBILITY_CLUSTERS, Visibility, VisibilityKind};
 

@@ -116,11 +116,8 @@ impl Map<'_> {
             if self.terrains.len() + terrains.len() >= bsp::MAX_DISPLACEMENTS {
                 return Err("Native displacement patch limit exceeded".into());
             }
-            if disp.flags.unwrap_or(0) & !14 != 0 || disp.subdivided {
-                return Err(
-                    "Bumped/unknown displacement flags and subdivision are not supported yet"
-                        .into(),
-                );
+            if disp.flags.unwrap_or(0) & !14 != 0 {
+                return Err("Bumped/unknown displacement flags are not supported yet".into());
             }
             let base: [DVec3; 4] = face
                 .vertices

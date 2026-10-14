@@ -335,7 +335,9 @@ Corner-only contacts receive reciprocal native lists when base and displaced cor
 
 **Build details…** also reports **Mixed-power pairs**, **Half-edge pairs**, **LOD disabled vertices** and **Snapped vertices**. Snapping can reduce detail near a coarse neighbor; the editable map and viewport retain the authored grid.
 
-Not yet: subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles and other fractional edge spans. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
+Imported grids marked as already subdivided compile their saved vertex rows. Building does not generate new subdivision geometry.
+
+Not yet: generating subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles and other fractional edge spans. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
 
 ## Overlays
 

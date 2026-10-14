@@ -19,7 +19,7 @@ def payload(data, index):
     return data[offset : offset + size]
 
 
-def model_top_color(data):
+def model_top_color(data, style=0):
     model = records(data, 14, "<9f3i")[1]
     planes = records(data, 1, "<4fi")
     faces = records(data, 7, FACE_FORMAT)
@@ -29,10 +29,15 @@ def model_top_color(data):
         plane = planes[face[0]]
         if plane[2] < 0.99 or abs(plane[3] + 32.125 - 40) > 0.001:
             continue
-        assert face[8:12] == (0, 255, 255, 255)
+        styles = [value for value in face[8:12] if value != 255]
+        style_index = styles.index(style)
         count = (face[16] + 1) * (face[17] + 1)
         for *rgb, exponent in struct.iter_unpack(
-            "<3Bb", colors[face[12] : face[12] + count * 4]
+            "<3Bb",
+            colors[
+                face[12] + style_index * count * 4 : face[12]
+                + (style_index + 1) * count * 4
+            ],
         ):
             result.append([component * 2**exponent for component in rgb])
     assert result

@@ -168,13 +168,13 @@ Limits: direct point/spot styles and sun/sky lighting at the authored pose, with
 3. Choose **Appearance**, for example **Normal** or **Fluorescent flicker**. Optionally set **Custom Appearance** to lowercase letters `a`–`z`: `a` is dark, `m` is normal brightness, and `z` is brighter. A custom pattern overrides the built-in appearance. A custom pattern needs a named light.
 4. Enable **Initially dark** if the light should begin switched off.
 5. Select an entity that will control it, such as a `logic_relay`, and open **Connections… → Add connection**. Choose its output, the light's name as the target, and **TurnOn**, **TurnOff** or **Toggle** as the input. Use **SetPattern** with a pattern parameter to change its appearance. Click **Apply connection**; **Cancel** leaves the connection unchanged.
-6. Open **Build settings…**, choose **Build lighting → Direct LDR** and **Indirect light → Direct only**, then **Close** and **Run Map**. **Build details…** reports **Light styles**, styled faces, lightmaps and switched groups.
+6. Open **Build settings…**, choose **Build lighting → Direct LDR**. Choose **Indirect light → One diffuse bounce** for reflections that follow the same switches and patterns, then **Close** and **Run Map**. **Build details…** reports **Light styles**, styled faces, lightmaps and switched groups.
 
-| Initially dark | Turned on |
+| Initially dark | Turned on, with reflected light |
 | --- | --- |
-| ![Named red lights start dark while static blue lighting remains](images/light-styles-off.png) | ![The same lights switched on through a relay](images/light-styles-on.png) |
+| ![The shadowed brush model while its light group is off](images/styled-bounce-off.png) | ![The same model receiving its switched reflected light](images/styled-bounce-on.png) |
 
-Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct world/detail/terrain and brush-model lightmaps; styled bounces, switching model-ambient cubes, sun/sky styles and baked prop lightmaps remain unfinished. A styled build with **One diffuse bounce** fails with a recovery instruction. The common lighting allocation/work limits apply.
+Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct and reflected world/detail/terrain and brush-model lightmaps. Reflections can introduce a style on a face beyond its direct reach, and still count toward the four-style limit. Switching model-ambient cubes, sun/sky styles and baked prop lightmaps remain unfinished. The common lighting allocation/work limits apply.
 
 #### Bounced light
 
@@ -187,7 +187,7 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 | --- | --- |
 | ![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png) | ![Reflected world light reaches a brush entity beneath the shelf](images/compiled-model-bounce.png) |
 
-Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate models do not cast permanent bounce shadows or supply reflected light. Props, more bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: one diffuse bounce from direct world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate models do not cast permanent bounce shadows or supply reflected light. Props, more bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Normal-map lighting
 
@@ -200,7 +200,7 @@ Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, us
 
 Each lit face gets its base map and three directional maps per light style. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
 
-Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. Materials that only declare `$bumpmap2`, independently rotated initial model poses, transparent shadows, HDR and baked prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap and 100-million work limits; larger scales or lower sampling can reduce work. Styled bounces remain unsupported.
+Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. Materials that only declare `$bumpmap2`, independently rotated initial model poses, transparent shadows, HDR and baked prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap and 100-million work limits; larger scales or lower sampling can reduce work.
 
 #### Falloff
 
@@ -240,7 +240,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent shadows, second-normal-map-only materials, multiple or styled light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, second-normal-map-only materials, multiple light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

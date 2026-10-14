@@ -152,7 +152,7 @@ fn named_and_builtin_styles_keep_separate_native_channels_and_reversed_averages(
 }
 
 #[test]
-fn named_groups_share_style_and_conflicting_states_or_unsupported_bounces_reject() {
+fn named_groups_share_style_and_bounce_while_conflicting_states_reject() {
     let mut document = Document::new(common::room());
     for brightness in ["255 0 0 100", "255 0 0 80"] {
         add_light(
@@ -200,8 +200,9 @@ fn named_groups_share_style_and_conflicting_states_or_unsupported_bounces_reject
             ..Default::default()
         },
     );
-    assert!(result.report.has_errors() && !result.write(&path).unwrap());
-    assert_eq!(std::fs::read(path).unwrap(), b"previous BSP");
+    assert!(!result.report.has_errors(), "{:?}", result.report);
+    assert!(result.stats.bounce_samples > 0);
+    assert!(floor_channels(&result.bsp.unwrap())[1].1.x > 180.0);
     assert_eq!(*document.vmf(), source);
 }
 

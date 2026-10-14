@@ -151,23 +151,29 @@ fn native_directional_style_maps_keep_base_samples_averages_and_order() {
     light(&mut document, false);
     light(&mut document, true);
     let source = document.vmf().clone();
-    let plain = built(&document, &plain_game, 0).bsp.unwrap();
-    let result = built(&document, &bump_game, 0);
-    assert!(result.stats.bump_faces > 0 && result.stats.bump_lightmaps > 0);
-    assert_eq!(
-        result.stats.bump_lightmaps,
-        result.stats.light_style_maps * 3 / 4
-    );
-    let bumped = result.bsp.unwrap();
-    check_base_maps(&plain, &bumped);
-    for style in [0, 1] {
-        let base = sample(&bumped, 0, DVec3::ZERO, DVec3::ZERO, style, 0);
-        for direction in 1..4 {
-            let actual = sample(&bumped, 0, DVec3::ZERO, DVec3::ZERO, style, direction);
-            assert!(
-                actual.distance(base * (1.0_f64 / 3.0).sqrt()) < 2.0,
-                "{actual}, {base}"
-            );
+    for bounces in [0, 1] {
+        let plain = built(&document, &plain_game, bounces).bsp.unwrap();
+        let result = built(&document, &bump_game, bounces);
+        assert!(result.stats.bump_faces > 0 && result.stats.bump_lightmaps > 0);
+        assert_eq!(
+            result.stats.bump_lightmaps,
+            result.stats.light_style_maps * 3 / 4
+        );
+        let bumped = result.bsp.unwrap();
+        check_base_maps(&plain, &bumped);
+        for style in [0, 1] {
+            let base = sample(&bumped, 0, DVec3::ZERO, DVec3::ZERO, style, 0);
+            for direction in 1..4 {
+                let actual = sample(&bumped, 0, DVec3::ZERO, DVec3::ZERO, style, direction);
+                assert!(actual.y == 0.0 && actual[if style == 0 { 2 } else { 0 }] == 0.0);
+                assert!(actual[if style == 0 { 0 } else { 2 }] > 0.0);
+                if bounces == 0 {
+                    assert!(
+                        actual.distance(base * (1.0_f64 / 3.0).sqrt()) < 2.0,
+                        "{actual}, {base}"
+                    );
+                }
+            }
         }
     }
     assert_eq!(*document.vmf(), source);

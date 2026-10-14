@@ -107,6 +107,55 @@ pub fn create(tx: &mut Transaction<'_>, faces: &[FaceId], power: u32) -> Result<
     Ok(count)
 }
 
+fn removal_targets(
+    document: &Document,
+    faces: &[FaceId],
+) -> Result<Vec<(FaceId, usize)>, EditError> {
+    let faces = faces.iter().copied().collect::<BTreeSet<_>>();
+    if faces.is_empty() || faces.len() > 16 {
+        return Err(EditError::Invalid(
+            "Select 1–16 terrain faces to remove".into(),
+        ));
+    }
+    let mut planned = Vec::with_capacity(faces.len());
+    for target in faces {
+        let solid = document
+            .solid(target.solid)
+            .ok_or_else(|| EditError::Invalid("Terrain parent brush is missing".into()))?;
+        let matches = solid
+            .sides
+            .iter()
+            .enumerate()
+            .filter(|(_, side)| side.id == target.side)
+            .collect::<Vec<_>>();
+        let [(index, side)] = matches.as_slice() else {
+            return Err(EditError::Invalid(
+                "Terrain face is missing or ambiguous".into(),
+            ));
+        };
+        if side.displacement.is_none() {
+            return Err(EditError::Invalid(
+                "Every selected face must have terrain".into(),
+            ));
+        }
+        planned.push((target, *index));
+    }
+    Ok(planned)
+}
+
+pub fn validate_removal(document: &Document, faces: &[FaceId]) -> Result<(), EditError> {
+    removal_targets(document, faces).map(|_| ())
+}
+
+pub fn remove(tx: &mut Transaction<'_>, faces: &[FaceId]) -> Result<usize, EditError> {
+    let planned = removal_targets(tx.document(), faces)?;
+    let count = planned.len();
+    for (target, index) in planned {
+        tx.solid_mut(target.solid)?.sides[index].displacement = None;
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +227,12 @@ mod tests {
                     .write(&Default::default()),
                 text
             );
+            document
+                .edit("remove terrain", |tx| remove(tx, &[target]))
+                .unwrap();
+            assert_eq!(*document.vmf(), before);
+            document.undo().unwrap();
+            assert_eq!(*document.vmf(), after);
             document.undo().unwrap();
             assert_eq!(*document.vmf(), before);
             document.redo().unwrap();
@@ -263,5 +318,62 @@ mod tests {
                 .is_err()
         );
         assert_eq!(*document.vmf(), before);
+    }
+    #[test]
+    fn removal_preserves_imported_rows_and_extras_in_undo_and_rejects_mixed_targets() {
+        let (mut document, target) = fixture();
+        document
+            .edit("terrain", |tx| create(tx, &[target], 4))
+            .unwrap();
+        document
+            .edit("imported data", |tx| {
+                let solid = tx.solid_mut(target.solid)?;
+                let side = solid
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == target.side)
+                    .unwrap();
+                let info = side.displacement.as_mut().unwrap();
+                info.distances.as_mut().unwrap()[0][0] = 17.0;
+                info.alphas.as_mut().unwrap()[0][0] = 195.0;
+                info.extra_properties.set("custom_grid_note", "preserve");
+                Ok(())
+            })
+            .unwrap();
+        let imported = document.vmf().clone();
+        let ordinary = document
+            .solid(target.solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| side.displacement.is_none())
+            .unwrap()
+            .id;
+        assert!(
+            document
+                .edit("bad removal", |tx| remove(
+                    tx,
+                    &[
+                        target,
+                        FaceId {
+                            solid: target.solid,
+                            side: ordinary
+                        }
+                    ]
+                ))
+                .is_err()
+        );
+        assert_eq!(*document.vmf(), imported);
+        document.edit("remove", |tx| remove(tx, &[target])).unwrap();
+        assert!(
+            document
+                .solid(target.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .all(|side| side.displacement.is_none())
+        );
+        document.undo().unwrap();
+        assert_eq!(*document.vmf(), imported);
     }
 }

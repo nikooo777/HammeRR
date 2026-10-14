@@ -1375,6 +1375,11 @@ pub struct ReplaceMaterialsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RemoveTerrainArgs {
+    pub faces: Option<Vec<FaceRef>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateTerrainArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub power: Option<u32>,
@@ -4847,6 +4852,21 @@ impl EditorServer {
             Ok(
                 json!({"surfaces_created": count, "power": power, "grid_size": (1_u32 << power) + 1, "state": face_state(&session)}),
             )
+        })
+    }
+
+    #[tool(
+        description = "Remove terrain from 1–16 selected or explicit faces in one atomic undoable edit. Every target must contain terrain; missing/ambiguous/ordinary targets reject the entire batch. Preserves underlying brush geometry,IDs,material,mapping and lighting; undo restores all imported grid rows/extras. The parent becomes a solid brush once no terrain faces remain. Can clean up imported entity terrain. UI: Remove terrain in the face inspector."
+    )]
+    fn remove_terrain(&self, Parameters(args): Parameters<RemoveTerrainArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let count = session.remove_terrain(Actor::Agent, &faces)?;
+            Ok(json!({"surfaces_removed":count,"state":face_state(&session)}))
         })
     }
 

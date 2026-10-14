@@ -20,6 +20,18 @@ impl Session {
             .map(|error| error.to_string())
     }
 
+    pub fn terrain_removal_error(&self) -> Option<String> {
+        map_core::displacement::edit::validate_removal(&self.document, &self.selected_faces())
+            .err()
+            .map(|error| error.to_string())
+    }
+
+    pub fn remove_terrain(&mut self, actor: Actor, faces: &[FaceId]) -> Result<usize, String> {
+        self.edit(actor, "remove terrain", |tx| {
+            map_core::displacement::edit::remove(tx, faces)
+        })
+    }
+
     pub fn create_terrain(
         &mut self,
         actor: Actor,
@@ -217,6 +229,12 @@ mod tests {
             session.create_terrain(actor, &[target], 4).unwrap();
             assert_eq!(session.selected_faces(), vec![target]);
             assert!(session.terrain_creation_error().is_some());
+            assert!(session.terrain_removal_error().is_none());
+            let created = session.document().vmf().clone();
+            session.remove_terrain(actor, &[target]).unwrap();
+            assert_eq!(*session.document().vmf(), before);
+            session.undo(actor).unwrap();
+            assert_eq!(*session.document().vmf(), created);
             session.undo(actor).unwrap();
             assert_eq!(*session.document().vmf(), before);
             assert!(session.terrain_creation_error().is_none());

@@ -142,7 +142,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `brush_runtime` | Sliding and rotating doors, a continuously rotating brush, trigger outputs, pivot-aware model lightmaps, exact shared builds, and unchanged geometry/collision. |
 | `physics_surfaces --runtime` | Shared face materials and rotated mixed-surface hulls, checked native material tables, exact foreground/background builds and unchanged source/history; paired ice/rubber contact on the same incline. |
 | `static_props --runtime` | Static prop collision settings. |
-| `terrain_creation --runtime` | Shared quad conversion at powers 2/3/4, atomic invalid batches, saved source/selection and exact foreground/background builds, offscreen grid rendering and native contact at the created surface height. |
+| `terrain_creation --runtime` | Shared quad conversion at powers 2/3/4, atomic invalid creation/removal batches, restored-parent compilation and exact grid undo, saved source/selection and exact foreground/background builds, offscreen grid rendering and native contact at the created surface height. |
 | `terrain --runtime` | Terrain with uneven heights, power-4 and mixed-size lighting, player collision, ray flags and moving objects. `--runtime-cases power-four mixed` limits the game checks to those two fixtures; `--runtime-cases neighbors` runs the linked-edge fixture. |
 | `areaportals --runtime` | Native area/portal bindings, hidden and invalid boundaries, exact MCP build output, and visible-area/client portal bits through close/reopen from both sides. |
 | `window_portals --runtime` | Rendered and foreground brush models, distance closing, fade-distance inputs, and server/client visibility bits. |

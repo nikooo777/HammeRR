@@ -19,7 +19,7 @@ HammeRR is in active development.
 | Materials and textures | Works. |
 | Entities, connections and renaming | Works. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawns. Models, terrain, objectives, full asset dependencies and engine limits are planned. |
-| Terrain (displacements) | Flat power-2/3/4 terrain creation from world quad faces works, with undo and preserved materials/mapping. Imported terrain displays, can be selected and compiles. Sculpting, blend painting and resolution changes remain planned. |
+| Terrain (displacements) | Flat power-2/3/4 terrain creation and selected-face removal work, with undo and preserved materials/mapping. Imported terrain displays, can be selected and compiles. Sculpting, blend painting and resolution changes remain planned. |
 | Models | Static props compile, but models aren't drawn in the viewport yet. |
 
 ## Compiler
@@ -35,7 +35,7 @@ HammeRR is in active development.
 | Brush entities | Explicit and origin-brush pivots; sliding and rotating doors, rotating brushes and triggers | Broader behavior/contact coverage and independently rotated initial lighting poses |
 | Water | Flat world water, fog regions, floating objects | Depth and below-water materials, currents, water in detail brushes or brush entities |
 | Cubemaps | Sample positions and sizes | Baked reflections |
-| Static props | Models, transforms, collision, skins, fading | Prop lighting and shadows, exact placement in the BSP tree |
+| Static props | Models, transforms, collision, skins, fading, named lighting origins | Prop lighting and shadows, exact placement in the BSP tree |
 | Terrain | Power 2/3/4 surfaces, collision, lighting normals sewn across matching equal-power full edges, neighbor links | Authored smoothing angles, LOD between different powers or partial edges, corner neighbors, subdivision, removed triangles |
 | Overlays | Imported `info_overlay` projections on world, detail and terrain surfaces; materials, render order, distance fading and named accessors | Placement, corner editing, viewport projection, geometry-edit rebinding, brush-model targets, water transitions and decals |
 

@@ -173,10 +173,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Opaque distance-fading window](docs/images/areaportal-window-closed.png) |
 | Fade rendered windows to opaque with distance and hide the area beyond. |
 
-| Terrain creation |
+| Terrain authoring |
 | --- |
-| ![A flat terrain grid created from a quad face](docs/images/terrain-creation.png) |
-| Create flat 5×5, 9×9 or 17×17 terrain grids with a chosen start corner; restore brushes by removing terrain. |
+| ![A refined terrain grid retaining its heights](docs/images/terrain-refinement.png) |
+| Create terrain, choose its grid orientation, preview resolution changes and restore parent brushes. |
 
 | Connected terrain lighting |
 | --- |

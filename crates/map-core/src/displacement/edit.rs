@@ -171,6 +171,38 @@ fn removal_targets(
     Ok(planned)
 }
 
+pub struct TerrainGrid {
+    pub face: FaceId,
+    pub power: u32,
+    pub flags: u32,
+    pub mesh: super::DisplacementMesh,
+}
+
+pub fn inspect(document: &Document, faces: &[FaceId]) -> Result<Vec<TerrainGrid>, EditError> {
+    removal_targets(document, faces)?
+        .into_iter()
+        .map(|(target, index)| {
+            let solid = document.solid(target.solid).unwrap();
+            let geometry = BrushGeometry::from_solid(solid)
+                .map_err(|error| EditError::Invalid(error.to_string()))?;
+            let face = geometry
+                .faces
+                .iter()
+                .find(|face| face.side == index)
+                .ok_or_else(|| EditError::Invalid("Terrain needs an effective quad face".into()))?;
+            let info = solid.sides[index].displacement.as_ref().unwrap();
+            let mesh = super::DisplacementMesh::build(face, info)
+                .map_err(|error| EditError::Invalid(error.to_string()))?;
+            Ok(TerrainGrid {
+                face: target,
+                power: info.power,
+                flags: info.flags.unwrap_or(0),
+                mesh,
+            })
+        })
+        .collect()
+}
+
 pub fn validate_removal(document: &Document, faces: &[FaceId]) -> Result<(), EditError> {
     removal_targets(document, faces).map(|_| ())
 }

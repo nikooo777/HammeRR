@@ -25,6 +25,7 @@ mod spatial;
 mod statistics_ui;
 mod steam;
 mod surface_group_ui;
+mod terrain_ui;
 #[cfg(test)]
 mod test_assets;
 mod viewport;
@@ -173,6 +174,7 @@ struct Ui {
     surface_window: Option<SurfaceWindow>,
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     lighting: Option<lighting_ui::Controller>,
+    terrain: Option<terrain_ui::Controller>,
     material_replace: Option<material_replace_ui::Controller>,
     surface_group: Option<surface_group_ui::Controller>,
     volume: Option<volume_ui::Controller>,
@@ -3107,6 +3109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_window: None,
         surface_target: None,
         lighting: None,
+        terrain: None,
         material_replace: None,
         surface_group: None,
         volume: None,
@@ -3663,6 +3666,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     bind_terrain_controls(&app, session_of(&ui));
+    app.on_change_terrain_resolution({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().terrain.is_none() {
+                match terrain_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().terrain = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.terrain.as_ref().unwrap();
+            match controller.initialize(&mut lock(&shared)) {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
+    });
     app.on_edit_face_lighting({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -4256,6 +4282,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         controller.refresh(&session);
                     }
+                    if let Some(controller) = &ui.terrain
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(window) = &ui.surface_window
                         && window.window().is_visible()
                         && let Some(target) = &ui.surface_target
@@ -4290,6 +4321,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.lighting
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
+                    if let Some(controller) = &ui.terrain
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&session);
@@ -9592,6 +9628,101 @@ mod tests {
         lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(*lock(&shared).document().vmf(), before);
         app.hide().unwrap();
+    }
+
+    #[test]
+    fn terrain_resolution_controls_keep_cancel_and_guard_foreign_previews() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let target = map_core::surface::FaceId {
+            solid,
+            side: session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id,
+        };
+        session
+            .select_faces(&[target], session::SelectMode::Replace)
+            .unwrap();
+        session
+            .create_terrain(Actor::Agent, &[target], 2, 3)
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = terrain_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-resolution");
+        assert!(!window.get_ready());
+        window.set_grid_index(2);
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        assert_eq!(
+            lock(&shared).terrain_grids(&[target], true).unwrap()[0].power,
+            4
+        );
+        window.invoke_cancel();
+        assert!(!lock(&shared).has_face_preview());
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_grid_index(1);
+        window.invoke_preview_edit();
+        lock(&shared)
+            .preview_terrain_resolution(Actor::Agent, &[target], 4)
+            .unwrap();
+        let foreign = lock(&shared).face_preview_token();
+        controller.refresh(&lock(&shared));
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).face_preview_token(), foreign);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_grid_index(1);
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(
+            lock(&shared).terrain_grids(&[target], false).unwrap()[0].power,
+            3
+        );
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.invoke_preview_edit();
+        lock(&shared)
+            .remove_terrain(Actor::Agent, &[target])
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(window.get_stale());
+        window.invoke_apply();
+        assert!(lock(&shared).terrain_grids(&[target], false).is_err());
     }
 
     #[test]

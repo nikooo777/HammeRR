@@ -16,6 +16,7 @@ pub struct ChainPaint {
 pub struct TerrainSew {
     pub changed: usize,
     pub pairs: usize,
+    pub corner_joins: usize,
     pub vertices: usize,
     pub interpolated_vertices: usize,
 }
@@ -28,8 +29,8 @@ pub struct TerrainTriangles {
 impl TerrainSew {
     pub fn summary(&self) -> String {
         format!(
-            "Preview: {} joined borders across {} surfaces. {} fine border points resampled. Apply to keep this edit.",
-            self.pairs, self.changed, self.interpolated_vertices
+            "Preview: {} joined borders, {} corner joins across {} surfaces. {} fine border points resampled. Apply to keep this edit.",
+            self.pairs, self.corner_joins, self.changed, self.interpolated_vertices
         )
     }
 }
@@ -138,6 +139,7 @@ impl Session {
         Ok(TerrainSew {
             changed,
             pairs: plan.pairs,
+            corner_joins: plan.corner_joins,
             vertices: plan.vertices,
             interpolated_vertices: plan.interpolated_vertices,
         })

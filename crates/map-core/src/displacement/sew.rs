@@ -15,6 +15,7 @@ use crate::{
 pub struct Plan {
     pub edits: Vec<(FaceId, DispInfo)>,
     pub pairs: usize,
+    pub corner_joins: usize,
     pub vertices: usize,
     pub interpolated_vertices: usize,
 }
@@ -70,11 +71,6 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
             "Sewing needs unambiguous full or whole-to-half terrain edges",
         ));
     }
-    if neighbors.pairs.is_empty() {
-        return Err(invalid(
-            "No matching full or whole-to-half terrain edges were found",
-        ));
-    }
     let mut starts = Vec::with_capacity(grids.len());
     let mut count = 0;
     for grid in &grids {
@@ -94,6 +90,44 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
             let (low, high) = if a < b { (a, b) } else { (b, a) };
             parents[high] = low;
         }
+    }
+    let mut corner_groups = BTreeMap::<[u64; 3], Vec<(usize, usize)>>::new();
+    for (index, grid) in grids.iter().enumerate() {
+        let n = grid.mesh.size;
+        for (corner, vertex) in [0, n * (n - 1), n * n - 1, n - 1].into_iter().enumerate() {
+            corner_groups
+                .entry(super::neighbors::key(views[index].corners[corner]))
+                .or_default()
+                .push((index, vertex));
+        }
+    }
+    let mut corner_joins = 0;
+    for group in corner_groups.values() {
+        if group
+            .iter()
+            .map(|(grid, _)| grid)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != group.len()
+        {
+            return Err(invalid(
+                "Terrain base corners collapse at Source float precision",
+            ));
+        }
+        for pair in group.windows(2) {
+            let a = root(&mut parents, starts[pair[0].0] + pair[0].1);
+            let b = root(&mut parents, starts[pair[1].0] + pair[1].1);
+            if a != b {
+                let (low, high) = if a < b { (a, b) } else { (b, a) };
+                parents[high] = low;
+                corner_joins += 1;
+            }
+        }
+    }
+    if neighbors.pairs.is_empty() && corner_joins == 0 {
+        return Err(invalid(
+            "No matching full/half terrain borders or base corners were found",
+        ));
     }
     let mut sums = BTreeMap::<usize, Average>::new();
     for (index, grid) in grids.iter().enumerate() {
@@ -254,6 +288,7 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
     Ok(Plan {
         edits,
         pairs: neighbors.pairs.len(),
+        corner_joins,
         vertices,
         interpolated_vertices,
     })
@@ -551,5 +586,57 @@ mod tests {
                 &info
             );
         }
+    }
+    #[test]
+    fn corner_only_sewing_averages_once_and_preserves_all_other_vertices() {
+        let (mut document, faces) = fixture();
+        let selected = [faces[0], faces[3]];
+        let source = document.vmf().clone();
+        let before = inspect(&document, &selected).unwrap();
+        let plan = plan(&document, &selected, true).unwrap();
+        assert_eq!(
+            (
+                plan.pairs,
+                plan.corner_joins,
+                plan.vertices,
+                plan.interpolated_vertices
+            ),
+            (0, 1, 1, 0)
+        );
+        document
+            .edit("sew corner", |tx| {
+                for (face, info) in &plan.edits {
+                    tx.solid_mut(face.solid)?
+                        .sides
+                        .iter_mut()
+                        .find(|side| side.id == face.side)
+                        .unwrap()
+                        .displacement = Some(info.clone());
+                }
+                Ok(())
+            })
+            .unwrap();
+        let after = inspect(&document, &selected).unwrap();
+        for (old, new) in before.iter().zip(&after) {
+            for index in 0..old.mesh.positions.len() {
+                let base = old.mesh.base_positions[index];
+                if base.x == 0.0 && base.y == 0.0 {
+                    assert_eq!(new.mesh.positions[index], DVec3::new(0.0, 0.0, 40.0));
+                    assert_eq!(new.mesh.alphas[index], 96.0);
+                } else {
+                    assert_eq!(new.mesh.positions[index], old.mesh.positions[index]);
+                    assert_eq!(new.mesh.alphas[index], old.mesh.alphas[index]);
+                }
+            }
+        }
+        let repeat = super::plan(&document, &selected, true).unwrap();
+        for (face, info) in repeat.edits {
+            assert_eq!(
+                side(&document, face).unwrap().displacement.as_ref(),
+                Some(&info)
+            );
+        }
+        document.undo();
+        assert_eq!(document.vmf(), &source);
     }
 }

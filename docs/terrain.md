@@ -41,7 +41,7 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 ![Terrain sculpting controls with viewport center picking](images/terrain-center-picker.png)
 
-Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; use **Sew edges** to join matching full/half borders across grid sizes; sewing is not automatic.
+Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; use **Sew borders & corners** to join matching full/half borders across grid sizes; sewing is not automatic.
 
 ## Select triangles in a box
 
@@ -80,21 +80,25 @@ Limits: the mask is the union of each selected triangle's three vertices. Shared
 
 ![Painted grass and dirt on terrain](images/terrain-blending.png)
 
-Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Use **Pick center in viewport…** or exact coordinates to place the bounded brush. Live viewport strokes remain planned. **Sew edges** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
+Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Use **Pick center in viewport…** or exact coordinates to place the bounded brush. Live viewport strokes remain planned. **Sew borders & corners** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
 
 ## Sew neighboring terrain
 
-1. Select 2–16 terrain faces with matching full base edges or exact whole-to-half borders. Grid resolutions may differ.
-2. Click **Edit terrain…**, then choose **Operation → Sew edges**.
-3. Enable **Also sew blend values** to join alpha along those shared borders as well as positions.
-4. Click **Preview**. Common border points average their original positions once, including junctions. Finer border points follow the sewn coarse edge; the preview reports their count. Interior vertices stay fixed.
+1. Select 2–16 terrain faces with matching full base edges, exact whole-to-half borders or matching base corners. Grid resolutions may differ.
+2. Click **Edit terrain…**, then choose **Operation → Sew borders & corners**.
+3. Enable **Also sew blend values** to join alpha at those shared borders and corners as well as positions.
+4. Click **Preview**. Common border and corner groups average their original positions once, including junctions. Finer border points follow the sewn coarse edge; the preview reports their count. Interior vertices stay fixed.
 5. Click **Apply** or **Cancel**. **Undo** restores all original grids.
 
 ![Terrain sewing controls](images/terrain-sewing-controls.png)
 
 ![Different terrain grids joined across full and half borders](images/terrain-sewn.png)
 
-Limits: full or exact whole-to-half base edges at powers 2–4. Missing matches, ambiguous overlaps and unsupported subdivision/cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and subdivision authoring remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
+![Different terrain grids joined at one base corner](images/terrain-corner-sewn.png)
+
+For corner-only contacts, **Preview** reports **corner joins** separately from joined borders. Only those shared corner vertices move; optional alpha averages once across the same group. Unrelated borders and interiors stay fixed.
+
+Limits: full or exact whole-to-half base edges and matching base corners at powers 2–4. Missing matches, ambiguous overlaps, Source-float-collapsed corners and unsupported subdivision/cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and subdivision authoring remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
 
 ## Set collision behavior
 
@@ -140,7 +144,7 @@ Limits: every target must contain terrain, with 1–16 faces per action. Invalid
 
 ![Compiled terrain with adjacent grid resolutions](images/terrain-mixed-resolution.png)
 
-Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans, subdivision and holes remain planned. **Sew edges** repairs these source borders through a preview.
+Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans, subdivision and holes remain planned. **Sew borders & corners** repairs these source borders through a preview.
 
 ## Compile split borders
 

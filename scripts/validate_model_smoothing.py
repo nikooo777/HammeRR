@@ -5,6 +5,8 @@ import re
 import struct
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import validate_native_runtime as runtime
@@ -159,6 +161,30 @@ def fixture(args):
         client.close()
 
 
+def capture_rest(output, errors):
+    try:
+        started = time.monotonic()
+        log = output / "cstrike/hammerr-runtime.log"
+        while time.monotonic() - started < 30:
+            if log.exists() and "HAMMERR_MODEL_REST_READY" in log.read_text(
+                errors="replace"
+            ):
+                time.sleep(1)
+                subprocess.run(
+                    ["grim", str(output / "rest.png")], check=True, timeout=5
+                )
+                subprocess.run(
+                    ["grim", "-t", "ppm", str(output / "rest.ppm")],
+                    check=True,
+                    timeout=5,
+                )
+                return
+            time.sleep(0.1)
+        raise TimeoutError("No settled model frame before motion")
+    except (OSError, subprocess.SubprocessError, TimeoutError) as error:
+        errors.append(str(error))
+
+
 def worker(args):
     args.capture_ppm = True
     runtime.OBSERVER = runtime.OBSERVER.replace(
@@ -169,9 +195,16 @@ def worker(args):
         "stage <- 0;", "stage <- 0;\nmodel_started <- false;"
     ).replace(
         '    local player = Entities.FindByClassname(null, "player");',
-        '    local model = Entities.FindByName(null, "smooth_model");\n    if (model != null) printl("HAMMERR_MODEL_YAW " + model.GetAngles().y);\n    if (Time() > 20 && !model_started) { EntFire("smooth_model", "Start"); model_started = true; }\n    local player = Entities.FindByClassname(null, "player");',
+        '    local model = Entities.FindByName(null, "smooth_model");\n    if (model != null) printl("HAMMERR_MODEL_YAW " + model.GetAngles().y);\n    if (Time() > 12 && Time() < 19) printl("HAMMERR_MODEL_REST_READY");\n    if (Time() > 20 && !model_started) { EntFire("smooth_model", "Start"); model_started = true; }\n    local player = Entities.FindByClassname(null, "player");',
     )
+    errors = []
+    capture = threading.Thread(
+        target=capture_rest, args=(args.output, errors), daemon=True
+    )
+    capture.start()
     runtime.worker(args)
+    capture.join(timeout=10)
+    assert not errors and (args.output / "rest.png").exists(), errors
     text = (args.output / "cstrike/hammerr-runtime.log").read_text(errors="replace")
     angles = [
         float(value) for value in re.findall(r"HAMMERR_MODEL_YAW ([\d.eE+-]+)", text)
@@ -186,7 +219,7 @@ def compare(output):
     frames = []
     for name in ["flat", "smooth"]:
         magic, dimensions, maximum, pixels = (
-            (output / name / "game.ppm").read_bytes().split(b"\n", 3)
+            (output / name / "rest.ppm").read_bytes().split(b"\n", 3)
         )
         assert magic == b"P6" and maximum == b"255"
         frames.append((dimensions, pixels))

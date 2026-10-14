@@ -826,12 +826,43 @@ fn engine_terrain_soup_preserves_native_grids_and_honors_no_physics_flags() {
     if !gameinfo.is_file() {
         return;
     }
-    let game = source_formats::gamefs::GameFs::from_gameinfo(&gameinfo).unwrap();
+    let mut game = source_formats::gamefs::GameFs::from_gameinfo(&gameinfo).unwrap();
+    let private = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(private.path().join("materials/dev")).unwrap();
+    std::fs::write(
+        private
+            .path()
+            .join("materials/dev/dev_measuregeneric01.vmt"),
+        "LightmappedGeneric { $surfaceprop default }",
+    )
+    .unwrap();
+    std::fs::write(
+        private.path().join("materials/terrain_metal.vmt"),
+        "LightmappedGeneric { $surfaceprop metal }",
+    )
+    .unwrap();
+    game.mounts.insert(
+        0,
+        source_formats::gamefs::MountedPath {
+            ids: vec!["game".into()],
+            mount: source_formats::gamefs::Mount::Directory(private.path().into()),
+        },
+    );
     let options = compiler::Options {
         physics: compiler::PhysicsMode::Engine,
         ..Default::default()
     };
     let (mut vmf, id) = fixture(2);
+    vmf.world
+        .solids
+        .iter_mut()
+        .find(|solid| solid.id == id)
+        .unwrap()
+        .sides
+        .iter_mut()
+        .find(|side| side.displacement.is_some())
+        .unwrap()
+        .material = "terrain_metal".into();
     let source = vmf.clone();
     let output = compiler::compile_with_options(&vmf, &game, options);
     assert!(!output.report.has_errors(), "{:?}", output.report);
@@ -841,6 +872,9 @@ fn engine_terrain_soup_preserves_native_grids_and_honors_no_physics_flags() {
     let bsp = output.bsp.unwrap();
     let physics = bsp.physics().unwrap().unwrap();
     assert_eq!(physics.models[0].solids.len(), 2);
+    let keys = std::str::from_utf8(physics.models[0].key_data).unwrap();
+    assert!(keys.contains("\"metal\" \"2\""));
+    assert_eq!(output.stats.physics_surface_properties, 2);
     assert_eq!(
         compiler::compile_with_options(&vmf, &game, options)
             .bsp

@@ -28,6 +28,7 @@ type Release = unsafe extern "C" fn(Pointer, Pointer);
 type Convert = unsafe extern "C" fn(Pointer, *const Pointer, i32) -> Pointer;
 type Size = unsafe extern "C" fn(Pointer, Pointer) -> i32;
 type Write = unsafe extern "C" fn(Pointer, *mut u8, Pointer, bool) -> i32;
+type Unserialize = unsafe extern "C" fn(Pointer, *mut u8, i32, i32) -> Pointer;
 type Measure = unsafe extern "C" fn(Pointer, Pointer) -> f32;
 type CreateQuery = unsafe extern "C" fn(Pointer, Pointer) -> Pointer;
 type Count = unsafe extern "C" fn(Pointer) -> i32;
@@ -59,6 +60,7 @@ struct Api {
     destroy: Release,
     size: Size,
     write: Write,
+    unserialize: Unserialize,
     volume: Measure,
     query: CreateQuery,
     destroy_query: Release,
@@ -130,6 +132,7 @@ impl Api {
             destroy: unsafe { member(pointer, base, 17, 0x227b0)? },
             size: unsafe { member(pointer, base, 18, 0x21ce0)? },
             write: unsafe { member(pointer, base, 19, 0x20a90)? },
+            unserialize: unsafe { member(pointer, base, 20, 0x23a00)? },
             volume: unsafe { member(pointer, base, 21, 0x23f90)? },
             query: unsafe { member(pointer, base, 43, 0x24180)? },
             destroy_query: unsafe { member(pointer, base, 44, 0x22860)? },
@@ -232,7 +235,13 @@ fn point(vector: Vector) -> DVec3 {
 }
 
 impl Collide<'_> {
-    fn verify(&self, body: &Body, material: i32, work: &mut usize) -> Result<f32, String> {
+    fn verify(
+        &self,
+        body: &Body,
+        material: i32,
+        assign: bool,
+        work: &mut usize,
+    ) -> Result<f32, String> {
         if let Some(mesh) = &body.mesh {
             return self.verify_soup(mesh, material, work);
         }
@@ -280,7 +289,7 @@ impl Collide<'_> {
                 .sum::<DVec3>()
                 / shape.corners.len() as f64;
             for triangle in 0..triangle_count {
-                *work += shape.planes.len() * 3 + shape.corners.len();
+                *work += shape.planes.len() * 7 + shape.corners.len();
                 if *work > MAX_GEOMETRY_WORK {
                     return Err("Physics hull verification exceeded its work limit".into());
                 }
@@ -323,11 +332,14 @@ impl Collide<'_> {
                         "Native physics cropped brush {brush} beyond the geometry tolerance"
                     ));
                 }
-                unsafe {
-                    set_material(pointer, index, triangle, material);
+                let material = triangle_material(shape, corners, normal, material)?;
+                if assign {
+                    unsafe {
+                        set_material(pointer, index, triangle, material);
+                    }
                 }
                 if unsafe { get_material(pointer, index, triangle) } != material {
-                    return Err("Native physics did not retain the default surface mapping".into());
+                    return Err("Native physics did not retain the authored surface mapping".into());
                 }
             }
         }
@@ -371,6 +383,46 @@ impl Collide<'_> {
     }
 }
 
+fn triangle_material(
+    shape: &crate::physics::Shape,
+    corners: [DVec3; 3],
+    normal: DVec3,
+    fallback: i32,
+) -> Result<i32, String> {
+    if shape.materials.is_empty() {
+        return Ok(fallback);
+    }
+    if shape
+        .materials
+        .iter()
+        .all(|&index| index == shape.materials[0])
+    {
+        return Ok(i32::from(shape.materials[0]));
+    }
+    let mut best = None;
+    for (plane, &material) in shape.planes.iter().zip(&shape.materials) {
+        let axis = DVec3::new(plane[0] as f64, plane[1] as f64, plane[2] as f64);
+        let alignment = axis.normalize().dot(normal);
+        if alignment < 0.99
+            || corners.iter().any(|&point| {
+                (axis.dot(point) - plane[3] as f64).abs() > GEOMETRY_EPSILON * axis.length()
+            })
+        {
+            continue;
+        }
+        if best.is_none_or(|(score, _)| alignment > score) {
+            best = Some((alignment, material));
+        }
+    }
+    best.map(|(_, material)| i32::from(material))
+        .ok_or_else(|| {
+            format!(
+                "Native physics triangle cannot be matched to brush {} surface properties",
+                shape.brush
+            )
+        })
+}
+
 pub(super) fn limits() -> io::Result<()> {
     let memory = libc::rlimit {
         rlim_cur: 24 * 1024 * 1024 * 1024,
@@ -399,16 +451,27 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
         let mut keys = String::new();
         for (index, body) in model.bodies.iter().enumerate() {
             let collide = api.body(body)?;
-            let volume = collide.verify(
-                body,
-                if model.index == 0 && body.surface.is_none() {
-                    1
-                } else {
-                    0
-                },
-                &mut work,
-            )?;
-            let solid = collide.serialize()?;
+            let material = if model.index == 0 && body.surface.is_none() {
+                1
+            } else {
+                0
+            };
+            let volume = collide.verify(body, material, true, &mut work)?;
+            let mut solid = collide.serialize()?;
+            let pointer = unsafe {
+                (api.unserialize)(
+                    api.pointer,
+                    solid.as_mut_ptr(),
+                    solid.len() as i32,
+                    index as i32,
+                )
+            };
+            if pointer.is_null() {
+                return Err("Native physics could not reload its checked generated body".into());
+            }
+            let loaded = Collide { api: &api, pointer };
+            loaded.verify(body, material, false, &mut work)?;
+            drop(loaded);
             bytes += 4 + solid.len();
             if bytes > source_formats::bsp::MAX_PHYSICS_BYTES {
                 return Err("Native physics data exceeds its 64 MiB limit".into());
@@ -431,7 +494,11 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
             solids.push(solid);
         }
         if model.index == 0 {
-            keys.push_str("materialtable {\n\"default\" \"1\"\n}\n");
+            keys.push_str("materialtable {\n");
+            for (index, name) in request.materials.iter().enumerate() {
+                keys.push_str(&format!("\"{name}\" \"{}\"\n", index + 1));
+            }
+            keys.push_str("}\n");
         }
         keys.push('\0');
         bytes += 16 + keys.len();

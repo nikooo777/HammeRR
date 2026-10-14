@@ -5,7 +5,7 @@ use std::process::Command;
 
 use compiler::{Options, PhysicsMode};
 use glam::DVec3;
-use map_core::{Document, ObjectId, edit};
+use map_core::{BrushGeometry, Document, ObjectId, edit};
 use source_formats::bsp::{Bsp, CollisionHeader, Model, lump};
 use source_formats::gamefs::{Mount, MountedPath};
 
@@ -31,7 +31,12 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
     std::fs::create_dir(&materials).unwrap();
     std::fs::write(
         materials.join("clip.vmt"),
-        "UnlitGeneric { %compileclip 1 }",
+        "UnlitGeneric { %compileclip 1 $surfaceprop metal }",
+    )
+    .unwrap();
+    std::fs::write(
+        materials.join("ice.vmt"),
+        "LightmappedGeneric { $surfaceprop ice }",
     )
     .unwrap();
     let mut fs = common::empty_game();
@@ -40,7 +45,16 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
         ids: vec!["game".into()],
         mount: Mount::Directory(directory.path().into()),
     });
-    let mut document = Document::new(common::room());
+    let mut source = common::room();
+    let top = BrushGeometry::from_solid(&source.world.solids[0])
+        .unwrap()
+        .faces
+        .into_iter()
+        .find(|face| face.plane.normal.z > 0.99)
+        .unwrap()
+        .side;
+    source.world.solids[0].sides[top].material = "ice".into();
+    let mut document = Document::new(source);
     document
         .edit("physics fixtures", |tx| {
             edit::create_block(
@@ -96,6 +110,8 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
             && world_keys.contains("\"contents\" \"131072\"")
     );
     assert!(world_keys.contains("materialtable"));
+    assert!(world_keys.contains("\"ice\" \"2\"") && world_keys.contains("\"metal\" \"3\""));
+    assert_eq!(output.stats.physics_surface_properties, 3);
     let body_keys = std::str::from_utf8(physics.models[1].key_data).unwrap();
     assert!(body_keys.contains("solid {") && body_keys.contains("\"mass\" \"1\""));
     let model = bsp.records::<Model>().unwrap()[1];
@@ -123,6 +139,23 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
         repeated.lump(lump::PHYSCOLLIDE).data,
         bsp.lump(lump::PHYSCOLLIDE).data
     );
+    std::fs::write(
+        materials.join("ice.vmt"),
+        "LightmappedGeneric { $surfaceprop \"bad/name\" }",
+    )
+    .unwrap();
+    let guarded = directory.path().join("guarded.bsp");
+    std::fs::write(&guarded, b"previous BSP").unwrap();
+    let invalid = compiler::compile_with_options(document.vmf(), &fs, options);
+    assert!(invalid.report.has_errors() && !invalid.write(&guarded).unwrap());
+    assert!(
+        invalid
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("surface property"))
+    );
+    assert_eq!(std::fs::read(guarded).unwrap(), b"previous BSP");
 }
 
 #[test]

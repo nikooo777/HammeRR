@@ -22,6 +22,7 @@ const MAX_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CONVEXES: usize = 8192;
 const MAX_CORNERS: usize = 256;
 const MAX_PLANES: usize = 256;
+const MAX_SURFACE_PROPERTIES: usize = 127;
 const MAX_VERTICES: usize = 1_000_000;
 const MAX_MESH_TRIANGLES: usize = 65_536;
 const WORKER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -36,6 +37,8 @@ struct Shape {
     brush: u32,
     corners: Vec<[f32; 3]>,
     planes: Vec<[f32; 4]>,
+    #[serde(default)]
+    materials: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +57,8 @@ struct Body {
 struct Mesh {
     vertices: Vec<[f32; 3]>,
     triangles: Vec<[u32; 3]>,
+    #[serde(default)]
+    materials: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +73,8 @@ struct Model {
 struct Request {
     model_count: usize,
     models: Vec<Model>,
+    #[serde(default = "default_materials")]
+    materials: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -78,6 +85,36 @@ pub(crate) struct Stats {
     pub bytes: usize,
     pub fluids: usize,
     pub mesh_triangles: usize,
+    pub surface_properties: usize,
+}
+
+fn default_materials() -> Vec<String> {
+    vec!["default".into()]
+}
+
+fn valid_surface_property(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 127
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+}
+
+fn material_index(map: &Map, material: usize, names: &mut Vec<String>) -> Result<u8, String> {
+    let name = &map.materials.get(material).surface_prop;
+    if !valid_surface_property(name) {
+        return Err(format!(
+            "Physics surface property {name:?} must use 1–127 ASCII letters, digits, underscores, dots or dashes"
+        ));
+    }
+    if let Some(index) = names.iter().position(|value| value == name) {
+        return Ok((index + 1) as u8);
+    }
+    if names.len() == MAX_SURFACE_PROPERTIES {
+        return Err("World physics exceeds 127 surface properties including default".into());
+    }
+    names.push(name.clone());
+    Ok(names.len() as u8)
 }
 
 fn hull(
@@ -107,12 +144,13 @@ fn hull(
             .map_err(|_| "Physics brush index exceeds native bounds")?,
         corners,
         planes,
+        materials: Vec::new(),
     })
 }
 
-fn shape(map: &Map, index: usize) -> Result<Shape, String> {
+fn shape(map: &Map, index: usize, materials: Option<&mut Vec<String>>) -> Result<Shape, String> {
     let brush = &map.brushes[index];
-    hull(
+    let mut result = hull(
         map,
         index,
         brush.points(),
@@ -121,7 +159,16 @@ fn shape(map: &Map, index: usize) -> Result<Shape, String> {
             .iter()
             .filter(|side| !side.bevel)
             .map(|side| side.plane),
-    )
+    )?;
+    if let Some(names) = materials {
+        result.materials = brush
+            .sides
+            .iter()
+            .filter(|side| !side.bevel)
+            .map(|side| material_index(map, side.material, names))
+            .collect::<Result<_, _>>()?;
+    }
+    Ok(result)
 }
 
 fn plan(
@@ -135,6 +182,7 @@ fn plan(
     let mut request = Request {
         model_count: models.len(),
         models: Vec::new(),
+        materials: default_materials(),
     };
     for (model_index, model) in models.iter().enumerate() {
         control.checkpoint()?;
@@ -151,7 +199,11 @@ fn plan(
             if model_index == 0 {
                 for mask in WORLD_MASKS {
                     if brush.contents & mask != 0 {
-                        groups.entry(mask).or_default().push(shape(map, index)?);
+                        groups.entry(mask).or_default().push(shape(
+                            map,
+                            index,
+                            Some(&mut request.materials),
+                        )?);
                     }
                 }
             } else if brush.contents & (MASK_SOLID | contents::PLAYERCLIP | contents::MONSTERCLIP)
@@ -160,7 +212,7 @@ fn plan(
                 groups
                     .entry(MASK_SOLID)
                     .or_default()
-                    .push(shape(map, index)?);
+                    .push(shape(map, index, None)?);
             }
         }
         let mut bodies: Vec<_> = WORLD_MASKS
@@ -178,6 +230,7 @@ fn plan(
             let mut mesh = Mesh {
                 vertices: Vec::new(),
                 triangles: Vec::new(),
+                materials: Vec::new(),
             };
             if let Some(data) = bsp.displacements().map_err(|e| e.to_string())? {
                 for (index, terrain) in map.terrains.iter().enumerate() {
@@ -200,6 +253,11 @@ fn plan(
                             .iter()
                             .map(|triangle| triangle.map(|index| index as u32 + offset)),
                     );
+                    let material =
+                        map.texdata[map.texinfos.infos[terrain.texinfo].texdata as usize];
+                    let material = material_index(map, material, &mut request.materials)?;
+                    mesh.materials
+                        .extend(std::iter::repeat_n(material, terrain.indices.len()));
                 }
             }
             if !mesh.triangles.is_empty() {
@@ -253,7 +311,32 @@ fn plan(
     Ok(request)
 }
 
+fn validate_materials(materials: &[u8], count: usize, names: usize) -> Result<(), String> {
+    if !materials.is_empty()
+        && (materials.len() != count
+            || materials
+                .iter()
+                .any(|&index| index == 0 || usize::from(index) > names))
+    {
+        return Err("Physics surface mappings must match source geometry and declared seven-bit material indices".into());
+    }
+    Ok(())
+}
+
 fn validate(request: &Request) -> Result<(), String> {
+    if request.materials.is_empty()
+        || request.materials.len() > MAX_SURFACE_PROPERTIES
+        || request.materials[0] != "default"
+        || request
+            .materials
+            .iter()
+            .any(|name| !valid_surface_property(name))
+        || request.materials.iter().collect::<BTreeSet<_>>().len() != request.materials.len()
+    {
+        return Err(
+            "Physics requires 1–127 unique safe surface names, starting with default".into(),
+        );
+    }
     if request.model_count == 0
         || request.model_count > MAX_PHYSICS_MODELS
         || request.models.len() > request.model_count
@@ -276,6 +359,11 @@ fn validate(request: &Request) -> Result<(), String> {
         let mut seen_mesh = false;
         for body in &model.bodies {
             if let Some(mesh) = &body.mesh {
+                validate_materials(
+                    &mesh.materials,
+                    mesh.triangles.len(),
+                    request.materials.len(),
+                )?;
                 if model.index != 0
                     || body.surface.is_some()
                     || !body.shapes.is_empty()
@@ -333,6 +421,14 @@ fn validate(request: &Request) -> Result<(), String> {
             }
             let mut seen_brushes = BTreeSet::new();
             for shape in &body.shapes {
+                validate_materials(
+                    &shape.materials,
+                    shape.planes.len(),
+                    request.materials.len(),
+                )?;
+                if !shape.materials.is_empty() && (model.index != 0 || fluid) {
+                    return Err("Plane surface mappings require a non-fluid world body".into());
+                }
                 convexes += 1;
                 vertices += shape.corners.len();
                 if convexes > MAX_CONVEXES
@@ -575,13 +671,18 @@ pub(crate) fn bake(
             .filter_map(|body| body.mesh.as_ref())
             .map(|mesh| mesh.triangles.len())
             .sum(),
+        surface_properties: if request.models.iter().any(|model| model.index == 0) {
+            request.materials.len()
+        } else {
+            0
+        },
     };
     bsp.set_physics(&physics)
         .map_err(|error| error.to_string())?;
     if models.len() > 1 {
-        report.diagnostics.push(Diagnostic::warning("Engine physics uses default surface properties and a one-kilogram brush-model mass; material density and authored mass controls are unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Engine physics uses authored world/terrain surface properties; brush models retain default surfaces and a one-kilogram mass. Material density and authored mass controls are unfinished", None, None));
     } else {
-        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with default surface properties; authored friction/density/masses and broader collision validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with authored world/terrain surface properties; model surfaces/masses, density and broader collision validation remain unfinished", None, None));
     }
     Ok(stats)
 }
@@ -614,9 +715,11 @@ mod tests {
         let mesh = Mesh {
             vertices: vec![[0.0, 0.0, 0.0], [32.0, 0.0, 0.0], [0.0, 32.0, 0.0]],
             triangles: vec![[0, 1, 2]],
+            materials: Vec::new(),
         };
         let request = Request {
             model_count: 1,
+            materials: default_materials(),
             models: vec![Model {
                 index: 0,
                 bodies: vec![Body {
@@ -628,7 +731,7 @@ mod tests {
             }],
         };
         validate(&request).unwrap();
-        for case in 0..6 {
+        for case in 0..15 {
             let mut invalid = request.clone();
             let body = &mut invalid.models[0].bodies[0];
             let mesh = body.mesh.as_mut().unwrap();
@@ -639,10 +742,27 @@ mod tests {
                 3 => mesh.triangles.resize(MAX_MESH_TRIANGLES + 1, [0, 1, 2]),
                 4 => body.surface = Some(32.0),
                 5 => body.contents = contents::PLAYERCLIP,
+                6 => mesh.materials = vec![0],
+                7 => mesh.materials = vec![2],
+                8 => mesh.materials = vec![1, 1],
+                9 => invalid.materials.push("default".into()),
+                10 => invalid.materials[0] = "bad\"name".into(),
+                11 => invalid
+                    .materials
+                    .extend((1..128).map(|index| format!("surface_{index}"))),
+                12 => mesh.materials = vec![128],
+                13 => invalid.materials.clear(),
+                14 => invalid.materials.push("x".repeat(128)),
                 _ => unreachable!(),
             }
             assert!(validate(&invalid).is_err());
         }
+        let mut largest = request;
+        largest
+            .materials
+            .extend((1..127).map(|index| format!("surface_{index}")));
+        largest.models[0].bodies[0].mesh.as_mut().unwrap().materials = vec![127];
+        validate(&largest).unwrap();
     }
 
     fn sleeping_worker(pid: &Path) -> Command {

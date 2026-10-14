@@ -31,10 +31,11 @@ impl Api {
             return Err("Native terrain soup could not be created".into());
         }
         let soup = Soup { api: self, pointer };
-        for triangle in &mesh.triangles {
+        for (index, triangle) in mesh.triangles.iter().enumerate() {
             let [a, b, c] = triangle.map(|index| Vector(mesh.vertices[index as usize]));
+            let material = mesh.materials.get(index).copied().unwrap_or(1);
             unsafe {
-                (self.soup_triangle)(self.pointer, soup.pointer, &a, &b, &c, 1);
+                (self.soup_triangle)(self.pointer, soup.pointer, &a, &b, &c, i32::from(material));
             }
         }
         let pointer = unsafe { (self.soup_convert)(self.pointer, soup.pointer, false) };
@@ -104,16 +105,16 @@ impl Collide<'_> {
                 return Err("Native terrain triangle needs two collision sides".into());
             }
             let mut match_index = None;
+            let mut actual_materials = [0; 2];
             for side in 0..2 {
                 let mut corners = [Vector::default(); 3];
                 unsafe {
                     vertices(pointer, index, side, corners.as_mut_ptr());
                 }
                 let corners = corners.map(point);
-                if corners.iter().any(|point| !point.is_finite())
-                    || unsafe { get_material(pointer, index, side) } != material
-                {
-                    return Err("Native terrain vertices or default material are invalid".into());
+                actual_materials[side as usize] = unsafe { get_material(pointer, index, side) };
+                if corners.iter().any(|point| !point.is_finite()) {
+                    return Err("Native terrain vertices are invalid".into());
                 }
                 if let Some(expected_index) = match_index {
                     *work += 18;
@@ -157,7 +158,15 @@ impl Collide<'_> {
             if *work > MAX_GEOMETRY_WORK {
                 return Err("Terrain mesh verification exceeded its work limit".into());
             }
-            seen[match_index.unwrap()] = true;
+            let expected_index = match_index.unwrap();
+            let expected_material = mesh
+                .materials
+                .get(expected_index)
+                .map_or(material, |&index| i32::from(index));
+            if actual_materials != [expected_material; 2] {
+                return Err("Native terrain did not retain the authored surface mapping".into());
+            }
+            seen[expected_index] = true;
         }
         if seen.iter().any(|&seen| !seen) {
             return Err("Native terrain mesh dropped compiled triangles".into());

@@ -266,9 +266,16 @@ With **CS:S engine physics**:
 
 - Collision bodies are built for the world, player and NPC clips, brush entities (around their pivots), water and terrain. Static props use the collision that ships with their models.
 - The helper checks the collision library's version and the generated geometry, limits its memory and work, and stops after 30 seconds or when the build is cancelled. A missing or unrecognized library fails the build clearly and keeps the previous output. Editing never needs the library.
-- Bodies use default surface properties, and brush entities fall back to a one-kilogram mass.
+- World brush faces and terrain triangles keep the material's `$surfaceprop` for physics contact. Missing properties use **default**; brush entities keep default body surfaces and a one-kilogram base mass.
 
-Not yet: material friction and density, authored masses, liquids in detail brushes or brush entities, and broader collision with moving bodies.
+1. Select the world or terrain faces under **Selection → Faces · materials & textures**.
+2. Click **Browse materials…**, choose a material with the desired surface property, then **Use material** and **Apply**. **Cancel** keeps the previous material.
+3. Open **Build settings…**, choose **Physics bodies → CS:S engine physics**, then **Close** and **Compile** or **Run Map**.
+4. Open **Build details…** and read **Surface properties** in the **Physics** row. The game uses its definitions of properties such as ice, rubber, wood or metal.
+
+![Physics build details with the surface-property count](images/build-status.png)
+
+Limits: at most 127 world surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings are checked before and after native serialization. This preserves the primary `$surfaceprop`; blended secondary properties are unfinished. Material density, compiler-derived brush-model masses and model surface assignments, liquids in detail brushes or brush entities, and broader moving-body contact remain unfinished.
 
 ### Brush entities and pivots
 

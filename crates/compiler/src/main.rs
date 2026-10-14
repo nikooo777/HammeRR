@@ -122,6 +122,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.bounces, stats.bounce_rays, stats.bounce_samples, stats.bounce_work
     );
     println!(
+        "brush smoothing: {} faces, {} corners, {} work units",
+        stats.smoothed_faces, stats.smoothed_corners, stats.normal_work
+    );
+    println!(
         "model ambient: {} probes, {} bytes",
         stats.ambient_samples, stats.ambient_bytes
     );

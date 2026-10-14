@@ -30,7 +30,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 | **Stop Map** | Toolbar | Stops the game started by the editor. |
 | **Leak path** | Toolbar | Shows or hides the red leak line after a failed build. |
 
-Builds run in the background, and closing Build details leaves them running. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile.
+Builds run in the background, and closing Build details leaves them running. Scroll the window to inspect settings, statistics and **Diagnostics**; **Close**, **Cancel build** and **Play built map** stay at the bottom. Output is written in one step at the end: a failed or cancelled build never replaces the previous BSP or pointfile.
 
 ![Build settings, statistics, stage, output and diagnostics](images/build-status.png)
 
@@ -136,7 +136,7 @@ With **Direct LDR**:
 
 - Static `light`, `light_spot` and `light_environment` entities are baked in color.
 - Opaque world brushes, detail brushes and terrain cast shadows.
-- Each face uses its [lightmap scale](textures.md#face-lighting).
+- Each face uses its [lightmap scale and assigned smoothing groups](textures.md#face-lighting). World/detail brush smoothing retains the same fan across lightmap subdivisions.
 - Terrain is lit using its real raised surface, with smooth normals within patches and across matching equal-power full edges. The viewport uses the same normal construction.
 
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
@@ -150,7 +150,7 @@ With **Direct LDR**:
 
 ![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png)
 
-Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows; props and brush models do not cast bounce shadows or supply reflected light. More bounces, HDR, emissive materials and baked prop/model lightmaps remain unfinished. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. **Fullbright** retains this setting but performs no lighting work.
+Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows; props and brush models do not cast bounce shadows or supply reflected light. More bounces, HDR, emissive materials and baked prop/model lightmaps remain unfinished. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Falloff
 
@@ -190,7 +190,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Named or animated lights, invalid falloff values and invalid sun angles fail with a diagnostic that names the object.
 
-Not yet: other light types, transparent shadows, smoothing groups and bump maps on brush faces, multiple light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, automatic brush angle smoothing, brush-model smoothing and bump maps, multiple light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

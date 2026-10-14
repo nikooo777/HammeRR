@@ -335,6 +335,18 @@ impl Controller {
                 format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · Workers: {workers} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
             })
             .unwrap_or_default();
+        let smoothing = result["stats"]["smoothed_faces"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                format!(
+                    "\nBrush smoothing: {count} faces · {} corners",
+                    result["stats"]["smoothed_corners"]
+                        .as_u64()
+                        .unwrap_or_default()
+                )
+            })
+            .unwrap_or_default();
         let bounce = result["stats"]["bounces"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -462,7 +474,7 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),

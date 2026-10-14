@@ -183,6 +183,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Detailed portal clipping selected in Build settings](docs/images/build-settings.png) |
 | Choose a quick conservative build or parallel portal clipping for tighter visibility. |
 
+| Brush smoothing |
+| --- |
+| ![Authored smoothing on a brush cube in Counter-Strike: Source](docs/images/compiled-brush-smoothing.png) |
+| Blend baked lighting across selected brush faces with shared smoothing groups. |
+
 | Bounced light |
 | --- |
 | ![Reflected light beneath a shelf in Counter-Strike: Source](docs/images/compiled-bounce.png) |

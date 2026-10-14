@@ -7686,6 +7686,22 @@ mod tests {
             Ok(())
         })
         .unwrap();
+        room.edit("world smoothing", |tx| {
+            let ids = tx
+                .vmf()
+                .world
+                .solids
+                .iter()
+                .map(|solid| solid.id)
+                .collect::<Vec<_>>();
+            for id in ids {
+                for side in &mut tx.solid_mut(id)?.sides {
+                    side.smoothing_groups = Some(1);
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
         std::fs::write(&vmf_path, room.vmf().write(&Default::default())).unwrap();
         lock(&shared).open(Actor::User, &vmf_path, true).unwrap();
         controller.window.invoke_change_lighting(1);
@@ -7751,6 +7767,9 @@ mod tests {
                 .get_details()
                 .contains("Terrain surfaces: 1")
         );
+        assert!(stats["smoothed_faces"].as_u64().unwrap() > 0);
+        assert!(stats["smoothed_corners"].as_u64().unwrap() > 0);
+        assert!(controller.window.get_details().contains("Brush smoothing:"));
         assert_eq!(stats["bounces"], 1);
         assert!(stats["bounce_rays"].as_u64().unwrap() > 0);
         assert!(
@@ -7807,6 +7826,17 @@ mod tests {
                 .get_details()
                 .contains("current map snapshot")
         );
+        let details = controller.window.get_details();
+        controller
+            .window
+            .set_details((details.to_string() + &"Extra build detail.\n".repeat(80)).into());
+        controller
+            .window
+            .set_diagnostics("A long diagnostic message.\n".repeat(80).into());
+        assert_dialog_button_visible(&controller.window, "Close");
+        assert_dialog_button_visible(&controller.window, "Cancel build");
+        assert_dialog_button_visible(&controller.window, "Play built map");
+        controller.refresh(&lock(&shared));
         save_ui_snapshot(controller.window.window(), "build-status");
         assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
         controller.window.invoke_close_dialog();

@@ -6,12 +6,13 @@ use crate::map::MapEntity;
 mod bake;
 mod bounce;
 mod falloff;
+mod normals;
 mod probes;
 mod radiance;
 mod shadows;
 mod sky;
 mod terrain;
-pub(crate) use bake::bake;
+pub(crate) use bake::{Settings, bake};
 
 const PROJECTION_EPSILON: f64 = 1e-10;
 const MIN_LIGHT_DISTANCE: f64 = 1.0;

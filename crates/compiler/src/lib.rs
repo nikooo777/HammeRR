@@ -57,7 +57,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static point lights, spotlights, sun and sky on world brushes and terrain, with shadows and model ambient. One diffuse bounce is optional. HDR and baked prop/model lightmaps remain unfinished."
+                "Bakes static point lights, spotlights, sun and sky on world brushes and terrain, with shadows, authored brush smoothing and model ambient. One diffuse bounce is optional. HDR and baked prop/model lightmaps remain unfinished."
             }
         }
     }
@@ -278,6 +278,9 @@ pub struct Stats {
     pub bounce_rays: usize,
     pub bounce_samples: usize,
     pub bounce_work: usize,
+    pub smoothed_faces: usize,
+    pub smoothed_corners: usize,
+    pub normal_work: usize,
     pub physics_mode: PhysicsMode,
     pub visibility_mode: VisibilityMode,
     pub brushes: usize,
@@ -544,7 +547,7 @@ fn build(
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     control.advance(Stage::Emitting)?;
-    let mut bsp = emit::build(
+    let emission = emit::build(
         &map,
         &models,
         &visibility,
@@ -553,6 +556,7 @@ fn build(
         revision,
         control,
     )?;
+    let mut bsp = emission.bsp;
     if let Some(data) = bsp.overlay_data().map_err(|error| error.to_string())? {
         output.stats.overlays = data.overlays.len();
         output.stats.overlay_face_refs = data
@@ -578,7 +582,10 @@ fn build(
             &mut bsp,
             &mut output.report,
             control,
-            options,
+            lighting::Settings {
+                options,
+                smoothing_sources: &emission.smoothing_sources,
+            },
         )?;
         if output.report.has_errors() {
             return Ok(());
@@ -594,6 +601,9 @@ fn build(
         output.stats.bounce_rays = stats.bounce_rays;
         output.stats.bounce_samples = stats.bounce_samples;
         output.stats.bounce_work = stats.bounce_work;
+        output.stats.smoothed_faces = stats.smoothed_faces;
+        output.stats.smoothed_corners = stats.smoothed_corners;
+        output.stats.normal_work = stats.normal_work;
     }
     if options.physics == PhysicsMode::Engine {
         control.advance(Stage::Physics)?;

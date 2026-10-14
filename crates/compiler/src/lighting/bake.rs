@@ -30,6 +30,9 @@ pub(crate) struct BakeStats {
     pub bounce_rays: usize,
     pub bounce_samples: usize,
     pub bounce_work: usize,
+    pub smoothed_faces: usize,
+    pub smoothed_corners: usize,
+    pub normal_work: usize,
 }
 
 pub(super) struct Plan {
@@ -42,6 +45,7 @@ enum Surface {
         frame: LuxelFrame,
         normal: DVec3,
         points: Vec<DVec3>,
+        normals: Option<std::sync::Arc<super::normals::Field>>,
     },
     Terrain(TerrainPlan),
 }
@@ -70,12 +74,17 @@ impl Plan {
                 frame,
                 normal,
                 points,
+                normals,
             } => {
                 budget.consume(points.len() + 1)?;
-                Ok((
-                    inside_or_closest(frame.position(s, t)?, points, *normal),
-                    *normal,
-                ))
+                let point = inside_or_closest(frame.position(s, t)?, points, *normal);
+                let shading = if let Some(normals) = normals {
+                    budget.consume(normals.point_count())?;
+                    normals.sample(point, *normal)
+                } else {
+                    *normal
+                };
+                Ok((point, shading))
             }
             Surface::Terrain(plan) => {
                 budget.consume(1)?;
@@ -83,6 +92,13 @@ impl Plan {
                 Ok((sample.point, sample.normal))
             }
         }
+    }
+    pub(super) fn origin(&self, point: DVec3, normal: DVec3) -> DVec3 {
+        let bias = match &self.surface {
+            Surface::Plane { normal, .. } => *normal,
+            Surface::Terrain(_) => normal,
+        };
+        point + bias * SAMPLE_BIAS
     }
 }
 
@@ -99,7 +115,7 @@ impl Budget<'_> {
             .checked_add(amount)
             .ok_or("Direct lighting work count overflow")?;
         if self.work > MAX_LIGHTING_WORK {
-            return Err("Direct LDR exceeded its 100-million work-unit limit; use Fullbright while the accelerated lighting backend is unfinished".into());
+            return Err("Direct LDR exceeded its 100-million work-unit limit; choose Fast sampling, larger lightmap scales, Direct only or Fullbright".into());
         }
         Ok(())
     }
@@ -268,6 +284,7 @@ fn plans(
     bsp: &Bsp,
     faces: &mut [Face],
     infos: &mut Vec<TexInfo>,
+    normals: &mut super::normals::Plan,
     control: &Control,
     budget: &mut Budget<'_>,
 ) -> Result<Vec<Plan>, String> {
@@ -363,6 +380,7 @@ fn plans(
                 frame,
                 normal: plane.normal.normalize(),
                 points,
+                normals: normals.fields.remove(&index),
             },
         });
     }
@@ -412,6 +430,11 @@ fn sky_visible(
     }
 }
 
+pub(crate) struct Settings<'a> {
+    pub options: crate::Options,
+    pub smoothing_sources: &'a [Option<std::sync::Arc<crate::faces::SmoothingSource>>],
+}
+
 pub(crate) fn bake(
     map: &Map,
     tree: &Tree,
@@ -419,8 +442,9 @@ pub(crate) fn bake(
     bsp: &mut Bsp,
     report: &mut Report,
     control: &Control,
-    options: crate::Options,
+    settings: Settings<'_>,
 ) -> Result<BakeStats, String> {
+    let options = settings.options;
     let sky_quality = options.sky_quality;
     let lights = lights(map, tree, visibility, report, control)?;
     if report.has_errors() {
@@ -442,7 +466,18 @@ pub(crate) fn bake(
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;
     let mut budget = Budget { work: 0, control };
-    let plans = plans(map, bsp, &mut faces, &mut infos, control, &mut budget)?;
+    let normal_start = budget.work;
+    let mut normals = super::normals::build(bsp, &faces, settings.smoothing_sources, &mut budget)?;
+    let normal_work = budget.work - normal_start;
+    let plans = plans(
+        map,
+        bsp,
+        &mut faces,
+        &mut infos,
+        &mut normals,
+        control,
+        &mut budget,
+    )?;
     if bsp
         .records::<Model>()
         .map_err(|error| error.to_string())?
@@ -457,9 +492,7 @@ pub(crate) fn bake(
             info.flags &= !surf::BUMPLIGHT;
         }
     }
-    if faces.iter().any(|face| face.smoothing_groups != 0) {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR does not smooth lighting normals across smoothing groups yet; authored masks remain in the BSP", None, None));
-    }
+
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
@@ -488,7 +521,7 @@ pub(crate) fn bake(
         for t in 0..height {
             for s in 0..width {
                 let (point, normal) = plan.sample(s, t, &mut budget)?;
-                let origin = point + normal * SAMPLE_BIAS;
+                let origin = plan.origin(point, normal);
                 let mut color = DVec3::ZERO;
                 for light in &lights {
                     budget.consume(1)?;
@@ -660,6 +693,9 @@ pub(crate) fn bake(
         bounce_rays: bounce.rays,
         bounce_samples: bounce.samples,
         bounce_work,
+        smoothed_faces: normals.faces,
+        smoothed_corners: normals.corners,
+        normal_work,
     })
 }
 

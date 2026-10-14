@@ -1,7 +1,7 @@
 use glam::DVec3;
 use source_formats::bsp::{Bsp, Face, RgbExp32, TexInfo};
 
-use super::bake::{Budget, Plan, SAMPLE_BIAS};
+use super::bake::{Budget, Plan};
 use super::shadows::ShadowIndex;
 use super::{Occluder, encode_color};
 use crate::SkyQuality;
@@ -111,7 +111,7 @@ pub(super) fn bake(
         for t in 0..height {
             for s in 0..width {
                 let (point, normal) = plan.sample(s, t, budget)?;
-                let origin = point + normal * SAMPLE_BIAS;
+                let origin = plan.origin(point, normal);
                 let bounce = gather(normal, &directions, &mut |direction| {
                     stats.rays += 1;
                     Ok(surfaces

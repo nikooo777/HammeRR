@@ -88,7 +88,7 @@ Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsuppor
 2. Click **Remove terrain**. Removing the last terrain face restores the parent's solid brush volume; another terrain face on that parent keeps it as terrain.
 3. Use **Undo** to restore the complete grid, including imported heights, alpha, tags and extra data.
 
-Limits: every target must contain terrain, with 1–16 faces per action. Invalid or mixed ordinary/terrain targets reject together. IDs, brush planes, material, mapping and lighting remain. Imported brush-entity terrain can be removed to repair it, while its native compilation remains unsupported.
+Limits: every target must contain terrain, with 1–16 faces per action. Invalid or mixed ordinary/terrain targets reject together. IDs, brush planes, material, mapping and lighting remain. Imported brush-entity terrain can be removed to repair it, while native runtime brush-model terrain remains unsupported; static `func_detail` helpers compile as world terrain.
 
 ## Compile different grid resolutions together
 
@@ -112,6 +112,17 @@ Limits: powers 2–4, complete base edges with matching common heights, and boun
 
 Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans, subdivision generation and holes remain planned. Imported subdivided grids compile their saved rows; source-editing tools still require cache remapping. Source grids stay unchanged.
 
+## Compile terrain as detail
+
+1. Create terrain on world parents using **Create terrain**.
+2. Select the terrain parents, click **Tie to entity…** and choose **func_detail**.
+3. Open **Build settings…**, choose **Direct LDR** and **CS:S engine physics**, then **Close** and **Compile**.
+4. Open **Build details…** and inspect **Terrain surfaces**, **Neighbor pairs** and **Half-edge pairs**. Detail helpers contribute world terrain with their saved heights, blends, border shading and collision choices.
+
+![Terrain compiled through a detail helper](images/terrain-detail.png)
+
+Limits: world and consumed `func_detail` terrain only. Helpers keep sheet behavior; parent volumes do not seal or become solid boxes. Hidden helpers are omitted. Runtime brush-model terrain remains unsupported. Creation still starts on world parents; **Move to world** returns a helper to world brushes. Compatible world/detail borders share the same preview, lighting and native neighbor rules.
+
 ## Control border shading
 
 1. Select terrain faces and click **Edit terrain… → Operation → Border smoothing**.
@@ -126,7 +137,7 @@ Limits: exact full-to-half base edges with matching common samples. Masks and ge
 | --- | --- |
 | ![Automatically blended terrain lighting](images/terrain-border-automatic.png) | ![Separate terrain border lighting](images/terrain-border-hard.png) |
 
-Limits: 1–16 faces, angles 0–180 degrees, world terrain with shared full/half borders and pairwise local-normal thresholds. Connected corners share the accepted group normal. Interior shading remains smooth; heights, alpha, flags, topology and collision stay fixed. The viewport uses authored geometry, while compiler LOD may change fine geometry and its local angles. Invalid/duplicate imported `smooth` fields block compilation until repaired; **Automatic** removes the override. This setting is separate from the compiler's brush smoothing angle and the **Smooth** height brush.
+Limits: 1–16 faces, angles 0–180 degrees, world/func_detail terrain with shared full/half borders and pairwise local-normal thresholds. Connected corners share the accepted group normal. Interior shading remains smooth; heights, alpha, flags, topology and collision stay fixed. The viewport uses authored geometry, while compiler LOD may change fine geometry and its local angles. Invalid/duplicate imported `smooth` fields block compilation until repaired; **Automatic** removes the override. This setting is separate from the compiler's brush smoothing angle and the **Smooth** height brush.
 
 ## Connected lighting
 

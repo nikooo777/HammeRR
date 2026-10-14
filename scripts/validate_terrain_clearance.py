@@ -98,16 +98,22 @@ def validate(args):
             "tie_to_entity", {"ids": [parent], "classname": "func_detail"}
         )["id"]
         client.call("run_map_checks")
+        assert (
+            not issues(client, "compiler_displacement")
+            and len(issues(client, "spawn_clearance")) == 1
+        )
+        client.call(
+            "set_entity_properties",
+            {"id": entity, "set": {"classname": "func_brush"}},
+        )
+        client.call("run_map_checks")
         owner = issues(client, "compiler_displacement")
         assert (
             len(owner) == 1
             and owner[0]["object"] == entity
             and "brush entities" in owner[0]["message"]
         )
-        assert (
-            not issues(client, "spawn_clearance")
-            and len(issues(client, "spawn_clearance_unchecked")) == 1
-        )
+        assert not issues(client, "spawn_clearance")
         (args.output / "results.json").write_text(
             json.dumps(
                 {

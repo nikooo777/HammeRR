@@ -18,7 +18,7 @@ HammeRR is in active development.
 | Flat partitions | Works. Inward extrusion, free-form dividing lines and per-piece texture axes, fit and justification are planned. |
 | Materials and textures | Works. |
 | Entities, connections and renaming | Works. |
-| Map checks | Geometry, IDs, textures, entity logic, asset paths, terrain metadata and authored spawn clearance against static brushes/world terrain. Models, compiler LOD changes, runtime placement, objectives, full dependencies and engine limits are planned. |
+| Map checks | Geometry, IDs, textures, entity logic, asset paths, terrain metadata and authored spawn clearance against static brushes/world/detail terrain. Models, compiler LOD changes, runtime placement, objectives, full dependencies and engine limits are planned. |
 | Terrain (displacements) | Creation, chosen corners, resolution edits, sculpting, blend paint, full/half-edge sewing across grid resolutions and collision/border-shading controls work with guarded previews and Undo. Viewport center picking and framing follow displaced terrain. Compatible mixed-power full and whole-to-half edges compile with native LOD masks and snapping. Live strokes, subdivision, other partial spans and restricted-topology remapping remain planned. |
 | Models | Static props compile, but models aren't drawn in the viewport yet. |
 
@@ -36,7 +36,7 @@ HammeRR is in active development.
 | Water | Flat world water, fog regions, floating objects | Depth and below-water materials, currents, water in detail brushes or brush entities |
 | Cubemaps | Sample positions and sizes | Baked reflections |
 | Static props | Models, transforms, collision, skins, fading, named lighting origins | Prop lighting and shadows, exact placement in the BSP tree |
-| Terrain | Power 2/3/4 surfaces, collision, matching full-edge and corner-only links, full/half-edge LOD masks/snapping, saved subdivided grids, authored border shading and shared vertex normals | Other fractional spans, subdivision generation, removed triangles |
+| Terrain | World/func_detail power 2/3/4 surfaces, collision, matching full-edge and corner-only links, full/half-edge LOD masks/snapping, saved subdivided grids, authored border shading and shared vertex normals | Other fractional spans, subdivision generation, removed triangles |
 | Overlays | Imported `info_overlay` projections on world, detail and terrain surfaces; materials, render order, distance fading and named accessors | Placement, corner editing, viewport projection, geometry-edit rebinding, brush-model targets, water transitions and decals |
 
 ## Next

@@ -35,7 +35,7 @@ These counts describe the editable map: brush sides rather than compiled faces, 
 
 The report marks itself out of date when the map or the entity definitions change.
 
-Checks cover geometry, IDs, textures, entity logic, asset paths and player spawns. They include hidden objects and ignore open previews. Spawn checks warn when a visible spawn's standing player box overlaps solid world or `func_detail` brushes, including player clips, or a visible world terrain sheet with **Player collision** enabled. Spawns that just touch the floor within 0.01 units are fine. Terrain parent volumes do not block; the check uses the authored surface triangles and identifies affected spawns and terrain faces.
+Checks cover geometry, IDs, textures, entity logic, asset paths and player spawns. They include hidden objects and ignore open previews. Spawn checks warn when a visible spawn's standing player box overlaps solid world or `func_detail` brushes, including player clips, or a visible world or `func_detail` terrain sheet with **Player collision** enabled. Spawns that just touch the floor within 0.01 units are fine. Terrain parent volumes do not block; the check uses the authored surface triangles and identifies affected spawns and terrain faces.
 
 Some issues can be repaired automatically. **Review repair…** shows the exact before and after values, and **Apply repair** fixes it in one undo step. This currently covers invalid texture projections and zero lightmap scales. Other issues link you to the content so you can fix it by hand.
 

@@ -175,6 +175,7 @@ struct Ui {
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     lighting: Option<lighting_ui::Controller>,
     terrain: Option<terrain_ui::Controller>,
+    terrain_pick_release: bool,
     material_replace: Option<material_replace_ui::Controller>,
     surface_group: Option<surface_group_ui::Controller>,
     volume: Option<volume_ui::Controller>,
@@ -2899,6 +2900,13 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         return true;
     }
     if key == key_text(Key::Escape) {
+        if let Some(controller) = &ui.borrow().terrain
+            && controller.is_picking()
+        {
+            controller.cancel_center_pick();
+            app.set_terrain_center_picking(false);
+            return true;
+        }
         {
             let mut ui = ui.borrow_mut();
             let shared = ui.session.clone();
@@ -3110,6 +3118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_target: None,
         lighting: None,
         terrain: None,
+        terrain_pick_release: false,
         material_replace: None,
         surface_group: None,
         volume: None,
@@ -3666,6 +3675,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     bind_terrain_controls(&app, session_of(&ui));
+    app.on_cancel_terrain_center_pick({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if let Some(controller) = &ui.borrow().terrain {
+                controller.cancel_center_pick();
+            }
+            app.unwrap().set_terrain_center_picking(false);
+        }
+    });
     app.on_change_terrain_resolution({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -3897,6 +3915,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app = app.unwrap();
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
+            if button == 0 && !down && ui.terrain_pick_release {
+                ui.terrain_pick_release = false;
+                return;
+            }
+            if button == 0
+                && ui
+                    .terrain
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_picking())
+            {
+                if down {
+                    ui.terrain_pick_release = true;
+                    let controller = ui.terrain.as_ref().unwrap();
+                    let size = (viewport_size.0.max(1.0), viewport_size.1.max(1.0));
+                    let (origin, direction) = ui.viewport.camera.ray(
+                        2.0 * x / size.0 - 1.0,
+                        1.0 - 2.0 * y / size.1,
+                        size.0 / size.1,
+                    );
+                    let result = controller.select_center(
+                        &mut lock(&ui.session),
+                        &Ray {
+                            origin: origin.as_dvec3(),
+                            direction: direction.as_dvec3(),
+                        },
+                    );
+                    app.set_terrain_center_picking(controller.is_picking());
+                    app.set_message(match result {
+                        Ok(_) => {
+                            "Brush center selected. Preview the edit in the terrain dialog.".into()
+                        }
+                        Err(error) => error.into(),
+                    });
+                    if !controller.is_picking() {
+                        let _ = controller.window.show();
+                    }
+                }
+                return;
+            }
             if button != 0 && down && ui.interaction.active() {
                 let shared = ui.session.clone();
                 ui.interaction.cancel(&mut lock(&shared));
@@ -4495,6 +4552,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            app.set_terrain_center_picking(
+                ui.terrain
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_picking()),
+            );
             let scale = app.window().scale_factor();
             let size = (
                 (app.get_viewport_width() * scale).round() as u32,
@@ -9900,6 +9962,106 @@ mod tests {
         assert!(window.get_ready(), "{}", window.get_message());
         window.invoke_apply();
         assert_eq!(*lock(&shared).document().vmf(), before);
+    }
+
+    #[test]
+    fn terrain_center_picking_uses_rendered_hits_and_preserves_foreign_drafts() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                DVec3::new(-64.0, -64.0, 0.0),
+                DVec3::new(64.0, 64.0, 16.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let target = map_core::surface::FaceId {
+            solid,
+            side: session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id,
+        };
+        session
+            .select_faces(&[target], session::SelectMode::Replace)
+            .unwrap();
+        session
+            .create_terrain(Actor::Agent, &[target], 2, 0)
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = terrain_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        window.set_operation_index(1);
+        window.set_radius("32".into());
+        window.set_amount("64".into());
+        window.invoke_edited();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-center-picker");
+        window.invoke_preview_edit();
+        let own = lock(&shared).face_preview_token();
+        window.invoke_pick_center();
+        assert!(controller.is_picking());
+        let miss = Ray {
+            origin: DVec3::new(1000.0, 0.0, 200.0),
+            direction: DVec3::NEG_Z,
+        };
+        assert!(controller.select_center(&mut lock(&shared), &miss).is_err());
+        assert!(controller.is_picking());
+        controller.cancel_center_pick();
+        assert_eq!(lock(&shared).face_preview_token(), own);
+        window.invoke_pick_center();
+        let ray = Ray {
+            origin: DVec3::new(0.0, 0.0, 200.0),
+            direction: DVec3::NEG_Z,
+        };
+        assert_eq!(
+            controller.select_center(&mut lock(&shared), &ray).unwrap(),
+            DVec3::new(0.0, 0.0, 80.0)
+        );
+        assert!(!controller.is_picking());
+        assert_eq!(window.get_center_z(), "80");
+        assert!(!lock(&shared).has_face_preview());
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        lock(&shared)
+            .preview_terrain_resolution(Actor::Agent, &[target], 3)
+            .unwrap();
+        let foreign = lock(&shared).face_preview_token();
+        window.invoke_pick_center();
+        assert_eq!(
+            controller
+                .select_center(&mut lock(&shared), &ray)
+                .unwrap()
+                .z,
+            16.0
+        );
+        assert_eq!(lock(&shared).face_preview_token(), foreign);
+        window.invoke_pick_center();
+        lock(&shared)
+            .remove_terrain(Actor::Agent, &[target])
+            .unwrap();
+        assert!(controller.select_center(&mut lock(&shared), &ray).is_err());
+        assert!(!controller.is_picking());
+        assert!(window.get_stale());
+        window.invoke_cancel();
     }
 
     #[test]

@@ -176,7 +176,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Terrain authoring |
 | --- |
 | ![Painted grass and dirt on terrain](docs/images/terrain-blending.png) |
-| Create, sculpt, blend and sew terrain, preview grid and collision changes, then Apply or Cancel. |
+| Create, sculpt, blend and sew terrain with picked brush centers, guarded previews and Undo. |
 
 | Connected terrain lighting |
 | --- |

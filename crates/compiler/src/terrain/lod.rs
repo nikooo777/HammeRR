@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use glam::DVec3;
-use map_core::displacement::neighbors::{self, NeighborPair, SurfaceGrid};
+use map_core::displacement::neighbors::{self, NeighborPair, Span, SurfaceGrid};
 use source_formats::bsp::{DisplacementInfo, DisplacementVertex};
 
 use super::{Terrain, neighbors::consume};
@@ -72,10 +72,10 @@ pub(super) fn prepare(
     work: &mut usize,
     control: &Control,
 ) -> Result<(Vec<Option<Patch>>, Stats), String> {
-    if pairs
-        .iter()
-        .all(|pair| grids[pair.first].power == grids[pair.second].power)
-    {
+    if pairs.iter().all(|pair| {
+        effective_power(grids[pair.first].power, pair.first_span)
+            == effective_power(grids[pair.second].power, pair.second_span)
+    }) {
         return Ok((
             (0..terrains.len()).map(|_| None).collect(),
             Stats::default(),
@@ -87,7 +87,10 @@ pub(super) fn prepare(
     for pair in pairs {
         let a = grids[pair.first].power;
         let b = grids[pair.second].power;
-        for (i, j) in neighbors::common_edge_indices(a, pair.first_edge, b, pair.second_edge)? {
+        for (i, j) in neighbors::common_span_indices(
+            (a, pair.first_edge, pair.first_span),
+            (b, pair.second_edge, pair.second_span),
+        )? {
             consume(work, 1, control)?;
             shared
                 .entry((pair.first, i))
@@ -98,17 +101,28 @@ pub(super) fn prepare(
                 .or_default()
                 .push((pair.first, i));
         }
-        if a != b {
-            let (patch, edge, power, other) = if a > b {
-                (pair.first, pair.first_edge, a, b)
+        let a_steps = effective_power(a, pair.first_span);
+        let b_steps = effective_power(b, pair.second_span);
+        if a_steps != b_steps {
+            let (patch, edge, span, power, shift) = if a_steps > b_steps {
+                (
+                    pair.first,
+                    pair.first_edge,
+                    pair.first_span,
+                    a,
+                    a_steps - b_steps,
+                )
             } else {
-                (pair.second, pair.second_edge, b, a)
+                (
+                    pair.second,
+                    pair.second_edge,
+                    pair.second_span,
+                    b,
+                    b_steps - a_steps,
+                )
             };
-            let stride = 1 << (power - other);
-            for (step, vertex) in neighbors::edge_indices((1 << power) + 1, edge)?
-                .into_iter()
-                .enumerate()
-            {
+            let stride = 1 << shift;
+            for (step, vertex) in span.indices(power, edge)?.into_iter().enumerate() {
                 if step % stride != 0 {
                     queue.push_back((patch, vertex));
                 }
@@ -211,6 +225,10 @@ pub(super) fn prepare(
         }));
     }
     Ok((pending, stats))
+}
+
+fn effective_power(power: u32, span: Span) -> u32 {
+    power - u32::from(span != Span::Full)
 }
 
 #[cfg(test)]

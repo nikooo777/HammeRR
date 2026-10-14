@@ -463,10 +463,11 @@ impl Controller {
                 let neighbors = result["stats"]["displacement_neighbor_pairs"].as_u64().unwrap_or_default();
                 let corners=result["stats"]["displacement_corner_neighbor_pairs"].as_u64().unwrap_or_default();
                 let mixed=result["stats"]["displacement_mixed_power_pairs"].as_u64().unwrap_or_default();
+                let halves=result["stats"]["displacement_half_edge_pairs"].as_u64().unwrap_or_default();
                 let disabled=result["stats"]["displacement_lod_disabled_vertices"].as_u64().unwrap_or_default();
                 let snapped=result["stats"]["displacement_lod_snapped_vertices"].as_u64().unwrap_or_default();
                 format!(
-                    "\nTerrain surfaces: {count} · Vertices: {vertices} · Triangles: {triangles} · Neighbor pairs: {neighbors} · Corner pairs: {corners}\nMixed-power pairs: {mixed} · LOD disabled vertices: {disabled} · Snapped vertices: {snapped}"
+                    "\nTerrain surfaces: {count} · Vertices: {vertices} · Triangles: {triangles} · Neighbor pairs: {neighbors} · Corner pairs: {corners}\nMixed-power pairs: {mixed} · Half-edge pairs: {halves} · LOD disabled vertices: {disabled} · Snapped vertices: {snapped}"
                 )
             })
             .unwrap_or_default();

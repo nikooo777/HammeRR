@@ -34,10 +34,14 @@ def fixture(args):
                 {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
             )
         parents, faces = [], []
-        for power, corner, low, high in [
-            (2, 1, [-128, -128, 0], [0, 128, 16]),
-            (4, 3, [0, -128, 0], [128, 128, 16]),
-        ]:
+        patches = [(2, 1, [-128, -128, 0], [0, 128, 16])]
+        if args.split_edge:
+            patches.extend(
+                [(3, 3, [0, -128, 0], [128, 0, 16]), (4, 2, [0, 0, 0], [128, 128, 16])]
+            )
+        else:
+            patches.append((4, 3, [0, -128, 0], [128, 128, 16]))
+        for power, corner, low, high in patches:
             parent = client.call(
                 "create_block",
                 {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
@@ -85,7 +89,12 @@ def fixture(args):
         )
         client.call("select_faces", {"faces": faces})
         flat, flat_stats = build(client, args.output, "flat")
-        assert flat_stats["displacement_mixed_power_pairs"] == 1
+        assert flat_stats["displacement_mixed_power_pairs"] == (
+            3 if args.split_edge else 1
+        )
+        assert flat_stats["displacement_half_edge_pairs"] == (
+            2 if args.split_edge else 0
+        )
         assert flat_stats["displacement_lod_disabled_vertices"] > 12
         assert flat_stats["displacement_lod_snapped_vertices"] == 0
         assert (
@@ -102,7 +111,9 @@ def fixture(args):
         saved = source.read_bytes()
         history = client.call("get_map_info")["undo"]
         curved, curved_stats = build(client, args.output, "curved")
-        assert curved_stats["displacement_mixed_power_pairs"] == 1
+        assert curved_stats["displacement_mixed_power_pairs"] == (
+            3 if args.split_edge else 1
+        )
         assert curved_stats["displacement_lod_snapped_vertices"] > 0
         infos = records(curved.read_bytes(), 26, "<3f4ifi2H2i48s40s10I")
         for index, info in enumerate(infos):
@@ -111,14 +122,44 @@ def fixture(args):
                 for offset in range(0, 48, 6)
             ]
             connected = [edge for edge in edges if edge[0] != 65535]
-            assert len(connected) == 1 and connected[0][0] == 1 - index
-            assert connected[0][2:4] == (0, 0)
+            assert len(connected) == (2 if args.split_edge else 1)
+            assert {edge[0] for edge in connected} == set(range(len(infos))) - {index}
+            if not args.split_edge:
+                assert connected[0][2:4] == (0, 0)
+            else:
+                assert sum(edge[2] != 0 or edge[3] != 0 for edge in connected) == (
+                    2 if index == 0 else 1
+                )
             assert (info[15:] == (0xFFFFFFFF,) * 10) == (index == 0)
         assert client.call("get_terrain_grids", {}) == original_grids
         assert (
             client.call("get_map_info")["undo"] == history
             and source.read_bytes() == saved
         )
+        if args.split_edge:
+            for index in [1, 2]:
+                client.call(
+                    "set_object_visibility", {"action": "hide", "ids": [parents[index]]}
+                )
+                path, stats = build(client, args.output, f"single-half-{index}")
+                assert stats["displacement_half_edge_pairs"] == 1
+                assert stats["displacement_neighbor_pairs"] == 1
+                single = records(path.read_bytes(), 26, "<3f4ifi2H2i48s40s10I")
+                large_edges = [
+                    struct.unpack_from("<H4B", single[0][13], offset)
+                    for offset in range(0, 48, 6)
+                ]
+                connected = [
+                    (slot, edge)
+                    for slot, edge in enumerate(large_edges)
+                    if edge[0] != 65535
+                ]
+                assert len(connected) == 1 and connected[0][0] % 2 == int(
+                    connected[0][1][2] == 2
+                )
+                client.call(
+                    "set_object_visibility", {"action": "show", "ids": [parents[index]]}
+                )
         client.call("set_object_visibility", {"action": "hide", "ids": parents[1:]})
         _, hidden_stats = build(client, args.output, "hidden")
         assert hidden_stats["displacement_mixed_power_pairs"] == 0
@@ -131,8 +172,12 @@ def fixture(args):
         )
         client.call("commit_face_preview", {"token": draft["state"]["preview_token"]})
         _, mismatched_stats = build(client, args.output, "mismatched")
-        assert mismatched_stats["displacement_neighbor_pairs"] == 0
-        assert mismatched_stats["displacement_lod_disabled_vertices"] == 0
+        assert mismatched_stats["displacement_neighbor_pairs"] == (
+            1 if args.split_edge else 0
+        )
+        assert mismatched_stats["displacement_half_edge_pairs"] == 0
+        if not args.split_edge:
+            assert mismatched_stats["displacement_lod_disabled_vertices"] == 0
         client.call("undo", {})
         client.call("select_faces", {"faces": faces})
         assert client.call("get_terrain_grids", {}) == original_grids
@@ -145,6 +190,7 @@ def fixture(args):
                     "mismatched": mismatched_stats,
                     "exact_both_builds": True,
                     "source_history_preserved": True,
+                    "split_edge": args.split_edge,
                 },
                 indent=2,
             )
@@ -217,6 +263,11 @@ def main():
         / ".local/share/Steam/steamapps/common/Counter-Strike Source",
     )
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument(
+        "--split-edge",
+        action="store_true",
+        help="Use one large patch and two smaller half-edge neighbors",
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--view", choices=["near", "far"], default="near")

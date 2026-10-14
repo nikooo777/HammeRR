@@ -186,7 +186,8 @@ fn invalid_ambiguous_and_mismatched_edges_do_not_sew_and_work_is_cancellable() {
                 first: 0,
                 first_edge: 2,
                 second: 1,
-                second_edge: 0
+                second_edge: 0,
+                ..Default::default()
             }],
             &mut |_| Ok(())
         )

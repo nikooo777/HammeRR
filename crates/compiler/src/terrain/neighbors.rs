@@ -1,4 +1,4 @@
-use map_core::displacement::neighbors::{self, SurfaceGrid};
+use map_core::displacement::neighbors::{self, Span, SurfaceGrid};
 use source_formats::bsp::{DisplacementCorner, DisplacementNeighbor};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,16 +50,37 @@ pub(super) fn connect(
         })
         .collect::<Vec<_>>();
     let neighbors =
-        neighbors::find_mixed(&grids, &mut |amount| consume(&mut work, amount, control))?;
+        neighbors::find_spans(&grids, &mut |amount| consume(&mut work, amount, control))?;
     let mut pending = vec![[[DisplacementNeighbor::default(); 2]; 4]; terrains.len()];
     for pair in &neighbors.pairs {
-        for (index, edge, other, other_edge) in [
-            (pair.first, pair.first_edge, pair.second, pair.second_edge),
-            (pair.second, pair.second_edge, pair.first, pair.first_edge),
+        for (index, edge, span, other, other_edge, other_span) in [
+            (
+                pair.first,
+                pair.first_edge,
+                pair.first_span,
+                pair.second,
+                pair.second_edge,
+                pair.second_span,
+            ),
+            (
+                pair.second,
+                pair.second_edge,
+                pair.second_span,
+                pair.first,
+                pair.first_edge,
+                pair.first_span,
+            ),
         ] {
-            pending[index][edge][0] = DisplacementNeighbor {
+            let span = span.native(edge);
+            let slot = usize::from(span == 2);
+            if pending[index][edge][slot].index != u16::MAX {
+                return Err("Terrain neighbor spans overlap an occupied native slot".into());
+            }
+            pending[index][edge][slot] = DisplacementNeighbor {
                 index: other as u16,
                 orientation: ((2 + other_edge + 4 - edge) % 4) as u8,
+                span,
+                neighbor_span: other_span.native(other_edge),
                 ..Default::default()
             };
         }
@@ -69,6 +90,11 @@ pub(super) fn connect(
         .pairs
         .iter()
         .filter(|pair| grids[pair.first].power != grids[pair.second].power)
+        .count();
+    let half_pairs = neighbors
+        .pairs
+        .iter()
+        .filter(|pair| pair.first_span != Span::Full || pair.second_span != Span::Full)
         .count();
     let (lod, stats) = super::lod::prepare(terrains, &grids, &neighbors.pairs, &mut work, control)?;
     control.checkpoint()?;
@@ -84,7 +110,7 @@ pub(super) fn connect(
         }
     }
     if neighbors.ambiguous + neighbors.mismatched != 0 {
-        report.diagnostics.push(Diagnostic::warning(format!("Terrain shared edges left unlinked: {} ambiguous, {} mismatched surfaces. Full native base edges require matching common samples; partial spans are not connected yet", neighbors.ambiguous, neighbors.mismatched), None, None));
+        report.diagnostics.push(Diagnostic::warning(format!("Terrain shared edges left unlinked: {} ambiguous, {} mismatched surfaces. Native full/half edges require matching common samples; other partial spans are not connected", neighbors.ambiguous, neighbors.mismatched), None, None));
     }
     if stats.snapped != 0 {
         report.diagnostics.push(Diagnostic::warning(format!("Terrain LOD snapped {} inactive vertices onto the compatible surface; editable terrain remains unchanged", stats.snapped), None, None));
@@ -93,6 +119,7 @@ pub(super) fn connect(
         pairs: neighbors.pairs.len(),
         corner_pairs,
         mixed_pairs,
+        half_pairs,
         disabled_vertices: stats.disabled,
         snapped_vertices: stats.snapped,
     })

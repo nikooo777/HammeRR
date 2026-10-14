@@ -411,6 +411,165 @@ fn adjacent_fixture(powers: [u32; 2], rotations: [usize; 2]) -> Vmf {
     document.vmf().clone()
 }
 
+fn split_edge_fixture(powers: [u32; 3], rotations: [u32; 3]) -> Vmf {
+    let mut document = Document::new(common::room());
+    for (index, (low, high)) in [
+        ([0., 0., 0.], [112., 224., 16.]),
+        ([112., 0., 0.], [224., 112., 16.]),
+        ([112., 112., 0.], [224., 224., 16.]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        document
+            .edit("split edge terrain", |tx| {
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::from_array(low),
+                    DVec3::from_array(high),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                let solid = tx.document().solid(id).unwrap();
+                let geometry = BrushGeometry::from_solid(solid).unwrap();
+                let face = geometry
+                    .faces
+                    .iter()
+                    .find(|face| face.plane.normal.z > 0.99)
+                    .unwrap();
+                let target = map_core::surface::FaceId {
+                    solid: id,
+                    side: solid.sides[face.side].id,
+                };
+                map_core::displacement::edit::create(
+                    tx,
+                    &[target],
+                    powers[index],
+                    rotations[index],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    document.vmf().clone()
+}
+
+#[test]
+fn native_half_edge_spans_are_reciprocal_across_powers_and_rotated_corners() {
+    use map_core::displacement::neighbors::{Span, common_span_indices};
+    for a in 2..=4 {
+        for b in 2..=4 {
+            for c in 2..=4 {
+                for first in 0..4 {
+                    for second in 0..4 {
+                        let vmf =
+                            split_edge_fixture([a, b, c], [first, second, (first + second) % 4]);
+                        let source = vmf.clone();
+                        let output = compiler::compile(&vmf, &common::empty_game());
+                        assert!(!output.report.has_errors(), "{:?}", output.report);
+                        assert_eq!(output.stats.displacement_neighbor_pairs, 3);
+                        assert_eq!(output.stats.displacement_half_edge_pairs, 2);
+                        let bsp = output.bsp.unwrap();
+                        let data = bsp.displacements().unwrap().unwrap();
+                        let points = (0..3)
+                            .map(|index| {
+                                data.positions(index, bsp.displacement_quad(index).unwrap())
+                                    .unwrap()
+                            })
+                            .collect::<Vec<_>>();
+                        for (index, info) in data.infos.iter().enumerate() {
+                            for (edge, slots) in info.edges.iter().enumerate() {
+                                for (slot, neighbor) in slots.iter().enumerate() {
+                                    if neighbor.index == u16::MAX {
+                                        continue;
+                                    }
+                                    assert_eq!(slot, usize::from(neighbor.span == 2));
+                                    let other = neighbor.index as usize;
+                                    let other_edge = (edge + 2 + neighbor.orientation as usize) % 4;
+                                    let reciprocal = data.infos[other].edges[other_edge]
+                                        [usize::from(neighbor.neighbor_span == 2)];
+                                    assert_eq!(reciprocal.index as usize, index);
+                                    assert_eq!(
+                                        (reciprocal.span, reciprocal.neighbor_span),
+                                        (neighbor.neighbor_span, neighbor.span)
+                                    );
+                                    let mine = Span::from_native(neighbor.span, edge).unwrap();
+                                    let theirs =
+                                        Span::from_native(neighbor.neighbor_span, other_edge)
+                                            .unwrap();
+                                    for (i, j) in common_span_indices(
+                                        (info.power as u32, edge, mine),
+                                        (data.infos[other].power as u32, other_edge, theirs),
+                                    )
+                                    .unwrap()
+                                    {
+                                        assert_eq!(points[index][i], points[other][j]);
+                                        assert_eq!(
+                                            info.vertex_allowed(i),
+                                            data.infos[other].vertex_allowed(j)
+                                        );
+                                    }
+                                }
+                            }
+                            let size = info.grid_size().unwrap();
+                            let uv =
+                                |i: usize| glam::DVec2::new((i % size) as f64, (i / size) as f64);
+                            let area = info
+                                .allowed_triangle_indices()
+                                .unwrap()
+                                .iter()
+                                .map(|&[a, b, c]| (uv(b) - uv(a)).perp_dot(uv(c) - uv(a)))
+                                .sum::<f64>();
+                            assert_eq!(area, -2.0 * ((size - 1) * (size - 1)) as f64);
+                        }
+                        assert_eq!(vmf, source);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn half_edge_lighting_reads_both_native_slots_and_preserves_geometry() {
+    let mut document = Document::new(split_edge_fixture([2, 3, 4], [1, 3, 2]));
+    document
+        .edit("split-edge light", |tx| {
+            edit::create_entity(
+                tx,
+                "light",
+                Some(DVec3::new(112., 112., 180.)),
+                &[
+                    ("_light".into(), "255 255 255 200".into()),
+                    ("_constant_attn".into(), "1".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let source = document.vmf().clone();
+    let plain = compiler::compile(document.vmf(), &common::empty_game())
+        .bsp
+        .unwrap();
+    let result = compiler::compile_with_options(
+        document.vmf(),
+        &common::empty_game(),
+        compiler::Options {
+            lighting: compiler::LightingMode::DirectLdr,
+            ..Default::default()
+        },
+    );
+    assert!(!result.report.has_errors(), "{:?}", result.report);
+    assert_eq!(result.stats.displacement_half_edge_pairs, 2);
+    let lit = result.bsp.unwrap();
+    for lump in [bsp::lump::DISP_VERTS, bsp::lump::DISP_TRIS] {
+        assert_eq!(plain.lumps[lump].data, lit.lumps[lump].data);
+    }
+    assert_eq!(document.vmf(), &source);
+}
+
 #[test]
 fn native_terrain_full_edges_keep_sdk_orientations_for_rotated_start_corners() {
     let orientations = [[2, 3, 0, 1], [1, 2, 3, 0], [0, 1, 2, 3], [3, 0, 1, 2]];

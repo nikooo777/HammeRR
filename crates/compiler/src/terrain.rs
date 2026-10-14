@@ -22,6 +22,7 @@ pub(crate) struct NeighborStats {
     pub pairs: usize,
     pub corner_pairs: usize,
     pub mixed_pairs: usize,
+    pub half_pairs: usize,
     pub disabled_vertices: usize,
     pub snapped_vertices: usize,
 }

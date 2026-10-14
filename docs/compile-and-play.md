@@ -328,14 +328,14 @@ Create flat terrain with [Terrain grid and Create terrain](terrain.md), or open 
 - Terrain from imported VMFs compiles, at power 2, 3 and 4, with blend alpha and its no-physics, no-hull and no-ray flags.
 - Terrain doesn't seal the map, and its parent brush doesn't become a solid box.
 - With engine physics, terrain gets collision meshes.
-- Neighboring patches that share a full edge and matching coarse samples are linked in the BSP, including different powers. Compilation disables unsupported fine vertices and snaps them onto the compatible surface; lighting and physics use that geometry. Ambiguous edges and mismatched coarse heights stay unlinked, with a diagnostic.
+- Neighboring patches that share a full edge or exact whole-to-half spans and matching coarse samples are linked in the BSP, including different powers. Compilation disables unsupported fine vertices and snaps them onto the compatible surface; lighting and physics use that geometry. Ambiguous edges and mismatched coarse heights stay unlinked, with a diagnostic.
 - Direct LDR lights terrain of every size, with smooth normals sewn across matching equal-power full edges, and raised terrain shades the world beneath it. Terrain with unlit materials needs **Fullbright** for now.
 
 Corner-only contacts receive reciprocal native lists when base and displaced corners match, including different powers. **Build details…** reports **Corner pairs** separately from full-edge **Neighbor pairs**.
 
-**Build details…** also reports **Mixed-power pairs**, **LOD disabled vertices** and **Snapped vertices**. Snapping can reduce detail near a coarse neighbor; the editable map and viewport retain the authored grid.
+**Build details…** also reports **Mixed-power pairs**, **Half-edge pairs**, **LOD disabled vertices** and **Snapped vertices**. Snapping can reduce detail near a coarse neighbor; the editable map and viewport retain the authored grid.
 
-Not yet: subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles and partial-edge LOD. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
+Not yet: subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles and other fractional edge spans. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
 
 ## Overlays
 

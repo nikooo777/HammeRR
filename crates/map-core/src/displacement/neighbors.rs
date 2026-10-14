@@ -7,8 +7,10 @@ pub const EDGE_TOLERANCE: f64 = 0.02;
 const MAX_TOPOLOGY_WORK: usize = 2_000_000;
 const MAX_NORMAL_WORK: usize = 4_000_000;
 
+mod spans;
 #[cfg(test)]
 mod tests;
+pub use spans::find_spans;
 
 pub struct SurfaceGrid<'a> {
     pub power: u32,
@@ -16,12 +18,54 @@ pub struct SurfaceGrid<'a> {
     pub positions: &'a [DVec3],
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NeighborPair {
     pub first: usize,
     pub first_edge: usize,
     pub second: usize,
     pub second_edge: usize,
+    pub first_span: Span,
+    pub second_span: Span,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Span {
+    #[default]
+    Full,
+    FirstHalf,
+    SecondHalf,
+}
+
+impl Span {
+    pub fn native(self, edge: usize) -> u8 {
+        match (self, edge >= 2) {
+            (Self::Full, _) => 0,
+            (Self::FirstHalf, false) | (Self::SecondHalf, true) => 1,
+            _ => 2,
+        }
+    }
+
+    pub fn from_native(span: u8, edge: usize) -> Result<Self, String> {
+        match (span, edge >= 2) {
+            (0, _) => Ok(Self::Full),
+            (1, false) | (2, true) => Ok(Self::FirstHalf),
+            (2, false) | (1, true) => Ok(Self::SecondHalf),
+            _ => Err("Terrain neighbor span must be full or half".into()),
+        }
+    }
+
+    pub fn indices(self, power: u32, edge: usize) -> Result<Vec<usize>, String> {
+        if !(2..=4).contains(&power) {
+            return Err("Terrain power must be 2, 3 or 4".into());
+        }
+        let indices = edge_indices((1 << power) + 1, edge)?;
+        let middle = indices.len() / 2;
+        Ok(match self {
+            Self::Full => indices,
+            Self::FirstHalf => indices[..=middle].to_vec(),
+            Self::SecondHalf => indices[middle..].to_vec(),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -173,6 +217,7 @@ fn find_edges(
                 first_edge,
                 second,
                 second_edge,
+                ..Default::default()
             });
         } else {
             neighbors.mismatched += 1;
@@ -187,11 +232,18 @@ pub fn common_edge_indices(
     second_power: u32,
     second_edge: usize,
 ) -> Result<Vec<(usize, usize)>, String> {
-    if !(2..=4).contains(&first_power) || !(2..=4).contains(&second_power) {
-        return Err("Terrain power must be 2, 3 or 4".into());
-    }
-    let a = edge_indices((1 << first_power) + 1, first_edge)?;
-    let b = edge_indices((1 << second_power) + 1, second_edge)?;
+    common_span_indices(
+        (first_power, first_edge, Span::Full),
+        (second_power, second_edge, Span::Full),
+    )
+}
+
+pub fn common_span_indices(
+    first: (u32, usize, Span),
+    second: (u32, usize, Span),
+) -> Result<Vec<(usize, usize)>, String> {
+    let a = first.2.indices(first.0, first.1)?;
+    let b = second.2.indices(second.0, second.1)?;
     let steps = (a.len() - 1).min(b.len() - 1);
     Ok((0..=steps)
         .map(|i| {
@@ -227,7 +279,7 @@ pub fn vertex_normals(
         consume,
     };
     validate(grids, &mut budget)?;
-    if pairs.len() > grids.len() * 2 {
+    if pairs.len() > grids.len() * 4 {
         return Err("Terrain normal pair count exceeds the bounded edge limit".into());
     }
     let mut offsets = vec![0];
@@ -247,7 +299,10 @@ pub fn vertex_normals(
         if pair.first == pair.second {
             return Err("Terrain normals require distinct neighbors".into());
         }
-        for (i, j) in common_edge_indices(a.power, pair.first_edge, b.power, pair.second_edge)? {
+        for (i, j) in common_span_indices(
+            (a.power, pair.first_edge, pair.first_span),
+            (b.power, pair.second_edge, pair.second_span),
+        )? {
             budget.consume(1)?;
             if a.positions[i].distance(b.positions[j]) > EDGE_TOLERANCE {
                 return Err("Terrain normal neighbor surfaces do not match".into());

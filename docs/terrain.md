@@ -99,7 +99,18 @@ Limits: every target must contain terrain, with 1–16 faces per action. Invalid
 
 ![Compiled terrain with adjacent grid resolutions](images/terrain-mixed-resolution.png)
 
-Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Partial spans, subdivision and holes remain planned. **Sew edges** still edits equal-power grids only.
+Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans, subdivision and holes remain planned. **Sew edges** still edits equal-power full-edge grids only.
+
+## Compile split borders
+
+1. In **Top**, use **Draw brush** with one **Start** and **Depth** to create a larger parent beside two smaller parents. Each smaller border must cover exactly half of the larger border.
+2. Select the top faces under **Selection → Faces · materials & textures** and use **Create terrain**. Choose each **Terrain grid** independently; their powers may differ.
+3. Keep shared coarse heights aligned, then **Compile** with the lighting and physics settings above.
+4. Open **Build details…** and check **Half-edge pairs**. A large border can link both smaller neighbors, or either half by itself. Overlapping candidates stay unlinked and appear in **Diagnostics**.
+
+![Compiled terrain across a split border](images/terrain-half-edge.png)
+
+Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans, subdivision and holes remain planned. Source grids stay unchanged.
 
 ## Connected lighting
 

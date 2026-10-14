@@ -1,5 +1,5 @@
 use glam::DVec3;
-use map_core::displacement::neighbors::{self, NeighborPair, SurfaceGrid};
+use map_core::displacement::neighbors::{self, NeighborPair, Span, SurfaceGrid};
 use source_formats::bsp::{DisplacementLightmapSample, DisplacementSurfaceSampler, TexInfo};
 
 use crate::map::Terrain;
@@ -45,16 +45,20 @@ pub(super) fn fields(
     let mut pairs = Vec::new();
     for (first, terrain) in terrains.iter().enumerate() {
         for (edge, neighbors) in terrain.info.edges.iter().enumerate() {
-            let neighbor = neighbors[0];
-            if neighbor.index == u16::MAX || neighbor.index as usize <= first {
-                continue;
+            for neighbor in neighbors {
+                if neighbor.index == u16::MAX || neighbor.index as usize <= first {
+                    continue;
+                }
+                let second_edge = (edge + neighbor.orientation as usize + 2) % 4;
+                pairs.push(NeighborPair {
+                    first,
+                    first_edge: edge,
+                    second: neighbor.index as usize,
+                    second_edge,
+                    first_span: Span::from_native(neighbor.span, edge)?,
+                    second_span: Span::from_native(neighbor.neighbor_span, second_edge)?,
+                });
             }
-            pairs.push(NeighborPair {
-                first,
-                first_edge: edge,
-                second: neighbor.index as usize,
-                second_edge: (edge + neighbor.orientation as usize + 2) % 4,
-            });
         }
     }
     let normals = neighbors::vertex_normals(&grids, &pairs, consume)?;

@@ -5,7 +5,7 @@ use source_formats::vmf::DispInfo;
 
 use super::{
     edit::{TerrainGrid, inspect},
-    neighbors::{SurfaceGrid, edge_indices, find},
+    neighbors::{SurfaceGrid, common_span_indices, find_spans},
 };
 use crate::{
     Document, EditError,
@@ -16,7 +16,10 @@ pub struct Plan {
     pub edits: Vec<(FaceId, DispInfo)>,
     pub pairs: usize,
     pub vertices: usize,
+    pub interpolated_vertices: usize,
 }
+
+const POSITION_EPSILON: f64 = 1e-9;
 
 struct Average {
     point: DVec3,
@@ -57,19 +60,19 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
         .iter()
         .map(|grid| SurfaceGrid {
             power: grid.power,
-            corners: corners(grid),
+            corners: corners(grid).map(|point| point.as_vec3().as_dvec3()),
             positions: &grid.mesh.base_positions,
         })
         .collect::<Vec<_>>();
-    let neighbors = find(&views, &mut |_| Ok(())).map_err(invalid)?;
-    if neighbors.ambiguous > 0 || neighbors.unequal_power > 0 {
+    let neighbors = find_spans(&views, &mut |_| Ok(())).map_err(invalid)?;
+    if neighbors.ambiguous > 0 {
         return Err(invalid(
-            "Sewing needs unambiguous matching full edges with equal grid powers",
+            "Sewing needs unambiguous full or whole-to-half terrain edges",
         ));
     }
     if neighbors.pairs.is_empty() {
         return Err(invalid(
-            "No matching equal-power full terrain edges were found",
+            "No matching full or whole-to-half terrain edges were found",
         ));
     }
     let mut starts = Vec::with_capacity(grids.len());
@@ -80,10 +83,12 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
     }
     let mut parents = (0..count).collect::<Vec<_>>();
     for pair in &neighbors.pairs {
-        let first = edge_indices(grids[pair.first].mesh.size, pair.first_edge).map_err(invalid)?;
-        let second =
-            edge_indices(grids[pair.second].mesh.size, pair.second_edge).map_err(invalid)?;
-        for (a, b) in first.into_iter().zip(second.into_iter().rev()) {
+        for (a, b) in common_span_indices(
+            (grids[pair.first].power, pair.first_edge, pair.first_span),
+            (grids[pair.second].power, pair.second_edge, pair.second_span),
+        )
+        .map_err(invalid)?
+        {
             let a = root(&mut parents, starts[pair.first] + a);
             let b = root(&mut parents, starts[pair.second] + b);
             let (low, high) = if a < b { (a, b) } else { (b, a) };
@@ -112,6 +117,71 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
         }
     }
     let vertices = sums.values().filter(|sum| sum.count > 1).count();
+    let mut points = grids
+        .iter()
+        .map(|grid| grid.mesh.positions.clone())
+        .collect::<Vec<_>>();
+    let mut blends = grids
+        .iter()
+        .map(|grid| grid.mesh.alphas.clone())
+        .collect::<Vec<_>>();
+    for (index, grid) in grids.iter().enumerate() {
+        for vertex in 0..grid.mesh.positions.len() {
+            let owner = root(&mut parents, starts[index] + vertex);
+            let sum = &sums[&owner];
+            if sum.count < 2 {
+                continue;
+            }
+            points[index][vertex] = if sum.same_point {
+                sum.first_point
+            } else {
+                sum.point / sum.count as f64
+            };
+            if blend {
+                blends[index][vertex] = if sum.same_alpha {
+                    sum.first_alpha
+                } else {
+                    sum.alpha / sum.count as f64
+                };
+            }
+        }
+    }
+    let mut interpolated_vertices = 0;
+    for pair in &neighbors.pairs {
+        let a = pair
+            .first_span
+            .indices(grids[pair.first].power, pair.first_edge)
+            .map_err(invalid)?;
+        let b = pair
+            .second_span
+            .indices(grids[pair.second].power, pair.second_edge)
+            .map_err(invalid)?;
+        if a.len() == b.len() {
+            continue;
+        }
+        let (fine_patch, fine, coarse_patch, mut coarse) = if a.len() > b.len() {
+            (pair.first, a, pair.second, b)
+        } else {
+            (pair.second, b, pair.first, a)
+        };
+        coarse.reverse();
+        let stride = (fine.len() - 1) / (coarse.len() - 1);
+        for (step, &vertex) in fine.iter().enumerate() {
+            if step % stride == 0 {
+                continue;
+            }
+            let segment = step / stride;
+            let t = (step % stride) as f64 / stride as f64;
+            points[fine_patch][vertex] = points[coarse_patch][coarse[segment]]
+                .lerp(points[coarse_patch][coarse[segment + 1]], t);
+            if blend {
+                let a = blends[coarse_patch][coarse[segment]];
+                let b = blends[coarse_patch][coarse[segment + 1]];
+                blends[fine_patch][vertex] = a + (b - a) * t;
+            }
+            interpolated_vertices += 1;
+        }
+    }
     let mut edits = Vec::with_capacity(grids.len());
     for (index, grid) in grids.iter().enumerate() {
         let mut info = side(document, grid.face)
@@ -155,19 +225,12 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
         let mut moved = false;
         let mut painted = false;
         for vertex in 0..grid.mesh.positions.len() {
-            let root = root(&mut parents, starts[index] + vertex);
-            let sum = &sums[&root];
-            if sum.count < 2 {
-                continue;
-            }
             let row = vertex / grid.mesh.size;
             let col = vertex % grid.mesh.size;
-            let point = if sum.same_point {
-                sum.first_point
-            } else {
-                sum.point / sum.count as f64
-            };
-            let change = point - grid.mesh.positions[vertex];
+            let mut change = points[index][vertex] - grid.mesh.positions[vertex];
+            if change.length_squared() <= POSITION_EPSILON * POSITION_EPSILON {
+                change = DVec3::ZERO;
+            }
             let updated = offsets[row][col] + change;
             if !updated.is_finite() {
                 return Err(invalid("Sewn terrain offsets must be finite"));
@@ -175,11 +238,7 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
             offsets[row][col] = updated;
             moved |= change != DVec3::ZERO;
             if blend {
-                let value = if sum.same_alpha {
-                    sum.first_alpha
-                } else {
-                    sum.alpha / sum.count as f64
-                };
+                let value = blends[index][vertex];
                 painted |= value != alphas[row][col];
                 alphas[row][col] = value;
             }
@@ -196,6 +255,7 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
         edits,
         pairs: neighbors.pairs.len(),
         vertices,
+        interpolated_vertices,
     })
 }
 
@@ -311,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn incompatible_powers_and_missing_neighbors_reject_without_source_changes() {
+    fn different_powers_sew_but_missing_neighbors_reject_without_source_changes() {
         let (mut doc, faces) = fixture();
         let before = doc.vmf().clone();
         assert!(plan(&doc, &faces[..1], false).is_err());
@@ -333,7 +393,136 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert!(plan(&doc, &faces, false).is_err());
+        assert!(plan(&doc, &faces, false).unwrap().interpolated_vertices > 0);
+    }
+
+    #[test]
+    fn mixed_full_and_half_borders_interpolate_once_and_preserve_interior_metadata() {
+        for split in [false, true] {
+            let mut document = Document::empty();
+            let mut faces = Vec::new();
+            let mut patches = vec![(2, 1, [-64.1, -64.1, 0.0], [0.1, 64.1, 16.0])];
+            if split {
+                patches.extend([
+                    (3, 3, [0.1, -64.1, 0.0], [64.1, 0.0, 16.0]),
+                    (4, 2, [0.1, 0.0, 0.0], [64.1, 64.1, 16.0]),
+                ]);
+            } else {
+                patches.push((4, 3, [0.1, -64.1, 0.0], [64.1, 64.1, 16.0]));
+            }
+            for (index, (power, corner, low, high)) in patches.into_iter().enumerate() {
+                let face = document
+                    .edit("terrain", |tx| {
+                        let ObjectId::Solid(id) = edit::create_block(
+                            tx,
+                            DVec3::from_array(low),
+                            DVec3::from_array(high),
+                            "brick/test",
+                        )?
+                        else {
+                            unreachable!()
+                        };
+                        let solid = tx.document().solid(id).unwrap();
+                        let geometry = crate::BrushGeometry::from_solid(solid).unwrap();
+                        let face = geometry
+                            .faces
+                            .iter()
+                            .find(|face| face.plane.normal.z > 0.99)
+                            .unwrap();
+                        let target = FaceId {
+                            solid: id,
+                            side: solid.sides[face.side].id,
+                        };
+                        super::super::edit::create(tx, &[target], power, corner)?;
+                        let info = tx.solid_mut(id)?.sides[face.side]
+                            .displacement
+                            .as_mut()
+                            .unwrap();
+                        info.elevation = index as f64 * 16.0 + 0.1;
+                        info.alphas = Some(vec![
+                            vec![index as f64 * 100.0 + 0.1; (1 << power) + 1];
+                            (1 << power) + 1
+                        ]);
+                        info.extra_properties.set("custom_grid_note", "keep");
+                        Ok(target)
+                    })
+                    .unwrap();
+                faces.push(face);
+            }
+            let source = document.vmf().clone();
+            let before = inspect(&document, &faces).unwrap();
+            let original = faces
+                .iter()
+                .map(|&face| side(&document, face).unwrap().displacement.clone().unwrap())
+                .collect::<Vec<_>>();
+            let planned = plan(&document, &faces, true).unwrap();
+            assert_eq!(planned.pairs, if split { 3 } else { 1 });
+            assert!(planned.interpolated_vertices > 0);
+            for (index, (_, info)) in planned.edits.iter().enumerate() {
+                let mut metadata = info.clone();
+                metadata.offsets = original[index].offsets.clone();
+                metadata.alphas = original[index].alphas.clone();
+                assert_eq!(metadata, original[index]);
+            }
+            document
+                .edit("sew", |tx| {
+                    for (face, info) in &planned.edits {
+                        tx.solid_mut(face.solid)?
+                            .sides
+                            .iter_mut()
+                            .find(|side| side.id == face.side)
+                            .unwrap()
+                            .displacement = Some(info.clone());
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let after = inspect(&document, &faces).unwrap();
+            if split {
+                for grid in &after {
+                    let vertex = grid
+                        .mesh
+                        .base_positions
+                        .iter()
+                        .position(|point| (point.x - 0.1).abs() < 1e-9 && point.y.abs() < 1e-9)
+                        .unwrap();
+                    assert!((grid.mesh.positions[vertex].z - 32.1).abs() < 1e-9);
+                    assert!((grid.mesh.alphas[vertex] - 100.1).abs() < 1e-9);
+                }
+                let vertex = after[1]
+                    .mesh
+                    .base_positions
+                    .iter()
+                    .position(|point| {
+                        (point.x - 0.1).abs() < 1e-9 && (point.y + 16.025).abs() < 1e-9
+                    })
+                    .unwrap();
+                assert!((after[1].mesh.positions[vertex].z - 28.1).abs() < 1e-9);
+                assert!((after[1].mesh.alphas[vertex] - 75.1).abs() < 1e-9);
+            }
+            for (a, b) in before.iter().zip(&after) {
+                for row in 1..a.mesh.size - 1 {
+                    for col in 1..a.mesh.size - 1 {
+                        let index = row * a.mesh.size + col;
+                        assert_eq!(a.mesh.positions[index], b.mesh.positions[index]);
+                        assert_eq!(a.mesh.alphas[index], b.mesh.alphas[index]);
+                    }
+                }
+            }
+            let next = plan(&document, &faces, true).unwrap();
+            for (face, info) in next.edits {
+                assert_eq!(
+                    side(&document, face)
+                        .unwrap()
+                        .displacement
+                        .as_ref()
+                        .unwrap(),
+                    &info
+                );
+            }
+            document.undo().unwrap();
+            assert_eq!(document.vmf(), &source);
+        }
     }
     #[test]
     fn already_equal_fractional_three_patch_junctions_are_exact_no_ops() {

@@ -41,7 +41,7 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 ![Terrain sculpting controls with viewport center picking](images/terrain-center-picker.png)
 
-Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; Use **Sew edges** to join matching equal-power full borders; sewing is not automatic.
+Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; use **Sew edges** to join matching full/half borders across grid sizes; sewing is not automatic.
 
 ## Paint a material blend
 
@@ -59,17 +59,17 @@ Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can r
 
 ## Sew neighboring terrain
 
-1. Select 2–16 terrain faces with matching complete base edges and the same grid resolution.
+1. Select 2–16 terrain faces with matching full base edges or exact whole-to-half borders. Grid resolutions may differ.
 2. Click **Edit terrain…**, then choose **Operation → Sew edges**.
-3. Enable **Also sew blend values** to average alpha along those shared borders as well as positions.
-4. Click **Preview**. Shared border vertices average their original positions; multi-patch corners are grouped before averaging. Interior vertices stay fixed.
+3. Enable **Also sew blend values** to join alpha along those shared borders as well as positions.
+4. Click **Preview**. Common border points average their original positions once, including junctions. Finer border points follow the sewn coarse edge; the preview reports their count. Interior vertices stay fixed.
 5. Click **Apply** or **Cancel**. **Undo** restores all original grids.
 
 ![Terrain sewing controls](images/terrain-sewing-controls.png)
 
-![Two terrain surfaces joined along their shared border](images/terrain-sewn.png)
+![Different terrain grids joined across full and half borders](images/terrain-sewn.png)
 
-Limits: equal-power full base edges only. Missing matches, ambiguous overlaps, unequal powers and unsupported subdivision/cache data reject atomically. Unmatched borders are unchanged. Partial-edge authoring and subdivision remain planned. Compilation can link compatible mixed-power full edges without sewing the source grids. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
+Limits: full or exact whole-to-half base edges at powers 2–4. Missing matches, ambiguous overlaps and unsupported subdivision/cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and subdivision remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
 
 ## Set collision behavior
 
@@ -99,7 +99,7 @@ Limits: every target must contain terrain, with 1–16 faces per action. Invalid
 
 ![Compiled terrain with adjacent grid resolutions](images/terrain-mixed-resolution.png)
 
-Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans, subdivision and holes remain planned. **Sew edges** still edits equal-power full-edge grids only.
+Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans, subdivision and holes remain planned. **Sew edges** repairs these source borders through a preview.
 
 ## Compile split borders
 

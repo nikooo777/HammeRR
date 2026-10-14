@@ -35,7 +35,7 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 1. Select terrain faces and click **Edit terrain…**.
 2. Choose **Operation**: **Raise / lower**, **Flatten**, **Smooth** or **Noise**.
-3. Set **Brush center · world coordinates**. Choose **Brush direction**: **Up / down · world Z** or **Along the face normal**. Set **Radius · world units** with the slider or exact numeric input.
+3. Set **Brush center · world coordinates**. Terrain selection and **Frame · F** follow the displaced surface, including previews. Choose **Brush direction**: **Up / down · world Z** or **Along the face normal**. Set **Radius · world units** with the slider or exact numeric input.
 4. For **Raise / lower**, set **Height change · negative lowers**. For **Flatten** or **Smooth**, set **Strength** from 0 to 1. Flatten moves toward the plane through the brush center; with world-Z direction, **Z** sets its target height. Smooth uses the original neighboring samples. For **Noise**, set **Noise amount · world units** and **Noise seed**.
 5. Click **Preview** and inspect the shape. Each brush fades smoothly toward its edge. Click **Apply** to keep it, or **Cancel** to discard it. **Undo** restores the complete source grid.
 
@@ -80,7 +80,7 @@ Limits: equal-power full base edges only. Missing matches, ambiguous overlaps, u
 
 ![Terrain collision controls](images/terrain-collision.png)
 
-Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsupported imported flags still need compiler support. These controls affect complete surfaces; individual triangle tags/removal remain planned.
+Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsupported imported flags still need compiler support. These controls affect complete surfaces; individual triangle tags/removal remain planned. Editor picking continues to use visible geometry, even when game collision is disabled.
 
 ## Remove terrain
 

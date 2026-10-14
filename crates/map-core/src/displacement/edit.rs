@@ -147,8 +147,7 @@ fn removal_targets(
     }
     let mut planned = Vec::with_capacity(faces.len());
     for target in faces {
-        let solid = document
-            .solid(target.solid)
+        let solid = crate::surface::solid(document, target.solid)
             .ok_or_else(|| EditError::Invalid("Terrain parent brush is missing".into()))?;
         let matches = solid
             .sides
@@ -183,7 +182,7 @@ pub fn inspect(document: &Document, faces: &[FaceId]) -> Result<Vec<TerrainGrid>
     removal_targets(document, faces)?
         .into_iter()
         .map(|(target, index)| {
-            let solid = document.solid(target.solid).unwrap();
+            let solid = crate::surface::solid(document, target.solid).unwrap();
             let geometry = BrushGeometry::from_solid(solid)
                 .map_err(|error| EditError::Invalid(error.to_string()))?;
             let face = geometry
@@ -220,7 +219,20 @@ pub fn remove(tx: &mut Transaction<'_>, faces: &[FaceId]) -> Result<usize, EditE
     let planned = removal_targets(tx.document(), faces)?;
     let count = planned.len();
     for (target, index) in planned {
-        tx.solid_mut(target.solid)?.sides[index].displacement = None;
+        let owner = tx
+            .document()
+            .owner_of_solid(target.solid)
+            .ok_or_else(|| EditError::Invalid("Terrain parent brush is missing".into()))?;
+        let solid = match owner {
+            ObjectId::Solid(id) => tx.solid_mut(id)?,
+            ObjectId::Entity(id) => tx
+                .entity_mut(id)?
+                .solids
+                .iter_mut()
+                .find(|solid| solid.id == target.solid)
+                .ok_or_else(|| EditError::Invalid("Terrain parent brush is missing".into()))?,
+        };
+        solid.sides[index].displacement = None;
     }
     Ok(count)
 }
@@ -502,5 +514,30 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn imported_entity_terrain_inspection_and_removal_use_owner_aware_paths() {
+        let (mut document, target) = fixture();
+        document
+            .edit("terrain", |tx| create(tx, &[target], 2, 0))
+            .unwrap();
+        document
+            .edit("imported owner", |tx| {
+                edit::tie_to_entity(tx, &[target.solid], "func_brush", &[])
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        assert_eq!(inspect(&document, &[target]).unwrap()[0].mesh.size, 5);
+        document
+            .edit("remove terrain", |tx| remove(tx, &[target]))
+            .unwrap();
+        assert!(
+            crate::surface::side(&document, target)
+                .unwrap()
+                .displacement
+                .is_none()
+        );
+        document.undo().unwrap();
+        assert_eq!(*document.vmf(), before);
     }
 }

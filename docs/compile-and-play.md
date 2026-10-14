@@ -159,7 +159,7 @@ With **Direct LDR**:
 
 ![Pivot-aware direct lighting on moving brush entities](images/compiled-brush-models.png)
 
-Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Independently rotated initial poses, dynamic relighting, bump/HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
+Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Independently rotated initial poses, dynamic relighting, HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
 
 #### Switchable lights and appearances
 
@@ -188,6 +188,19 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 | ![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png) | ![Reflected world light reaches a brush entity beneath the shelf](images/compiled-model-bounce.png) |
 
 Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate models do not cast permanent bounce shadows or supply reflected light. Props, more bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+
+#### Normal-map lighting
+
+1. Set **Selection** to **Faces · materials & textures** and select the target faces.
+2. Click **Browse materials…**, choose a lit material whose VMT declares `$bumpmap`, then **Use material** and **Apply**. Its normal texture must be available to the game.
+3. Open **Build settings…** and choose **Build lighting → Direct LDR**. Choose **Indirect light → One diffuse bounce** if you want reflected world light too.
+4. Click **Close**, then **Compile** or **Run Map**. **Build details…** reports **Normal-map lighting**, faces and directional maps.
+
+![Directional shading on a normal-mapped floor](images/compiled-normal-maps.png)
+
+Each lit face gets its base map and three directional maps per light style. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
+
+Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. Materials that only declare `$bumpmap2`, independently rotated initial model poses, transparent shadows, HDR and baked prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap and 100-million work limits; larger scales or lower sampling can reduce work. Styled bounces remain unsupported.
 
 #### Falloff
 
@@ -227,7 +240,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent shadows, bump maps, multiple or styled light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, second-normal-map-only materials, multiple or styled light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

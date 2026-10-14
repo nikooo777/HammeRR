@@ -117,6 +117,7 @@ python3 -B scripts/validate_brush_junctions.py --output /tmp/hammerr-junction-ch
 python3 -B scripts/validate_light_styles.py --output /tmp/hammerr-styles-check
 python3 -B scripts/validate_model_smoothing.py --output /tmp/hammerr-model-smoothing-check
 python3 -B scripts/validate_light_culling.py --output /tmp/hammerr-light-culling-check
+python3 -B scripts/validate_bump_lighting.py --output /tmp/hammerr-bump-check
 ```
 
 `direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
@@ -134,6 +135,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 
 | Script | Checks |
 | --- | --- |
+| `bump_lighting --runtime` | Shared material/face authoring, native base/directional map order, equal base samples, frozen jobs and exact builds; private flat/tilted normal textures check engine brightness and directional shading. |
 | `native_runtime` | Player spawn and teleport, baked red lightmaps, a physics crate with and without collision bodies. `--fluid` adds a pool and checks that the crate floats. |
 | `brush_runtime` | Sliding and rotating doors, a continuously rotating brush, trigger outputs, pivot-aware model lightmaps, exact shared builds, and unchanged geometry/collision. |
 | `static_props --runtime` | Static prop collision settings. |

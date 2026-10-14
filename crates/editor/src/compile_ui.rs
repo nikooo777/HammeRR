@@ -359,6 +359,18 @@ impl Controller {
                 format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · Workers: {workers} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
             })
             .unwrap_or_default();
+        let bumps = result["stats"]["bump_faces"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                format!(
+                    "\nNormal-map lighting: {count} faces · {} directional maps",
+                    result["stats"]["bump_lightmaps"]
+                        .as_u64()
+                        .unwrap_or_default()
+                )
+            })
+            .unwrap_or_default();
         let model_maps = result["stats"]["lit_brush_models"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -541,7 +553,7 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{model_maps}{styles}{smoothing}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),

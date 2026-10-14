@@ -111,39 +111,45 @@ pub(super) fn bake(
             .ok_or("Bounce receiver has no average sample")?;
         let [width, height] = plan.dimensions();
         let samples = colors
-            .get_mut(average..first + plan.sample_count())
+            .get_mut(average..first + plan.sample_count() * plan.map_count())
             .ok_or("Bounce receiver exceeds its lightmap samples")?;
         let mut total = DVec3::ZERO;
         for t in 0..height {
             for s in 0..width {
                 let (point, normal) = plan.sample(s, t, budget)?;
                 let origin = plan.origin(point, normal);
-                let bounce = gather(normal, &directions, &mut |direction| {
-                    stats.rays += 1;
-                    let hit = surfaces
-                        .trace(origin, direction, cone, ctx.shadows, budget)?
-                        .filter(|hit| !hit.sky && hit.front);
-                    match hit {
-                        Some(hit)
-                            if !super::bake::model_blocked(
-                                &ctx.model_shadows[plan.model],
-                                origin,
-                                hit.point,
-                                budget,
-                            )? =>
-                        {
-                            Ok(hit.color * LIGHTMAP_SCALE)
+                let normals = plan.shading_normals(normal, budget)?;
+                for (map, &normal) in normals.iter().enumerate().take(plan.map_count()) {
+                    let bounce = gather(normal, &directions, &mut |direction| {
+                        stats.rays += 1;
+                        let hit = surfaces
+                            .trace(origin, direction, cone, ctx.shadows, budget)?
+                            .filter(|hit| !hit.sky && hit.front);
+                        match hit {
+                            Some(hit)
+                                if !super::bake::model_blocked(
+                                    &ctx.model_shadows[plan.model],
+                                    origin,
+                                    hit.point,
+                                    budget,
+                                )? =>
+                            {
+                                Ok(hit.color * LIGHTMAP_SCALE)
+                            }
+                            _ => Ok(DVec3::ZERO),
                         }
-                        _ => Ok(DVec3::ZERO),
+                    })?;
+                    let slot = &mut samples[1 + map * plan.sample_count() + t * width + s];
+                    if bounce != DVec3::ZERO {
+                        *slot = encode_color(DVec3::from_array(slot.linear()) + bounce)?;
                     }
-                })?;
-                let slot = &mut samples[1 + t * width + s];
-                if bounce != DVec3::ZERO {
-                    *slot = encode_color(DVec3::from_array(slot.linear()) + bounce)?;
+                    if map == 0 {
+                        total += bounce;
+                        stats.samples += usize::from(bounce.max_element() > 0.0);
+                        stats.model_samples +=
+                            usize::from(plan.model != 0 && bounce.max_element() > 0.0);
+                    }
                 }
-                total += bounce;
-                stats.samples += usize::from(bounce.max_element() > 0.0);
-                stats.model_samples += usize::from(plan.model != 0 && bounce.max_element() > 0.0);
             }
         }
         if total != DVec3::ZERO {

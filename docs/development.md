@@ -181,3 +181,19 @@ python3 -B scripts/validate_vphysics_backend.py \
 ```
 
 Checks the installed CS:S Linux64 **VPhysicsCollision007** library that engine physics builds rely on: convex construction, serialization, compound geometry and solid loading. It runs in a timed child process with a 24 GiB address-space limit, rejects library builds it doesn't recognize, and doesn't launch the game.
+
+### Terrain triangle checks
+
+```sh
+python3 -B scripts/validate_terrain_triangles.py --runtime --output /tmp/hammerr-terrain-triangles-check
+```
+
+Checks native triangle order at powers 2–4, arbitrary subset classification overrides, source/BSP bit conversion, invalid-batch preservation, Cancel, Undo/Redo, save/reopen, automatic restoration and exact foreground/background builds. Other BSP lump payloads must stay unchanged. `--runtime` loads the classified map and checks player/prop contact in a private CS:S display with `-insecure`. The editor's `terrain_triangle_controls_preserve_owned_cancel_and_apply_subsets` test exercises the software-rendered dialog without desktop input; `HAMMERR_UI_SNAPSHOTS` saves its capture.
+
+To recheck the current CS:S removal limitation, reuse a flat engine-physics BSP produced by `terrain_lod`:
+
+```sh
+python3 -B scripts/validate_terrain_removal_probe.py --bsp /tmp/hammerr-terrain-lod-check/flat.bsp --output /tmp/hammerr-removal-probe-check
+```
+
+This private runtime probe adds the native removal bit to every terrain triangle while retaining all other data, then compares the render, ray hits and player positions against the original. A changed engine behavior requires reviewing hole support before changing the compiler.

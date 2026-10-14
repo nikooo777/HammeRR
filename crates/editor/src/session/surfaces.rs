@@ -20,6 +20,11 @@ pub struct TerrainSew {
     pub interpolated_vertices: usize,
 }
 
+pub struct TerrainTriangles {
+    pub face: FaceId,
+    pub triangles: Vec<map_core::displacement::triangles::Triangle>,
+}
+
 impl TerrainSew {
     pub fn summary(&self) -> String {
         format!(
@@ -30,6 +35,71 @@ impl TerrainSew {
 }
 
 impl Session {
+    pub fn terrain_triangles(
+        &self,
+        faces: &[FaceId],
+        preview: bool,
+    ) -> Result<Vec<TerrainTriangles>, String> {
+        let document = if preview {
+            self.render_document()
+        } else {
+            &self.document
+        };
+        self.terrain_grids(faces, preview)?
+            .into_iter()
+            .map(|grid| {
+                let side = map_core::surface::side(document, grid.face)
+                    .ok_or("Terrain face is missing")?;
+                let triangles = map_core::displacement::triangles::inspect(
+                    side.displacement.as_ref().unwrap(),
+                    &grid.mesh,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(TerrainTriangles {
+                    face: grid.face,
+                    triangles,
+                })
+            })
+            .collect()
+    }
+
+    pub fn preview_terrain_triangle_tags(
+        &mut self,
+        actor: Actor,
+        targets: &[(FaceId, Vec<usize>)],
+        settings: map_core::displacement::triangles::Settings,
+    ) -> Result<usize, String> {
+        let faces = targets.iter().map(|(face, _)| *face).collect::<Vec<_>>();
+        self.terrain_grids(&faces, false)?;
+        if targets.len()
+            != faces
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+        {
+            return Err("Use one triangle selection per terrain face".into());
+        }
+        self.preview_or_apply_faces(
+            actor,
+            targets
+                .iter()
+                .map(|(face, triangles)| {
+                    (
+                        *face,
+                        SurfaceEdit {
+                            terrain: Some(map_core::displacement::Operation::TriangleTags {
+                                triangles: triangles.clone(),
+                                settings,
+                            }),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+            true,
+        )
+    }
+
     pub fn terrain_grids(
         &self,
         faces: &[FaceId],
@@ -1125,5 +1195,104 @@ fn terrain_smoothing_preview_repairs_fields_and_preserves_geometry_for_both_acto
                 .smoothing_error
                 .is_some()
         );
+    }
+}
+
+#[test]
+fn terrain_triangle_subsets_share_actors_and_preserve_failed_drafts_and_history() {
+    use map_core::displacement::triangles::{Choice, Settings};
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = Session::new(Err("no assets needed".into()));
+        let mut faces = Vec::new();
+        for power in [2, 3] {
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    actor,
+                    glam::DVec3::ZERO,
+                    glam::DVec3::splat(64.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let face = FaceId { solid, side };
+            session
+                .create_terrain(actor, &[face], power, power - 2)
+                .unwrap();
+            faces.push(face);
+        }
+        session.select_faces(&faces, SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let settings = Settings {
+            walkable: Some(Choice::Disabled),
+            buildable: Some(Choice::Enabled),
+        };
+        let targets = vec![(faces[0], vec![0, 31]), (faces[1], vec![7, 127])];
+        assert_eq!(
+            session
+                .preview_terrain_triangle_tags(actor, &targets, settings)
+                .unwrap(),
+            2
+        );
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        let preview = session.face_preview_token();
+        let rows = session.terrain_triangles(&faces, true).unwrap();
+        for (row, (_, selected)) in rows.iter().zip(&targets) {
+            for triangle in &row.triangles {
+                assert_eq!(triangle.walkable, !selected.contains(&triangle.id));
+                assert_eq!(
+                    triangle.buildable_override,
+                    selected.contains(&triangle.id).then_some(true)
+                );
+            }
+        }
+        assert!(
+            session
+                .preview_terrain_triangle_tags(
+                    actor,
+                    &[(faces[0], vec![1]), (faces[1], vec![128])],
+                    settings
+                )
+                .is_err()
+        );
+        assert!(
+            session
+                .preview_terrain_triangle_tags(
+                    actor,
+                    &[(faces[0], vec![1]), (faces[0], vec![2])],
+                    settings
+                )
+                .is_err()
+        );
+        assert_eq!(session.face_preview_token(), preview);
+        session.cancel_face_preview();
+        assert_eq!(session.document().vmf(), &source);
+        session
+            .preview_terrain_triangle_tags(actor, &targets, settings)
+            .unwrap();
+        session.commit_face_preview(actor).unwrap();
+        assert_eq!(session.document().undo_labels().count(), history + 1);
+        assert_eq!(
+            session.document().undo_labels().next(),
+            Some("edit terrain triangle tags")
+        );
+        let changed = session.document().vmf().clone();
+        session.undo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &source);
+        session.redo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &changed);
     }
 }

@@ -9,6 +9,7 @@ export { MaterialReplaceWindow } from "material-replace.slint";
 export { PrimitiveWindow } from "primitive.slint";
 export { LightingWindow, LightingGroup } from "lighting.slint";
 export { ContextWindow, ContextRow } from "context.slint";
+export { TerrainTrianglesWindow, TerrainTriangleRow } from "terrain-triangles.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
@@ -1736,6 +1737,7 @@ export component AppWindow inherits Window {
     in-out property <int> terrain-corner-index;
     callback remove-terrain();
     callback change-terrain-resolution();
+    callback edit-terrain-triangles();
     in property <bool> terrain-center-picking;
     callback cancel-terrain-center-pick();
     in property <bool> can-remove-terrain;
@@ -2248,6 +2250,7 @@ export component AppWindow inherits Window {
                             if root.can-remove-terrain: VerticalLayout {
                                 spacing: 6px;
                                 Button { text: "Edit terrain…"; clicked => { root.change-terrain-resolution(); } }
+                                Button { text: "Terrain triangles…"; clicked => { root.edit-terrain-triangles(); } }
                                 Button { text: "Remove terrain"; clicked => { root.remove-terrain(); } }
                                 Text { text: "Removing the last terrain face restores the parent brush's volume. Undo keeps all grid data."; wrap: word-wrap; color: #919aaa; font-size: 12px; }
                             }

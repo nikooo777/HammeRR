@@ -80,7 +80,19 @@ Limits: full or exact whole-to-half base edges at powers 2–4. Missing matches,
 
 ![Terrain collision controls](images/terrain-collision.png)
 
-Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsupported imported flags still need compiler support. These controls affect complete surfaces; individual triangle tags/removal remain planned. Editor picking continues to use visible geometry, even when game collision is disabled.
+Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsupported imported flags still need compiler support. These controls affect complete surfaces; use **Terrain triangles…** for per-triangle classifications. Triangle removal remains planned. Editor picking continues to use visible geometry, even when game collision is disabled.
+
+## Inspect and classify triangles
+
+1. Select terrain faces under **Selection → Faces · materials & textures**, then click **Terrain triangles…**.
+2. Choose **Surface**. Each row shows a native triangle ID, its center in world coordinates, and its current **Walkable** and **Buildable** classifications, marked **automatic** or **forced**.
+3. Tick any triangle subset, or use **Select all** and **Clear selection**. IDs run from 0–31 at power 2, 0–127 at power 3, and 0–511 at power 4.
+4. Under **Walkability** and **Buildability**, choose **Keep current**, **Automatic · from slope**, **Enabled** or **Disabled**. Automatic clears that override and recomputes the selected triangles from their source slope. Keep current retains each triangle's value.
+5. Click **Preview** to inspect the proposed classifications, then **Apply** to keep one undo step or **Cancel** to discard them. **Undo** restores the original tag rows, including their absence.
+
+![Terrain triangle selection and classification controls](images/terrain-triangle-tags.png)
+
+Limits: 1–16 selected terrain faces; the dialog edits one surface at a time. These are engine classifications, not collision switches: disabling Walkability does not make a player fall through terrain. Buildability applies to games that consume that legacy classification. Geometry, blend values, mapping, IDs, collision settings and unselected tags stay fixed. Malformed rows and invalid triangle IDs reject atomically. Imported removal and unknown tags remain inspectable but cannot compile; hole authoring and viewport triangle picking remain planned. IDs belong to a face's current power and start corner; query again after changing its topology.
 
 ## Remove terrain
 

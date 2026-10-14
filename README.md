@@ -178,6 +178,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Painted grass and dirt on terrain](docs/images/terrain-blending.png) |
 | Create, sculpt, blend and sew terrain, with border shading, guarded previews and Undo. |
 
+| Terrain triangles |
+| --- |
+| ![Terrain triangle selection and classifications](docs/images/terrain-triangle-tags.png) |
+| Inspect terrain triangles and preview walkability or buildability on any subset. |
+
 | Connected terrain lighting |
 | --- |
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |

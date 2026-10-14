@@ -342,11 +342,11 @@ impl Session {
                     if info.flags.unwrap_or(0) & !14 != 0 {
                         result.add(Severity::Warning,"compiler_displacement_flags",&location,"Terrain has unsupported native collision/bump flags. Keep supported physics, player and ray collision settings before building.",None);
                     }
-                    if info
-                        .triangle_tags
-                        .as_ref()
-                        .is_some_and(|rows| rows.iter().flatten().any(|tag| tag & 0x20 != 0))
-                    {
+                    if info.triangle_tags.as_ref().is_some_and(|rows| {
+                        rows.iter().flatten().any(|tag| {
+                            tag & i32::from(map_core::displacement::triangles::REMOVE) != 0
+                        })
+                    }) {
                         result.add(Severity::Warning,"compiler_displacement_triangles",&location,"Removed terrain triangles are not supported by the native compiler yet.",None);
                     }
                 }

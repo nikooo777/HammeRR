@@ -435,6 +435,14 @@ pub fn edit_faces(
                 crate::displacement::Operation::Smoothing(angle) => {
                     crate::displacement::smoothing::edit(info, *angle)?
                 }
+                crate::displacement::Operation::TriangleTags {
+                    triangles,
+                    settings,
+                } => {
+                    let mesh = crate::DisplacementMesh::build(&geometry, info)
+                        .map_err(|error| invalid(&error.to_string()))?;
+                    crate::displacement::triangles::edit(info, &mesh, triangles, *settings)?
+                }
                 crate::displacement::Operation::Resolution(power) => {
                     crate::displacement::resample::change(&geometry, info, *power)?
                 }

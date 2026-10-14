@@ -122,9 +122,11 @@ pub(super) fn inspect(
                 rows.len() != mesh.size - 1
                     || rows.iter().any(|row| {
                         row.len() != (mesh.size - 1) * 2
-                            || row
-                                .iter()
-                                .any(|&tag| u16::try_from(tag).is_err() || tag & 0x20 != 0)
+                            || row.iter().any(|&tag| {
+                                u16::try_from(tag).is_err()
+                                    || tag & i32::from(map_core::displacement::triangles::REMOVE)
+                                        != 0
+                            })
                     })
             })
         {

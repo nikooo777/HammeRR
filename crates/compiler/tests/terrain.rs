@@ -1050,7 +1050,7 @@ fn invalid_or_unsupported_terrain_preserves_previous_output() {
                 disp.subdivided = true;
                 disp.normals.as_mut().unwrap()[0].pop();
             }
-            5 => disp.triangle_tags = Some(vec![vec![0x20; 8]; 4]),
+            5 => disp.triangle_tags = Some(vec![vec![0x40; 8]; 4]),
             6 => disp.extra_properties.set("smooth", "NaN"),
             _ => unreachable!(),
         }
@@ -1296,4 +1296,36 @@ fn engine_terrain_soup_preserves_native_grids_and_honors_no_physics_flags() {
         output.bsp.unwrap().displacements().unwrap().unwrap().infos[0].flags(),
         Some(2)
     );
+}
+
+#[test]
+fn vmf_triangle_overrides_collapse_to_native_bits_in_stable_order() {
+    for power in 2..=4 {
+        let (mut vmf, id) = fixture(power);
+        let cells = 1 << power;
+        let source_tags = [7, 3, 48, 24, 32, 9, 0, 8];
+        let expected = [3, 1, 5, 1, 1, 7, 1, 5];
+        vmf.world
+            .solids
+            .iter_mut()
+            .find(|solid| solid.id == id)
+            .unwrap()
+            .sides
+            .iter_mut()
+            .find_map(|side| side.displacement.as_mut())
+            .unwrap()
+            .triangle_tags = Some(
+            (0..cells)
+                .map(|_| (0..cells * 2).map(|index| source_tags[index % 8]).collect())
+                .collect(),
+        );
+        let before = vmf.clone();
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let data = output.bsp.unwrap().displacements().unwrap().unwrap();
+        for (id, triangle) in data.triangles.iter().enumerate() {
+            assert_eq!(triangle.tags, expected[id % 8]);
+        }
+        assert_eq!(vmf, before);
+    }
 }

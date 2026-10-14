@@ -1738,6 +1738,8 @@ export component AppWindow inherits Window {
     callback remove-terrain();
     callback change-terrain-resolution();
     callback edit-terrain-triangles();
+    in property <bool> terrain-triangle-picking;
+    callback cancel-terrain-triangle-pick();
     in property <bool> terrain-center-picking;
     callback cancel-terrain-center-pick();
     in property <bool> can-remove-terrain;
@@ -2237,6 +2239,10 @@ export component AppWindow inherits Window {
                             if root.terrain-center-picking: VerticalLayout {
                                 Text {text:"Click selected terrain to set the brush center.";wrap:word-wrap;color:#91b9e9;}
                                 Button {text:"Cancel picking"; clicked=>{root.cancel-terrain-center-pick();}}
+                            }
+                            if root.terrain-triangle-picking: VerticalLayout {
+                                Text {text:"Click selected terrain to select a triangle. Escape cancels.";wrap:word-wrap;color:#91b9e9;}
+                                Button {text:"Cancel picking";clicked=>{root.cancel-terrain-triangle-pick();}}
                             }
                             if !root.can-remove-terrain: VerticalLayout {
                                 spacing: 6px;

@@ -10,7 +10,7 @@ export struct TerrainTriangleRow {
 export component TerrainTrianglesWindow inherits Window {
     title: "Terrain triangles";
     preferred-width: 600px;
-    preferred-height: 700px;
+    preferred-height: 740px;
     in property <[string]> faces;
     in-out property <int> face-index;
     in property <[TerrainTriangleRow]> triangles;
@@ -18,6 +18,7 @@ export component TerrainTrianglesWindow inherits Window {
     in property <string> message;
     in property <bool> stale;
     in property <bool> ready;
+    in property <float> aspect: 1.777778;
     in-out property <int> walkable-index;
     in-out property <int> buildable-index;
     callback face-changed();
@@ -27,6 +28,8 @@ export component TerrainTrianglesWindow inherits Window {
     callback preview-edit();
     callback apply();
     callback cancel();
+    callback pick-triangle();
+    callback frame-selected();
     forward-focus: focus;
     focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
@@ -39,8 +42,13 @@ export component TerrainTrianglesWindow inherits Window {
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: root.selection-label; vertical-alignment: center; }
-                Button { text: "Select all"; enabled: !root.stale; clicked => { root.select-all(true); } }
+                Button { text: "Select surface"; enabled: !root.stale; clicked => { root.select-all(true); } }
                 Button { text: "Clear selection"; enabled: !root.stale; clicked => { root.select-all(false); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button {text: "Pick triangle in viewport…"; enabled: !root.stale; clicked => {root.pick-triangle();}}
+                Button {text: "Frame selected"; enabled: !root.stale; clicked => {root.frame-selected();}}
             }
             ScrollView {
                 min-height: 200px;
@@ -58,7 +66,7 @@ export component TerrainTrianglesWindow inherits Window {
             ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.walkable-index; enabled: !root.stale; selected => { root.edited(); } }
             Text { text: "Buildability"; }
             ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.buildable-index; enabled: !root.stale; selected => { root.edited(); } }
-            Text { text: "Engine classifications for selected triangles. Collision stays fixed. IDs follow native triangle order; center coordinates locate each triangle. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
+            Text { text: "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
             Text { text: root.message; wrap: word-wrap; color: #a7adb8; }
             HorizontalLayout {
                 spacing: 8px;

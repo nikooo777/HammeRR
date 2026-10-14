@@ -2902,6 +2902,13 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         return true;
     }
     if key == key_text(Key::Escape) {
+        if let Some(controller) = &ui.borrow().terrain_triangles
+            && controller.is_picking()
+        {
+            controller.cancel_pick();
+            app.set_terrain_triangle_picking(false);
+            return true;
+        }
         if let Some(controller) = &ui.borrow().terrain
             && controller.is_picking()
         {
@@ -3710,6 +3717,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    app.on_cancel_terrain_triangle_pick({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if let Some(controller) = &ui.borrow().terrain_triangles {
+                controller.cancel_pick();
+            }
+            app.unwrap().set_terrain_triangle_picking(false);
+        }
+    });
     app.on_edit_terrain_triangles({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -3725,11 +3741,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let ui = ui.borrow();
             let controller = ui.terrain_triangles.as_ref().unwrap();
+            let app = app.unwrap();
+            controller
+                .window
+                .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
             match controller.initialize(&mut lock(&shared)) {
                 Ok(()) => {
                     let _ = controller.window.show();
                 }
-                Err(error) => app.unwrap().set_message(error.into()),
+                Err(error) => app.set_message(error.into()),
             }
         }
     });
@@ -3943,6 +3963,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut ui = ui.borrow_mut();
             if button == 0 && !down && ui.terrain_pick_release {
                 ui.terrain_pick_release = false;
+                return;
+            }
+            if button == 0
+                && ui
+                    .terrain_triangles
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_picking())
+            {
+                if down {
+                    ui.terrain_pick_release = true;
+                    let controller = ui.terrain_triangles.as_ref().unwrap();
+                    let size = (viewport_size.0.max(1.0), viewport_size.1.max(1.0));
+                    let (origin, direction) = ui.viewport.camera.ray(
+                        2.0 * x / size.0 - 1.0,
+                        1.0 - 2.0 * y / size.1,
+                        size.0 / size.1,
+                    );
+                    let result = controller.select_at_ray(
+                        &mut lock(&ui.session),
+                        &Ray {
+                            origin: origin.as_dvec3(),
+                            direction: direction.as_dvec3(),
+                        },
+                    );
+                    app.set_terrain_triangle_picking(controller.is_picking());
+                    app.set_message(match result {
+                        Ok(id) => {
+                            let _ = controller.window.show();
+                            format!("Selected terrain triangle {id}.").into()
+                        }
+                        Err(error) => error.into(),
+                    });
+                }
                 return;
             }
             if button == 0
@@ -4371,7 +4424,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.terrain_triangles
-                        && controller.window.window().is_visible()
+                        && (controller.window.window().is_visible() || controller.is_picking())
                     {
                         controller.refresh(&session);
                     }
@@ -4419,7 +4472,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.terrain_triangles
-                        && controller.window.window().is_visible()
+                        && (controller.window.window().is_visible() || controller.is_picking())
                     {
                         controller.refresh(&session);
                     }
@@ -4588,6 +4641,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            app.set_terrain_triangle_picking(
+                ui.terrain_triangles
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_picking()),
+            );
             app.set_terrain_center_picking(
                 ui.terrain
                     .as_ref()
@@ -10102,6 +10160,123 @@ mod tests {
         assert!(!rows[0].triangles[0].walkable);
         assert!(rows[0].triangles[1].walkable);
         lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), source);
+    }
+
+    #[test]
+    fn terrain_triangle_batch_controls_pick_frame_and_keep_foreign_guides() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let mut faces = Vec::new();
+        for (index, power) in [2, 3].into_iter().enumerate() {
+            let low = DVec3::X * index as f64 * 96.0;
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    Actor::Agent,
+                    low,
+                    low + DVec3::new(64.0, 64.0, 16.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let face = map_core::surface::FaceId { solid, side };
+            session
+                .create_terrain(Actor::Agent, &[face], power, index as u32)
+                .unwrap();
+            faces.push(face);
+        }
+        session.select_faces(&faces, SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = terrain_triangles_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        window.invoke_toggle_triangle(0, true);
+        window.invoke_toggle_triangle(7, true);
+        window.set_face_index(1);
+        window.invoke_face_changed();
+        window.invoke_toggle_triangle(31, true);
+        window.set_face_index(0);
+        window.invoke_face_changed();
+        assert!(window.get_triangles().row_data(0).unwrap().selected);
+        assert!(
+            window
+                .get_selection_label()
+                .contains("3 triangles across 2")
+        );
+        window.set_walkable_index(3);
+        window.invoke_edited();
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        assert_eq!(
+            lock(&shared).terrain_triangles(&faces, true).unwrap()[1].triangles[31]
+                .walkable_override,
+            Some(false)
+        );
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-triangle-picking");
+        let camera = lock(&shared).camera();
+        window.invoke_frame_selected();
+        assert_ne!(lock(&shared).camera(), camera);
+        let preview = lock(&shared).face_preview_token();
+        window.invoke_pick_triangle();
+        assert!(controller.is_picking());
+        controller.cancel_pick();
+        assert!(!controller.is_picking());
+        assert_eq!(lock(&shared).face_preview_token(), preview);
+        window.invoke_pick_triangle();
+        let center =
+            lock(&shared).terrain_triangles(&[faces[1]], true).unwrap()[0].triangles[127].centroid;
+        assert_eq!(
+            controller
+                .select_at_ray(
+                    &mut lock(&shared),
+                    &Ray {
+                        origin: center + DVec3::Z * 64.0,
+                        direction: DVec3::NEG_Z
+                    }
+                )
+                .unwrap(),
+            127
+        );
+        assert_eq!(window.get_face_index(), 1);
+        assert!(window.get_triangles().row_data(31).unwrap().selected);
+        assert!(window.get_triangles().row_data(127).unwrap().selected);
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        let rows = lock(&shared).terrain_triangles(&faces, false).unwrap();
+        assert!(!rows[0].triangles[0].walkable && !rows[1].triangles[127].walkable);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), source);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.invoke_toggle_triangle(0, true);
+        let foreign = lock(&shared)
+            .highlight_terrain_triangles(Actor::Agent, &[(faces[1], vec![7])])
+            .unwrap();
+        window.invoke_cancel();
+        assert_eq!(
+            lock(&shared).terrain_triangle_highlight_json()["token"],
+            foreign.to_string()
+        );
         assert_eq!(*lock(&shared).document().vmf(), source);
     }
 

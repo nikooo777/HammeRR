@@ -180,8 +180,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Terrain triangles |
 | --- |
-| ![Terrain triangle selection and classifications](docs/images/terrain-triangle-tags.png) |
-| Inspect terrain triangles and preview walkability or buildability on any subset. |
+| ![Terrain triangle selection and classifications](docs/images/terrain-triangle-picking.png) |
+| Pick, highlight and frame terrain triangles, then preview classifications on any subset. |
 
 | Connected terrain lighting |
 | --- |

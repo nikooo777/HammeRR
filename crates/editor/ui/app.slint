@@ -694,6 +694,7 @@ export component TerrainWindow inherits Window {
     callback preview-edit();
     callback apply();
     callback cancel();
+    callback pick-center();
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape {root.cancel(); accept} else {reject} }
@@ -718,6 +719,7 @@ export component TerrainWindow inherits Window {
                     Text {text: "Y"; vertical-alignment: center;} LineEdit {text <=> root.center-y; edited => {root.edited();}}
                     Text {text: "Z"; vertical-alignment: center;} LineEdit {text <=> root.center-z; edited => {root.edited();}}
                 }
+                Button {text:"Pick center in viewport…"; enabled:!root.stale; clicked=>{root.pick-center();}}
                 Text {text: "Brush direction";}
                 ComboBox {model:["Up / down · world Z", "Along the face normal"]; current-index <=> root.direction-index; selected => {root.edited();}}
                 Text {text: "Radius · world units";}
@@ -1715,6 +1717,8 @@ export component AppWindow inherits Window {
     in-out property <int> terrain-corner-index;
     callback remove-terrain();
     callback change-terrain-resolution();
+    in property <bool> terrain-center-picking;
+    callback cancel-terrain-center-pick();
     in property <bool> can-remove-terrain;
     in property <string> terrain-creation-error;
     callback replace-materials();
@@ -2209,6 +2213,10 @@ export component AppWindow inherits Window {
                         if root.has-faces: VerticalLayout {
                             spacing: 6px;
                             SectionTitle { text: "TERRAIN"; }
+                            if root.terrain-center-picking: VerticalLayout {
+                                Text {text:"Click selected terrain to set the brush center.";wrap:word-wrap;color:#91b9e9;}
+                                Button {text:"Cancel picking"; clicked=>{root.cancel-terrain-center-pick();}}
+                            }
                             if !root.can-remove-terrain: VerticalLayout {
                                 spacing: 6px;
                                 Text { text: "Terrain grid"; color: #c8ccd4; }

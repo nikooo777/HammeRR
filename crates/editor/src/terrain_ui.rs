@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use map_core::surface::FaceId;
@@ -37,6 +37,7 @@ impl Target {
 pub struct Controller {
     pub window: TerrainWindow,
     target: Rc<RefCell<Option<Target>>>,
+    picking: Rc<Cell<bool>>,
 }
 
 fn number(value: slint::SharedString, label: &str) -> Result<f64, String> {
@@ -164,6 +165,31 @@ impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = TerrainWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
+        let picking = Rc::new(Cell::new(false));
+        window.on_pick_center({
+            let (window, shared, target, picking) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                picking.clone(),
+            );
+            move || {
+                let window = window.unwrap();
+                let session = lock(&shared);
+                let result = target
+                    .borrow()
+                    .as_ref()
+                    .ok_or("Reopen terrain editing".to_owned())
+                    .and_then(|target| target.check(&session));
+                match result {
+                    Ok(()) => {
+                        picking.set(true);
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
+                }
+            }
+        });
         window.on_edited({
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
             move || {
@@ -232,10 +258,15 @@ impl Controller {
                 slint::CloseRequestResponse::HideWindow
             }
         });
-        Ok(Self { window, target })
+        Ok(Self {
+            window,
+            target,
+            picking,
+        })
     }
 
     pub fn initialize(&self, session: &mut Session) -> Result<(), String> {
+        self.picking.set(false);
         let faces = session.selected_faces();
         let grids = session.terrain_grids(&faces, false)?;
         if let Some(target) = self.target.borrow_mut().as_mut() {
@@ -303,6 +334,53 @@ impl Controller {
         );
         self.refresh(session);
         Ok(())
+    }
+
+    pub fn is_picking(&self) -> bool {
+        self.picking.get()
+    }
+
+    pub fn cancel_center_pick(&self) {
+        self.picking.set(false);
+        self.window
+            .set_message("Center picking cancelled. Terrain fields are unchanged.".into());
+        let _ = self.window.show();
+    }
+
+    pub fn select_center(
+        &self,
+        session: &mut Session,
+        ray: &map_core::query::Ray,
+    ) -> Result<glam::DVec3, String> {
+        if !self.is_picking() {
+            return Err("Center picking is not active".into());
+        }
+        let mut target = self.target.borrow_mut();
+        let target = target.as_mut().ok_or("Reopen terrain editing")?;
+        if let Err(error) = target.check(session) {
+            self.picking.set(false);
+            self.window.set_stale(true);
+            return Err(error);
+        }
+        let hit = session
+            .pick(ray)
+            .ok_or("Click a selected terrain surface, or cancel picking")?;
+        let face = map_core::surface::FaceId {
+            solid: hit.solid.ok_or("Click a selected terrain surface")?,
+            side: hit.side.ok_or("Click a selected terrain surface")?,
+        };
+        if !target.faces.contains(&face) {
+            return Err("Click one of the selected terrain surfaces, or cancel picking".into());
+        }
+        target.cancel(session);
+        self.window.set_center_x(hit.point.x.to_string().into());
+        self.window.set_center_y(hit.point.y.to_string().into());
+        self.window.set_center_z(hit.point.z.to_string().into());
+        self.window.set_ready(false);
+        self.window
+            .set_message("Brush center selected. Preview the new edit before applying.".into());
+        self.picking.set(false);
+        Ok(hit.point)
     }
 
     pub fn refresh(&self, session: &Session) {

@@ -35,11 +35,11 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 1. Select terrain faces and click **Edit terrain…**.
 2. Choose **Operation**: **Raise / lower**, **Flatten**, **Smooth** or **Noise**.
-3. Set **Brush center · world coordinates**. Terrain selection and **Frame · F** follow the displaced surface, including previews. Choose **Brush direction**: **Up / down · world Z** or **Along the face normal**. Set **Radius · world units** with the slider or exact numeric input.
+3. Set **Brush center · world coordinates**, or click **Pick center in viewport…** and choose a point on the selected terrain. The dialog returns with that point filled in. **Escape** or **Cancel picking** restores the dialog without changing its fields. Terrain selection and **Frame · F** follow the displaced surface, including previews. Choose **Brush direction**: **Up / down · world Z** or **Along the face normal**. Set **Radius · world units** with the slider or exact numeric input.
 4. For **Raise / lower**, set **Height change · negative lowers**. For **Flatten** or **Smooth**, set **Strength** from 0 to 1. Flatten moves toward the plane through the brush center; with world-Z direction, **Z** sets its target height. Smooth uses the original neighboring samples. For **Noise**, set **Noise amount · world units** and **Noise seed**.
 5. Click **Preview** and inspect the shape. Each brush fades smoothly toward its edge. Click **Apply** to keep it, or **Cancel** to discard it. **Undo** restores the complete source grid.
 
-![Terrain sculpting controls](images/terrain-sculpt.png)
+![Terrain sculpting controls with viewport center picking](images/terrain-center-picker.png)
 
 Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; Use **Sew edges** to join matching equal-power full borders; sewing is not automatic.
 
@@ -55,7 +55,7 @@ Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise chang
 
 ![Painted grass and dirt on terrain](images/terrain-blending.png)
 
-Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Painting uses a bounded brush center rather than live viewport strokes. **Sew edges** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
+Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Use **Pick center in viewport…** or exact coordinates to place the bounded brush. Live viewport strokes remain planned. **Sew edges** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
 
 ## Sew neighboring terrain
 

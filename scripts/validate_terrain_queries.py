@@ -52,6 +52,14 @@ def validate(args):
         for _ in range(3):
             assert client.call("raycast", ray)["point"] == [0, 0, 80]
         assert client.call("get_map_info")["undo"] == history
+        center = client.call("raycast", ray)["point"]
+        edit = client.call(
+            "preview_terrain_sculpt",
+            {"mode": "raise", "center": center, "radius": 32, "amount": 16},
+        )
+        assert grid(client, True)["positions"][12][2] == 96
+        client.call("cancel_face_preview", {"token": edit["state"]["preview_token"]})
+        assert client.call("get_map_info")["undo"] == history
         owner = client.call(
             "tie_to_entity", {"ids": [parent], "classname": "func_brush"}
         )
@@ -74,6 +82,7 @@ def validate(args):
                     "pixel_pick": picked,
                     "draft_frame_matches_committed": True,
                     "queries_preserve_history": True,
+                    "picked_point_drives_brush_center": True,
                     "entity_cleanup_undo": True,
                 },
                 indent=2,

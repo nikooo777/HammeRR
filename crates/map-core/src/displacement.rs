@@ -22,6 +22,10 @@ pub enum Operation {
         triangles: Vec<usize>,
         settings: triangles::Settings,
     },
+    Masked {
+        operation: Box<Operation>,
+        vertices: Vec<usize>,
+    },
     Sculpt {
         brush: brush::Brush,
         operation: brush::Sculpt,

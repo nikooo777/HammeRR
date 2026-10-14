@@ -1447,6 +1447,13 @@ pub struct TerrainTrianglePickArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVertexMaskArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TerrainCollisionArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub physics_collision: Option<bool>,
@@ -1471,7 +1478,9 @@ pub enum TerrainSculptMode {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TerrainSculptArgs {
+    pub mask_token: Option<String>,
     pub faces: Option<Vec<FaceRef>>,
     pub mode: TerrainSculptMode,
     pub center: [f64; 3],
@@ -1491,7 +1500,9 @@ pub enum TerrainBlendMode {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TerrainBlendArgs {
+    pub mask_token: Option<String>,
     pub faces: Option<Vec<FaceRef>>,
     pub mode: TerrainBlendMode,
     pub center: Option<[f64; 3]>,
@@ -5047,7 +5058,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. No automatic edge sewing. UI: Edit terrain…."
+        description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. Optional mask_token from get_terrain_vertex_mask confines writes to highlighted triangle vertices. Replaced/stale tokens reject. No automatic edge sewing. UI: Edit terrain…."
     )]
     fn preview_terrain_sculpt(
         &self,
@@ -5074,17 +5085,23 @@ impl EditorServer {
                     seed: args.seed.unwrap_or(1),
                 },
             };
-            let count = session.preview_terrain_edit(
-                Actor::Agent,
-                &faces,
-                map_core::displacement::Operation::Sculpt { brush, operation },
-            )?;
+            let operation = map_core::displacement::Operation::Sculpt { brush, operation };
+            let count = if let Some(token) = args.mask_token {
+                session.preview_terrain_masked_edit(
+                    Actor::Agent,
+                    &faces,
+                    operation,
+                    parse_token(&token)?,
+                )?
+            } else {
+                session.preview_terrain_edit(Actor::Agent, &faces, operation)?
+            };
             Ok(json!({"faces_changed":count,"state":face_state(&session)}))
         })
     }
 
     #[tool(
-        description = "Preview terrain alpha painting, full-face fill or invert on up to16 selected/explicit faces. value is0–255(default128); paint moves toward it with strength0–1(default1), smooth radial falloff and required world center. radius is1–8192(default128), direction=world_z(default) or face_normal. fill/invert affect complete grids and do not use brush coordinates. Geometry/material/mapping remain fixed. A two-material shader is needed to display alpha blending. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain…."
+        description = "Preview terrain alpha painting, full-face fill or invert on up to16 selected/explicit faces. value is0–255(default128); paint moves toward it with strength0–1(default1), smooth radial falloff and required world center. radius is1–8192(default128), direction=world_z(default) or face_normal. fill/invert affect complete grids and do not use brush coordinates. Optional mask_token from get_terrain_vertex_mask confines paint/fill/invert to highlighted triangle vertices. Replaced/stale tokens reject. Geometry/material/mapping remain fixed. A two-material shader is needed to display alpha blending. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain…."
     )]
     fn preview_terrain_blend(&self, Parameters(args): Parameters<TerrainBlendArgs>) -> ToolResult {
         run(|| {
@@ -5113,11 +5130,17 @@ impl EditorServer {
                 TerrainBlendMode::Fill => Blend::Fill(args.value.unwrap_or(128.0)),
                 TerrainBlendMode::Invert => Blend::Invert,
             };
-            let count = session.preview_terrain_edit(
-                Actor::Agent,
-                &faces,
-                map_core::displacement::Operation::Blend { brush, operation },
-            )?;
+            let operation = map_core::displacement::Operation::Blend { brush, operation };
+            let count = if let Some(token) = args.mask_token {
+                session.preview_terrain_masked_edit(
+                    Actor::Agent,
+                    &faces,
+                    operation,
+                    parse_token(&token)?,
+                )?
+            } else {
+                session.preview_terrain_edit(Actor::Agent, &faces, operation)?
+            };
             Ok(json!({"faces_changed":count,"state":face_state(&session)}))
         })
     }
@@ -5181,6 +5204,26 @@ impl EditorServer {
                 },
             )?;
             Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Inspect highlighted triangles as a deduplicated native vertex mask within selected/explicit terrain faces. Optional token guards the current highlight. Returns token, vertex count and per-face vertex IDs/triangle counts. Empty/stale/replaced selections reject. Use token as mask_token on preview_terrain_sculpt/blend. Only these vertices change. UI: Affect only highlighted triangle vertices.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_vertex_mask(
+        &self,
+        Parameters(args): Parameters<TerrainVertexMaskArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            Ok(session
+                .terrain_vertex_mask(&faces, args.token.as_deref().map(parse_token).transpose()?)?
+                .json())
         })
     }
 

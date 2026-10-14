@@ -203,3 +203,9 @@ python3 -B scripts/validate_terrain_triangle_picking.py --output /tmp/hammerr-te
 ```
 
 Checks native ray picks at powers2–4, normalized directions, draft geometry, offscreen highlighted/cleared renders, invalid-batch preservation, replaced highlight tokens, changed-power guards, framing, hidden detail owners, mixed tool faces and occlusion. Source/history remain unchanged during the read/view operations. The software UI test `terrain_triangle_batch_controls_pick_frame_and_keep_foreign_guides` covers retained surface subsets, viewport picking cancellation, batch Apply/Undo and foreign guide ownership.
+
+```sh
+python3 -B scripts/validate_terrain_vertex_masks.py --output /tmp/hammerr-terrain-masks-check
+```
+
+Checks deduplicated masks across power2/3/4 grids, exact unselected geometry/alpha, untouched faces, owned previews/Cancel, mask reuse after Apply, replaced-token failures preserving a valid draft, saved source and native geometry/alpha through exact foreground/background builds. The software UI check `terrain_mask_controls_retain_selection_and_confine_sculpt_and_blend` covers **Use selection**, mask counts, sculpt/fill previews, Cancel and Undo. Core tests check destination-only writes and immutable-neighbor smoothing.

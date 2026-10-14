@@ -65,6 +65,7 @@ struct FacePreview {
     token: u64,
     document: Document,
     edits: Vec<(FaceId, SurfaceEdit)>,
+    terrain_mask_token: Option<u64>,
 }
 
 pub struct MaterialPreview {
@@ -603,6 +604,7 @@ impl Session {
                 token: self.face_preview_serial,
                 document,
                 edits,
+                terrain_mask_token: None,
             });
             self.scene_serial += 1;
             Ok(changed)
@@ -628,6 +630,14 @@ impl Session {
                     "edit terrain triangle tags"
                 }
                 map_core::displacement::Operation::Sculpt { .. } => "sculpt terrain",
+                map_core::displacement::Operation::Masked { operation, .. } => {
+                    match operation.as_ref() {
+                        map_core::displacement::Operation::Sculpt { .. } => {
+                            "sculpt selected terrain vertices"
+                        }
+                        _ => "blend selected terrain vertices",
+                    }
+                }
                 map_core::displacement::Operation::Blend { .. } => "edit terrain blend",
             })
             .unwrap_or("edit face settings");
@@ -650,7 +660,11 @@ impl Session {
     pub fn commit_face_preview(&mut self, actor: Actor) -> Result<usize, String> {
         let preview = self.face_preview.take().ok_or("no face preview to apply")?;
         self.scene_serial += 1;
-        self.apply_face_edits(actor, preview.edits)
+        let changed = self.apply_face_edits(actor, preview.edits)?;
+        if let Some(token) = preview.terrain_mask_token {
+            self.refresh_terrain_mask_after_commit(token);
+        }
+        Ok(changed)
     }
 
     pub fn set_entity_component(

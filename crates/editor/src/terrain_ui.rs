@@ -13,6 +13,7 @@ struct Target {
     generation: u64,
     revision: u64,
     preview: Option<u64>,
+    mask_token: Option<u64>,
 }
 
 impl Target {
@@ -219,17 +220,52 @@ impl Controller {
             }
         });
         window.on_preview_edit({
-            let (window,shared,target)=(window.as_weak(),shared.clone(),target.clone());
+            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
             move || {
-                let window=window.unwrap();
-                let mut session=lock(&shared);
-                if let Some(target)=target.borrow_mut().as_mut() {
-                    let result=target.check(&session).and_then(|_|{
-                        if window.get_operation_index()==9 {session.preview_terrain_sew(Actor::User,&target.faces,window.get_sew_blend()).map(|result|result.summary())} else {session.preview_terrain_edit(Actor::User,&target.faces,operation(&window)?).map(|count|format!("Preview changes {count} terrain surfaces. Apply to keep this edit."))}
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                if let Some(target) = target.borrow_mut().as_mut() {
+                    let result = target.check(&session).and_then(|_| {
+                        if window.get_operation_index() == 9 {
+                            session
+                                .preview_terrain_sew(
+                                    Actor::User,
+                                    &target.faces,
+                                    window.get_sew_blend(),
+                                )
+                                .map(|result| result.summary())
+                        } else {
+                            let operation = operation(&window)?;
+                            let count = if window.get_use_mask()
+                                && (1..=7).contains(&window.get_operation_index())
+                            {
+                                session.preview_terrain_masked_edit(
+                                    Actor::User,
+                                    &target.faces,
+                                    operation,
+                                    target.mask_token.ok_or(
+                                        "Retain a triangle selection and reopen terrain editing",
+                                    )?,
+                                )?
+                            } else {
+                                session.preview_terrain_edit(
+                                    Actor::User,
+                                    &target.faces,
+                                    operation,
+                                )?
+                            };
+                            Ok(format!(
+                                "Preview changes {count} terrain surfaces. Apply to keep this edit."
+                            ))
+                        }
                     });
                     match result {
-                        Ok(message)=>{target.preview=session.face_preview_token();window.set_ready(true);window.set_message(message.into());}
-                        Err(error)=>window.set_message(error.into()),
+                        Ok(message) => {
+                            target.preview = session.face_preview_token();
+                            window.set_ready(true);
+                            window.set_message(message.into());
+                        }
+                        Err(error) => window.set_message(error.into()),
                     }
                 }
             }
@@ -372,11 +408,29 @@ impl Controller {
             )
             .into(),
         );
+        let mask = session.terrain_vertex_mask(&faces, None).ok();
+        self.window.set_mask_available(mask.is_some());
+        self.window.set_use_mask(false);
+        self.window.set_mask_label(
+            mask.as_ref()
+                .map_or(
+                    "No retained triangle selection. Use Terrain triangles… → Use selection first."
+                        .to_owned(),
+                    |mask| {
+                        format!(
+                            "Selection mask · {}. Shared vertices can affect adjoining triangles.",
+                            mask.summary()
+                        )
+                    },
+                )
+                .into(),
+        );
         *self.target.borrow_mut() = Some(Target {
             faces,
             generation: session.document_generation(),
             revision: session.document().revision(),
             preview: None,
+            mask_token: mask.map(|mask| mask.token),
         });
         self.window.set_message(
             "Choose an operation and preview the result. Cancel leaves the map unchanged.".into(),

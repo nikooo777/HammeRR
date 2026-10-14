@@ -429,6 +429,10 @@ pub fn edit_faces(
                 .ok_or_else(|| invalid("Every target must contain terrain"))?;
             side.displacement = Some(match operation {
                 crate::displacement::Operation::Sewn(info) => (**info).clone(),
+                crate::displacement::Operation::Masked {
+                    operation,
+                    vertices,
+                } => crate::displacement::brush::masked(&geometry, info, operation, vertices)?,
                 crate::displacement::Operation::Collision(settings) => {
                     crate::displacement::collision::apply(info, *settings)
                 }

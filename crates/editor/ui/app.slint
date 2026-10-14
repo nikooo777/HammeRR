@@ -664,11 +664,14 @@ export component MaterialWindow inherits Window {
 export component TerrainWindow inherits Window {
     title: "Edit terrain";
     preferred-width: 520px;
-    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 10 ? 480px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 650px;
+    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 10 ? 480px : root.operation-index == 6 || root.operation-index == 7 ? 470px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 720px;
     in property <string> selection-label;
     in property <string> message;
     in property <bool> stale;
     in property <bool> ready;
+    in property <bool> mask-available;
+    in property <string> mask-label;
+    in-out property <bool> use-mask;
     in-out property <int> grid-index;
     in-out property <int> operation-index;
     in-out property <int> direction-index;
@@ -709,6 +712,11 @@ export component TerrainWindow inherits Window {
             Text {text: root.selection-label; font-size: 17px; wrap: word-wrap;}
             Text {text: "Operation";}
             ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew edges", "Border smoothing"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
+            if root.operation-index >= 1 && root.operation-index <= 7: VerticalLayout {
+                spacing: 4px;
+                CheckBox {text:"Affect only highlighted triangle vertices";checked <=> root.use-mask;enabled:root.mask-available && !root.stale;toggled=>{root.edited();}}
+                Text {text:root.mask-label;wrap:word-wrap;color:#a7adb8;font-size:12px;}
+            }
             if root.operation-index == 0: VerticalLayout {
                 spacing: 12px;
                 Text {text: "Grid resolution";}

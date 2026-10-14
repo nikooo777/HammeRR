@@ -30,6 +30,7 @@ export component TerrainTrianglesWindow inherits Window {
     callback cancel();
     callback pick-triangle();
     callback frame-selected();
+    callback use-selection();
     forward-focus: focus;
     focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
@@ -71,6 +72,7 @@ export component TerrainTrianglesWindow inherits Window {
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Use selection"; enabled: !root.stale; clicked => { root.use-selection(); } }
                 Button { text: "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
                 Button { text: "Apply"; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
             }

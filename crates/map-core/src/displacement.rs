@@ -10,6 +10,7 @@ pub mod neighbors;
 pub mod resample;
 pub mod sew;
 pub mod smoothing;
+pub mod triangles;
 
 #[derive(Debug, Clone)]
 pub enum Operation {
@@ -17,6 +18,10 @@ pub enum Operation {
     Sewn(Box<source_formats::vmf::DispInfo>),
     Collision(collision::Settings),
     Smoothing(Option<f64>),
+    TriangleTags {
+        triangles: Vec<usize>,
+        settings: triangles::Settings,
+    },
     Sculpt {
         brush: brush::Brush,
         operation: brush::Sculpt,

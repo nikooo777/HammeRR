@@ -1392,6 +1392,40 @@ pub struct TerrainSmoothingArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerrainTriangleChoice {
+    Automatic,
+    Enabled,
+    Disabled,
+}
+
+fn terrain_triangle_choice(
+    choice: TerrainTriangleChoice,
+) -> map_core::displacement::triangles::Choice {
+    use map_core::displacement::triangles::Choice;
+    match choice {
+        TerrainTriangleChoice::Automatic => Choice::Automatic,
+        TerrainTriangleChoice::Enabled => Choice::Enabled,
+        TerrainTriangleChoice::Disabled => Choice::Disabled,
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainTriangleTarget {
+    pub face: FaceRef,
+    pub triangles: Vec<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainTriangleTagsArgs {
+    pub targets: Vec<TerrainTriangleTarget>,
+    pub walkable: Option<TerrainTriangleChoice>,
+    pub buildable: Option<TerrainTriangleChoice>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TerrainCollisionArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub physics_collision: Option<bool>,
@@ -5082,6 +5116,50 @@ impl EditorServer {
             Ok(
                 json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"grid_size":grid.mesh.size,"flags":grid.flags,"physics_collision":grid.collision.physics,"player_collision":grid.collision.player,"ray_collision":grid.collision.ray,"border_smoothing_angle":grid.smoothing_angle,"border_smoothing_error":grid.smoothing_error,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
             )
+        })
+    }
+
+    #[tool(
+        description = "Inspect 1–16 selected/explicit terrain faces in native triangle order (IDs0–31/127/511). Returns each triangle's grid indices, world positions, centroid, optional raw VMF source_tags, effective walkable/buildable classifications, optional forced overrides, removed and unknown_tags. VMF source bits differ from BSP bits. preview=true inspects the rendered draft. Removed/unknown tags remain inspectable but cannot compile. UI: Terrain triangles…. No selection or history change.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_triangles(&self, Parameters(args): Parameters<TerrainGridsArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let rows = session.terrain_triangles(&faces, args.preview.unwrap_or(false))?;
+            Ok(
+                json!({"faces":rows.iter().map(|row|json!({"solid":row.face.solid,"side":row.face.side,"triangles":row.triangles.iter().map(|triangle|json!({"id":triangle.id,"indices":triangle.indices,"positions":triangle.positions.map(|p|p.to_array()),"centroid":triangle.centroid.to_array(),"source_tags":triangle.source_tags,"walkable":triangle.walkable,"buildable":triangle.buildable,"walkable_override":triangle.walkable_override,"buildable_override":triangle.buildable_override,"removed":triangle.removed,"unknown_tags":triangle.unknown_tags})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Preview walkability/buildability classifications on arbitrary native triangle subsets in1–16 terrain faces. targets=[{face:{solid,side},triangles:[native IDs]}], one target per face. walkable/buildable accept automatic/enabled/disabled; omitted settings preserve current values. Automatic recomputes selected cached classification from source slope; enabled/disabled author a VMF force override. These are engine classifications, not collision switches. Geometry, alpha, IDs, other triangle tags and metadata remain. Invalid IDs/malformed rows reject atomically. Inspect get_terrain_triangles(preview=true), then commit/cancel_face_preview with state.preview_token. No removal authoring yet. UI: Terrain triangles…."
+    )]
+    fn preview_terrain_triangle_tags(
+        &self,
+        Parameters(args): Parameters<TerrainTriangleTagsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| (face_id(&target.face), target.triangles.clone()))
+                .collect::<Vec<_>>();
+            let changed = session.preview_terrain_triangle_tags(
+                Actor::Agent,
+                &targets,
+                map_core::displacement::triangles::Settings {
+                    walkable: args.walkable.map(terrain_triangle_choice),
+                    buildable: args.buildable.map(terrain_triangle_choice),
+                },
+            )?;
+            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
         })
     }
 

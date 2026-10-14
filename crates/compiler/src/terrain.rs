@@ -198,36 +198,11 @@ impl Map<'_> {
                 })
                 .collect::<Vec<_>>();
             let indices = info.triangle_indices().map_err(|error| error.to_string())?;
-            let triangles = if let Some(rows) = &disp.triangle_tags {
-                let cells = mesh.size - 1;
-                if rows.len() != cells || rows.iter().any(|row| row.len() != cells * 2) {
-                    return Err("Displacement triangle tag rows do not match its power".into());
-                }
-                rows.iter()
-                    .flatten()
-                    .map(|&tags| {
-                        let tags = u16::try_from(tags).map_err(
-                            |_| "Displacement triangle tags must fit native unsigned shorts",
-                        )?;
-                        if tags & 0x20 != 0 {
-                            return Err("Displacement triangle removal is not supported yet");
-                        }
-                        Ok(DisplacementTriangle { tags })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            } else {
-                indices
-                    .iter()
-                    .map(|&[a, b, c]| {
-                        let normal = (mesh.positions[c] - mesh.positions[a])
-                            .cross(mesh.positions[b] - mesh.positions[a])
-                            .normalize_or_zero();
-                        DisplacementTriangle {
-                            tags: 1 | if normal.z >= 0.7 { 6 } else { 0 },
-                        }
-                    })
-                    .collect()
-            };
+            let triangles = map_core::displacement::triangles::native_tags(disp, &mesh)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|tags| DisplacementTriangle { tags })
+                .collect();
             if indices.iter().any(|&[a, b, c]| {
                 (mesh.positions[b] - mesh.positions[a])
                     .cross(mesh.positions[c] - mesh.positions[a])

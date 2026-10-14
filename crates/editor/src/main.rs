@@ -25,6 +25,7 @@ mod spatial;
 mod statistics_ui;
 mod steam;
 mod surface_group_ui;
+mod terrain_triangles_ui;
 mod terrain_ui;
 #[cfg(test)]
 mod test_assets;
@@ -175,6 +176,7 @@ struct Ui {
     surface_target: Option<(Vec<map_core::surface::FaceId>, u64, u64)>,
     lighting: Option<lighting_ui::Controller>,
     terrain: Option<terrain_ui::Controller>,
+    terrain_triangles: Option<terrain_triangles_ui::Controller>,
     terrain_pick_release: bool,
     material_replace: Option<material_replace_ui::Controller>,
     surface_group: Option<surface_group_ui::Controller>,
@@ -3118,6 +3120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         surface_target: None,
         lighting: None,
         terrain: None,
+        terrain_triangles: None,
         terrain_pick_release: false,
         material_replace: None,
         surface_group: None,
@@ -3699,6 +3702,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let ui = ui.borrow();
             let controller = ui.terrain.as_ref().unwrap();
+            match controller.initialize(&mut lock(&shared)) {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
+    });
+    app.on_edit_terrain_triangles({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().terrain_triangles.is_none() {
+                match terrain_triangles_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().terrain_triangles = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.terrain_triangles.as_ref().unwrap();
             match controller.initialize(&mut lock(&shared)) {
                 Ok(()) => {
                     let _ = controller.window.show();
@@ -4344,6 +4370,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         controller.refresh(&session);
                     }
+                    if let Some(controller) = &ui.terrain_triangles
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(window) = &ui.surface_window
                         && window.window().is_visible()
                         && let Some(target) = &ui.surface_target
@@ -4383,6 +4414,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.terrain
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
+                    if let Some(controller) = &ui.terrain_triangles
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&session);
@@ -9980,6 +10016,93 @@ mod tests {
         );
         window.invoke_cancel();
         assert_eq!(*lock(&shared).document().vmf(), before);
+    }
+
+    #[test]
+    fn terrain_triangle_controls_preserve_owned_cancel_and_apply_subsets() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = map_core::surface::FaceId { solid, side };
+        session.create_terrain(Actor::Agent, &[face], 2, 0).unwrap();
+        session.select_faces(&[face], SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = terrain_triangles_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        assert_eq!(window.get_triangles().row_count(), 32);
+        window.invoke_toggle_triangle(0, true);
+        window.invoke_toggle_triangle(7, true);
+        window.set_walkable_index(3);
+        window.set_buildable_index(2);
+        window.invoke_edited();
+        window.show().unwrap();
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        assert!(
+            window
+                .get_triangles()
+                .row_data(0)
+                .unwrap()
+                .detail
+                .contains("no · forced")
+        );
+        save_ui_snapshot(window.window(), "terrain-triangle-tags");
+        assert_eq!(*lock(&shared).document().vmf(), source);
+        assert!(!lock(&shared).terrain_triangles(&[face], true).unwrap()[0].triangles[0].walkable);
+        window.invoke_cancel();
+        assert!(!lock(&shared).has_face_preview());
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.invoke_toggle_triangle(0, true);
+        window.set_walkable_index(3);
+        window.invoke_preview_edit();
+        lock(&shared)
+            .preview_terrain_resolution(Actor::Agent, &[face], 3)
+            .unwrap();
+        let foreign = lock(&shared).face_preview_token();
+        controller.refresh(&lock(&shared));
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        window.invoke_cancel();
+        assert_eq!(lock(&shared).face_preview_token(), foreign);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.invoke_toggle_triangle(0, true);
+        window.set_walkable_index(3);
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        let rows = lock(&shared).terrain_triangles(&[face], false).unwrap();
+        assert!(!rows[0].triangles[0].walkable);
+        assert!(rows[0].triangles[1].walkable);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), source);
     }
 
     #[test]

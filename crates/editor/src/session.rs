@@ -619,6 +619,9 @@ impl Session {
                 map_core::displacement::Operation::Sewn(_) => "sew terrain edges",
                 map_core::displacement::Operation::Collision(_) => "edit terrain collision",
                 map_core::displacement::Operation::Smoothing(_) => "edit terrain border smoothing",
+                map_core::displacement::Operation::TriangleTags { .. } => {
+                    "edit terrain triangle tags"
+                }
                 map_core::displacement::Operation::Sculpt { .. } => "sculpt terrain",
                 map_core::displacement::Operation::Blend { .. } => "edit terrain blend",
             })

@@ -1,0 +1,71 @@
+import { Button, CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+
+export struct TerrainTriangleRow {
+    id: int,
+    label: string,
+    detail: string,
+    selected: bool,
+}
+
+export component TerrainTrianglesWindow inherits Window {
+    title: "Terrain triangles";
+    preferred-width: 600px;
+    preferred-height: 700px;
+    in property <[string]> faces;
+    in-out property <int> face-index;
+    in property <[TerrainTriangleRow]> triangles;
+    in property <string> selection-label;
+    in property <string> message;
+    in property <bool> stale;
+    in property <bool> ready;
+    in-out property <int> walkable-index;
+    in-out property <int> buildable-index;
+    callback face-changed();
+    callback toggle-triangle(int, bool);
+    callback select-all(bool);
+    callback edited();
+    callback preview-edit();
+    callback apply();
+    callback cancel();
+    forward-focus: focus;
+    focus := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: "Choose terrain triangles"; font-size: 20px; }
+            Text { text: "Surface"; }
+            ComboBox { model: root.faces; current-index <=> root.face-index; enabled: !root.stale; selected => { root.face-changed(); } }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: root.selection-label; vertical-alignment: center; }
+                Button { text: "Select all"; enabled: !root.stale; clicked => { root.select-all(true); } }
+                Button { text: "Clear selection"; enabled: !root.stale; clicked => { root.select-all(false); } }
+            }
+            ScrollView {
+                min-height: 200px;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 8px;
+                    for row[index] in root.triangles: VerticalLayout {
+                        spacing: 3px;
+                        CheckBox { text: row.label; checked: row.selected; enabled: !root.stale; toggled => { root.toggle-triangle(index, self.checked); } }
+                        Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: #a7adb8; }
+                    }
+                }
+            }
+            Text { text: "Walkability"; }
+            ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.walkable-index; enabled: !root.stale; selected => { root.edited(); } }
+            Text { text: "Buildability"; }
+            ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.buildable-index; enabled: !root.stale; selected => { root.edited(); } }
+            Text { text: "Engine classifications for selected triangles. Collision stays fixed. IDs follow native triangle order; center coordinates locate each triangle. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
+            Text { text: root.message; wrap: word-wrap; color: #a7adb8; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
+                Button { text: "Apply"; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

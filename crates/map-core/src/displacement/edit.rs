@@ -175,6 +175,8 @@ pub struct TerrainGrid {
     pub power: u32,
     pub flags: u32,
     pub collision: super::collision::State,
+    pub smoothing_angle: Option<f64>,
+    pub smoothing_error: Option<String>,
     pub mesh: super::DisplacementMesh,
 }
 
@@ -200,11 +202,17 @@ pub fn inspect(document: &Document, faces: &[FaceId]) -> Result<Vec<TerrainGrid>
                     "Terrain grid contains nonfinite positions or blend values".into(),
                 ));
             }
+            let (smoothing_angle, smoothing_error) = match super::smoothing::angle(info) {
+                Ok(angle) => (angle, None),
+                Err(error) => (None, Some(error)),
+            };
             Ok(TerrainGrid {
                 face: target,
                 power: info.power,
                 flags: info.flags.unwrap_or(0),
                 collision: super::collision::state(info.flags.unwrap_or(0)),
+                smoothing_angle,
+                smoothing_error,
                 mesh,
             })
         })

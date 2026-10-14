@@ -57,6 +57,18 @@ fn operation(window: &TerrainWindow) -> Result<map_core::displacement::Operation
         brush::{Axis, Blend, Brush, Sculpt},
     };
     let mode = window.get_operation_index();
+    if mode == 10 {
+        let angle = match window.get_smoothing_index() {
+            0 => None,
+            1 => Some(0.0),
+            2 => Some(number(
+                window.get_smoothing_angle(),
+                "border smoothing angle",
+            )?),
+            _ => return Err("Choose a valid border smoothing mode".into()),
+        };
+        return Ok(Operation::Smoothing(angle));
+    }
     if mode == 8 {
         let choice = |index| match index {
             0 => Ok(None),
@@ -152,6 +164,10 @@ fn sync_sliders(window: &TerrainWindow) {
         (window.get_amount(), TerrainWindow::set_amount_slider),
         (window.get_strength(), TerrainWindow::set_strength_slider),
         (window.get_blend_value(), TerrainWindow::set_blend_slider),
+        (
+            window.get_smoothing_angle(),
+            TerrainWindow::set_smoothing_slider,
+        ),
     ] {
         if let Ok(value) = value.trim().parse::<f32>()
             && value.is_finite()
@@ -303,6 +319,39 @@ impl Controller {
         self.window.set_physics_index(0);
         self.window.set_player_index(0);
         self.window.set_ray_index(0);
+        let angle = grids[0].smoothing_angle;
+        let smoothing_common = grids
+            .iter()
+            .all(|grid| grid.smoothing_angle == angle && grid.smoothing_error.is_none());
+        let smoothing_label = if grids.iter().any(|grid| grid.smoothing_error.is_some()) {
+            "invalid · choose a setting to repair".to_owned()
+        } else if !smoothing_common {
+            "mixed".to_owned()
+        } else {
+            match angle {
+                None => "automatic".into(),
+                Some(0.0) => "hard borders".into(),
+                Some(angle) => format!("{angle}° angle limit"),
+            }
+        };
+        self.window.set_smoothing_current(smoothing_label.into());
+        self.window.set_smoothing_index(if smoothing_common {
+            match angle {
+                None => 0,
+                Some(0.0) => 1,
+                Some(_) => 2,
+            }
+        } else {
+            0
+        });
+        self.window.set_smoothing_angle(
+            angle
+                .filter(|angle| *angle > 0.0)
+                .unwrap_or(45.0)
+                .to_string()
+                .into(),
+        );
+        sync_sliders(&self.window);
         let power = grids[0].power;
         let common = grids.iter().all(|grid| grid.power == power);
         self.window

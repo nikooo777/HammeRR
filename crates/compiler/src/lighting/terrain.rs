@@ -61,7 +61,11 @@ pub(super) fn fields(
             }
         }
     }
-    let normals = neighbors::vertex_normals(&grids, &pairs, consume)?;
+    let angles = terrains
+        .iter()
+        .map(|terrain| terrain.smoothing_angle)
+        .collect::<Vec<_>>();
+    let normals = neighbors::vertex_normals_with_smoothing(&grids, &pairs, &angles, consume)?;
     Ok(Fields { positions, normals })
 }
 

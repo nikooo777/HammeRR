@@ -1386,6 +1386,12 @@ pub struct TerrainSewArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TerrainSmoothingArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub angle: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TerrainCollisionArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub physics_collision: Option<bool>,
@@ -4937,7 +4943,29 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview optional positive physics_collision, player_collision and ray_collision booleans on 1–16 selected/explicit terrain faces. Omitted settings preserve each face. Changes only inverted native bits2/4/8, retaining other flags, geometry, alpha, tags and metadata. Unknown native flags still require compiler support. Commit/cancel the shared face preview with its token. UI: Edit terrain… → Collision, with Keep current/Enabled/Disabled choices. Individual triangle removal remains unsupported."
+        description = "Preview border lighting smoothing on 1–16 selected/explicit terrain faces. Omitted/null angle restores Automatic; angle=0 keeps borders hard; positive finite angles up to180 degrees limit shared border-normal blending using both surfaces' choices. Geometry, alpha, flags, tags and topology remain. Inspect border_smoothing_angle/error with get_terrain_grids, then commit/cancel_face_preview using state.preview_token. The viewport and Direct LDR share the normal decisions. Uses the standard VMF smooth field and repairs malformed/duplicate entries when explicitly changed. UI: Edit terrain… → Border smoothing."
+    )]
+    fn preview_terrain_smoothing(
+        &self,
+        Parameters(args): Parameters<TerrainSmoothingArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let changed = session.preview_terrain_edit(
+                Actor::Agent,
+                &faces,
+                map_core::displacement::Operation::Smoothing(args.angle),
+            )?;
+            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Preview optional positive physics_collision, player_collision and ray_collision booleans on 1–16 selected/explicit terrain faces. Omitted settings preserve each face. Changes only inverted native bits2/4/8, retaining other flags, geometry, alpha, tags and metadata. Unknown native flags still require compiler support. Commit/cancel the shared face preview with its token. UI: Edit terrain… → Collision, with Keep current/Enabled/Disabled choices. Individual triangle removal remainsunsupported."
     )]
     fn preview_terrain_collision(
         &self,
@@ -5040,7 +5068,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect up to 16 selected or explicit terrain faces: power, grid size, ordered world positions, alpha blend values 0–255 and flags. preview=true reads the rendered draft. Uses the same grid reconstruction as the viewport.",
+        description = "Inspect up to 16 selected or explicit terrain faces: power, grid size, ordered world positions, alpha blend values 0–255, flags and border_smoothing_angle/error. Null angle is Automatic; 0 is a hard border; positive angles are bounded limits. preview=true reads the rendered draft. Uses the same grid reconstruction as the viewport.",
         annotations(read_only_hint = true)
     )]
     fn get_terrain_grids(&self, Parameters(args): Parameters<TerrainGridsArgs>) -> ToolResult {
@@ -5052,7 +5080,7 @@ impl EditorServer {
             );
             let grids = session.terrain_grids(&faces, args.preview.unwrap_or(false))?;
             Ok(
-                json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"grid_size":grid.mesh.size,"flags":grid.flags,"physics_collision":grid.collision.physics,"player_collision":grid.collision.player,"ray_collision":grid.collision.ray,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
+                json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"grid_size":grid.mesh.size,"flags":grid.flags,"physics_collision":grid.collision.physics,"player_collision":grid.collision.player,"ray_collision":grid.collision.ray,"border_smoothing_angle":grid.smoothing_angle,"border_smoothing_error":grid.smoothing_error,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
             )
         })
     }

@@ -432,6 +432,9 @@ pub fn edit_faces(
                 crate::displacement::Operation::Collision(settings) => {
                     crate::displacement::collision::apply(info, *settings)
                 }
+                crate::displacement::Operation::Smoothing(angle) => {
+                    crate::displacement::smoothing::edit(info, *angle)?
+                }
                 crate::displacement::Operation::Resolution(power) => {
                     crate::displacement::resample::change(&geometry, info, *power)?
                 }

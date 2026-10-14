@@ -146,13 +146,14 @@ fn world_displacements(vmf: &Vmf) -> HashMap<FaceId, Displacement> {
                         side: side.id,
                     },
                     mesh,
+                    map_core::displacement::smoothing::angle(disp).unwrap_or(None),
                 ));
             }
         }
     }
     let grids = meshes
         .iter()
-        .map(|(_, mesh)| SurfaceGrid {
+        .map(|(_, mesh, _)| SurfaceGrid {
             power: (mesh.size - 1).ilog2(),
             corners: [
                 0,
@@ -160,16 +161,21 @@ fn world_displacements(vmf: &Vmf) -> HashMap<FaceId, Displacement> {
                 mesh.size * mesh.size - 1,
                 mesh.size - 1,
             ]
-            .map(|index| mesh.base_positions[index]),
+            .map(|index| mesh.base_positions[index].as_vec3().as_dvec3()),
             positions: &mesh.positions,
         })
         .collect::<Vec<_>>();
-    let normals = neighbors::find(&grids, &mut |_| Ok(()))
-        .and_then(|links| neighbors::vertex_normals(&grids, &links.pairs, &mut |_| Ok(())));
+    let angles = meshes
+        .iter()
+        .map(|(_, _, angle)| *angle)
+        .collect::<Vec<_>>();
+    let normals = neighbors::find_spans(&grids, &mut |_| Ok(())).and_then(|links| {
+        neighbors::vertex_normals_with_smoothing(&grids, &links.pairs, &angles, &mut |_| Ok(()))
+    });
     let mut normals = normals.unwrap_or_default().into_iter();
     meshes
         .into_iter()
-        .map(|(face, mesh)| {
+        .map(|(face, mesh, _)| {
             let normals = normals.next().unwrap_or_else(|| local_normals(&mesh));
             (face, Displacement { mesh, normals })
         })

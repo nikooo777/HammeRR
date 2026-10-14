@@ -663,7 +663,7 @@ export component MaterialWindow inherits Window {
 export component TerrainWindow inherits Window {
     title: "Edit terrain";
     preferred-width: 520px;
-    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 650px;
+    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 10 ? 480px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 650px;
     in property <string> selection-label;
     in property <string> message;
     in property <bool> stale;
@@ -678,6 +678,10 @@ export component TerrainWindow inherits Window {
     in-out property <int> player-index;
     in-out property <int> ray-index;
     in-out property <bool> sew-blend;
+    in property <string> smoothing-current;
+    in-out property <int> smoothing-index;
+    in-out property <string> smoothing-angle: "45";
+    in-out property <float> smoothing-slider: 45;
     in-out property <string> center-x: "0";
     in-out property <string> center-y: "0";
     in-out property <string> center-z: "0";
@@ -703,7 +707,7 @@ export component TerrainWindow inherits Window {
             spacing: 14px;
             Text {text: root.selection-label; font-size: 17px; wrap: word-wrap;}
             Text {text: "Operation";}
-            ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew edges"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
+            ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew edges", "Border smoothing"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
             if root.operation-index == 0: VerticalLayout {
                 spacing: 12px;
                 Text {text: "Grid resolution";}
@@ -770,8 +774,23 @@ export component TerrainWindow inherits Window {
                 Text {text:"Ray collision · currently " + root.ray-current;}
                 ComboBox {model:["Keep current", "Enabled", "Disabled"]; current-index <=> root.ray-index; selected=>{root.edited();}}
             }
+            if root.operation-index == 10: VerticalLayout {
+                spacing: 10px;
+                Text {text:"Border smoothing · currently " + root.smoothing-current; wrap:word-wrap;}
+                ComboBox {model:["Automatic", "Hard borders", "Angle limit"]; current-index <=> root.smoothing-index; selected=>{root.edited();}}
+                if root.smoothing-index == 2: VerticalLayout {
+                    spacing:8px;
+                    Text {text:"Maximum angle · degrees";}
+                    HorizontalLayout {
+                        spacing:12px;
+                        Slider {minimum:0;maximum:180;value:root.smoothing-slider;released(value)=>{root.smoothing-angle="\{value}";root.edited();}}
+                        LineEdit {preferred-width:90px;horizontal-stretch:0;text <=> root.smoothing-angle;edited=>{root.edited();}}
+                    }
+                }
+                Text {text:"Changes border shading in the viewport and Direct LDR builds. Both neighboring surfaces must allow the blend. Geometry and collision stay fixed."; wrap:word-wrap;color:#b6bac3;}
+            }
             if root.operation-index == 9: CheckBox {text:"Also sew blend values"; checked <=> root.sew-blend; toggled=>{root.edited();}}
-            if root.operation-index != 0: Text {text:root.operation-index == 9 ? "Join full or half borders at different resolutions. Shared points are averaged; finer border points follow the coarser grid. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
+            if root.operation-index != 0 && root.operation-index != 10: Text {text:root.operation-index == 9 ? "Join full or half borders at different resolutions. Shared points are averaged; finer border points follow the coarser grid. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
             Rectangle {vertical-stretch: 1;}
             Text {text: root.message; wrap: word-wrap; color: #a7adb8;}
             HorizontalLayout {

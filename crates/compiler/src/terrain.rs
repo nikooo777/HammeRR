@@ -36,6 +36,7 @@ pub struct Terrain {
     pub plane: usize,
     pub texinfo: usize,
     pub smoothing_groups: u32,
+    pub smoothing_angle: Option<f64>,
     pub base: [DVec3; 4],
     pub mesh: DisplacementMesh,
     pub info: DisplacementInfo,
@@ -167,10 +168,12 @@ impl Map<'_> {
             info.flags = (info.flags | surf::NOLIGHT) & !surf::BUMPLIGHT;
             let texinfo = self.texinfos.add(info);
             let first = mesh.base_positions[0];
+            let smoothing_angle = map_core::displacement::smoothing::angle(disp)?;
             let info = DisplacementInfo {
                 start: stored_vertex(first).as_vec3().to_array(),
                 power: disp.power as i32,
                 min_tessellation: i32::MIN | disp.flags.unwrap_or(0) as i32,
+                smoothing_angle: smoothing_angle.unwrap_or(0.0) as f32,
                 ..Default::default()
             };
             let vertices = mesh
@@ -237,6 +240,7 @@ impl Map<'_> {
                 plane,
                 texinfo,
                 smoothing_groups: side.smoothing_groups.unwrap_or(0),
+                smoothing_angle,
                 base,
                 mesh,
                 info,

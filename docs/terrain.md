@@ -112,6 +112,22 @@ Limits: powers 2–4, complete base edges with matching common heights, and boun
 
 Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans, subdivision generation and holes remain planned. Imported subdivided grids compile their saved rows; source-editing tools still require cache remapping. Source grids stay unchanged.
 
+## Control border shading
+
+1. Select terrain faces and click **Edit terrain… → Operation → Border smoothing**.
+2. Read the current setting, including **mixed** for a batch. Choose **Automatic** to blend compatible borders, **Hard borders** to keep neighboring patch normals separate, or **Angle limit** to restrict blending.
+3. For **Angle limit**, set **Maximum angle · degrees** with the slider or exact numeric input. Both neighboring surfaces must allow the blend; 0 keeps borders hard and the maximum is 180.
+4. Click **Preview**, then **Apply** or **Cancel**. Use **Undo** to restore the previous settings.
+5. Compile with **Direct LDR** for baked shading. **Build details…** reports **Border smoothing** as the number of authored surfaces.
+
+![Terrain border smoothing controls](images/terrain-border-smoothing.png)
+
+| Automatic borders | Hard borders |
+| --- | --- |
+| ![Automatically blended terrain lighting](images/terrain-border-automatic.png) | ![Separate terrain border lighting](images/terrain-border-hard.png) |
+
+Limits: 1–16 faces, angles 0–180 degrees, world terrain with shared full/half borders and pairwise local-normal thresholds. Connected corners share the accepted group normal. Interior shading remains smooth; heights, alpha, flags, topology and collision stay fixed. The viewport uses authored geometry, while compiler LOD may change fine geometry and its local angles. Invalid/duplicate imported `smooth` fields block compilation until repaired; **Automatic** removes the override. This setting is separate from the compiler's brush smoothing angle and the **Smooth** height brush.
+
 ## Connected lighting
 
-Matching equal-power full edges share lighting normals in the viewport and compiled map. See [Compile and play](compile-and-play.md#terrain-displacements) for the settings and limits.
+Compatible full/half edges share lighting normals according to the selected border rules in the viewport and compiled map. See [Compile and play](compile-and-play.md#terrain-displacements) for the settings and limits.

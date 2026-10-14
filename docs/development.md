@@ -221,3 +221,9 @@ python3 -B scripts/validate_indexed_terrain.py --output /tmp/hammerr-indexed-ter
 ```
 
 Checks power2/3/4 paint strokes against raised sheets, direct-pick parity, excluded parent-volume hits, object/face scopes, Cancel, owner selection and hidden owners. Source/history remain unchanged during stroke previews. Core picking tests also compare displaced/offset sheets outside parent bounds and preserve ordinary brush/entity behavior; the existing `paint_selection` script checks the broader stroke workflow.
+
+```sh
+python3 -B scripts/validate_terrain_corner_sewing.py --output /tmp/hammerr-terrain-corner-sew-check
+```
+
+Checks mixed-power rotated corner-only contacts, one original-value height/alpha average, untouched vertices, owned preview/Cancel, Undo/Redo/reopen, exact repeated no-ops, reciprocal native corner links and exact foreground/background builds. The existing `terrain_sewing_topology` check covers full/half borders; core sewing tests verify the shared junction average and metadata preservation.

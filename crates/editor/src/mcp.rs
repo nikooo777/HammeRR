@@ -4998,7 +4998,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview sewing 2–16 selected/explicit terrain faces along unambiguous full or whole-to-half base edges, including mixed powers. Shared coarse vertex groups average original world positions once, including junctions; unmatched fine border vertices interpolate the sewn coarse edge. blend=true also sews/interpolates alpha(default false). Interiors/IDs/material/mapping/flags remain. Rejects ambiguous edges and unsupported caches atomically. Returns neighbor pairs, shared groups, interpolated_vertices and a shared summary. Inspect the draft then commit/cancel_face_preview with state.preview_token. Other fractional spans/subdivision are not supported. UI: Edit terrain… → Sew edges."
+        description = "Preview sewing 2–16 selected/explicit terrain faces along unambiguous full/half base edges or matching base corners, including mixed powers. Shared coarse vertex groups average original world positions once, including junctions; unmatched fine border vertices interpolate the sewn coarse edge. blend=true also sews/interpolates alpha(default false). Interiors/IDs/material/mapping/flags remain. Rejects ambiguous edges and unsupported caches atomically. Returns neighbor pairs, corner_joins (additional corner unions), shared groups, interpolated_vertices and a shared summary. Inspect the draft then commit/cancel_face_preview with state.preview_token. Other fractional spans/subdivision are not supported. UI: Edit terrain… → Sew borders & corners."
     )]
     fn preview_terrain_sew(&self, Parameters(args): Parameters<TerrainSewArgs>) -> ToolResult {
         run(|| {
@@ -5010,7 +5010,7 @@ impl EditorServer {
             let result =
                 session.preview_terrain_sew(Actor::Agent, &faces, args.blend.unwrap_or(false))?;
             Ok(
-                json!({"faces_changed":result.changed,"neighbor_pairs":result.pairs,"sewn_vertices":result.vertices,"interpolated_vertices":result.interpolated_vertices,"summary":result.summary(),"state":face_state(&session)}),
+                json!({"faces_changed":result.changed,"neighbor_pairs":result.pairs,"corner_joins":result.corner_joins,"sewn_vertices":result.vertices,"interpolated_vertices":result.interpolated_vertices,"summary":result.summary(),"state":face_state(&session)}),
             )
         })
     }

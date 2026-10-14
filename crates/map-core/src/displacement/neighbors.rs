@@ -137,7 +137,7 @@ fn validate<F: FnMut(usize) -> Result<(), String>>(
     Ok(())
 }
 
-fn key(point: DVec3) -> [u64; 3] {
+pub(super) fn key(point: DVec3) -> [u64; 3] {
     point
         .to_array()
         .map(|value| if value == 0.0 { 0 } else { value.to_bits() })

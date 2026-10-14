@@ -193,6 +193,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Automatic brush smoothing on a cylinder in Counter-Strike: Source](docs/images/compiled-angle-smoothing.png) |
 | Smooth unassigned brush faces with a shared build angle. |
 
+| Switchable lights |
+| --- |
+| ![Named lights switched on in Counter-Strike: Source](docs/images/light-styles-on.png) |
+| Bake lights that switch, flicker or follow custom patterns. |
+
 | Bounced light |
 | --- |
 | ![Reflected light beneath a shelf in Counter-Strike: Source](docs/images/compiled-bounce.png) |

@@ -11,6 +11,7 @@ mod probes;
 mod radiance;
 mod shadows;
 mod sky;
+pub(crate) mod styles;
 mod terrain;
 pub(crate) use bake::{Settings, bake};
 
@@ -99,6 +100,7 @@ impl LuxelFrame {
 #[derive(Debug, Clone, Copy)]
 pub struct PointLight {
     pub origin: DVec3,
+    style: u8,
     intensity: DVec3,
     falloff: falloff::Falloff,
     cluster: i32,
@@ -142,10 +144,10 @@ impl PointLight {
                 "Point light origin must be finite and inside Source compile bounds".into(),
             );
         }
-        if number(entity, "style")? != 0.0
-            || property(entity, "targetname").is_some_and(|value| !value.is_empty())
-        {
-            return Err("Direct LDR supports static style-0 lights; named or animated lights need light-style baking".into());
+        let style = number(entity, "style")?;
+        let named = property(entity, "targetname").is_some_and(|value| !value.is_empty());
+        if style.fract() != 0.0 || style > 63.0 || (style >= 32.0) != named {
+            return Err("Point/spot light styles require an authored Appearance from 0 to 31 or a compiler-assigned named style from 32 to 63".into());
         }
         let values: Vec<f64> = property(entity, "_light")
             .ok_or("Point light needs a brightness value")?
@@ -183,6 +185,7 @@ impl PointLight {
         }
         Ok(Self {
             origin,
+            style: style as u8,
             intensity,
             falloff,
             cluster,
@@ -281,7 +284,7 @@ impl PointLight {
             intensity: (self.intensity / 255.0).as_vec3().to_array(),
             cluster: self.cluster,
             kind: world_light_kind::POINT,
-            style: 0,
+            style: i32::from(self.style),
             radius: self.falloff.radius as f32,
             constant_attenuation: self.falloff.coefficients[0] as f32,
             linear_attenuation: self.falloff.coefficients[1] as f32,

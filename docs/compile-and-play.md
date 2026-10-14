@@ -44,7 +44,7 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 **Build lighting**
 
 - **Fullbright** (default): no lighting. Fastest, for checking geometry.
-- **Direct LDR**: bakes direct light from static lights, spotlights and the sun, plus diffuse sky ambient, into lightmaps with shadows. See [Lighting](#lighting).
+- **Direct LDR**: bakes direct light from static, switchable and animated point/spot lights and the sun, plus diffuse sky ambient, into lightmaps with shadows. See [Lighting](#lighting).
 
 **Physics bodies**
 
@@ -140,12 +140,27 @@ Limits: the same area-boundary limits as plain areaportals apply. Model referenc
 
 With **Direct LDR**:
 
-- Static `light`, `light_spot` and `light_environment` entities are baked in color.
+- `light` and `light_spot` support static, switchable and animated appearances. `light_environment` remains static. All are baked in color.
 - Opaque world brushes, detail brushes and terrain cast shadows.
 - Each face uses its [lightmap scale and assigned smoothing groups](textures.md#face-lighting). World/detail brush smoothing retains the same fan across lightmap subdivisions.
 - Terrain is lit using its real raised surface, with smooth normals within patches and across matching equal-power full edges. The viewport uses the same normal construction.
 
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
+
+#### Switchable lights and appearances
+
+1. Use **Place entity** to add a `light` or `light_spot`. Set **Brightness**.
+2. Give it a **Name**, such as `room_lights`, to control it in game. To make a group, duplicate the named light with Ctrl+D and move the copies. Lights sharing that name switch together and must share their initial pattern and **Initially dark** state; colors and brightness may differ.
+3. Choose **Appearance**, for example **Normal** or **Fluorescent flicker**. Optionally set **Custom Appearance** to lowercase letters `a`–`z`: `a` is dark, `m` is normal brightness, and `z` is brighter. A custom pattern overrides the built-in appearance. A custom pattern needs a named light.
+4. Enable **Initially dark** if the light should begin switched off.
+5. Select an entity that will control it, such as a `logic_relay`, and open **Connections… → Add connection**. Choose its output, the light's name as the target, and **TurnOn**, **TurnOff** or **Toggle** as the input. Use **SetPattern** with a pattern parameter to change its appearance. Click **Apply connection**; **Cancel** leaves the connection unchanged.
+6. Open **Build settings…**, choose **Build lighting → Direct LDR** and **Indirect light → Direct only**, then **Close** and **Run Map**. **Build details…** reports **Light styles**, styled faces, lightmaps and switched groups.
+
+| Initially dark | Turned on |
+| --- | --- |
+| ![Named red lights start dark while static blue lighting remains](images/light-styles-off.png) | ![The same lights switched on through a relay](images/light-styles-on.png) |
+
+Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct world/detail/terrain lightmaps; styled bounces, switching model-ambient cubes, sun/sky styles and baked moving-model/prop lightmaps remain unfinished. A styled build with **One diffuse bounce** fails with a recovery instruction. The common lighting allocation/work limits apply.
 
 #### Bounced light
 
@@ -194,9 +209,9 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - Up to 16 MiB of lighting data and 8,192 baked light records.
 - One visible `light_environment` per map.
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
-- Named or animated lights, invalid falloff values and invalid sun angles fail with a diagnostic that names the object.
+- Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent shadows, brush-model smoothing and bump maps, multiple light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, brush-model smoothing and bump maps, multiple or styled light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

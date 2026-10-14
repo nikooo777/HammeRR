@@ -37,6 +37,12 @@ impl SkyLight {
         entity: &MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
+        if number(entity, "style")? != 0.0
+            || property(entity, "targetname").is_some_and(|name| !name.is_empty())
+            || property(entity, "pattern").is_some_and(|pattern| !pattern.is_empty())
+        {
+            return Err("Sun and sky lighting require unnamed static Appearance Normal".into());
+        }
         let spread = number(entity, "SunSpreadAngle")?;
         if spread > MAX_SUN_SPREAD_ANGLE {
             return Err("SunSpreadAngle must be between 0 and 90 degrees".into());

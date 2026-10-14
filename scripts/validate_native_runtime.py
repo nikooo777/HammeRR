@@ -139,7 +139,7 @@ def worker(args):
         )
         try:
             started = time.monotonic()
-            while time.monotonic() - started < 30:
+            while time.monotonic() - started < getattr(args, "observe_seconds", 30):
                 if process.poll() is not None:
                     raise RuntimeError(f"CS:S exited early: {process.returncode}")
                 time.sleep(1)

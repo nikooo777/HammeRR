@@ -113,6 +113,7 @@ python3 -B scripts/validate_bounced_lighting.py --output /tmp/hammerr-bounce-che
 python3 -B scripts/validate_brush_smoothing.py --output /tmp/hammerr-smoothing-check
 python3 -B scripts/validate_smoothing_angle.py --output /tmp/hammerr-angle-check
 python3 -B scripts/validate_brush_junctions.py --output /tmp/hammerr-junction-check
+python3 -B scripts/validate_light_styles.py --output /tmp/hammerr-styles-check
 ```
 
 `direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
@@ -138,6 +139,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `portal_flow --runtime` | Fast/Detailed settings, PVS/PAS rows, independent clear rays, exact MCP builds and paired native rendering through staggered openings. |
 | `hints --runtime` | Shared face/material authoring, intentional cuts, unchanged physics payload, atomic invalid-helper rejection, paired rendering and grounding inside/across the helper. |
 | `smoothing_angle --runtime` | Zero/below/boundary angles on a cylinder, shared settings and frozen/stale jobs, exact MCP builds and unchanged collision, with paired native shading. |
+| `light_styles --runtime` | Named channels and averages, shared relay authoring, exact MCP builds and atomic failures; native Initially dark, TurnOn, TurnOff, custom-pattern brightness and alternating animation. |
 | `brush_junctions --runtime` | Partial-edge normals, shared smooth/hard masks, exact MCP builds and unchanged source/history/collision, with paired native shading. |
 | `brush_smoothing --runtime` | Shared face mask authoring, smooth and hard-group normals, native short indices, exact MCP builds and unchanged collision, with paired native shading. |
 | `bounced_lighting --runtime` | Shared zero/one-bounce settings, reflected color beneath a shelf, exact MCP builds and unchanged geometry/collision, with paired native rendering. |

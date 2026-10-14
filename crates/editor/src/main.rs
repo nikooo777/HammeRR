@@ -491,6 +491,7 @@ fn refresh_texture_brush_sample(app: &AppWindow, session: &mut Session) {
 
 fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
     app.on_create_terrain({
+        let shared = shared.clone();
         let app = app.as_weak();
         move |power| {
             let mut session = lock(&shared);
@@ -502,10 +503,34 @@ fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
             app.set_terrain_creation_error(
                 session.terrain_creation_error().unwrap_or_default().into(),
             );
+            app.set_can_remove_terrain(session.terrain_removal_error().is_none());
             app.set_message(
                 match result {
                     Ok(count) => format!(
                         "Created {count} terrain surface{}",
+                        if count == 1 { "" } else { "s" }
+                    ),
+                    Err(error) => error,
+                }
+                .into(),
+            );
+        }
+    });
+    app.on_remove_terrain({
+        let app = app.as_weak();
+        move || {
+            let mut session = lock(&shared);
+            let faces = session.selected_faces();
+            let result = session.remove_terrain(Actor::User, &faces);
+            let app = app.unwrap();
+            app.set_terrain_creation_error(
+                session.terrain_creation_error().unwrap_or_default().into(),
+            );
+            app.set_can_remove_terrain(session.terrain_removal_error().is_none());
+            app.set_message(
+                match result {
+                    Ok(count) => format!(
+                        "Removed {count} terrain surface{}",
                         if count == 1 { "" } else { "s" }
                     ),
                     Err(error) => error,
@@ -2471,6 +2496,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_face_mode(session.face_mode());
     app.set_has_faces(!session.selected_faces().is_empty());
     app.set_terrain_creation_error(session.terrain_creation_error().unwrap_or_default().into());
+    app.set_can_remove_terrain(session.terrain_removal_error().is_none());
     app.set_can_sample_face(session.selected_faces().len() == 1);
     app.set_selection_pivot(
         session
@@ -9506,6 +9532,13 @@ mod tests {
         );
         let after = lock(&shared).document().vmf().clone();
         app.invoke_create_terrain(2);
+        assert_eq!(*lock(&shared).document().vmf(), after);
+        assert!(app.get_can_remove_terrain());
+        app.invoke_remove_terrain();
+        assert!(app.get_message().contains("Removed 1 terrain surface"));
+        assert!(!app.get_can_remove_terrain());
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(*lock(&shared).document().vmf(), after);
         lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(*lock(&shared).document().vmf(), before);

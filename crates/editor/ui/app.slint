@@ -1589,6 +1589,8 @@ export component AppWindow inherits Window {
     callback edit-face-textures();
     callback edit-face-lighting();
     callback create-terrain(int);
+    callback remove-terrain();
+    in property <bool> can-remove-terrain;
     in property <string> terrain-creation-error;
     callback replace-materials();
     callback map-face-group();
@@ -2085,6 +2087,8 @@ export component AppWindow inherits Window {
                             Text { text: "Terrain grid"; color: #c8ccd4; }
                             terrain-grid := ComboBox { model: ["5 × 5 · power 2", "9 × 9 · power 3", "17 × 17 · power 4"]; current-index: 0; }
                             Button { text: "Create terrain"; enabled: root.terrain-creation-error == ""; clicked => { root.create-terrain(terrain-grid.current-index + 2); } }
+                            Button { text: "Remove terrain"; enabled: root.can-remove-terrain; clicked => { root.remove-terrain(); } }
+                            if root.can-remove-terrain: Text { text: "Removing the last terrain face restores the parent brush's volume. Undo keeps all grid data."; wrap: word-wrap; color: #919aaa; font-size: 12px; }
                             Text { text: root.terrain-creation-error == "" ? "Creates a terrain surface. Terrain does not seal maps. Undo restores the brush." : root.terrain-creation-error; wrap: word-wrap; color: #919aaa; font-size: 12px; }
                         }
                     Button { text: "Select a volume…"; clicked => { root.select-volume(); } }

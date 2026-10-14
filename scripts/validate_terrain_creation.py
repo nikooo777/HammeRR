@@ -128,6 +128,38 @@ def fixture(args):
             if power != 4:
                 client.call("open_map", {"path": str(source), "discard_changes": True})
                 client.call("select_faces", {"faces": [target]})
+        current = detail(client, [parent])
+        client.call(
+            "remove_terrain",
+            {
+                "faces": [
+                    target,
+                    {
+                        "solid": target["solid"],
+                        "side": next(
+                            face["side"]
+                            for face in current[0]["faces"]
+                            if face["displacement"] is None
+                        ),
+                    },
+                ]
+            },
+            error=True,
+        )
+        assert detail(client, [parent]) == current
+        removed = client.call("remove_terrain", {})
+        assert removed["surfaces_removed"] == 1 and detail(client, [parent]) == before
+        restored = client.call(
+            "compile_map", {"path": str(args.output / "restored-brush.bsp")}
+        )
+        assert restored["success"] and restored["stats"]["brushes"] == 7
+        assert (
+            restored["stats"]["displacements"]
+            == restored["stats"]["physics_mesh_triangles"]
+            == 0
+        )
+        client.call("undo", {})
+        assert detail(client, [parent]) == current
         assert source.read_bytes() == saved
         (args.output / "results.json").write_text(
             json.dumps(

@@ -176,7 +176,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Terrain creation |
 | --- |
 | ![A flat terrain grid created from a quad face](docs/images/terrain-creation.png) |
-| Turn selected world quads into flat 5×5, 9×9 or 17×17 terrain grids. |
+| Create flat 5×5, 9×9 or 17×17 terrain grids from world quads; restore brushes by removing terrain. |
 
 | Connected terrain lighting |
 | --- |
@@ -244,7 +244,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 The editor covers most everyday brush work. Notable gaps:
 
-- **Terrain**: imported terrain displays and compiles, but can't be created or edited yet.
+- **Terrain**: flat grid creation and removal work; sculpting and blend painting remain planned.
 - **Models**: static props compile but aren't drawn in the viewport yet.
 - **Compiler**: Fast and Detailed visibility are available; lighting covers direct light, sky ambient and up to four optional diffuse bounces; HDR remains unfinished.
 

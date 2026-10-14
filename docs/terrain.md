@@ -2,7 +2,7 @@
 
 # Terrain
 
-Turn world quad faces into flat terrain surfaces at three grid resolutions. Imported terrain also displays and compiles; sculpting tools are still planned.
+Turn world quad faces into flat terrain surfaces at three grid resolutions. Sculpt heights and paint two-material blends through shared previews. Imported terrain also displays and compiles.
 
 ## Create a terrain surface
 
@@ -16,11 +16,11 @@ Turn world quad faces into flat terrain surfaces at three grid resolutions. Impo
 
 ![A newly created terrain grid](images/terrain-creation.png)
 
-Limits: 1–16 world quad faces per action, one per parent brush. Nonquad faces, brush entities and parents with existing terrain are rejected together; no partial conversion occurs. Terrain is a surface: its parent brush does not seal the map or become a solid collision box. Creation adds one undo step and retains face selection. Sculpting, blend painting, subdivision and holes remain planned. Use a visible ordinary solid material for native compilation.
+Limits: 1–16 world quad faces per action, one per parent brush. Nonquad faces, brush entities and parents with existing terrain are rejected together; no partial conversion occurs. Terrain is a surface: its parent brush does not seal the map or become a solid collision box. Creation adds one undo step and retains face selection. Subdivision and holes remain planned. Use a visible ordinary solid material for native compilation.
 
 ## Change grid resolution
 
-1. Select existing terrain faces and click **Change resolution…**.
+1. Select existing terrain faces and click **Edit terrain…**, then choose **Operation → Grid resolution**.
 2. Choose **Grid resolution**: **5 × 5 · power 2**, **9 × 9 · power 3** or **17 × 17 · power 4**. The dialog shows the current grid size, or **mixed grid sizes** for a batch.
 3. Click **Preview** and inspect the grid in the viewport. Finer grids keep existing height and blend samples; coarser grids can lose detail. The map and Undo history stay unchanged during preview.
 4. Click **Apply** to keep the preview in one undo step, or **Cancel** to discard it. Changing the grid choice discards this dialog's previous preview. Reopen the dialog if the map or face selection changes.
@@ -30,6 +30,32 @@ Limits: 1–16 world quad faces per action, one per parent brush. Nonquad faces,
 ![A refined terrain grid retaining its heights](images/terrain-refinement.png)
 
 Limits: 1–16 terrain faces per action. Start corners, material, mapping, lighting and IDs stay fixed. Uniform triangle tags, unrestricted vertex masks and zero offset-normal rows are resized or retained. Subdivision, mixed triangle tags, restricted masks, nonzero offset normals, opaque grid blocks and malformed/nonfinite rows reject together; these need topology remapping. Coarsening samples the old grid rather than preserving every old detail. A stale dialog cannot apply or cancel another actor's preview.
+
+## Sculpt heights
+
+1. Select terrain faces and click **Edit terrain…**.
+2. Choose **Operation**: **Raise / lower**, **Flatten**, **Smooth** or **Noise**.
+3. Set **Brush center · world coordinates**. Choose **Brush direction**: **Up / down · world Z** or **Along the face normal**. Set **Radius · world units** with the slider or exact numeric input.
+4. For **Raise / lower**, set **Height change · negative lowers**. For **Flatten** or **Smooth**, set **Strength** from 0 to 1. Flatten moves toward the plane through the brush center; with world-Z direction, **Z** sets its target height. Smooth uses the original neighboring samples. For **Noise**, set **Noise amount · world units** and **Noise seed**.
+5. Click **Preview** and inspect the shape. Each brush fades smoothly toward its edge. Click **Apply** to keep it, or **Cancel** to discard it. **Undo** restores the complete source grid.
+
+![Terrain sculpting controls](images/terrain-sculpt.png)
+
+Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; automatic seam sewing is still planned.
+
+## Paint a material blend
+
+1. Assign a two-texture material through **Browse materials…**, **Use material**, then **Apply**. A single-texture material cannot show the alpha blend.
+2. Select terrain faces, click **Edit terrain…**, then choose **Paint blend**, **Fill blend** or **Invert blend** under **Operation**.
+3. For **Paint blend**, set the brush center, direction, radius and strength. Choose **Blend value · 0 first texture, 255 second texture** with the slider or numeric input. Painting moves toward that value and fades toward the brush edge.
+4. **Fill blend** applies the chosen value to every vertex in the selected grids. **Invert blend** swaps weights across the complete grids.
+5. Click **Preview**, then **Apply** or **Cancel**. Geometry, material, mapping and lighting settings stay fixed; **Undo** restores the original blend values.
+
+![Terrain blend controls](images/terrain-blend-controls.png)
+
+![Painted grass and dirt on terrain](images/terrain-blending.png)
+
+Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Painting uses a bounded brush center rather than live viewport strokes. Secondary blend-material physics remains unfinished; current physics uses the primary material.
 
 ## Remove terrain
 

@@ -3,6 +3,7 @@ use source_formats::vmf::DispInfo;
 
 use crate::brush::Face;
 
+pub mod brush;
 pub mod edit;
 pub mod neighbors;
 pub mod resample;
@@ -10,6 +11,14 @@ pub mod resample;
 #[derive(Debug, Clone)]
 pub enum Operation {
     Resolution(u32),
+    Sculpt {
+        brush: brush::Brush,
+        operation: brush::Sculpt,
+    },
+    Blend {
+        brush: brush::Brush,
+        operation: brush::Blend,
+    },
 }
 
 /// The surface of a displaced face: a `size` x `size` vertex grid.

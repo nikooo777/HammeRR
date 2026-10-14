@@ -1380,6 +1380,60 @@ pub struct TerrainFacesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerrainDirection {
+    WorldZ,
+    FaceNormal,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerrainSculptMode {
+    Raise,
+    Flatten,
+    Smooth,
+    Noise,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TerrainSculptArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub mode: TerrainSculptMode,
+    pub center: [f64; 3],
+    pub radius: Option<f64>,
+    pub direction: Option<TerrainDirection>,
+    pub amount: Option<f64>,
+    pub strength: Option<f64>,
+    pub seed: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerrainBlendMode {
+    Paint,
+    Fill,
+    Invert,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TerrainBlendArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub mode: TerrainBlendMode,
+    pub center: Option<[f64; 3]>,
+    pub radius: Option<f64>,
+    pub direction: Option<TerrainDirection>,
+    pub value: Option<f64>,
+    pub strength: Option<f64>,
+}
+
+fn terrain_direction(value: Option<TerrainDirection>) -> map_core::displacement::brush::Axis {
+    match value {
+        Some(TerrainDirection::FaceNormal) => map_core::displacement::brush::Axis::FaceNormal,
+        _ => map_core::displacement::brush::Axis::WorldZ,
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TerrainResolutionArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub power: u32,
@@ -4851,6 +4905,82 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. No automatic edge sewing. UI: Edit terrain…."
+    )]
+    fn preview_terrain_sculpt(
+        &self,
+        Parameters(args): Parameters<TerrainSculptArgs>,
+    ) -> ToolResult {
+        run(|| {
+            use map_core::displacement::brush::{Brush, Sculpt};
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let brush = Brush {
+                center: DVec3::from_array(args.center),
+                radius: args.radius.unwrap_or(128.0),
+                axis: terrain_direction(args.direction),
+            };
+            let operation = match args.mode {
+                TerrainSculptMode::Raise => Sculpt::Raise(args.amount.unwrap_or(16.0)),
+                TerrainSculptMode::Flatten => Sculpt::Flatten(args.strength.unwrap_or(0.5)),
+                TerrainSculptMode::Smooth => Sculpt::Smooth(args.strength.unwrap_or(0.5)),
+                TerrainSculptMode::Noise => Sculpt::Noise {
+                    amplitude: args.amount.unwrap_or(16.0),
+                    seed: args.seed.unwrap_or(1),
+                },
+            };
+            let count = session.preview_terrain_edit(
+                Actor::Agent,
+                &faces,
+                map_core::displacement::Operation::Sculpt { brush, operation },
+            )?;
+            Ok(json!({"faces_changed":count,"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Preview terrain alpha painting, full-face fill or invert on up to16 selected/explicit faces. value is0–255(default128); paint moves toward it with strength0–1(default1), smooth radial falloff and required world center. radius is1–8192(default128), direction=world_z(default) or face_normal. fill/invert affect complete grids and do not use brush coordinates. Geometry/material/mapping remain fixed. A two-material shader is needed to display alpha blending. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain…."
+    )]
+    fn preview_terrain_blend(&self, Parameters(args): Parameters<TerrainBlendArgs>) -> ToolResult {
+        run(|| {
+            use map_core::displacement::brush::{Blend, Brush};
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let center = match args.mode {
+                TerrainBlendMode::Paint => {
+                    args.center.ok_or("center is required for blend painting")?
+                }
+                _ => [0.0; 3],
+            };
+            let brush = Brush {
+                center: DVec3::from_array(center),
+                radius: args.radius.unwrap_or(128.0),
+                axis: terrain_direction(args.direction),
+            };
+            let operation = match args.mode {
+                TerrainBlendMode::Paint => Blend::Paint {
+                    value: args.value.unwrap_or(128.0),
+                    strength: args.strength.unwrap_or(1.0),
+                },
+                TerrainBlendMode::Fill => Blend::Fill(args.value.unwrap_or(128.0)),
+                TerrainBlendMode::Invert => Blend::Invert,
+            };
+            let count = session.preview_terrain_edit(
+                Actor::Agent,
+                &faces,
+                map_core::displacement::Operation::Blend { brush, operation },
+            )?;
+            Ok(json!({"faces_changed":count,"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
         description = "Inspect up to 16 selected or explicit terrain faces: power, grid size, ordered world positions, alpha blend values 0–255 and flags. preview=true reads the rendered draft. Uses the same grid reconstruction as the viewport.",
         annotations(read_only_hint = true)
     )]
@@ -4869,7 +4999,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview changing selected or explicit terrain grids to power 2/3/4. Refinement samples the old triangles, preserving shared heights/blends; coarsening can lose detail. Preserves start corners, IDs and face metadata. Rejects malformed data, subdivision, mixed triangle tags, restricted vertex masks, nonzero offset normals and extra terrain blocks atomically. Source/history stay unchanged. Review get_terrain_grids(preview=true) or render_view, then commit_face_preview or cancel_face_preview with state.preview_token. UI: Change resolution…."
+        description = "Preview changing selected or explicit terrain grids to power 2/3/4. Refinement samples the old triangles, preserving shared heights/blends; coarsening can lose detail. Preserves start corners, IDs and face metadata. Rejects malformed data, subdivision, mixed triangle tags, restricted vertex masks, nonzero offset normals and extra terrain blocks atomically. Source/history stay unchanged. Review get_terrain_grids(preview=true) or render_view, then commit_face_preview or cancel_face_preview with state.preview_token. UI: Edit terrain… with Grid resolution."
     )]
     fn preview_terrain_resolution(
         &self,
@@ -4905,7 +5035,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Create flat terrain on 1–16 selected or explicit world quad faces, one per ordinary parent brush. power is 2, 3 or 4 (default 2), producing 5x5, 9x9 or 17x17 grids. Preserves IDs, materials, projections and lighting; rejects existing terrain, entity parents, ambiguous/nonquad targets and invalid powers atomically. One undo step. start_corner is 0–3 (default 0) in the winding order returned by get_terrain_creation; rows follow the next corner and columns the previous one. Parent brushes do not seal maps or become collision boxes. Sculpting/blending remain unfinished. UI: Terrain grid, Start corner and Create terrain in the face inspector."
+        description = "Create flat terrain on 1–16 selected or explicit world quad faces, one per ordinary parent brush. power is 2, 3 or 4 (default 2), producing 5x5, 9x9 or 17x17 grids. Preserves IDs, materials, projections and lighting; rejects existing terrain, entity parents, ambiguous/nonquad targets and invalid powers atomically. One undo step. start_corner is 0–3 (default 0) in the winding order returned by get_terrain_creation; rows follow the next corner and columns the previous one. Parent brushes do not seal maps or become collision boxes. Sculpt and blend tools use shared terrain previews. UI: Terrain grid, Start corner and Create terrain in the face inspector."
     )]
     fn create_terrain(&self, Parameters(args): Parameters<CreateTerrainArgs>) -> ToolResult {
         run(|| {

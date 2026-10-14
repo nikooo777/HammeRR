@@ -39,6 +39,112 @@ pub struct Controller {
     target: Rc<RefCell<Option<Target>>>,
 }
 
+fn number(value: slint::SharedString, label: &str) -> Result<f64, String> {
+    let value = value
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("Enter a number for {label}"))?;
+    if !value.is_finite() {
+        return Err(format!("{label} must be finite"));
+    }
+    Ok(value)
+}
+
+fn operation(window: &TerrainWindow) -> Result<map_core::displacement::Operation, String> {
+    use map_core::displacement::{
+        Operation,
+        brush::{Axis, Blend, Brush, Sculpt},
+    };
+    let mode = window.get_operation_index();
+    if mode == 0 {
+        let index = u32::try_from(window.get_grid_index())
+            .ok()
+            .filter(|index| *index <= 2)
+            .ok_or("Choose a valid terrain grid")?;
+        return Ok(Operation::Resolution(index + 2));
+    }
+    let brush = if (1..=5).contains(&mode) {
+        Brush {
+            center: glam::DVec3::new(
+                number(window.get_center_x(), "center X")?,
+                number(window.get_center_y(), "center Y")?,
+                number(window.get_center_z(), "center Z")?,
+            ),
+            radius: number(window.get_radius(), "radius")?,
+            axis: match window.get_direction_index() {
+                0 => Axis::WorldZ,
+                1 => Axis::FaceNormal,
+                _ => return Err("Choose a valid brush direction".into()),
+            },
+        }
+    } else {
+        Brush {
+            center: glam::DVec3::ZERO,
+            radius: 128.0,
+            axis: Axis::WorldZ,
+        }
+    };
+    Ok(match mode {
+        1 => Operation::Sculpt {
+            brush,
+            operation: Sculpt::Raise(number(window.get_amount(), "height change")?),
+        },
+        2 => Operation::Sculpt {
+            brush,
+            operation: Sculpt::Flatten(number(window.get_strength(), "strength")?),
+        },
+        3 => Operation::Sculpt {
+            brush,
+            operation: Sculpt::Smooth(number(window.get_strength(), "strength")?),
+        },
+        4 => Operation::Sculpt {
+            brush,
+            operation: Sculpt::Noise {
+                amplitude: number(window.get_amount(), "noise amount")?,
+                seed: window
+                    .get_seed()
+                    .trim()
+                    .parse()
+                    .map_err(|_| "Enter a whole noise seed from 0 to 4294967295")?,
+            },
+        },
+        5 => Operation::Blend {
+            brush,
+            operation: Blend::Paint {
+                value: number(window.get_blend_value(), "blend value")?,
+                strength: number(window.get_strength(), "strength")?,
+            },
+        },
+        6 => Operation::Blend {
+            brush,
+            operation: Blend::Fill(number(window.get_blend_value(), "blend value")?),
+        },
+        7 => Operation::Blend {
+            brush,
+            operation: Blend::Invert,
+        },
+        _ => return Err("Choose a valid terrain operation".into()),
+    })
+}
+
+fn sync_sliders(window: &TerrainWindow) {
+    for (value, setter) in [
+        (
+            window.get_radius(),
+            TerrainWindow::set_radius_slider as fn(&TerrainWindow, f32),
+        ),
+        (window.get_amount(), TerrainWindow::set_amount_slider),
+        (window.get_strength(), TerrainWindow::set_strength_slider),
+        (window.get_blend_value(), TerrainWindow::set_blend_slider),
+    ] {
+        if let Ok(value) = value.trim().parse::<f32>()
+            && value.is_finite()
+        {
+            setter(window, value);
+        }
+    }
+}
+
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = TerrainWindow::new()?;
@@ -50,26 +156,20 @@ impl Controller {
                     target.cancel(&mut lock(&shared));
                 }
                 let window = window.unwrap();
+                sync_sliders(&window);
                 window.set_ready(false);
-                window.set_message("Preview the new grid before applying.".into());
+                window.set_message("Preview the edited terrain before applying.".into());
             }
         });
         window.on_preview_edit({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window,shared,target)=(window.as_weak(),shared.clone(),target.clone());
             move || {
                 let window=window.unwrap();
                 let mut session=lock(&shared);
                 if let Some(target)=target.borrow_mut().as_mut() {
-                    let result=target.check(&session).and_then(|_|{
-                        let index=u32::try_from(window.get_grid_index()).ok().filter(|index|*index<=2).ok_or("Choose a valid terrain grid")?;
-                        session.preview_terrain_resolution(Actor::User,&target.faces,index+2)
-                    });
+                    let result=target.check(&session).and_then(|_|session.preview_terrain_edit(Actor::User,&target.faces,operation(&window)?));
                     match result {
-                        Ok(count) => {
-                            target.preview=session.face_preview_token();
-                            window.set_ready(true);
-                            window.set_message(format!("Preview changes {count} terrain surfaces. Apply to keep this grid.").into());
-                        }
+                        Ok(count)=>{target.preview=session.face_preview_token();window.set_ready(true);window.set_message(format!("Preview changes {count} terrain surfaces. Apply to keep this edit.").into());}
                         Err(error)=>window.set_message(error.into()),
                     }
                 }
@@ -82,7 +182,7 @@ impl Controller {
                 let mut session = lock(&shared);
                 if let Some(target) = target.borrow_mut().as_mut() {
                     let result = target.check(&session).and_then(|_| {
-                        let token = target.preview.ok_or("Preview the grid before applying")?;
+                        let token = target.preview.ok_or("Preview terrain before applying")?;
                         session.check_face_preview_token(Some(token))?;
                         session.commit_face_preview(Actor::User)
                     });
@@ -124,6 +224,20 @@ impl Controller {
         if let Some(target) = self.target.borrow_mut().as_mut() {
             target.cancel(session);
         }
+        let center = grids
+            .iter()
+            .flat_map(|grid| grid.mesh.positions.iter())
+            .copied()
+            .fold(glam::DVec3::ZERO, |sum, p| sum + p)
+            / grids
+                .iter()
+                .map(|grid| grid.mesh.positions.len())
+                .sum::<usize>() as f64;
+        self.window.set_center_x(format!("{:.3}", center.x).into());
+        self.window.set_center_y(format!("{:.3}", center.y).into());
+        self.window.set_center_z(format!("{:.3}", center.z).into());
+        self.window.set_operation_index(0);
+        sync_sliders(&self.window);
         let power = grids[0].power;
         let common = grids.iter().all(|grid| grid.power == power);
         self.window
@@ -151,7 +265,7 @@ impl Controller {
             preview: None,
         });
         self.window.set_message(
-            "Choose a grid and preview the result. Cancel leaves the map unchanged.".into(),
+            "Choose an operation and preview the result. Cancel leaves the map unchanged.".into(),
         );
         self.refresh(session);
         Ok(())
@@ -172,7 +286,7 @@ impl Controller {
                 && target.preview != session.face_preview_token()
             {
                 self.window.set_message(
-                    "Another face preview is active. Preview this grid to replace it.".into(),
+                    "Another face preview is active. Preview these settings to replace it.".into(),
                 );
             }
         }

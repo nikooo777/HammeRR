@@ -19,7 +19,7 @@ HammeRR is in active development.
 | Materials and textures | Works. |
 | Entities, connections and renaming | Works. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawns. Models, terrain, objectives, full asset dependencies and engine limits are planned. |
-| Terrain (displacements) | Flat power-2/3/4 terrain creation with chosen start corners and guarded resolution changes/removal work, with undo and preserved materials/mapping. Imported terrain displays, can be selected and compiles. Sculpting, blend painting and remapping restricted topology remain planned. |
+| Terrain (displacements) | Flat power-2/3/4 terrain creation with chosen start corners and guarded resolution changes/removal work, with undo and preserved materials/mapping. Imported terrain displays, can be selected and compiles. Raise/lower, flatten, smoothing, seeded noise and blend paint/fill/invert work through guarded previews. Live strokes, seam sewing and remapping restricted topology remain planned. |
 | Models | Static props compile, but models aren't drawn in the viewport yet. |
 
 ## Compiler

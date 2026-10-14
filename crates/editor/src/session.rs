@@ -611,7 +611,16 @@ impl Session {
         actor: Actor,
         edits: Vec<(FaceId, SurfaceEdit)>,
     ) -> Result<usize, String> {
-        let changed = self.edit(actor, "edit face settings", |tx| {
+        let label = edits
+            .iter()
+            .find_map(|(_, patch)| patch.terrain.as_ref())
+            .map(|operation| match operation {
+                map_core::displacement::Operation::Resolution(_) => "change terrain resolution",
+                map_core::displacement::Operation::Sculpt { .. } => "sculpt terrain",
+                map_core::displacement::Operation::Blend { .. } => "edit terrain blend",
+            })
+            .unwrap_or("edit face settings");
+        let changed = self.edit(actor, label, |tx| {
             edits.iter().try_fold(0, |count, (face, patch)| {
                 surface::edit_faces(tx, &[*face], patch).map(|changed| count + changed)
             })

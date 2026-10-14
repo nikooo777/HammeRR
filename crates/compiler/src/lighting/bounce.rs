@@ -1,9 +1,9 @@
 use glam::DVec3;
 use source_formats::bsp::{Bsp, Face, RgbExp32, TexInfo};
 
+use super::Occluder;
 use super::bake::{Budget, Plan};
 use super::shadows::ShadowIndex;
-use super::{Occluder, encode_color};
 use crate::SkyQuality;
 use crate::map::Map;
 
@@ -13,7 +13,7 @@ const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
 pub(super) struct Context<'a> {
     pub map: &'a Map<'a>,
     pub plans: &'a [Plan],
-    pub faces: &'a [Face],
+    pub faces: &'a mut [Face],
     pub infos: &'a [TexInfo],
     pub shadows: &'a ShadowIndex<Occluder>,
     pub model_shadows: &'a [Option<ShadowIndex<Occluder>>],
@@ -66,9 +66,9 @@ fn gather(
 }
 
 pub(super) fn bake(
-    ctx: &Context<'_>,
+    ctx: &mut Context<'_>,
     bsp: &Bsp,
-    colors: &mut [RgbExp32],
+    colors: &mut Vec<RgbExp32>,
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
     for plan in ctx.plans.iter().filter(|plan| plan.model == 0) {
@@ -89,7 +89,7 @@ pub(super) fn bake(
             ));
         }
     }
-    let surfaces = super::radiance::build(ctx.map, bsp, DVec3::ZERO, budget)?;
+    let surfaces = super::radiance::build_styled(ctx.map, bsp, budget)?;
     let directions = directions(ctx.quality.directions());
     let cone = (1.0 - 1.0 / directions.len() as f64).acos().tan();
     let mut stats = Stats {
@@ -98,27 +98,28 @@ pub(super) fn bake(
         model_faces: 0,
         model_samples: 0,
     };
+    let lighting = bsp
+        .lighting(source_formats::bsp::LightingKind::Ldr)
+        .map_err(|error| error.to_string())?
+        .ok_or("Bounce source lighting is missing")?;
+    let mut emitted = Vec::with_capacity(colors.len());
     for plan in ctx.plans {
         budget.consume(1)?;
         stats.model_faces += usize::from(plan.model != 0);
-        let first = usize::try_from(ctx.faces[plan.face].light_offset)
-            .ok()
-            .filter(|offset| offset % size_of::<RgbExp32>() == 0)
-            .ok_or("Bounce receiver has an invalid lightmap offset")?
-            / size_of::<RgbExp32>();
-        let average = first
-            .checked_sub(1)
-            .ok_or("Bounce receiver has no average sample")?;
+        let face = ctx.faces[plan.face];
+        let info = ctx.infos[face.texinfo as usize];
+        let source = lighting
+            .face(&face, &info)
+            .map_err(|error| error.to_string())?
+            .ok_or("Bounce receiver has no direct map")?;
+        let mut channels = super::styles::Channels::restore(&source, emitted.len(), budget)?;
         let [width, height] = plan.dimensions();
-        let samples = colors
-            .get_mut(average..first + plan.sample_count() * plan.map_count())
-            .ok_or("Bounce receiver exceeds its lightmap samples")?;
-        let mut total = DVec3::ZERO;
         for t in 0..height {
             for s in 0..width {
                 let (point, normal) = plan.sample(s, t, budget)?;
                 let origin = plan.origin(point, normal);
                 let normals = plan.shading_normals(normal, budget)?;
+                let mut colors = [[DVec3::ZERO; super::bump::MAPS]; 4];
                 for (map, &normal) in normals.iter().enumerate().take(plan.map_count()) {
                     let bounce = gather(normal, &directions, &mut |direction| {
                         stats.rays += 1;
@@ -134,30 +135,34 @@ pub(super) fn bake(
                                     budget,
                                 )? =>
                             {
+                                let styles = surfaces.styled_colors(&hit, cone, budget)?;
+                                for &(style, color) in
+                                    styles.iter().skip(1).filter(|(style, _)| *style != 255)
+                                {
+                                    let mut contribution = [DVec3::ZERO; super::bump::MAPS];
+                                    contribution[map] =
+                                        color * (LIGHTMAP_SCALE / directions.len() as f64);
+                                    channels.add(style, &contribution, &mut colors, budget)?;
+                                }
                                 Ok(hit.color * LIGHTMAP_SCALE)
                             }
                             _ => Ok(DVec3::ZERO),
                         }
                     })?;
-                    let slot = &mut samples[1 + map * plan.sample_count() + t * width + s];
-                    if bounce != DVec3::ZERO {
-                        *slot = encode_color(DVec3::from_array(slot.linear()) + bounce)?;
-                    }
-                    if map == 0 {
-                        total += bounce;
-                        stats.samples += usize::from(bounce.max_element() > 0.0);
-                        stats.model_samples +=
-                            usize::from(plan.model != 0 && bounce.max_element() > 0.0);
-                    }
+                    let mut contribution = [DVec3::ZERO; super::bump::MAPS];
+                    contribution[map] = bounce;
+                    channels.add(0, &contribution, &mut colors, budget)?;
                 }
+                let positive = channels.finish_bounce_sample(t * width + s, &colors, budget)?;
+                stats.samples += usize::from(positive);
+                stats.model_samples += usize::from(plan.model != 0 && positive);
             }
         }
-        if total != DVec3::ZERO {
-            samples[0] = encode_color(
-                DVec3::from_array(samples[0].linear()) + total / plan.sample_count() as f64,
-            )?;
-        }
+        let (styles, offset, _) = channels.emit(&mut emitted)?;
+        ctx.faces[plan.face].styles = styles;
+        ctx.faces[plan.face].light_offset = offset;
     }
+    *colors = emitted;
     Ok(stats)
 }
 

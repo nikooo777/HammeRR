@@ -25,15 +25,34 @@ struct Radiance {
     projection: [[f32; 4]; 2],
     mins: [i32; 2],
     sky: bool,
+    extras: Vec<Layer>,
+}
+
+struct Layer {
+    style: u8,
+    average: DVec3,
+    samples: Vec<RgbExp32>,
 }
 
 impl Radiance {
     fn at(&self, point: DVec3, uv: Option<DVec2>, distance: f64, cone: f64) -> DVec3 {
+        self.at_layer(&self.samples, self.average, point, uv, distance, cone)
+    }
+
+    fn at_layer(
+        &self,
+        samples: &[RgbExp32],
+        average: DVec3,
+        point: DVec3,
+        uv: Option<DVec2>,
+        distance: f64,
+        cone: f64,
+    ) -> DVec3 {
         let blend = ((distance * cone - LOCAL_FILTER_START)
             / (LOCAL_FILTER_END - LOCAL_FILTER_START))
             .clamp(0.0, 1.0);
-        if self.samples.is_empty() || blend == 1.0 {
-            return self.average;
+        if samples.is_empty() || blend == 1.0 {
+            return average;
         }
         let coordinates: [f64; 2] = std::array::from_fn(|axis| {
             let coordinate = if let Some(uv) = uv {
@@ -49,16 +68,15 @@ impl Radiance {
         let lower = coordinates.map(|value| value.floor() as usize);
         let upper: [usize; 2] =
             std::array::from_fn(|axis| (lower[axis] + 1).min(self.dimensions[axis] - 1));
-        let color = |x: usize, y: usize| {
-            DVec3::from_array(self.samples[y * self.dimensions[0] + x].linear())
-        };
+        let color =
+            |x: usize, y: usize| DVec3::from_array(samples[y * self.dimensions[0] + x].linear());
         let weight = [
             coordinates[0] - lower[0] as f64,
             coordinates[1] - lower[1] as f64,
         ];
         let near = color(lower[0], lower[1]).lerp(color(upper[0], lower[1]), weight[0]);
         let far = color(lower[0], upper[1]).lerp(color(upper[0], upper[1]), weight[0]);
-        (near.lerp(far, weight[1]) * self.reflectivity).lerp(self.average, blend)
+        (near.lerp(far, weight[1]) * self.reflectivity).lerp(average, blend)
     }
 }
 
@@ -113,6 +131,24 @@ pub(super) fn build(
     map: &Map<'_>,
     bsp: &Bsp,
     sky_radiance: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<SurfaceIndex, String> {
+    build_with_styles(map, bsp, sky_radiance, false, budget)
+}
+
+pub(super) fn build_styled(
+    map: &Map<'_>,
+    bsp: &Bsp,
+    budget: &mut Budget<'_>,
+) -> Result<SurfaceIndex, String> {
+    build_with_styles(map, bsp, DVec3::ZERO, true, budget)
+}
+
+fn build_with_styles(
+    map: &Map<'_>,
+    bsp: &Bsp,
+    sky_radiance: DVec3,
+    styled: bool,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
     let world = bsp
@@ -177,6 +213,26 @@ pub(super) fn build(
             &[]
         };
         budget.consume(samples.len())?;
+        let mut extras = Vec::new();
+        if styled
+            && !sky
+            && let Some(light) = &light
+        {
+            for (index, &style) in light.styles().iter().enumerate().skip(1) {
+                let samples = light
+                    .samples(index, 0)
+                    .ok_or("Styled radiance base map is missing")?;
+                budget.consume(samples.len() + 1)?;
+                let average = light
+                    .average(index)
+                    .ok_or("Styled radiance average is missing")?;
+                extras.push(Layer {
+                    style,
+                    average: DVec3::from_array(average.linear()) * reflectivity,
+                    samples: samples.to_vec(),
+                });
+            }
+        }
         let source = radiance.len();
         radiance.push(Radiance {
             average,
@@ -186,6 +242,7 @@ pub(super) fn build(
             projection: info.lightmap_vecs,
             mins: face.lightmap_mins,
             sky,
+            extras,
         });
         if face.dispinfo >= 0 {
             let terrain = &map.terrains[face.dispinfo as usize];
@@ -238,9 +295,38 @@ pub(super) struct Hit {
     pub point: DVec3,
     pub sky: bool,
     pub front: bool,
+    source: usize,
+    uv: Option<DVec2>,
+    distance: f64,
 }
 
 impl SurfaceIndex {
+    pub fn styled_colors(
+        &self,
+        hit: &Hit,
+        cone: f64,
+        budget: &mut Budget<'_>,
+    ) -> Result<[(u8, DVec3); 4], String> {
+        let mut colors = [(255, DVec3::ZERO); 4];
+        colors[0] = (0, hit.color);
+        let radiance = &self.radiance[hit.source];
+        for (index, layer) in radiance.extras.iter().enumerate() {
+            budget.consume(24)?;
+            colors[index + 1] = (
+                layer.style,
+                radiance.at_layer(
+                    &layer.samples,
+                    layer.average,
+                    hit.point,
+                    hit.uv,
+                    hit.distance,
+                    cone,
+                ),
+            );
+        }
+        Ok(colors)
+    }
+
     pub fn trace(
         &self,
         point: DVec3,
@@ -301,6 +387,9 @@ impl SurfaceIndex {
             point: position,
             sky: radiance.sky,
             front,
+            source,
+            uv,
+            distance,
         }))
     }
 }
@@ -323,6 +412,7 @@ mod tests {
             projection: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
             mins: [0, 0],
             sky: false,
+            extras: Vec::new(),
         };
         assert_eq!(field.at(DVec3::ZERO, None, 10.0, 0.1), DVec3::ZERO);
         assert_eq!(

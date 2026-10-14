@@ -11,6 +11,7 @@ from pathlib import Path
 
 import validate_native_runtime as runtime
 from validate_authored_planes import records
+from validate_bounced_lighting import model_top_color
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import FACE_FORMAT, lightmaps
 from validate_face_lighting import ROOT, Client, detail
@@ -70,6 +71,33 @@ def fixture(args):
             )
         lights = []
         objects = []
+        if args.bounced_model:
+            client.call(
+                "create_block",
+                {
+                    "mins": [-96, -96, 96],
+                    "maxs": [96, 96, 112],
+                    "material": "dev/dev_measuregeneric01",
+                },
+            )
+            receiver = client.call(
+                "create_block",
+                {
+                    "mins": [-48, -48, 16],
+                    "maxs": [48, 48, 40],
+                    "material": "dev/dev_measuregeneric01",
+                },
+            )["id"]
+            objects.append(
+                client.call(
+                    "tie_to_entity",
+                    {
+                        "ids": [receiver],
+                        "classname": "func_brush",
+                        "properties": {"origin": "90.5 -67.25 32.125"},
+                    },
+                )["id"]
+            )
         for x in [-96, 96]:
             entity = client.call(
                 "create_entity",
@@ -155,7 +183,12 @@ def fixture(args):
         client.call("save_map", {"path": str(source)})
         source_bytes = source.read_bytes()
         client.call(
-            "set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"}
+            "set_compile_settings",
+            {
+                "lighting": "direct_ldr",
+                "physics": "engine",
+                "bounces": 1 if args.bounced_model else 0,
+            },
         )
         before = detail(client, objects)
         history = client.call("get_map_info")["undo"]
@@ -179,10 +212,18 @@ def fixture(args):
             and history == client.call("get_map_info")["undo"]
             and source.read_bytes() == source_bytes
         )
-        client.call("set_compile_settings", {"bounces": 1})
-        client.call("compile_map", {"path": str(path)}, error=True)
-        assert path.read_bytes() == data
-        client.call("set_compile_settings", {"bounces": 0})
+        if args.bounced_model:
+            assert (
+                stats["model_bounce_samples"] > 0 and stats["model_bounce_faces"] == 6
+            )
+            assert model_top_color(data, 32)[0] > 0
+        else:
+            client.call("set_compile_settings", {"bounces": 1})
+            reflected = client.call(
+                "compile_map", {"path": str(args.output / "bounce.bsp")}
+            )
+            assert reflected["success"] and reflected["stats"]["bounce_samples"] > 0
+            client.call("set_compile_settings", {"bounces": 0})
         client.call("set_entity_properties", {"id": lights[0], "set": {"pattern": "A"}})
         client.call("compile_map", {"path": str(path)}, error=True)
         client.call("start_compile", {"path": str(path)})
@@ -225,7 +266,19 @@ OBSERVER = (
 )
 
 
-def capture_states(output, errors):
+def frame_red(pixels, dimensions, model):
+    if not model:
+        return sum(pixels[::3]) / (len(pixels) / 3)
+    width, height = map(int, dimensions.split())
+    red = [
+        pixels[(y * width + x) * 3]
+        for y in range(int(height * 0.434), int(height * 0.446))
+        for x in range(int(width * 0.485), int(width * 0.515))
+    ]
+    return sum(red) / len(red)
+
+
+def capture_states(output, errors, model=False):
     try:
         log = output / "cstrike/hammerr-runtime.log"
         started = time.monotonic()
@@ -240,8 +293,8 @@ def capture_states(output, errors):
                     subprocess.run(
                         ["grim", "-t", "ppm", str(path)], check=True, timeout=5
                     )
-                    pixels = path.read_bytes().split(b"\n", 3)[3]
-                    animated.append(sum(pixels[::3]) / (len(pixels) / 3))
+                    _, dimensions, _, pixels = path.read_bytes().split(b"\n", 3)
+                    animated.append(frame_red(pixels, dimensions, model))
                     time.sleep(0.06)
                 assert max(animated) > 10 and max(animated) - min(animated) > 10, (
                     animated
@@ -270,29 +323,45 @@ def capture_states(output, errors):
 
 
 def worker(args):
-    runtime.OBSERVER = OBSERVER
+    runtime.OBSERVER = (
+        OBSERVER.replace("setang 20 45 0", "setang 12 42 0")
+        if args.bounced_model
+        else OBSERVER
+    )
     args.observe_seconds = 40
     errors = []
     capture = threading.Thread(
-        target=capture_states, args=(args.output, errors), daemon=True
+        target=capture_states,
+        args=(args.output, errors, args.bounced_model),
+        daemon=True,
     )
     capture.start()
     runtime.worker(args)
     capture.join(timeout=10)
     assert not errors, errors
     means = []
+    model_means = []
     for phase in range(4):
-        magic, _dimensions, maximum, pixels = (
+        magic, dimensions, maximum, pixels = (
             (args.output / f"phase-{phase}.ppm").read_bytes().split(b"\n", 3)
         )
         assert magic == b"P6" and maximum == b"255"
         means.append([sum(pixels[axis::3]) / (len(pixels) / 3) for axis in range(3)])
+        if args.bounced_model:
+            model_means.append(frame_red(pixels, dimensions, True))
     assert abs(means[0][0] - means[2][0]) < 2, means
     assert means[1][0] > means[0][0] + 10 and means[3][0] > means[1][0] + 5, means
+    if args.bounced_model:
+        assert (
+            abs(model_means[0] - model_means[2]) < 2
+            and model_means[1] > model_means[0] + 5
+            and model_means[3] > model_means[1] + 5
+        ), model_means
     (args.output / "style-states.json").write_text(
         json.dumps(
             {
                 "mean_rgb": means,
+                "model_mean_red": model_means,
                 "relay_inputs": ["TurnOn", "TurnOff", "SetPattern z"],
             },
             indent=2,
@@ -308,6 +377,7 @@ def main():
         "--output", type=Path, default=Path("/tmp/hammerr-light-styles")
     )
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--bounced-model", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -340,6 +410,7 @@ def main():
                     "-B",
                     str(Path(__file__).resolve()),
                     "--worker",
+                    *(["--bounced-model"] if args.bounced_model else []),
                     "--bsp",
                     str(bsp),
                     "--output",

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use glam::DVec3;
-use source_formats::bsp::{MAX_LIGHTING_BYTES, RgbExp32};
+use source_formats::bsp::{FaceLighting, MAX_LIGHTING_BYTES, RgbExp32};
 
 use super::bake::Budget;
 use super::{encode_color, property};
@@ -124,6 +124,7 @@ struct Channel {
     style: u8,
     samples: Vec<RgbExp32>,
     total: DVec3,
+    average: Option<DVec3>,
 }
 
 pub(super) struct Channels {
@@ -167,6 +168,7 @@ impl Channels {
             style,
             samples: vec![RgbExp32::default(); samples],
             total: DVec3::ZERO,
+            average: None,
         });
         Ok(index)
     }
@@ -197,6 +199,59 @@ impl Channels {
         Ok(())
     }
 
+    pub(super) fn restore(
+        light: &FaceLighting<'_>,
+        completed: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<Self, String> {
+        let [width, height] = light.dimensions();
+        let mut result = Self::new(width * height, completed, light.maps())?;
+        for (style_index, &style) in light.styles().iter().enumerate() {
+            let index = if style == 0 {
+                0
+            } else {
+                result.allocate(style)?
+            };
+            budget.consume(result.count * result.maps + 1)?;
+            let channel = &mut result.channels[index];
+            channel.average = Some(DVec3::from_array(
+                light
+                    .average(style_index)
+                    .ok_or("Bounce source average is missing")?
+                    .linear(),
+            ));
+            for map in 0..result.maps {
+                channel.samples[map * result.count..(map + 1) * result.count].copy_from_slice(
+                    light
+                        .samples(style_index, map)
+                        .ok_or("Bounce source directional map is missing")?,
+                );
+            }
+        }
+        Ok(result)
+    }
+
+    pub(super) fn finish_bounce_sample(
+        &mut self,
+        index: usize,
+        colors: &SampleColors,
+        budget: &mut Budget<'_>,
+    ) -> Result<bool, String> {
+        budget.consume(self.channels.len() * self.maps - 1)?;
+        let mut positive = false;
+        for (channel, color) in self.channels.iter_mut().zip(colors) {
+            for (map, &color) in color.iter().enumerate().take(self.maps) {
+                if color != DVec3::ZERO {
+                    let slot = &mut channel.samples[map * self.count + index];
+                    *slot = encode_color(DVec3::from_array(slot.linear()) + color)?;
+                    positive = true;
+                }
+            }
+            channel.total += color[0];
+        }
+        Ok(positive)
+    }
+
     pub(super) fn finish_sample(
         &mut self,
         index: usize,
@@ -221,7 +276,9 @@ impl Channels {
         let mut styles = [255; MAX_FACE_STYLES];
         let offset = (colors.len() + self.channels.len()) * size_of::<RgbExp32>();
         for channel in self.channels.iter().rev() {
-            colors.push(encode_color(channel.total / self.count as f64)?);
+            colors.push(encode_color(
+                channel.average.unwrap_or(DVec3::ZERO) + channel.total / self.count as f64,
+            )?);
         }
         for (index, channel) in self.channels.iter().enumerate() {
             styles[index] = channel.style;

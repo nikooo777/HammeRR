@@ -476,3 +476,132 @@ fn model_bounce_uses_only_its_own_occluders_and_zero_albedo_preserves_bytes() {
         "Zero reflected model energy changed bytes"
     );
 }
+
+#[test]
+fn named_bounce_reaches_shadowed_world_and_model_channels_without_static_color() {
+    let (_directory, game) = albedo_game([0.5, 0.0, 0.0]);
+    let pivot = DVec3::new(101.5, -67.25, 32.125);
+    let mut source = model_receiver(pivot, false, false).vmf().clone();
+    source
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("light"))
+        .unwrap()
+        .properties
+        .set("targetname", "bounce_switch");
+    let direct = compiler::compile_with_options(&source, &game, settings(0));
+    let bounced = compiler::compile_with_options(&source, &game, settings(1));
+    assert!(
+        !direct.report.has_errors() && !bounced.report.has_errors(),
+        "{:?} {:?}",
+        direct.report,
+        bounced.report
+    );
+    let direct = direct.bsp.unwrap();
+    let bsp = bounced.bsp.unwrap();
+    let faces = bsp.records::<Face>().unwrap();
+    let infos = bsp.records::<TexInfo>().unwrap();
+    let maps = bsp.lighting(LightingKind::Ldr).unwrap().unwrap();
+    let mut reflected_faces = 0;
+    for face in faces {
+        if let Some(light) = maps.face(&face, &infos[face.texinfo as usize]).unwrap() {
+            assert!(
+                light
+                    .samples(0, 0)
+                    .unwrap()
+                    .iter()
+                    .all(|value| value.rgb == [0; 3])
+            );
+            if light.styles() == [0, 32] {
+                reflected_faces += 1;
+            }
+        }
+    }
+    assert!(reflected_faces > 0);
+    let models = bsp.records::<bsp::Model>().unwrap();
+    let faces = bsp.records::<Face>().unwrap();
+    let direct_faces = direct.records::<Face>().unwrap();
+    let top = faces
+        [models[1].first_face as usize..(models[1].first_face + models[1].face_count) as usize]
+        .iter()
+        .find(|face| {
+            let plane = bsp.records::<bsp::Plane>().unwrap()[face.plane as usize];
+            plane.normal[2] > 0.99 && (f64::from(plane.dist) + pivot.z - 24.0).abs() < 1e-6
+        })
+        .unwrap();
+    assert_eq!(top.styles, [0, 32, 255, 255]);
+    assert!(
+        maps.face(top, &infos[top.texinfo as usize])
+            .unwrap()
+            .unwrap()
+            .samples(1, 0)
+            .unwrap()
+            .iter()
+            .all(|value| value.rgb[1..] == [0; 2])
+    );
+    let index = faces
+        .iter()
+        .position(|face| std::ptr::eq(face, top))
+        .unwrap();
+    assert_eq!(direct_faces[index].styles, [0, 255, 255, 255]);
+    assert!(
+        maps.face(top, &infos[top.texinfo as usize])
+            .unwrap()
+            .unwrap()
+            .samples(1, 0)
+            .unwrap()
+            .iter()
+            .any(|value| value.rgb[0] > 0)
+    );
+}
+
+#[test]
+fn newly_overlapping_bounce_styles_reject_before_replacing_output() {
+    let mut document = Document::new(common::room());
+    document
+        .edit("four focused styles", |tx| {
+            for (x, yaw) in [(-128.0, "0 180 0"), (128.0, "0 0 0")] {
+                for y in [-128.0, 128.0] {
+                    edit::create_entity(
+                        tx,
+                        "light_spot",
+                        Some(DVec3::new(x, y, 128.0)),
+                        &[
+                            ("targetname".into(), format!("spot_{x}_{y}")),
+                            ("_light".into(), "255 0 0 200".into()),
+                            ("_constant_attn".into(), "1".into()),
+                            ("_inner_cone".into(), "6".into()),
+                            ("_cone".into(), "8".into()),
+                            ("angles".into(), yaw.into()),
+                        ],
+                        Vec::new(),
+                    )?;
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    let direct = compiler::compile_with_options(document.vmf(), &common::empty_game(), settings(0));
+    assert!(
+        !direct.report.has_errors(),
+        "Direct styles overlap: {:?}",
+        direct.report
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("guarded.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    let bounced =
+        compiler::compile_with_options(document.vmf(), &common::empty_game(), settings(1));
+    assert!(bounced.report.has_errors());
+    assert!(
+        bounced
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("more than four light styles")),
+        "{:?}",
+        bounced.report
+    );
+    assert!(!bounced.write(&path).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+}

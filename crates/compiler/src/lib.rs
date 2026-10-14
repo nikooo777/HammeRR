@@ -57,7 +57,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. One diffuse bounce reaches world, terrain and brush entities. HDR and prop lightmaps remain unfinished."
+                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. One style-preserving diffuse bounce reaches world, terrain and brush entities. HDR and prop lightmaps remain unfinished."
             }
         }
     }

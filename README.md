@@ -211,7 +211,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Switchable lights |
 | --- |
 | ![Named lights switched on in Counter-Strike: Source](docs/images/light-styles-on.png) |
-| Bake lights that switch, flicker or follow custom patterns. |
+| Bake direct and reflected light that switches, flickers or follows custom patterns. |
 
 | Bounced light |
 | --- |

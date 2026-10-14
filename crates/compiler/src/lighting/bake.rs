@@ -193,13 +193,6 @@ pub(super) enum Emitter {
 }
 
 impl Emitter {
-    fn style(&self) -> u8 {
-        match self {
-            Self::Point(light) => light.style,
-            Self::Sky(_) => 0,
-        }
-    }
-
     fn world_lights(&self) -> [Option<bsp::WorldLight>; 2] {
         match self {
             Self::Point(light) => [Some(light.world_light()), None],
@@ -550,9 +543,6 @@ pub(crate) fn bake(
     if report.has_errors() {
         return Ok(BakeStats::default());
     }
-    if options.bounces != 0 && lights.iter().any(|light| light.style() != 0) {
-        return Err("One diffuse bounce with switchable/animated light styles is unfinished; choose Direct only or Appearance Normal on unnamed lights".into());
-    }
     let world_lights = lights
         .iter()
         .flat_map(Emitter::world_lights)
@@ -613,7 +603,7 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional style-preserving diffuse world-light bounce is supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
     let count: usize = plans
         .iter()
         .map(|plan| plan.sample_count() * plan.map_count() + 1)
@@ -802,10 +792,10 @@ pub(crate) fn bake(
     let bounce_start = budget.work;
     let bounce = if options.bounces == 1 {
         let stats = super::bounce::bake(
-            &super::bounce::Context {
+            &mut super::bounce::Context {
                 map,
                 plans: &plans,
-                faces: &faces,
+                faces: &mut faces,
                 infos: &infos,
                 shadows: &shadows,
                 model_shadows: &model_shadows,
@@ -817,6 +807,22 @@ pub(crate) fn bake(
         )?;
         bsp.set_lighting(LightingKind::Ldr, &colors)
             .map_err(|error| error.to_string())?;
+        bsp.set_records(&faces);
+        used_styles.clear();
+        styled_faces = 0;
+        style_maps = 0;
+        bump_lightmaps = 0;
+        for plan in &plans {
+            let styles = faces[plan.face]
+                .styles
+                .into_iter()
+                .filter(|&style| style != 255)
+                .collect::<Vec<_>>();
+            used_styles.extend(styles.iter().copied());
+            styled_faces += usize::from(styles.len() > 1);
+            style_maps += styles.len() * plan.map_count();
+            bump_lightmaps += styles.len() * (plan.map_count() - 1);
+        }
         stats
     } else {
         super::bounce::Stats {

@@ -193,6 +193,13 @@ pub fn inspect(document: &Document, faces: &[FaceId]) -> Result<Vec<TerrainGrid>
             let info = solid.sides[index].displacement.as_ref().unwrap();
             let mesh = super::DisplacementMesh::build(face, info)
                 .map_err(|error| EditError::Invalid(error.to_string()))?;
+            if mesh.positions.iter().any(|p| !p.is_finite())
+                || mesh.alphas.iter().any(|a| !a.is_finite())
+            {
+                return Err(EditError::Invalid(
+                    "Terrain grid contains nonfinite positions or blend values".into(),
+                ));
+            }
             Ok(TerrainGrid {
                 face: target,
                 power: info.power,

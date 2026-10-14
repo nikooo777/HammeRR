@@ -9726,6 +9726,100 @@ mod tests {
     }
 
     #[test]
+    fn terrain_sculpt_and_blend_controls_drive_shared_previews() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                glam::DVec3::splat(-64.0),
+                glam::DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let target = map_core::surface::FaceId {
+            solid,
+            side: session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id,
+        };
+        session
+            .select_faces(&[target], session::SelectMode::Replace)
+            .unwrap();
+        session
+            .create_terrain(Actor::Agent, &[target], 2, 0)
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = terrain_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        window.set_operation_index(1);
+        window.set_radius("32".into());
+        window.set_amount("16".into());
+        window.invoke_edited();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-sculpt");
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(
+            lock(&shared).terrain_grids(&[target], true).unwrap()[0]
+                .mesh
+                .positions[12]
+                .z,
+            80.0
+        );
+        window.invoke_apply();
+        assert_eq!(
+            lock(&shared).terrain_grids(&[target], false).unwrap()[0]
+                .mesh
+                .positions[12]
+                .z,
+            80.0
+        );
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        for mode in [2, 3, 4, 5, 6, 7] {
+            window.set_operation_index(mode);
+            window.invoke_edited();
+            window.invoke_preview_edit();
+            assert!(window.get_ready(), "mode {mode}: {}", window.get_message());
+            window.invoke_cancel();
+            assert_eq!(*lock(&shared).document().vmf(), before);
+        }
+        window.set_operation_index(5);
+        window.show().unwrap();
+        window.invoke_edited();
+        save_ui_snapshot(window.window(), "terrain-blend");
+        window.invoke_preview_edit();
+        window.set_blend_value("256".into());
+        window.invoke_edited();
+        assert!(!lock(&shared).has_face_preview());
+        window.invoke_preview_edit();
+        assert!(!window.get_ready());
+        assert!(window.get_message().contains("0–255"));
+        window.invoke_cancel();
+    }
+
+    #[test]
     fn mirror_controls_share_brush_transform_and_agent_preview() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

@@ -169,7 +169,10 @@ def worker(args):
                 row[0] == 100 and row[1] == 2 for row in players
             ), players
             ground_z = getattr(args, "ground_z", 0.0)
-            assert all(abs(row[4] - ground_z) < 1 for row in players[-3:]), players
+            ground_tolerance = getattr(args, "ground_tolerance", 1.0)
+            assert all(
+                abs(row[4] - ground_z) < ground_tolerance for row in players[-3:]
+            ), players
             assert '"mat_fullbright" = "0"' in text and "Level unlit" not in text
             assert props, "Physics prop did not enter the observer"
             report = {
@@ -179,6 +182,7 @@ def worker(args):
                 "wayland_display": os.environ.get("WAYLAND_DISPLAY"),
                 "insecure": True,
                 "ground_z": ground_z,
+                "ground_tolerance": ground_tolerance,
             }
             (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
         finally:

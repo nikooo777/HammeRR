@@ -416,7 +416,7 @@ pub fn edit_faces(
         let side = &mut brush.sides[index];
         let before = side.clone();
         update(side, edit, &points)?;
-        if let Some(crate::displacement::Operation::Resolution(power)) = &edit.terrain {
+        if let Some(operation) = &edit.terrain {
             let geometry = crate::brush::Face {
                 side: index,
                 plane: Plane::from_points(side.plane.0)
@@ -427,9 +427,17 @@ pub fn edit_faces(
                 .displacement
                 .as_ref()
                 .ok_or_else(|| invalid("Every target must contain terrain"))?;
-            side.displacement = Some(crate::displacement::resample::change(
-                &geometry, info, *power,
-            )?);
+            side.displacement = Some(match operation {
+                crate::displacement::Operation::Resolution(power) => {
+                    crate::displacement::resample::change(&geometry, info, *power)?
+                }
+                crate::displacement::Operation::Sculpt { brush, operation } => {
+                    crate::displacement::brush::sculpt(&geometry, info, *brush, *operation)?
+                }
+                crate::displacement::Operation::Blend { brush, operation } => {
+                    crate::displacement::brush::blend(&geometry, info, *brush, *operation)?
+                }
+            });
         }
         changed += usize::from(*side != before);
     }

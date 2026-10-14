@@ -33,12 +33,25 @@ impl Session {
         faces: &[FaceId],
         power: u32,
     ) -> Result<usize, String> {
+        self.preview_terrain_edit(
+            actor,
+            faces,
+            map_core::displacement::Operation::Resolution(power),
+        )
+    }
+
+    pub fn preview_terrain_edit(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        operation: map_core::displacement::Operation,
+    ) -> Result<usize, String> {
         self.terrain_grids(faces, false)?;
         self.edit_faces(
             actor,
             faces,
             SurfaceEdit {
-                terrain: Some(map_core::displacement::Operation::Resolution(power)),
+                terrain: Some(operation),
                 ..Default::default()
             },
             false,
@@ -358,6 +371,111 @@ mod tests {
             session.commit_face_preview(actor).unwrap();
             assert_eq!(session.document().undo_labels().count(), history + 1);
             assert_eq!(session.selected_faces(), vec![target]);
+            session.undo(actor).unwrap();
+            assert_eq!(*session.document().vmf(), before);
+        }
+    }
+
+    #[test]
+    fn terrain_brush_previews_share_actors_commit_cancel_and_atomic_failures() {
+        use map_core::displacement::{
+            Operation,
+            brush::{Axis, Blend, Brush, Sculpt},
+        };
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    actor,
+                    DVec3::splat(-64.0),
+                    DVec3::splat(64.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let target = FaceId {
+                solid,
+                side: session
+                    .document()
+                    .solid(solid)
+                    .unwrap()
+                    .sides
+                    .iter()
+                    .find(|side| {
+                        map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                    })
+                    .unwrap()
+                    .id,
+            };
+            session
+                .select_faces(&[target], SelectMode::Replace)
+                .unwrap();
+            session.create_terrain(actor, &[target], 2, 0).unwrap();
+            let before = session.document().vmf().clone();
+            let brush = Brush {
+                center: DVec3::new(0.0, 0.0, 64.0),
+                radius: 32.0,
+                axis: Axis::WorldZ,
+            };
+            session
+                .preview_terrain_edit(
+                    actor,
+                    &[target],
+                    Operation::Sculpt {
+                        brush,
+                        operation: Sculpt::Raise(16.0),
+                    },
+                )
+                .unwrap();
+            let token = session.face_preview_token();
+            assert_eq!(
+                session.terrain_grids(&[target], true).unwrap()[0]
+                    .mesh
+                    .positions[12]
+                    .z,
+                80.0
+            );
+            assert!(
+                session
+                    .preview_terrain_edit(
+                        actor,
+                        &[target],
+                        Operation::Sculpt {
+                            brush,
+                            operation: Sculpt::Raise(4097.0)
+                        }
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), token);
+            assert_eq!(*session.document().vmf(), before);
+            session.cancel_face_preview();
+            session
+                .preview_terrain_edit(
+                    actor,
+                    &[target],
+                    Operation::Blend {
+                        brush,
+                        operation: Blend::Fill(255.0),
+                    },
+                )
+                .unwrap();
+            assert_eq!(*session.document().vmf(), before);
+            session.commit_face_preview(actor).unwrap();
+            assert!(
+                session.terrain_grids(&[target], false).unwrap()[0]
+                    .mesh
+                    .alphas
+                    .iter()
+                    .all(|alpha| *alpha == 255.0)
+            );
+            assert_eq!(
+                session.document().undo_labels().next().unwrap(),
+                "edit terrain blend"
+            );
             session.undo(actor).unwrap();
             assert_eq!(*session.document().vmf(), before);
         }

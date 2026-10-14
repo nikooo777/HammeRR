@@ -175,8 +175,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Terrain authoring |
 | --- |
-| ![A refined terrain grid retaining its heights](docs/images/terrain-refinement.png) |
-| Create terrain, choose its grid orientation, preview resolution changes and restore parent brushes. |
+| ![Painted grass and dirt on terrain](docs/images/terrain-blending.png) |
+| Create, resize, sculpt and blend terrain with guarded previews and Undo. |
 
 | Connected terrain lighting |
 | --- |
@@ -244,7 +244,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 The editor covers most everyday brush work. Notable gaps:
 
-- **Terrain**: flat grid creation and removal work; sculpting and blend painting remain planned.
+- **Terrain**: creation, resolution edits, sculpting and blending work; live brush strokes and seam sewing remain planned.
 - **Models**: static props compile but aren't drawn in the viewport yet.
 - **Compiler**: Fast and Detailed visibility are available; lighting covers direct light, sky ambient and up to four optional diffuse bounces; HDR remains unfinished.
 

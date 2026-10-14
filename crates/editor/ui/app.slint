@@ -661,14 +661,28 @@ export component MaterialWindow inherits Window {
 }
 
 export component TerrainWindow inherits Window {
-    title: "Change terrain resolution";
-    preferred-width: 460px;
-    preferred-height: 350px;
+    title: "Edit terrain";
+    preferred-width: 520px;
+    preferred-height: 650px;
     in property <string> selection-label;
     in property <string> message;
     in property <bool> stale;
     in property <bool> ready;
     in-out property <int> grid-index;
+    in-out property <int> operation-index;
+    in-out property <int> direction-index;
+    in-out property <string> center-x: "0";
+    in-out property <string> center-y: "0";
+    in-out property <string> center-z: "0";
+    in-out property <string> radius: "128";
+    in-out property <string> amount: "16";
+    in-out property <string> strength: "0.5";
+    in-out property <string> blend-value: "128";
+    in-out property <string> seed: "1";
+    in-out property <float> radius-slider: 128;
+    in-out property <float> amount-slider: 16;
+    in-out property <float> strength-slider: 0.5;
+    in-out property <float> blend-slider: 128;
     callback edited();
     callback preview-edit();
     callback apply();
@@ -680,9 +694,65 @@ export component TerrainWindow inherits Window {
             padding: 20px;
             spacing: 14px;
             Text {text: root.selection-label; font-size: 17px; wrap: word-wrap;}
-            Text {text: "Grid resolution";}
-            ComboBox {model: ["5 × 5 · power 2", "9 × 9 · power 3", "17 × 17 · power 4"]; current-index <=> root.grid-index; enabled: !root.stale; selected => {root.edited();}}
-            Text {text: "Finer grids keep existing height and blend samples. Coarser grids can lose detail. Start corner, materials and mapping stay fixed."; wrap: word-wrap; color: #b6bac3;}
+            Text {text: "Operation";}
+            ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
+            if root.operation-index == 0: VerticalLayout {
+                spacing: 12px;
+                Text {text: "Grid resolution";}
+                ComboBox {model: ["5 × 5 · power 2", "9 × 9 · power 3", "17 × 17 · power 4"]; current-index <=> root.grid-index; enabled: !root.stale; selected => {root.edited();}}
+                Text {text: "Finer grids keep existing height and blend samples. Coarser grids can lose detail. Start corner, materials and mapping stay fixed."; wrap: word-wrap; color: #b6bac3;}
+            }
+            if root.operation-index >= 1 && root.operation-index <= 5: VerticalLayout {
+                spacing: 8px;
+                Text {text: "Brush center · world coordinates";}
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {text: "X"; vertical-alignment: center;} LineEdit {text <=> root.center-x; edited => {root.edited();}}
+                    Text {text: "Y"; vertical-alignment: center;} LineEdit {text <=> root.center-y; edited => {root.edited();}}
+                    Text {text: "Z"; vertical-alignment: center;} LineEdit {text <=> root.center-z; edited => {root.edited();}}
+                }
+                Text {text: "Brush direction";}
+                ComboBox {model:["Up / down · world Z", "Along the face normal"]; current-index <=> root.direction-index; selected => {root.edited();}}
+                Text {text: "Radius · world units";}
+                HorizontalLayout {
+                    spacing: 12px;
+                    Slider {minimum:1; maximum:max(512,root.radius-slider); value:root.radius-slider; released(value)=>{root.radius="\{value}";root.edited();}}
+                    LineEdit {preferred-width:90px; horizontal-stretch:0; text <=> root.radius; edited=>{root.edited();}}
+                }
+            }
+            if root.operation-index == 1 || root.operation-index == 4: VerticalLayout {
+                spacing: 8px;
+                Text {text:root.operation-index == 1 ? "Height change · negative lowers" : "Noise amount · world units";}
+                HorizontalLayout {
+                    spacing:12px;
+                    Slider {minimum:-max(128,abs(root.amount-slider)); maximum:max(128,abs(root.amount-slider)); value:root.amount-slider; released(value)=>{root.amount="\{value}";root.edited();}}
+                    LineEdit {preferred-width:90px; horizontal-stretch:0; text <=> root.amount; edited=>{root.edited();}}
+                }
+            }
+            if root.operation-index == 2 || root.operation-index == 3 || root.operation-index == 5: VerticalLayout {
+                spacing:8px;
+                Text {text:"Strength · 0 leaves terrain unchanged, 1 applies fully"; wrap:word-wrap;}
+                HorizontalLayout {
+                    spacing:12px;
+                    Slider {minimum:0; maximum:1; value:root.strength-slider; released(value)=>{root.strength="\{value}";root.edited();}}
+                    LineEdit {preferred-width:90px; horizontal-stretch:0; text <=> root.strength; edited=>{root.edited();}}
+                }
+            }
+            if root.operation-index == 4: HorizontalLayout {
+                spacing:12px;
+                Text {text:"Noise seed"; vertical-alignment:center;}
+                LineEdit {text <=> root.seed; edited=>{root.edited();}}
+            }
+            if root.operation-index == 5 || root.operation-index == 6: VerticalLayout {
+                spacing:8px;
+                Text {text:"Blend value · 0 first texture, 255 second texture"; wrap:word-wrap;}
+                HorizontalLayout {
+                    spacing:12px;
+                    Slider {minimum:0; maximum:255; value:root.blend-slider; released(value)=>{root.blend-value="\{value}";root.edited();}}
+                    LineEdit {preferred-width:90px; horizontal-stretch:0; text <=> root.blend-value; edited=>{root.edited();}}
+                }
+            }
+            if root.operation-index != 0: Text {text:root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
             Rectangle {vertical-stretch: 1;}
             Text {text: root.message; wrap: word-wrap; color: #a7adb8;}
             HorizontalLayout {
@@ -2133,7 +2203,7 @@ export component AppWindow inherits Window {
                             }
                             if root.can-remove-terrain: VerticalLayout {
                                 spacing: 6px;
-                                Button { text: "Change resolution…"; clicked => { root.change-terrain-resolution(); } }
+                                Button { text: "Edit terrain…"; clicked => { root.change-terrain-resolution(); } }
                                 Button { text: "Remove terrain"; clicked => { root.remove-terrain(); } }
                                 Text { text: "Removing the last terrain face restores the parent brush's volume. Undo keeps all grid data."; wrap: word-wrap; color: #919aaa; font-size: 12px; }
                             }

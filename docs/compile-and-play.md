@@ -158,7 +158,7 @@ With **Direct LDR**:
 
 ![Pivot-aware direct lighting on moving brush entities](images/compiled-brush-models.png)
 
-Limits: direct point/spot styles and sun/sky lighting at the authored pose, with geometric face normals and isolated self-shadow hulls. Moving models do not add permanent world shadows or supply/receive bounced light. Model smoothing, independently rotated initial poses, dynamic relighting, bump/HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
+Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Moving models do not add permanent world shadows or supply/receive bounced light. Independently rotated initial poses, dynamic relighting, bump/HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
 
 #### Switchable lights and appearances
 
@@ -224,7 +224,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent shadows, brush-model smoothing and bump maps, multiple or styled light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, bump maps, multiple or styled light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

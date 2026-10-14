@@ -119,6 +119,7 @@ impl Index {
 pub(super) fn insert(
     sources: &mut [Source],
     threshold: Option<f64>,
+    retained: &mut usize,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
     let mut index = Index {
@@ -127,10 +128,9 @@ pub(super) fn insert(
         nodes: Vec::new(),
     };
     let mut keys = HashMap::new();
-    let mut retained = 0usize;
     for (owner, source) in sources.iter().enumerate() {
         budget.consume(source.points.len())?;
-        retained = retained
+        *retained = retained
             .checked_add(source.points.len())
             .filter(|&count| count <= crate::faces::MAX_SMOOTH_SOURCE_POINTS)
             .ok_or("Brush smoothing junctions exceed the four-million source-point budget")?;
@@ -168,7 +168,7 @@ pub(super) fn insert(
                     .iter()
                     .any(|&other| other != owner && compatible(source, &sources[other], threshold))
                 {
-                    retained = retained
+                    *retained = retained
                         .checked_add(1)
                         .filter(|&count| count <= crate::faces::MAX_SMOOTH_SOURCE_POINTS)
                         .ok_or(

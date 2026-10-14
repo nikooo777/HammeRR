@@ -231,3 +231,158 @@ fn named_style_channels_follow_model_receiver_coordinates() {
         expected
     );
 }
+
+#[test]
+fn authored_model_groups_bake_checked_smooth_corner_normals() {
+    let pivot = DVec3::new(101.5, -67.25, 32.125);
+    let mut source = fixture(Some(pivot));
+    for side in source
+        .entities
+        .iter_mut()
+        .find(|entity| !entity.solids.is_empty())
+        .unwrap()
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.smoothing_groups = Some(1);
+    }
+    let output = built(&source);
+    assert_eq!(output.stats.smoothed_faces, 6);
+    let bsp = output.bsp.unwrap();
+    let normals = model_corner_normals(&bsp, 1, DVec3::new(32.0, 32.0, 96.0) - pivot);
+    assert_eq!(normals.len(), 3);
+    assert!(
+        normals
+            .iter()
+            .all(|normal| normal.distance(DVec3::ONE.normalize()) < 2e-7)
+    );
+    let point = DVec3::new(16.0, 0.0, 96.0);
+    let expected = sample_at(&bsp, 1, pivot, point, 0);
+    for side in source
+        .entities
+        .iter_mut()
+        .flat_map(|entity| &mut entity.solids)
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.lightmap_scale = 1;
+    }
+    let divided = built(&source).bsp.unwrap();
+    assert_eq!(sample_at(&divided, 1, pivot, point, 0), expected);
+}
+
+fn model_corner_normals(bsp: &Bsp, model: usize, target: DVec3) -> Vec<DVec3> {
+    let model = bsp.records::<Model>().unwrap()[model];
+    let faces = bsp.records::<Face>().unwrap();
+    let vertices = bsp.vertices().unwrap();
+    let edges = bsp.records::<bsp::Edge>().unwrap();
+    let surfedges = bsp.surfedges().unwrap();
+    let indices = bsp.values::<u16>(bsp::lump::VERTNORMALINDICES).unwrap();
+    let normals = bsp.values::<[f32; 3]>(bsp::lump::VERTNORMALS).unwrap();
+    let mut result = Vec::new();
+    for face in &faces[model.first_face as usize..(model.first_face + model.face_count) as usize] {
+        for index in face.first_edge as usize..face.first_edge as usize + face.edge_count as usize {
+            let edge = surfedges[index];
+            let vertex = edges[edge.unsigned_abs() as usize].0[usize::from(edge < 0)];
+            if DVec3::from_array(vertices[vertex as usize].map(f64::from)).distance(target) < 1e-6 {
+                let normal = DVec3::from_array(normals[indices[index] as usize].map(f64::from));
+                result.push(normal);
+            }
+        }
+    }
+    result
+}
+
+#[test]
+fn model_scopes_keep_coincident_local_vertices_separate_and_respect_hard_and_angle_rules() {
+    let mut document = Document::new(common::room());
+    let mut marked = Vec::new();
+    for (x, normal) in [(-128.0, DVec3::Z), (128.0, DVec3::X)] {
+        let pivot = DVec3::new(x, 0.0, 64.0);
+        let id = document
+            .edit("separate models", |tx| {
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    pivot - DVec3::splat(32.0),
+                    pivot + DVec3::splat(32.0),
+                    "dev/dev_measuregeneric01",
+                )?
+                else {
+                    unreachable!()
+                };
+                edit::tie_to_entity(
+                    tx,
+                    &[id],
+                    "func_brush",
+                    &[("origin".into(), source_formats::vmf::format_vec3(pivot))],
+                )
+            })
+            .unwrap();
+        marked.push((id, normal));
+    }
+    let mut source = document.vmf().clone();
+    for (id, normal) in marked {
+        let ObjectId::Entity(id) = id else {
+            unreachable!()
+        };
+        let side = source
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == id)
+            .unwrap()
+            .solids[0]
+            .sides
+            .iter_mut()
+            .find(|side| Plane::from_points(side.plane.0).unwrap().normal == normal)
+            .unwrap();
+        side.smoothing_groups = Some(1);
+    }
+    let output = built(&source);
+    assert_eq!(output.stats.smoothed_faces, 0);
+    let bsp = output.bsp.unwrap();
+    for model in [1, 2] {
+        let normals = model_corner_normals(&bsp, model, DVec3::splat(32.0));
+        assert_eq!(normals.len(), 3);
+        assert!(normals.iter().all(|normal| {
+            [DVec3::X, DVec3::Y, DVec3::Z]
+                .iter()
+                .any(|axis| normal.distance(*axis) < 2e-7)
+        }));
+    }
+    let pivot = DVec3::new(101.5, -67.25, 32.125);
+    let mut source = fixture(Some(pivot));
+    for side in source
+        .entities
+        .iter_mut()
+        .flat_map(|entity| &mut entity.solids)
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.smoothing_groups = Some(1 | (1 << 24));
+    }
+    assert_eq!(built(&source).stats.smoothed_faces, 0);
+    let source = fixture(Some(pivot));
+    for (angle, smooth) in [(89, false), (90, true)] {
+        let result = compiler::compile_with_options(
+            &source,
+            &common::empty_game(),
+            Options {
+                lighting: LightingMode::DirectLdr,
+                smoothing_angle: angle,
+                ..Default::default()
+            },
+        );
+        assert!(!result.report.has_errors(), "{:?}", result.report);
+        let normals = model_corner_normals(
+            &result.bsp.unwrap(),
+            1,
+            DVec3::new(32.0, 32.0, 96.0) - pivot,
+        );
+        assert_eq!(normals.len(), 3);
+        assert_eq!(
+            normals
+                .iter()
+                .all(|normal| normal.distance(DVec3::ONE.normalize()) < 2e-7),
+            smooth
+        );
+    }
+}

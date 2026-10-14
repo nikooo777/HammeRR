@@ -82,7 +82,7 @@ export component LightingWindow inherits Window {
                 text: root.view-mode == 3 ? "One grid cell per lighting pixel · blue ≤8, green ≤16, orange ≤32, red >32. Magenta marks invalid values." : root.view-mode == 4 ? "Cyan marks faces in group \{root.view-group}; gray marks other faces." : "Choose a view mode to inspect surfaces in any projection.";
                 color: #aeb9c8; wrap: word-wrap;
             }
-            Text { text: "These settings are saved in the VMF. Direct LDR bakes assigned smoothing on world/detail brushes. Terrain uses its own smooth normals."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "These settings are saved in the VMF. Direct LDR bakes assigned smoothing on world brushes and brush entities. Terrain uses its own smooth normals."; color: #aeb9c8; wrap: word-wrap; }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

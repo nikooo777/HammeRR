@@ -57,7 +57,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with shadows, authored brush smoothing and model ambient. One diffuse bounce is optional. HDR, prop lightmaps and model smoothing/bounces remain unfinished."
+                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with shadows, scoped world/model brush smoothing and model ambient. One diffuse bounce is optional. HDR, prop lightmaps and model bounces remain unfinished."
             }
         }
     }
@@ -533,12 +533,26 @@ fn build(
         None,
     ));
     control.advance(Stage::Faces)?;
+    let mut retained_points = 0;
+    let retention = if options.lighting != LightingMode::DirectLdr {
+        faces::SourceRetention::None
+    } else if options.smoothing_angle == 0 {
+        faces::SourceRetention::Assigned
+    } else {
+        faces::SourceRetention::All
+    };
+    let world_retention = if options.lighting == LightingMode::Fullbright {
+        faces::SourceRetention::Assigned
+    } else {
+        retention
+    };
     let mut faces = faces::build_with_smoothing(
         &map,
         &tree,
         0,
         control,
-        options.lighting == LightingMode::DirectLdr && options.smoothing_angle != 0,
+        world_retention,
+        &mut retained_points,
     )?;
     faces.extend(map.terrain_faces(&tree, &mut output.report, control)?);
     if output.report.has_errors() {
@@ -557,7 +571,14 @@ fn build(
             continue;
         }
         let tree = tree::Tree::build_controlled(&map.brushes, indices, &mut map.planes, control)?;
-        let faces = faces::build_controlled(&map, &tree, entity, control)?;
+        let faces = faces::build_with_smoothing(
+            &map,
+            &tree,
+            entity,
+            control,
+            retention,
+            &mut retained_points,
+        )?;
         models.push(emit::Model {
             entity,
             tree,

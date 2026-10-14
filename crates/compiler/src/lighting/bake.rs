@@ -506,17 +506,18 @@ pub(crate) fn bake(
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;
     let mut budget = Budget { work: 0, control };
+    let model_records = bsp.records::<Model>().map_err(|error| error.to_string())?;
+    let scopes = super::models::scopes(map, &model_records, settings.model_entities, faces.len())?;
     let normal_start = budget.work;
     let mut normals = super::normals::build(
         bsp,
         &faces,
         settings.smoothing_sources,
+        &scopes,
         options.smoothing_angle,
         &mut budget,
     )?;
     let normal_work = budget.work - normal_start;
-    let model_records = bsp.records::<Model>().map_err(|error| error.to_string())?;
-    let scopes = super::models::scopes(map, &model_records, settings.model_entities, faces.len())?;
     let plans = plans(
         map,
         bsp,
@@ -552,7 +553,7 @@ pub(crate) fn bake(
         ));
     }
     if infos.iter().any(|info| info.flags & surf::BUMPLIGHT != 0) {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR disables bump-light sample maps; world/detail brush smoothing is supported, while bump-light baking remains unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Direct LDR disables bump-light sample maps; scoped world/model brush smoothing is supported, while bump-light baking remains unfinished", None, None));
         for info in &mut infos {
             info.flags &= !surf::BUMPLIGHT;
         }
@@ -561,7 +562,7 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct maps with isolated self shadows; model smoothing/bounces, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct maps with isolated self shadows; model bounces, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;

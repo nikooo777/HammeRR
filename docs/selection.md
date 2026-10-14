@@ -34,6 +34,8 @@ Select everything inside exact XYZ bounds.
 4. The blue box and highlights stay visible while you move the camera. **Frame box** shows the whole region.
 5. **Select matches** applies the selection. **Cancel** leaves the selection unchanged.
 
+Terrain uses its displaced triangles for volume and area matching. Fully contained checks every surface vertex, including raised interior peaks. Other parent faces and the old parent volume do not match. To retain a triangle subset instead of complete faces, keep the volume preview active and use **Terrain triangles… → Select in volume**; see [Terrain](terrain.md).
+
 | Volume controls | Region preview |
 | --- | --- |
 | ![Volume bounds, match rules and cancellation](images/volume-selection.png) | ![Blue volume guide and matching brush](images/volume-preview.png) |

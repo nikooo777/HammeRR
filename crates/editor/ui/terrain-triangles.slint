@@ -31,6 +31,7 @@ export component TerrainTrianglesWindow inherits Window {
     callback pick-triangle();
     callback frame-selected();
     callback use-selection();
+    callback select-volume();
     forward-focus: focus;
     focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
@@ -50,6 +51,7 @@ export component TerrainTrianglesWindow inherits Window {
                 spacing: 8px;
                 Button {text: "Pick triangle in viewport…"; enabled: !root.stale; clicked => {root.pick-triangle();}}
                 Button {text: "Frame selected"; enabled: !root.stale; clicked => {root.frame-selected();}}
+                Button {text: "Select in volume"; enabled: !root.stale; clicked => {root.select-volume();}}
             }
             ScrollView {
                 min-height: 200px;

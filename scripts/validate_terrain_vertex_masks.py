@@ -106,7 +106,7 @@ def validate(args):
         assert client.call("get_terrain_vertex_mask", {"token": mask["token"]}) == mask
         client.render(
             args.output / "masked.png",
-            camera={"position": [-340, -300, 260], "look_at": [0, 0, 16]},
+            camera={"position": [-220, -210, 180], "look_at": [0, 0, 16]},
         )
         bsp, stats = build(client, args.output, "masked")
         infos = records(bsp.read_bytes(), 26, "<3f4ifi2H2i48s40s10I")

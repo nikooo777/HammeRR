@@ -1454,6 +1454,13 @@ pub struct TerrainVertexMaskArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVolumeArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub volume_token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TerrainCollisionArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub physics_collision: Option<bool>,
@@ -5208,6 +5215,52 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Select and highlight native triangle subsets from a current volume box in one shared atomic operation. volume_token and optional terrain faces match get_terrain_volume_triangles. Uses the volume's contained/intersecting rule, actual displaced geometry and hidden/tool filtering. Replaces triangle highlights while preserving face selection, VMF/history and the box. Returns highlight state and target lists. UI: Terrain triangles… → Select in volume."
+    )]
+    fn select_terrain_triangles_in_volume(
+        &self,
+        Parameters(args): Parameters<TerrainVolumeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let selected = session.select_terrain_triangles_in_volume(
+                Actor::Agent,
+                &faces,
+                parse_token(&args.volume_token)?,
+            )?;
+            Ok(
+                json!({"highlight":session.terrain_triangle_highlight_json(),"targets":selected.targets.iter().map(|(face,ids)|json!({"face":{"solid":face.solid,"side":face.side},"triangles":ids})).collect::<Vec<_>>()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Find native terrain triangles within a current select_volume(preview=true) box, using its contained/intersecting rule and actual displaced positions. volume_token is required; faces defaults to selected terrain faces (1–16). Hidden owners/tool-filtered faces stay excluded. Returns bounded targets suitable for highlight_terrain_triangles or classification edits, without changing VMF/history/face selection. Stale/replaced volume tokens reject. UI: preview a Select a volume… box, then Terrain triangles… → Select in volume.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_volume_triangles(
+        &self,
+        Parameters(args): Parameters<TerrainVolumeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let targets =
+                session.terrain_triangles_in_volume(&faces, parse_token(&args.volume_token)?)?;
+            Ok(
+                json!({"volume_token":args.volume_token,"triangle_count":targets.iter().map(|(_,ids)|ids.len()).sum::<usize>(),"targets":targets.iter().map(|(face,ids)|json!({"face":{"solid":face.solid,"side":face.side},"triangles":ids})).collect::<Vec<_>>()}),
+            )
+        })
+    }
+
+    #[tool(
         description = "Inspect highlighted triangles as a deduplicated native vertex mask within selected/explicit terrain faces. Optional token guards the current highlight. Returns token, vertex count and per-face vertex IDs/triangle counts. Empty/stale/replaced selections reject. Use token as mask_token on preview_terrain_sculpt/blend. Only these vertices change. UI: Affect only highlighted triangle vertices.",
         annotations(read_only_hint = true)
     )]
@@ -6259,7 +6312,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Select objects or faces through an axis-aligned world-space box. Shared with Select a volume in the UI. Corners must be ordered, finite and within ±65536 units. Geometry-based contained/intersecting rules; replace/add/remove/toggle. Hidden geometry and hidden tool brushes are skipped; displacements use supporting faces. preview=true shows a blue guide and resulting selection highlights without changing selection/history. It survives camera movement; map, selection or tool-visibility changes invalidate it. Inspect paginated get_volume_selection and use its token to commit/cancel/frame."
+        description = "Select objects or faces through an axis-aligned world-space box. Shared with Select a volume in the UI. Corners must be ordered, finite and within ±65536 units. Geometry-based contained/intersecting rules; replace/add/remove/toggle. Hidden geometry and hidden tool brushes are skipped; terrain uses actual displaced sheets and excludes parent volumes/faces. preview=true shows a blue guide and resulting selection highlights without changing selection/history. It survives camera movement; map, selection or tool-visibility changes invalidate it. Inspect paginated get_volume_selection and use its token to commit/cancel/frame."
     )]
     fn select_volume(&self, Parameters(args): Parameters<VolumeArgs>) -> ToolResult {
         run(|| {

@@ -38,7 +38,7 @@ impl Session {
         }
     }
 
-    fn checked_volume(&self, token: u64) -> Result<&Preview, String> {
+    pub(super) fn checked_volume(&self, token: u64) -> Result<&Preview, String> {
         let preview = self
             .volume_preview()
             .filter(|preview| preview.token == token)
@@ -173,7 +173,7 @@ impl Session {
                 "faces":preview.matches.faces.iter().skip(offset).take(limit.clamp(1,500)).map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()})
         });
         json!({"preview":preview,"suggested_bounds":self.volume_selection_bounds().map(|point|point.to_array()),
-            "hidden_policy":"Hidden objects, child brushes and hidden tool brushes are excluded; displacements use supporting brush faces."})
+            "hidden_policy":"Hidden objects, child brushes and hidden tool brushes are excluded; terrain uses actual displaced sheets, excluding ordinary parent faces and volumes."})
     }
 
     pub fn append_volume_guide(&self, mesh: &mut render::SceneMesh) {

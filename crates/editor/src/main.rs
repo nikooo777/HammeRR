@@ -489,21 +489,56 @@ fn refresh_texture_brush_sample(app: &AppWindow, session: &mut Session) {
     }
 }
 
+fn refresh_terrain_controls(app: &AppWindow, session: &Session) {
+    app.set_terrain_creation_error(session.terrain_creation_error().unwrap_or_default().into());
+    app.set_can_remove_terrain(session.terrain_removal_error().is_none());
+    let faces = session.selected_faces();
+    let choices = match session.terrain_creation_faces(&faces) {
+        Ok(faces) if faces.len() == 1 => faces[0]
+            .corners
+            .iter()
+            .enumerate()
+            .map(|(index, p)| {
+                format!(
+                    "Corner {} · X {:.1} · Y {:.1} · Z {:.1}",
+                    index + 1,
+                    p.x,
+                    p.y,
+                    p.z
+                )
+            })
+            .collect::<Vec<_>>(),
+        _ => (1..=4)
+            .map(|index| format!("Corner {index} · each face"))
+            .collect(),
+    };
+    app.set_terrain_corner_choices(
+        Rc::new(VecModel::from(
+            choices
+                .into_iter()
+                .map(SharedString::from)
+                .collect::<Vec<_>>(),
+        ))
+        .into(),
+    );
+}
+
 fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
     app.on_create_terrain({
         let shared = shared.clone();
         let app = app.as_weak();
-        move |power| {
+        move |power, corner| {
             let mut session = lock(&shared);
             let faces = session.selected_faces();
             let result = u32::try_from(power)
                 .map_err(|_| "Invalid terrain power".to_owned())
-                .and_then(|power| session.create_terrain(Actor::User, &faces, power));
+                .and_then(|power| {
+                    let corner = u32::try_from(corner)
+                        .map_err(|_| "Invalid terrain start corner".to_owned())?;
+                    session.create_terrain(Actor::User, &faces, power, corner)
+                });
             let app = app.unwrap();
-            app.set_terrain_creation_error(
-                session.terrain_creation_error().unwrap_or_default().into(),
-            );
-            app.set_can_remove_terrain(session.terrain_removal_error().is_none());
+            refresh_terrain_controls(&app, &session);
             app.set_message(
                 match result {
                     Ok(count) => format!(
@@ -523,10 +558,7 @@ fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
             let faces = session.selected_faces();
             let result = session.remove_terrain(Actor::User, &faces);
             let app = app.unwrap();
-            app.set_terrain_creation_error(
-                session.terrain_creation_error().unwrap_or_default().into(),
-            );
-            app.set_can_remove_terrain(session.terrain_removal_error().is_none());
+            refresh_terrain_controls(&app, &session);
             app.set_message(
                 match result {
                     Ok(count) => format!(
@@ -2495,8 +2527,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_has_selection(!session.selection().is_empty());
     app.set_face_mode(session.face_mode());
     app.set_has_faces(!session.selected_faces().is_empty());
-    app.set_terrain_creation_error(session.terrain_creation_error().unwrap_or_default().into());
-    app.set_can_remove_terrain(session.terrain_removal_error().is_none());
+    refresh_terrain_controls(app, session);
     app.set_can_sample_face(session.selected_faces().len() == 1);
     app.set_selection_pivot(
         session
@@ -9523,15 +9554,33 @@ mod tests {
         app.window()
             .set_size(slint::LogicalSize::new(1100.0, 800.0));
         app.show().unwrap();
+        refresh_terrain_controls(&app, &lock(&shared));
+        app.set_selection_title("1 face selected".into());
         save_ui_snapshot(app.window(), "terrain-creation");
-        app.invoke_create_terrain(4);
+        let corners = lock(&shared).terrain_creation_faces(&[target]).unwrap()[0].corners;
+        app.invoke_create_terrain(4, 3);
+        assert_eq!(
+            lock(&shared)
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| side.id == target.side)
+                .unwrap()
+                .displacement
+                .as_ref()
+                .unwrap()
+                .start_position,
+            corners[3]
+        );
         assert!(app.get_message().contains("Created 1 terrain surface"));
         assert!(
             app.get_terrain_creation_error()
                 .contains("already has terrain")
         );
         let after = lock(&shared).document().vmf().clone();
-        app.invoke_create_terrain(2);
+        app.invoke_create_terrain(2, 0);
         assert_eq!(*lock(&shared).document().vmf(), after);
         assert!(app.get_can_remove_terrain());
         app.invoke_remove_terrain();

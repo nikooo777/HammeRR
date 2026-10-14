@@ -1375,7 +1375,7 @@ pub struct ReplaceMaterialsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct RemoveTerrainArgs {
+pub struct TerrainFacesArgs {
     pub faces: Option<Vec<FaceRef>>,
 }
 
@@ -1383,6 +1383,7 @@ pub struct RemoveTerrainArgs {
 pub struct CreateTerrainArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub power: Option<u32>,
+    pub start_corner: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -4838,7 +4839,25 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Create flat terrain on 1–16 selected or explicit world quad faces, one per ordinary parent brush. power is 2, 3 or 4 (default 2), producing 5x5, 9x9 or 17x17 grids. Preserves IDs, materials, projections and lighting; rejects existing terrain, entity parents, ambiguous/nonquad targets and invalid powers atomically. One undo step. Parent brushes do not seal maps or become collision boxes. Sculpting/blending remain unfinished. UI: Terrain grid and Create terrain in the face inspector."
+        description = "Inspect eligible selected or explicit world quad faces and their four ordered world-space corners before terrain creation. Indices 0–3 match create_terrain.start_corner. Rows point toward the next corner, columns toward the previous one. Invalid selections return an error without changing the map.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_creation(&self, Parameters(args): Parameters<TerrainFacesArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let faces = session.terrain_creation_faces(&faces)?;
+            Ok(
+                json!({"faces": faces.iter().map(|face|json!({"solid":face.face.solid,"side":face.face.side,"corners":face.corners.map(|point|point.to_array())})).collect::<Vec<_>>(), "default_start_corner":0}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Create flat terrain on 1–16 selected or explicit world quad faces, one per ordinary parent brush. power is 2, 3 or 4 (default 2), producing 5x5, 9x9 or 17x17 grids. Preserves IDs, materials, projections and lighting; rejects existing terrain, entity parents, ambiguous/nonquad targets and invalid powers atomically. One undo step. start_corner is 0–3 (default 0) in the winding order returned by get_terrain_creation; rows follow the next corner and columns the previous one. Parent brushes do not seal maps or become collision boxes. Sculpting/blending remain unfinished. UI: Terrain grid, Start corner and Create terrain in the face inspector."
     )]
     fn create_terrain(&self, Parameters(args): Parameters<CreateTerrainArgs>) -> ToolResult {
         run(|| {
@@ -4848,9 +4867,10 @@ impl EditorServer {
                 |faces| faces.iter().map(face_id).collect(),
             );
             let power = args.power.unwrap_or(2);
-            let count = session.create_terrain(Actor::Agent, &faces, power)?;
+            let start_corner = args.start_corner.unwrap_or(0);
+            let count = session.create_terrain(Actor::Agent, &faces, power, start_corner)?;
             Ok(
-                json!({"surfaces_created": count, "power": power, "grid_size": (1_u32 << power) + 1, "state": face_state(&session)}),
+                json!({"surfaces_created": count, "power": power, "grid_size": (1_u32 << power) + 1, "start_corner": start_corner, "state": face_state(&session)}),
             )
         })
     }
@@ -4858,7 +4878,7 @@ impl EditorServer {
     #[tool(
         description = "Remove terrain from 1–16 selected or explicit faces in one atomic undoable edit. Every target must contain terrain; missing/ambiguous/ordinary targets reject the entire batch. Preserves underlying brush geometry,IDs,material,mapping and lighting; undo restores all imported grid rows/extras. The parent becomes a solid brush once no terrain faces remain. Can clean up imported entity terrain. UI: Remove terrain in the face inspector."
     )]
-    fn remove_terrain(&self, Parameters(args): Parameters<RemoveTerrainArgs>) -> ToolResult {
+    fn remove_terrain(&self, Parameters(args): Parameters<TerrainFacesArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
             let faces = args.faces.as_ref().map_or_else(

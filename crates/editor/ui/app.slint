@@ -1588,7 +1588,9 @@ export component AppWindow inherits Window {
     callback selection-mode-changed(int);
     callback edit-face-textures();
     callback edit-face-lighting();
-    callback create-terrain(int);
+    callback create-terrain(int, int);
+    in property <[string]> terrain-corner-choices: ["Corner 1", "Corner 2", "Corner 3", "Corner 4"];
+    in-out property <int> terrain-corner-index;
     callback remove-terrain();
     in property <bool> can-remove-terrain;
     in property <string> terrain-creation-error;
@@ -2086,7 +2088,9 @@ export component AppWindow inherits Window {
                             SectionTitle { text: "TERRAIN"; }
                             Text { text: "Terrain grid"; color: #c8ccd4; }
                             terrain-grid := ComboBox { model: ["5 × 5 · power 2", "9 × 9 · power 3", "17 × 17 · power 4"]; current-index: 0; }
-                            Button { text: "Create terrain"; enabled: root.terrain-creation-error == ""; clicked => { root.create-terrain(terrain-grid.current-index + 2); } }
+                            Text { text: "Start corner"; color: #c8ccd4; }
+                            ComboBox { model: root.terrain-corner-choices; current-index <=> root.terrain-corner-index; enabled: root.terrain-creation-error == ""; }
+                            Button { text: "Create terrain"; enabled: root.terrain-creation-error == ""; clicked => { root.create-terrain(terrain-grid.current-index + 2, root.terrain-corner-index); } }
                             Button { text: "Remove terrain"; enabled: root.can-remove-terrain; clicked => { root.remove-terrain(); } }
                             if root.can-remove-terrain: Text { text: "Removing the last terrain face restores the parent brush's volume. Undo keeps all grid data."; wrap: word-wrap; color: #919aaa; font-size: 12px; }
                             Text { text: root.terrain-creation-error == "" ? "Creates a terrain surface. Terrain does not seal maps. Undo restores the brush." : root.terrain-creation-error; wrap: word-wrap; color: #919aaa; font-size: 12px; }

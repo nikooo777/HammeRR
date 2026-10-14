@@ -14,6 +14,14 @@ pub struct ChainPaint {
 }
 
 impl Session {
+    pub fn terrain_creation_faces(
+        &self,
+        faces: &[FaceId],
+    ) -> Result<Vec<map_core::displacement::edit::CreationFace>, String> {
+        map_core::displacement::edit::creation_faces(&self.document, faces)
+            .map_err(|error| error.to_string())
+    }
+
     pub fn terrain_creation_error(&self) -> Option<String> {
         map_core::displacement::edit::validate(&self.document, &self.selected_faces())
             .err()
@@ -37,9 +45,10 @@ impl Session {
         actor: Actor,
         faces: &[FaceId],
         power: u32,
+        start_corner: u32,
     ) -> Result<usize, String> {
         self.edit(actor, "create terrain", |tx| {
-            map_core::displacement::edit::create(tx, faces, power)
+            map_core::displacement::edit::create(tx, faces, power, start_corner)
         })
     }
 
@@ -224,12 +233,29 @@ mod tests {
                 .unwrap();
             let before = session.document().vmf().clone();
             assert!(session.terrain_creation_error().is_none());
-            assert!(session.create_terrain(actor, &[target], 5).is_err());
+            let corners = session.terrain_creation_faces(&[target]).unwrap()[0].corners;
+            assert!(session.create_terrain(actor, &[target], 4, 4).is_err());
+            assert!(session.create_terrain(actor, &[target], 5, 0).is_err());
             assert_eq!(*session.document().vmf(), before);
-            session.create_terrain(actor, &[target], 4).unwrap();
+            session.create_terrain(actor, &[target], 4, 3).unwrap();
             assert_eq!(session.selected_faces(), vec![target]);
             assert!(session.terrain_creation_error().is_some());
             assert!(session.terrain_removal_error().is_none());
+            assert_eq!(
+                session
+                    .document()
+                    .solid(solid)
+                    .unwrap()
+                    .sides
+                    .iter()
+                    .find(|side| side.id == target.side)
+                    .unwrap()
+                    .displacement
+                    .as_ref()
+                    .unwrap()
+                    .start_position,
+                corners[3]
+            );
             let created = session.document().vmf().clone();
             session.remove_terrain(actor, &[target]).unwrap();
             assert_eq!(*session.document().vmf(), before);

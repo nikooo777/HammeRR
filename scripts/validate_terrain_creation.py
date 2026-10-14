@@ -1,6 +1,8 @@
 import argparse
+import itertools
 import json
 import os
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -76,13 +78,19 @@ def fixture(args):
             detail(client, [parent]) == before
             and client.call("get_map_info")["undo"] == history
         )
+        corners = client.call("get_terrain_creation", {})["faces"][0]["corners"]
+        client.call("create_terrain", {"start_corner": 4}, error=True)
+        assert detail(client, [parent]) == before
         results = []
         path = None
-        for power in [2, 3, 4]:
-            result = client.call("create_terrain", {"power": power})
+        for power, corner in itertools.product([2, 3, 4], range(4)):
+            result = client.call(
+                "create_terrain", {"power": power, "start_corner": corner}
+            )
             assert (
                 result["surfaces_created"] == 1
                 and result["grid_size"] == (1 << power) + 1
+                and result["start_corner"] == corner
             )
             faces = detail(client, [parent])[0]["faces"]
             assert (
@@ -92,7 +100,7 @@ def fixture(args):
                 == power
             )
             client.call("create_terrain", {"power": 2}, error=True)
-            current = args.output / f"terrain-{power}.vmf"
+            current = args.output / f"terrain-{power}-corner-{corner}.vmf"
             client.call("save_map", {"path": str(current)})
             client.call("open_map", {"path": str(current)})
             client.call("select_faces", {"faces": [target]})
@@ -100,7 +108,7 @@ def fixture(args):
             client.call(
                 "set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"}
             )
-            path = args.output / f"terrain-{power}.bsp"
+            path = args.output / f"terrain-{power}-corner-{corner}.bsp"
             compiled = client.call("compile_map", {"path": str(path)})
             stats = compiled["stats"]
             assert compiled["success"] and stats["displacements"] == 1
@@ -110,22 +118,34 @@ def fixture(args):
                 == stats["physics_mesh_triangles"]
                 == 2 * (1 << power) ** 2
             )
+            data = path.read_bytes()
+            offset, length, _, _ = struct.unpack_from("<4i", data, 8 + 26 * 16)
+            assert length == 176 and struct.unpack_from("<3f", data, offset) == tuple(
+                corners[corner]
+            )
             assert stats["brushes"] == 6
-            background = args.output / f"background-{power}.bsp"
+            background = args.output / f"background-{power}-corner-{corner}.bsp"
             client.call("start_compile", {"path": str(background)})
             assert (
                 wait_job(client)["status"] == "completed"
                 and background.read_bytes() == path.read_bytes()
             )
             assert current.read_bytes() == snapshot
-            if power in [2, 3]:
+            if power in [2, 3] and corner == 0:
                 client.render(
                     args.output / f"terrain-grid-{power}.png",
                     surface="wireframe",
                     camera={"position": [-260, -240, 220], "look_at": [0, 0, 48]},
                 )
-            results.append({"power": power, "stats": stats, "exact_both_builds": True})
-            if power != 4:
+            results.append(
+                {
+                    "power": power,
+                    "corner": corner,
+                    "stats": stats,
+                    "exact_both_builds": True,
+                }
+            )
+            if (power, corner) != (4, 3):
                 client.call("open_map", {"path": str(source), "discard_changes": True})
                 client.call("select_faces", {"faces": [target]})
         current = detail(client, [parent])

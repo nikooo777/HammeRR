@@ -186,7 +186,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Brush smoothing |
 | --- |
 | ![Authored smoothing on a brush cube in Counter-Strike: Source](docs/images/compiled-brush-smoothing.png) |
-| Blend baked lighting across selected brush faces with shared smoothing groups. |
+| Blend selected brush faces and edge junctions with shared smoothing groups. |
 
 | Angle smoothing |
 | --- |

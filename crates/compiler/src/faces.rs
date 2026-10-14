@@ -11,7 +11,7 @@ use crate::winding::{ON_EPSILON, Winding};
 
 const MAX_LIGHTMAP_EXTENT: i32 = 32;
 const MAX_PROVENANCE_WORK: usize = 4_000_000;
-const MAX_SMOOTH_SOURCE_POINTS: usize = 4_000_000;
+pub(crate) const MAX_SMOOTH_SOURCE_POINTS: usize = 4_000_000;
 
 #[derive(Debug)]
 pub struct SmoothingSource {

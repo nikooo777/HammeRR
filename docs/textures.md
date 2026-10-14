@@ -113,18 +113,20 @@ Direct LDR builds use each face's lightmap scale and assigned smoothing groups o
 
 ![Authored smoothing groups soften lighting across the cube's faces](images/compiled-brush-smoothing.png)
 
-Limits: explicitly assigned masks on world/detail brushes, with adjacency at matching source vertices. Unassigned faces keep flat normals when **Brush smoothing angle** is zero. The smoothing fan is retained across lightmap subdivision; geometry, texture axes and collision stay fixed. T-junction matching, brush-model smoothing and bump-light maps remain unfinished. Degenerate or backward normals fall back to the geometric face normal. Source allocation is capped at four million retained points, native normals at 65,536 entries, and work shares the lighting budget. The viewport's **Group membership** mode shows assignment; compiled shading is viewed in game.
+![Smoothing where a small face meets the middle of a longer edge](images/compiled-brush-junctions.png)
+
+Limits: explicitly assigned masks on world/detail brushes, with adjacency at matching source vertices and corners landing inside eligible neighboring edges. Unassigned faces keep flat normals when **Brush smoothing angle** is zero. Original fan centers stay fixed when junction points are added. Edge matching uses canonical native positions within 0.000001 world units. The smoothing fan is retained across lightmap subdivision; geometry, texture axes and collision stay fixed. Brush-model smoothing and bump-light maps remain unfinished. Degenerate or backward normals fall back to the geometric face normal. Source allocation is capped at four million retained points, native normals at 65,536 entries, and work shares the lighting budget. The viewport's **Group membership** mode shows assignment; compiled shading is viewed in game.
 
 ### Smooth by angle
 
-1. Leave the faces without smoothing groups, or select them in **Face lighting…** and use **Clear all groups**, then **Apply settings**.
+1. Leave the faces without smoothing groups, or select them in **Face lighting…** and use **Clear all groups**, then **Preview settings** and **Apply settings**.
 2. Open **Build settings…** and choose **Build lighting → Direct LDR**.
 3. Set **Brush smoothing angle** with the degree input or slider. **0°** keeps unassigned faces flat; **45°** is a useful starting point for curved brushes. The range is whole degrees from 0 to 90.
 4. Click **Close**, then **Compile** or **Run Map**. **Build details…** shows the captured angle and **Brush smoothing** counts.
 
 ![Automatic angle smoothing on a cylinder in Counter-Strike: Source](images/compiled-angle-smoothing.png)
 
-Limits: automatic blending requires both neighboring world/detail faces to be unassigned. Assigned smooth/hard groups keep their rules. Matching source vertices and retained source fans determine adjacency; model-local coordinates and terrain are separate. This is a session build setting and does not change VMF groups, selection or undo history. **Fullbright** retains the angle and does no smoothing work. The same native/source/work budgets apply.
+Limits: automatic blending requires both neighboring world/detail faces to be unassigned. Assigned smooth/hard groups keep their rules. Matching source vertices, interior edge junctions and retained source fans determine adjacency; model-local coordinates and terrain are separate. This is a session build setting and does not change VMF groups, selection or undo history. **Fullbright** retains the angle and does no smoothing work. The same native/source/work budgets apply.
 
 | Face lighting controls | Lightmap density on brushes with different scales |
 | --- | --- |

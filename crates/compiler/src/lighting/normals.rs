@@ -6,6 +6,8 @@ use source_formats::bsp::{Bsp, Edge, Face, Model, lump};
 
 use super::bake::Budget;
 
+mod junctions;
+
 const HARD_GROUPS: u32 = 0xff00_0000;
 const MAX_NORMALS: usize = u16::MAX as usize + 1;
 const NORMAL_EPSILON: f64 = 1e-9;
@@ -64,9 +66,19 @@ fn normal_key(normal: [f32; 3]) -> [u32; 3] {
 }
 
 struct Source {
+    center: DVec3,
     points: Vec<DVec3>,
     normal: DVec3,
     groups: u32,
+}
+
+fn compatible(source: &Source, other: &Source, threshold: Option<f64>) -> bool {
+    if source.groups == 0 && other.groups == 0 {
+        threshold.is_some_and(|threshold| source.normal.dot(other.normal) + 1e-6 >= threshold)
+    } else {
+        let common = source.groups & other.groups;
+        common != 0 && common & HARD_GROUPS == 0
+    }
 }
 
 pub(super) fn build(
@@ -113,7 +125,6 @@ pub(super) fn build(
         return Err("Brush smoothing has invalid native normal arrays".into());
     }
     budget.consume(normals.len())?;
-    let mut references: HashMap<[u32; 3], Vec<usize>> = HashMap::new();
     let mut source_ids = HashMap::new();
     let mut sources = Vec::new();
     let mut targets = Vec::new();
@@ -145,17 +156,13 @@ pub(super) fn build(
                 .iter()
                 .map(|&point| crate::emit::stored_vertex(point).as_vec3().to_array())
                 .collect::<Vec<_>>();
-            for &point in &points {
-                let neighbors = references.entry(normal_key(point)).or_default();
-                if neighbors.last() != Some(&source_id) {
-                    neighbors.push(source_id);
-                }
-            }
+            let points = points
+                .into_iter()
+                .map(|point| DVec3::from_array(point.map(f64::from)))
+                .collect::<Vec<_>>();
             sources.push(Source {
-                points: points
-                    .into_iter()
-                    .map(|point| DVec3::from_array(point.map(f64::from)))
-                    .collect(),
+                center: points.iter().sum::<DVec3>() / points.len() as f64,
+                points,
                 normal,
                 groups: source.groups,
             });
@@ -164,7 +171,20 @@ pub(super) fn build(
         };
         targets.push((index, source_id));
     }
-    let threshold = f64::from(smoothing_angle).to_radians().cos();
+    let threshold = (smoothing_angle != 0).then(|| f64::from(smoothing_angle).to_radians().cos());
+    junctions::insert(&mut sources, threshold, budget)?;
+    let mut references: HashMap<[u32; 3], Vec<usize>> = HashMap::new();
+    for (source_id, source) in sources.iter().enumerate() {
+        budget.consume(source.points.len())?;
+        for &point in &source.points {
+            let neighbors = references
+                .entry(normal_key(point.as_vec3().to_array()))
+                .or_default();
+            if neighbors.last() != Some(&source_id) {
+                neighbors.push(source_id);
+            }
+        }
+    }
     let mut fields = Vec::with_capacity(sources.len());
     for source in &sources {
         let mut shading = Vec::with_capacity(source.points.len());
@@ -175,15 +195,7 @@ pub(super) fn build(
             let mut sum = DVec3::ZERO;
             for &neighbor in neighbors {
                 let other = &sources[neighbor];
-                let common = source.groups & other.groups;
-                let automatic = source.groups == 0
-                    && other.groups == 0
-                    && smoothing_angle != 0
-                    && source.normal.dot(other.normal) + 1e-6 >= threshold;
-                if std::ptr::eq(source, other)
-                    || automatic
-                    || common != 0 && common & HARD_GROUPS == 0
-                {
+                if std::ptr::eq(source, other) || compatible(source, other, threshold) {
                     sum += other.normal;
                 }
             }
@@ -196,7 +208,7 @@ pub(super) fn build(
         }
         fields.push(changed.then(|| {
             Arc::new(Field {
-                center: source.points.iter().sum::<DVec3>() / source.points.len() as f64,
+                center: source.center,
                 points: source.points.clone(),
                 corners: shading,
             })

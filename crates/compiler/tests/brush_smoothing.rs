@@ -68,6 +68,10 @@ fn output(vmf: &Vmf) -> compiler::Output {
 }
 
 fn corner_normals(bsp: &Bsp, point: DVec3) -> Vec<DVec3> {
+    corner_normals_filtered(bsp, point, false)
+}
+
+fn corner_normals_filtered(bsp: &Bsp, point: DVec3, assigned_only: bool) -> Vec<DVec3> {
     let vertices = bsp.vertices().unwrap();
     let edges = bsp.records::<Edge>().unwrap();
     let surfedges = bsp.surfedges().unwrap();
@@ -75,6 +79,9 @@ fn corner_normals(bsp: &Bsp, point: DVec3) -> Vec<DVec3> {
     let normals = bsp.values::<[f32; 3]>(lump::VERTNORMALS).unwrap();
     let mut result = Vec::new();
     for face in bsp.records::<Face>().unwrap() {
+        if assigned_only && face.smoothing_groups == 0 {
+            continue;
+        }
         for index in face.first_edge as usize..face.first_edge as usize + face.edge_count as usize {
             let edge = surfedges[index];
             let vertex = edges[edge.unsigned_abs() as usize].0[usize::from(edge < 0)] as usize;
@@ -392,4 +399,145 @@ fn automatic_cylinder_sides_smooth_at_their_angle_and_invalid_settings_preserve_
                 .to_bytes()
     );
     assert_eq!(*document.vmf(), source);
+}
+
+fn junction_fixture() -> Vmf {
+    let mut document = Document::new(common::room());
+    let mut marked = Vec::new();
+    for (mins, maxs, normal) in [
+        ([-64.0, -128.0, 32.0], [64.0, 128.0, 160.0], DVec3::Z),
+        ([64.0, -64.0, 160.0], [128.0, 64.0, 192.0], DVec3::NEG_X),
+    ] {
+        let ObjectId::Solid(id) = document
+            .edit("junction", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::from_array(mins),
+                    DVec3::from_array(maxs),
+                    "dev/dev_measuregeneric01",
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        marked.push((id, normal));
+    }
+    document
+        .edit("light", |tx| {
+            edit::create_entity(
+                tx,
+                "light",
+                Some(DVec3::new(-128.0, -128.0, 200.0)),
+                &[
+                    ("_light".into(), "255 255 255 200".into()),
+                    ("_constant_attn".into(), "1".into()),
+                    ("_quadratic_attn".into(), "0".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let mut vmf = document.vmf().clone();
+    for (id, normal) in marked {
+        let solid = vmf
+            .world
+            .solids
+            .iter_mut()
+            .find(|solid| solid.id == id)
+            .unwrap();
+        let side = solid
+            .sides
+            .iter_mut()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal == normal)
+            .unwrap();
+        side.smoothing_groups = Some(1);
+    }
+    vmf
+}
+
+#[test]
+fn interior_edge_junctions_share_source_normals_without_changing_geometry() {
+    let vmf = junction_fixture();
+    let before = vmf.clone();
+    let built = output(&vmf).bsp.unwrap();
+    for y in [-64.0, 64.0] {
+        let normals = corner_normals_filtered(&built, DVec3::new(64.0, y, 160.0), true);
+        assert!(!normals.is_empty());
+        assert!(
+            normals
+                .iter()
+                .all(|normal| normal.distance((DVec3::NEG_X + DVec3::Z).normalize()) < 2e-7),
+            "{normals:?}"
+        );
+    }
+    let mut flat = vmf.clone();
+    for solid in &mut flat.world.solids {
+        for side in &mut solid.sides {
+            side.smoothing_groups = None;
+        }
+    }
+    let flat = output(&flat).bsp.unwrap();
+    assert_eq!(
+        top_sample(&built, DVec3::new(0.0, 0.0, 160.0)),
+        top_sample(&flat, DVec3::new(0.0, 0.0, 160.0)),
+        "Junctions moved the source fan center"
+    );
+    for index in [
+        lump::VERTEXES,
+        lump::EDGES,
+        lump::SURFEDGES,
+        lump::PLANES,
+        lump::BRUSHES,
+        lump::BRUSHSIDES,
+        lump::MODELS,
+    ] {
+        assert!(
+            built.lumps[index] == flat.lumps[index],
+            "Geometry lump {index} changed"
+        );
+    }
+    let mut subdivided = vmf.clone();
+    for solid in &mut subdivided.world.solids {
+        for side in &mut solid.sides {
+            side.lightmap_scale = 1;
+        }
+    }
+    let subdivided = output(&subdivided).bsp.unwrap();
+    assert_eq!(
+        top_sample(&built, DVec3::new(32.0, 0.0, 160.0)),
+        top_sample(&subdivided, DVec3::new(32.0, 0.0, 160.0))
+    );
+    for hard in [2, 1 | (1 << 24), 1 | (1 << 31)] {
+        let mut incompatible = vmf.clone();
+        for side in incompatible
+            .world
+            .solids
+            .iter_mut()
+            .flat_map(|solid| &mut solid.sides)
+        {
+            if side.smoothing_groups == Some(1) {
+                side.smoothing_groups = Some(hard);
+                if hard == 2 {
+                    break;
+                }
+            }
+        }
+        let result = output(&incompatible);
+        assert_eq!(result.stats.smoothed_faces, 0);
+        for index in [lump::LIGHTING, lump::VERTNORMALS, lump::VERTNORMALINDICES] {
+            assert!(
+                result.bsp.as_ref().unwrap().lumps[index] == flat.lumps[index],
+                "Incompatible lump {index} changed"
+            );
+        }
+    }
+    let mut disconnected = vmf.clone();
+    for side in &mut disconnected.world.solids.last_mut().unwrap().sides {
+        for point in &mut side.plane.0 {
+            point.x += 0.001;
+        }
+    }
+    assert_eq!(output(&disconnected).stats.smoothed_faces, 0);
+    assert_eq!(vmf, before);
 }

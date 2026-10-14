@@ -172,7 +172,7 @@ These details aren't obvious from the tool list.
 
 **Map checks**
 
-- `run_map_checks` / `get_map_checks` include standing-hull intersections with supported visible world/func_detail terrain sheets. They use the authored 32×32×72 hull, 0.01-unit contact tolerance, known solid materials and positive player-collision state. Terrain parent volumes are excluded. No-physics/no-ray flags do not disable player clearance. Unknown materials, unsupported runtime owners/flags, malformed geometry, removed triangles and exhausted work produce explicit unchecked warnings. The terrain pass has a one-million-work limit and native triangle cap. Pending previews, compiler LOD snapping, models and runtime spawn placement are excluded. Existing issue navigation retains source/token guards; malformed terrain smoothing and tag rows receive face issues.
+- `run_map_checks` / `get_map_checks` include standing-hull intersections with supported visible world/func_detail terrain sheets. They use the authored 32×32×72 hull, 0.01-unit contact tolerance, known solid materials and positive player-collision state. Terrain parent volumes are excluded. No-physics/no-ray flags do not disable player clearance. Unknown materials, unsupported flags, malformed geometry, removed triangles and exhausted work produce explicit unchecked warnings. Runtime brush-model owners remain outside clearance scope and receive compiler warnings. The terrain pass has a one-million-work limit and native triangle cap. Pending previews, compiler LOD snapping, models and runtime spawn placement are excluded. Existing issue navigation retains source/token guards; malformed terrain smoothing and tag rows receive face issues.
 
 **Terrain**
 

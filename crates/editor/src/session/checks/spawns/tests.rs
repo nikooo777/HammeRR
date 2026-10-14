@@ -533,7 +533,7 @@ fn redundant_materials_do_not_change_collision_and_blocker_details_are_bounded()
 }
 
 #[test]
-fn displacement_and_complex_geometry_are_explicitly_outside_collision_scope() {
+fn terrain_uses_surface_collision_and_complex_brushes_remain_unchecked() {
     let (mut session, _directory) = fixture();
     spawn(&mut session, TEAMS[0].0, DVec3::ZERO);
     block(
@@ -562,12 +562,12 @@ fn displacement_and_complex_geometry_are_explicitly_outside_collision_scope() {
     });
     session.replace_document(Document::new(vmf), None);
     session.run_map_checks(Actor::Agent);
-    assert!(issues(&session, "spawn_clearance").is_empty());
-    assert_eq!(issues(&session, "compiler_displacement").len(), 1);
+    assert_eq!(issues(&session, "spawn_clearance").len(), 1);
+    assert!(issues(&session, "compiler_displacement").is_empty());
     assert!(
         issues(&session, "spawn_clearance_scope")[0]
             .message
-            .contains("displacements")
+            .contains("compiler LOD snapping")
     );
     let mut vmf = source;
     while vmf.world.solids[0].sides.len() <= MAX_BRUSH_SIDES {
@@ -584,4 +584,155 @@ fn displacement_and_complex_geometry_are_explicitly_outside_collision_scope() {
             .message
             .contains("256")
     );
+}
+
+fn terrain(session: &mut Session, height: f64) -> map_core::surface::FaceId {
+    let solid = block(
+        session,
+        DVec3::new(-32., -32., -128.),
+        DVec3::new(32., 32., height),
+        "checks/solid",
+    );
+    let side = session
+        .document()
+        .solid(solid)
+        .unwrap()
+        .sides
+        .iter()
+        .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+        .unwrap()
+        .id;
+    let face = map_core::surface::FaceId { solid, side };
+    session.create_terrain(Actor::Agent, &[face], 2, 0).unwrap();
+    face
+}
+
+#[test]
+fn terrain_sheets_respect_contact_and_leave_empty_space_below_them() {
+    for (height, blocked) in [
+        (0., false),
+        (0.005, false),
+        (0.02, true),
+        (32., true),
+        (72., false),
+        (80., false),
+    ] {
+        let (mut session, _directory) = fixture();
+        spawn(&mut session, TEAMS[0].0, DVec3::ZERO);
+        terrain(&mut session, height);
+        let source = session.document().vmf().clone();
+        for actor in [Actor::User, Actor::Agent] {
+            session.run_map_checks(actor);
+            assert_eq!(
+                !issues(&session, "spawn_clearance").is_empty(),
+                blocked,
+                "height {height}"
+            );
+            assert!(issues(&session, "compiler_displacement").is_empty());
+            assert_eq!(session.document().vmf(), &source);
+        }
+    }
+}
+
+#[test]
+fn malformed_terrain_rows_and_start_positions_remain_explicitly_unchecked() {
+    for invalid_start in [false, true] {
+        let (mut session, _directory) = fixture();
+        spawn(&mut session, TEAMS[0].0, DVec3::ZERO);
+        let face = terrain(&mut session, 32.);
+        session
+            .edit(Actor::Agent, "invalid terrain", |tx| {
+                let info = tx
+                    .solid_mut(face.solid)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap()
+                    .displacement
+                    .as_mut()
+                    .unwrap();
+                if invalid_start {
+                    info.start_position = DVec3::splat(f64::NAN);
+                } else {
+                    info.triangle_tags = Some(vec![vec![7; 1]; 4]);
+                }
+                Ok(())
+            })
+            .unwrap();
+        session.run_map_checks(Actor::Agent);
+        assert!(issues(&session, "spawn_clearance").is_empty());
+        assert_eq!(issues(&session, "spawn_clearance_unchecked").len(), 1);
+    }
+}
+
+#[test]
+fn terrain_peak_visibility_player_flags_and_unknown_materials_share_clearance_scope() {
+    use map_core::displacement::{
+        Operation,
+        brush::{Axis, Brush, Sculpt},
+    };
+    let (mut session, _directory) = fixture();
+    spawn(&mut session, TEAMS[0].0, DVec3::ZERO);
+    let face = terrain(&mut session, 0.);
+    session
+        .preview_terrain_edit(
+            Actor::Agent,
+            &[face],
+            Operation::Sculpt {
+                brush: Brush {
+                    center: DVec3::ZERO,
+                    radius: 16.,
+                    axis: Axis::WorldZ,
+                },
+                operation: Sculpt::Raise(80.),
+            },
+        )
+        .unwrap();
+    session.run_map_checks(Actor::Agent);
+    assert!(issues(&session, "spawn_clearance").is_empty());
+    session.commit_face_preview(Actor::Agent).unwrap();
+    session.run_map_checks(Actor::Agent);
+    assert_eq!(issues(&session, "spawn_clearance").len(), 1);
+    for (flags, blocked) in [(2, true), (4, false), (8, true)] {
+        session
+            .edit(Actor::Agent, "terrain flags", |tx| {
+                tx.solid_mut(face.solid)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap()
+                    .displacement
+                    .as_mut()
+                    .unwrap()
+                    .flags = Some(flags);
+                Ok(())
+            })
+            .unwrap();
+        session.run_map_checks(Actor::Agent);
+        assert_eq!(!issues(&session, "spawn_clearance").is_empty(), blocked);
+    }
+    session
+        .edit(Actor::Agent, "hidden terrain", |tx| {
+            tx.solid_mut(face.solid)?.hidden = true;
+            Ok(())
+        })
+        .unwrap();
+    session.run_map_checks(Actor::Agent);
+    assert!(issues(&session, "spawn_clearance").is_empty());
+    session
+        .edit(Actor::Agent, "unknown terrain material", |tx| {
+            let solid = tx.solid_mut(face.solid)?;
+            solid.hidden = false;
+            solid
+                .sides
+                .iter_mut()
+                .find(|side| side.id == face.side)
+                .unwrap()
+                .material = "checks/missing".into();
+            Ok(())
+        })
+        .unwrap();
+    session.run_map_checks(Actor::Agent);
+    assert!(issues(&session, "spawn_clearance").is_empty());
+    assert_eq!(issues(&session, "spawn_clearance_unchecked").len(), 1);
 }

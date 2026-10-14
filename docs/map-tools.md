@@ -35,11 +35,13 @@ These counts describe the editable map: brush sides rather than compiled faces, 
 
 The report marks itself out of date when the map or the entity definitions change.
 
-Checks cover geometry, IDs, textures, entity logic, asset paths and player spawns. They include hidden objects and ignore open previews. Spawn checks warn when a visible spawn's standing player box overlaps solid world or `func_detail` brushes, including player clips. Spawns that just touch the floor are fine.
+Checks cover geometry, IDs, textures, entity logic, asset paths and player spawns. They include hidden objects and ignore open previews. Spawn checks warn when a visible spawn's standing player box overlaps solid world or `func_detail` brushes, including player clips, or a visible world terrain sheet with **Player collision** enabled. Spawns that just touch the floor within 0.01 units are fine. Terrain parent volumes do not block; the check uses the authored surface triangles and identifies affected spawns and terrain faces.
 
 Some issues can be repaired automatically. **Review repair…** shows the exact before and after values, and **Apply repair** fixes it in one undo step. This currently covers invalid texture projections and zero lightmap scales. Other issues link you to the content so you can fix it by hand.
 
-Not checked yet: spawns blocked by models, terrain or other brush entities, gameplay objectives, full asset dependencies and engine limits. Compile and test in CS:S to find leaks and playability problems.
+Unknown terrain materials, unsupported flags or malformed geometry are reported as unchecked. Invalid terrain border-smoothing values appear as face issues; repair them through **Edit terrain… → Border smoothing**. Compiler warnings identify actual unsupported owners, flags or removed triangles.
+
+Not checked yet: spawns blocked by models or other brush entities, removed terrain triangles, compiler LOD changes, runtime placement, gameplay objectives, full asset dependencies and engine limits. Compile and test in CS:S to find leaks and playability problems.
 
 ![Map issues with navigation and a repair preview](images/map-checks.png)
 

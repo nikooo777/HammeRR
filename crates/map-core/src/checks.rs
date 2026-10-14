@@ -313,8 +313,35 @@ fn check_brush(
             );
         }
         if let Some(displacement) = &side.displacement {
+            if let Err(error) = crate::displacement::smoothing::angle(displacement) {
+                report.add(
+                    Severity::Error,
+                    "displacement_smoothing",
+                    &face_location,
+                    error,
+                    None,
+                );
+            }
             match face.map(|face| DisplacementMesh::build(face, displacement)) {
                 Some(Ok(mesh)) => {
+                    if displacement.normals.is_some() != displacement.distances.is_some() {
+                        report.add(
+                            Severity::Error,
+                            "invalid_displacement",
+                            &face_location,
+                            "Terrain normals and distances must be provided together.",
+                            None,
+                        );
+                    }
+                    if displacement.triangle_tags.as_ref().is_some_and(|rows| {
+                        rows.len() != mesh.size - 1
+                            || rows.iter().any(|row| {
+                                row.len() != (mesh.size - 1) * 2
+                                    || row.iter().any(|&tag| u16::try_from(tag).is_err())
+                            })
+                    }) {
+                        report.add(Severity::Error,"displacement_triangle_tags",&face_location,"Terrain triangle tag rows must match the grid and contain native unsigned-short values.",None);
+                    }
                     if !displacement.start_position.is_finite()
                         || !displacement.elevation.is_finite()
                         || mesh.positions.iter().any(|point| !point.is_finite())

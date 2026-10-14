@@ -39,6 +39,10 @@ pub enum Operation {
         spec: stroke::Spec,
         points: Vec<DVec3>,
     },
+    VertexMove {
+        vertices: Vec<usize>,
+        offset: DVec3,
+    },
 }
 
 /// The surface of a displaced face: a `size` x `size` vertex grid.

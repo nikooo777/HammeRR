@@ -186,7 +186,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Terrain vertices |
 | --- |
 | ![Exact terrain vertex selection](docs/images/terrain-explicit-vertices.png) |
-| Pick individual terrain vertices and confine height or blend edits to the chosen samples. |
+| Pick and move terrain vertices in world XYZ, or confine sculpting and blends to those samples. |
 
 | Terrain brush strokes |
 | --- |

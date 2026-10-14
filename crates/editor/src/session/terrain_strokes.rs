@@ -27,6 +27,7 @@ struct Stroke {
     preview_token: Option<u64>,
     vertices: usize,
     axis: DVec3,
+    changed: usize,
 }
 
 impl Session {
@@ -120,6 +121,7 @@ impl Session {
                 }
             },
             spec,
+            changed: 0,
             path: Path::default(),
             mask_token,
             preview_token: None,
@@ -143,6 +145,12 @@ impl Session {
         if path.points.len() * stroke.vertices > stroke::MAX_WORK {
             return Err("Terrain stroke exceeds its two-million vertex/sample work limit".into());
         }
+        if path.points.len() == stroke.path.points.len() && stroke.preview_token.is_some() {
+            let changed = stroke.changed;
+            self.terrain_strokes.stroke.as_mut().unwrap().path = path;
+            self.scene_serial += 1;
+            return Ok(changed);
+        }
         let faces = stroke.faces.clone();
         let mask_token = stroke.mask_token;
         let operation = Operation::Stroke {
@@ -158,6 +166,7 @@ impl Session {
         let stroke = self.terrain_strokes.stroke.as_mut().unwrap();
         stroke.path = path;
         stroke.preview_token = preview_token;
+        stroke.changed = changed;
         Ok(changed)
     }
 
@@ -337,10 +346,12 @@ mod tests {
             );
             assert_eq!(whole.terrain_stroke_json()["samples"], 13);
             let draft = whole.render_document().vmf().clone();
+            let preview = whole.face_preview_token();
             whole
                 .update_terrain_stroke(actor, token, &[points[1] + DVec3::Z * 128.0])
                 .unwrap();
             assert_eq!(whole.render_document().vmf(), &draft);
+            assert_eq!(whole.face_preview_token(), preview);
             let state = whole.terrain_stroke_json();
             for invalid in [
                 vec![],

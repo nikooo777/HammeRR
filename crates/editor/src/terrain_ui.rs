@@ -282,6 +282,10 @@ impl Controller {
                                     window.get_sew_blend(),
                                 )
                                 .map(|result| result.summary())
+                        } else if window.get_operation_index() == 11 {
+                            let offset=glam::DVec3::new(number(window.get_vertex_x(),"world X offset")?,number(window.get_vertex_y(),"world Y offset")?,number(window.get_vertex_z(),"world Z offset")?);
+                            let changed=session.preview_terrain_vertex_move(Actor::User,&target.faces,offset,target.mask_token.ok_or("Retain a terrain vertex selection and reopen terrain editing")?)?;
+                            Ok(format!("Preview moves selected vertices on {changed} surfaces. Apply to keep one Undo step."))
                         } else {
                             let operation = operation(&window)?;
                             let count = if window.get_use_mask()
@@ -404,6 +408,9 @@ impl Controller {
         self.window.set_center_y(format!("{:.3}", center.y).into());
         self.window.set_center_z(format!("{:.3}", center.z).into());
         self.window.set_operation_index(0);
+        self.window.set_vertex_x("0".into());
+        self.window.set_vertex_y("0".into());
+        self.window.set_vertex_z("0".into());
         sync_sliders(&self.window);
         let current = |field: fn(&map_core::displacement::edit::TerrainGrid) -> bool| {
             let first = field(&grids[0]);

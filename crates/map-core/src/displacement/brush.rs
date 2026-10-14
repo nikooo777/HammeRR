@@ -307,6 +307,52 @@ pub fn masked(
     }
 }
 
+pub fn move_vertices(
+    face: &Face,
+    info: &DispInfo,
+    vertices: &[usize],
+    offset: DVec3,
+) -> Result<DispInfo, EditError> {
+    if !offset.is_finite() || offset.abs().max_element() > 4096.0 {
+        return Err(invalid(
+            "Terrain vertex offsets must be finite and within ±4096 per axis",
+        ));
+    }
+    let mesh = mesh(face, info)?;
+    let vertices = vertices.iter().copied().collect::<BTreeSet<_>>();
+    validate_mask(&mesh, Some(&vertices))?;
+    if info.offset_normals.as_ref().is_some_and(|rows| {
+        rows.len() != mesh.size
+            || rows
+                .iter()
+                .any(|row| row.len() != mesh.size || row.iter().any(|v| *v != DVec3::ZERO))
+    }) {
+        return Err(invalid(
+            "Nonzero or malformed offset normals need remapping before moving vertices",
+        ));
+    }
+    if offset == DVec3::ZERO {
+        return Ok(info.clone());
+    }
+    let mut offsets = info
+        .offsets
+        .clone()
+        .unwrap_or_else(|| vec![vec![DVec3::ZERO; mesh.size]; mesh.size]);
+    for index in vertices {
+        let point = mesh.positions[index] + offset;
+        let value = offsets[index / mesh.size][index % mesh.size] + offset;
+        if !point.is_finite() || point.abs().max_element() > MAX_COORDINATE || !value.is_finite() {
+            return Err(invalid(
+                "Moved terrain vertices must fit finite coordinates within ±65536",
+            ));
+        }
+        offsets[index / mesh.size][index % mesh.size] = value;
+    }
+    let mut result = info.clone();
+    result.offsets = Some(offsets);
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,5 +647,40 @@ mod tests {
                 assert_eq!(old, new);
             }
         }
+    }
+
+    #[test]
+    fn exact_vertex_moves_keep_other_samples_metadata_and_absent_zero_rows() {
+        let (face, mut info, _) = fixture();
+        info.flags = Some(14);
+        info.triangle_tags = Some(vec![vec![9; 8]; 4]);
+        let selected = [7, 12, 12];
+        assert_eq!(
+            move_vertices(&face, &info, &selected, DVec3::ZERO).unwrap(),
+            info
+        );
+        let offset = DVec3::new(3.5, -2.0, 12.0);
+        let moved = move_vertices(&face, &info, &selected, offset).unwrap();
+        let before = DisplacementMesh::build(&face, &info).unwrap();
+        let after = DisplacementMesh::build(&face, &moved).unwrap();
+        for (id, (a, b)) in before.positions.iter().zip(&after.positions).enumerate() {
+            assert_eq!(
+                *b,
+                *a + if selected.contains(&id) {
+                    offset
+                } else {
+                    DVec3::ZERO
+                }
+            );
+        }
+        let mut metadata = moved.clone();
+        metadata.offsets = info.offsets.clone();
+        assert_eq!(metadata, info);
+        for invalid in [DVec3::splat(f64::NAN), DVec3::X * 4097.0] {
+            assert!(move_vertices(&face, &info, &selected, invalid).is_err());
+        }
+        assert!(move_vertices(&face, &info, &[25], offset).is_err());
+        let restored = move_vertices(&face, &moved, &selected, -offset).unwrap();
+        assert_eq!(DisplacementMesh::build(&face, &restored).unwrap(), before);
     }
 }

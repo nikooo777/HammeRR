@@ -239,3 +239,9 @@ python3 -B scripts/validate_terrain_strokes.py --output /tmp/hammerr-terrain-str
 ```
 
 Checks whole/grouped paths at powers 2–4 for raise, flatten, smooth, noise and blend paint, unchanged source/history during preview, stationary pointers, ray-miss segment breaks, invalid update limits, explicit vertex masks, Apply/Cancel, one-step Undo, foreign preview preservation, saved rows and native sample agreement through exact foreground/background builds. Core sampling checks include turns and movement along the brush direction; software UI tests drive the viewport-stroke lifecycle and existing controls.
+
+```sh
+python3 -B scripts/validate_terrain_vertex_moves.py --output /tmp/hammerr-terrain-vertex-moves-check
+```
+
+Checks exact lateral/vertical sample moves on rotated powers 2–4, untouched neighbors/alpha/flags, zero no-ops, invalid-coordinate and unknown-argument guards, preview/source/history ownership, masks and triangle unions, Cancel/Undo/Redo/reopen, native XYZ reconstruction and exact foreground/background builds. Core tests cover metadata/absent rows; software UI drives the exact-offset controls. The stroke check also confirms that stationary updates retain the existing preview token.

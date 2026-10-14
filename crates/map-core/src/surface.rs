@@ -459,6 +459,9 @@ pub fn edit_faces(
                 crate::displacement::Operation::Stroke { spec, points } => {
                     crate::displacement::stroke::apply(&geometry, info, *spec, points, None)?
                 }
+                crate::displacement::Operation::VertexMove { vertices, offset } => {
+                    crate::displacement::brush::move_vertices(&geometry, info, vertices, *offset)?
+                }
             });
         }
         changed += usize::from(*side != before);

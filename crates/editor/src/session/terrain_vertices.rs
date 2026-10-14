@@ -21,6 +21,35 @@ pub struct Hit {
 }
 
 impl Session {
+    pub fn preview_terrain_vertex_move(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        offset: DVec3,
+        token: u64,
+    ) -> Result<usize, String> {
+        let mask = self.terrain_vertex_mask(faces, Some(token))?;
+        let edits = mask
+            .faces
+            .into_iter()
+            .map(|face| {
+                (
+                    face.face,
+                    map_core::surface::SurfaceEdit {
+                        terrain: Some(map_core::displacement::Operation::VertexMove {
+                            vertices: face.vertices,
+                            offset,
+                        }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let changed = self.preview_or_apply_faces(actor, edits, true)?;
+        self.face_preview.as_mut().unwrap().terrain_mask_token = Some(token);
+        Ok(changed)
+    }
+
     pub fn terrain_vertices_json(&self, faces: &[FaceId], preview: bool) -> Result<Value, String> {
         let grids = self.terrain_grids(faces, preview)?;
         Ok(json!({"faces":grids.iter().map(|grid|json!({
@@ -495,5 +524,71 @@ mod tests {
         assert_eq!(session.terrain_triangle_highlight_json(), state);
         assert_eq!(session.document().vmf(), &source);
         assert_eq!(session.document().undo_labels().count(), history);
+    }
+
+    #[test]
+    fn terrain_vertex_moves_share_exact_world_offsets_masks_history_and_foreign_guards() {
+        for power in 2..=4 {
+            for corner in 0..4 {
+                for actor in [Actor::User, Actor::Agent] {
+                    let (mut session, face) = fixture(power, corner);
+                    let source = session.document().vmf().clone();
+                    let mesh = session
+                        .terrain_grids(&[face], false)
+                        .unwrap()
+                        .remove(0)
+                        .mesh;
+                    let id = mesh.size + 2;
+                    let token = session
+                        .highlight_terrain_vertices(actor, &[(face, vec![id])])
+                        .unwrap();
+                    assert_eq!(
+                        session
+                            .preview_terrain_vertex_move(actor, &[face], DVec3::ZERO, token)
+                            .unwrap(),
+                        0
+                    );
+                    assert_eq!(session.render_document().vmf(), &source);
+                    let offset = DVec3::new(1.5, -2.0, 8.0);
+                    session
+                        .preview_terrain_vertex_move(actor, &[face], offset, token)
+                        .unwrap();
+                    let draft = session.terrain_grids(&[face], true).unwrap().remove(0).mesh;
+                    for (index, (a, b)) in mesh.positions.iter().zip(&draft.positions).enumerate() {
+                        assert_eq!(*b, *a + if index == id { offset } else { DVec3::ZERO });
+                    }
+                    let preview = session.face_preview_token();
+                    assert!(
+                        session
+                            .preview_terrain_vertex_move(actor, &[face], DVec3::X * 4097.0, token)
+                            .is_err()
+                    );
+                    assert_eq!(session.face_preview_token(), preview);
+                    assert_eq!(session.document().vmf(), &source);
+                    session.commit_face_preview(actor).unwrap();
+                    assert!(session.terrain_vertex_mask(&[face], Some(token)).is_ok());
+                    session
+                        .preview_terrain_vertex_move(actor, &[face], offset, token)
+                        .unwrap();
+                    let preview = session.face_preview_token();
+                    let replaced = session
+                        .highlight_terrain_triangles(actor, &[(face, vec![0])])
+                        .unwrap();
+                    assert!(
+                        session
+                            .preview_terrain_vertex_move(actor, &[face], offset, token)
+                            .is_err()
+                    );
+                    assert_eq!(session.face_preview_token(), preview);
+                    assert_eq!(
+                        session.terrain_triangle_highlight_json()["token"],
+                        replaced.to_string()
+                    );
+                    session.cancel_face_preview();
+                    session.undo(actor).unwrap();
+                    assert_eq!(session.document().vmf(), &source);
+                }
+            }
+        }
     }
 }

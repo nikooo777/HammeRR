@@ -15,6 +15,16 @@ use crate::{Control, Diagnostic, Report};
 
 const MAX_LEAF_WORK: usize = 16_000_000;
 const GEOMETRY_EPSILON: f64 = 0.02;
+#[path = "terrain/lod.rs"]
+mod lod;
+
+pub(crate) struct NeighborStats {
+    pub pairs: usize,
+    pub corner_pairs: usize,
+    pub mixed_pairs: usize,
+    pub disabled_vertices: usize,
+    pub snapped_vertices: usize,
+}
 #[path = "terrain/neighbors.rs"]
 mod neighbors;
 
@@ -54,7 +64,7 @@ impl Map<'_> {
         &mut self,
         report: &mut Report,
         control: &Control,
-    ) -> Result<(usize, usize), String> {
+    ) -> Result<NeighborStats, String> {
         neighbors::connect(&mut self.terrains, report, control)
     }
     pub(super) fn add_terrain(

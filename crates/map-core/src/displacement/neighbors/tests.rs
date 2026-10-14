@@ -1,5 +1,47 @@
 use super::*;
 
+#[test]
+fn mixed_edges_match_only_shared_coarse_samples_and_share_their_normals() {
+    let a = patch(2, 1, 0.0, 0.0);
+    let b = patch(4, 3, 128.0, 0.0);
+    let grids = [
+        SurfaceGrid {
+            power: 2,
+            corners: a.0,
+            positions: &a.1,
+        },
+        SurfaceGrid {
+            power: 4,
+            corners: b.0,
+            positions: &b.1,
+        },
+    ];
+    assert_eq!(find(&grids, &mut |_| Ok(())).unwrap().unequal_power, 1);
+    let pairs = find_mixed(&grids, &mut |_| Ok(())).unwrap().pairs;
+    assert_eq!(pairs.len(), 1);
+    let pair = pairs[0];
+    let normals = vertex_normals(&grids, &pairs, &mut |_| Ok(())).unwrap();
+    for (i, j) in common_edge_indices(2, pair.first_edge, 4, pair.second_edge).unwrap() {
+        assert_eq!(normals[0][i], normals[1][j]);
+    }
+    let mut shifted = b.1.clone();
+    let (_, vertex) = common_edge_indices(2, pair.first_edge, 4, pair.second_edge).unwrap()[2];
+    shifted[vertex].z += 1.0;
+    let bad = [
+        SurfaceGrid {
+            power: 2,
+            corners: a.0,
+            positions: &a.1,
+        },
+        SurfaceGrid {
+            power: 4,
+            corners: b.0,
+            positions: &shifted,
+        },
+    ];
+    assert_eq!(find_mixed(&bad, &mut |_| Ok(())).unwrap().mismatched, 1);
+}
+
 fn patch(power: u32, rotation: usize, x: f64, y: f64) -> ([DVec3; 4], Vec<DVec3>) {
     let ring = [
         [x, y],

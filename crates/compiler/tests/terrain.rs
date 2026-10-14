@@ -579,9 +579,9 @@ fn curved_neighbor_lightmaps_share_seam_normals_without_changing_native_geometry
 }
 
 #[test]
-fn unequal_power_mismatched_and_ambiguous_terrain_edges_stay_unlinked() {
-    for case in 0..3 {
-        let mut vmf = adjacent_fixture(if case == 0 { [2, 3] } else { [3, 3] }, [0, 0]);
+fn mismatched_and_ambiguous_terrain_edges_stay_unlinked() {
+    for case in 1..3 {
+        let mut vmf = adjacent_fixture([3, 3], [0, 0]);
         if case == 1 {
             vmf.world
                 .solids
@@ -624,6 +624,141 @@ fn unequal_power_mismatched_and_ambiguous_terrain_edges_stay_unlinked() {
                 .all(|neighbor| neighbor.index == u16::MAX)
         );
     }
+}
+
+#[test]
+fn mixed_power_full_edges_keep_common_samples_and_disable_unmatched_vertices() {
+    for powers in [[2, 3], [3, 2], [2, 4], [4, 2], [3, 4], [4, 3]] {
+        for first in 0..4 {
+            for second in 0..4 {
+                let vmf = adjacent_fixture(powers, [first, second]);
+                let source = vmf.clone();
+                let output = compiler::compile(&vmf, &common::empty_game());
+                assert!(!output.report.has_errors(), "{:?}", output.report);
+                assert_eq!(output.stats.displacement_neighbor_pairs, 1);
+                assert_eq!(output.stats.displacement_mixed_power_pairs, 1);
+                assert!(output.stats.displacement_lod_disabled_vertices > 0);
+                assert_eq!(output.stats.displacement_lod_snapped_vertices, 0);
+                let data = output.bsp.unwrap().displacements().unwrap().unwrap();
+                for (index, info) in data.infos.iter().enumerate() {
+                    let edge = info
+                        .edges
+                        .iter()
+                        .position(|edge| edge[0].index != u16::MAX)
+                        .unwrap();
+                    let other_edge = data.infos[1 - index]
+                        .edges
+                        .iter()
+                        .position(|edge| edge[0].index != u16::MAX)
+                        .unwrap();
+                    assert_eq!(info.edges[edge][0].index as usize, 1 - index);
+                    assert_eq!(
+                        info.edges[edge][0].orientation as usize,
+                        (2 + other_edge + 4 - edge) % 4
+                    );
+                    assert_eq!(
+                        (info.edges[edge][0].span, info.edges[edge][0].neighbor_span),
+                        (0, 0)
+                    );
+                    let vertices = map_core::displacement::neighbors::edge_indices(
+                        (1 << powers[index]) + 1,
+                        edge,
+                    )
+                    .unwrap();
+                    let stride = 1 << powers[index].saturating_sub(powers[1 - index]);
+                    for (step, vertex) in vertices.into_iter().enumerate() {
+                        assert_eq!(info.vertex_allowed(vertex), step % stride == 0);
+                    }
+                    if powers[index] < powers[1 - index] {
+                        assert_eq!(info.allowed_vertices, [u32::MAX; 10]);
+                    }
+                    let triangles = info.allowed_triangle_indices().unwrap();
+                    assert!(
+                        triangles
+                            .iter()
+                            .flatten()
+                            .all(|&vertex| info.vertex_allowed(vertex))
+                    );
+                    let size = (1usize << powers[index]) + 1;
+                    let uv = |i: usize| glam::DVec2::new((i % size) as f64, (i / size) as f64);
+                    let area = triangles
+                        .iter()
+                        .map(|&[a, b, c]| (uv(b) - uv(a)).perp_dot(uv(c) - uv(a)))
+                        .sum::<f64>();
+                    assert_eq!(area, -2.0 * ((size - 1) * (size - 1)) as f64);
+                }
+                assert_eq!(vmf, source);
+            }
+        }
+    }
+}
+
+#[test]
+fn mixed_power_curved_edges_snap_inactive_geometry_without_editing_source() {
+    let mut vmf = adjacent_fixture([2, 4], [1, 3]);
+    for solid in &mut vmf.world.solids {
+        let geometry = BrushGeometry::from_solid(solid).unwrap();
+        for face in &geometry.faces {
+            let Some(disp) = solid.sides[face.side].displacement.as_mut() else {
+                continue;
+            };
+            let mesh = DisplacementMesh::build(face, disp).unwrap();
+            disp.offsets = Some(
+                mesh.positions
+                    .chunks(mesh.size)
+                    .map(|row| {
+                        row.iter()
+                            .map(|p| {
+                                DVec3::Z
+                                    * ((p.y - 112.0).powi(2) / 512.0
+                                        + (p.x - 112.0).powi(2) / 256.0)
+                            })
+                            .collect()
+                    })
+                    .collect(),
+            );
+        }
+    }
+    let source = vmf.clone();
+    let output = compiler::compile(&vmf, &common::empty_game());
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.stats.displacement_lod_snapped_vertices > 0);
+    assert!(output.stats.displacement_lod_disabled_vertices > 12);
+    let data = output.bsp.unwrap().displacements().unwrap().unwrap();
+    let quads = vmf
+        .world
+        .solids
+        .iter()
+        .filter_map(|solid| {
+            let geometry = BrushGeometry::from_solid(solid).unwrap();
+            geometry.faces.iter().find_map(|face| {
+                solid.sides[face.side].displacement.as_ref().map(|disp| {
+                    (
+                        face.vertices.clone().try_into().unwrap(),
+                        DisplacementMesh::build(face, disp).unwrap(),
+                    )
+                })
+            })
+        })
+        .collect::<Vec<([DVec3; 4], DisplacementMesh)>>();
+    let native = quads
+        .iter()
+        .enumerate()
+        .map(|(index, (quad, _))| {
+            data.positions(index, quad.map(|p| p.as_vec3().to_array()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for (index, (_, mesh)) in quads.iter().enumerate() {
+        for (vertex, &point) in mesh.positions.iter().enumerate() {
+            if data.infos[index].vertex_allowed(vertex) {
+                assert!(
+                    point.distance(DVec3::from_array(native[index][vertex].map(f64::from))) < 0.02
+                );
+            }
+        }
+    }
+    assert_eq!(vmf, source);
 }
 
 fn fixture(power: u32) -> (Vmf, u32) {

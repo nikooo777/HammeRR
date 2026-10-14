@@ -13,6 +13,7 @@ pub struct FaceId {
 
 #[derive(Debug, Clone, Default)]
 pub struct SurfaceEdit {
+    pub terrain: Option<crate::displacement::Operation>,
     pub material: Option<String>,
     pub shift_u: Option<f64>,
     pub shift_v: Option<f64>,
@@ -415,6 +416,21 @@ pub fn edit_faces(
         let side = &mut brush.sides[index];
         let before = side.clone();
         update(side, edit, &points)?;
+        if let Some(crate::displacement::Operation::Resolution(power)) = &edit.terrain {
+            let geometry = crate::brush::Face {
+                side: index,
+                plane: Plane::from_points(side.plane.0)
+                    .ok_or_else(|| invalid("Terrain base plane is degenerate"))?,
+                vertices: points,
+            };
+            let info = side
+                .displacement
+                .as_ref()
+                .ok_or_else(|| invalid("Every target must contain terrain"))?;
+            side.displacement = Some(crate::displacement::resample::change(
+                &geometry, info, *power,
+            )?);
+        }
         changed += usize::from(*side != before);
     }
     Ok(changed)

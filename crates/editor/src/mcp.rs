@@ -1380,6 +1380,18 @@ pub struct TerrainFacesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TerrainResolutionArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub power: u32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TerrainGridsArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub preview: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateTerrainArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub power: Option<u32>,
@@ -4839,6 +4851,42 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Inspect up to 16 selected or explicit terrain faces: power, grid size, ordered world positions, alpha blend values 0–255 and flags. preview=true reads the rendered draft. Uses the same grid reconstruction as the viewport.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_grids(&self, Parameters(args): Parameters<TerrainGridsArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let grids = session.terrain_grids(&faces, args.preview.unwrap_or(false))?;
+            Ok(
+                json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"grid_size":grid.mesh.size,"flags":grid.flags,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Preview changing selected or explicit terrain grids to power 2/3/4. Refinement samples the old triangles, preserving shared heights/blends; coarsening can lose detail. Preserves start corners, IDs and face metadata. Rejects malformed data, subdivision, mixed triangle tags, restricted vertex masks, nonzero offset normals and extra terrain blocks atomically. Source/history stay unchanged. Review get_terrain_grids(preview=true) or render_view, then commit_face_preview or cancel_face_preview with state.preview_token. UI: Change resolution…."
+    )]
+    fn preview_terrain_resolution(
+        &self,
+        Parameters(args): Parameters<TerrainResolutionArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let count = session.preview_terrain_resolution(Actor::Agent, &faces, args.power)?;
+            Ok(json!({"faces_changed":count,"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
         description = "Inspect eligible selected or explicit world quad faces and their four ordered world-space corners before terrain creation. Indices 0–3 match create_terrain.start_corner. Rows point toward the next corner, columns toward the previous one. Invalid selections return an error without changing the map.",
         annotations(read_only_hint = true)
     )]
@@ -5009,7 +5057,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the shared face material/lighting preview in one undo step. Pass its token to reject a replaced preview. Fails if edits, document replacement or selection changes have invalidated it."
+        description = "Apply the shared face material/lighting/terrain preview in one undo step. Pass its token to reject a replaced preview. Fails if edits, document replacement or selection changes have invalidated it."
     )]
     fn commit_face_preview(&self, Parameters(args): Parameters<FacePreviewArgs>) -> ToolResult {
         run(|| {

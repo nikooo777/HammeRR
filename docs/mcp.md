@@ -176,6 +176,10 @@ These details aren't obvious from the tool list.
 
 - `get_terrain_creation` inspects selected or explicit eligible faces without editing. It returns `faces` with `solid`, `side` and four ordered world-space `corners`, plus `default_start_corner`. UI corner labels are numbered 1–4; MCP indices are 0–3. Invalid selections return the shared creation error.
 
+- `get_terrain_grids` returns 1–16 selected or explicit terrain faces with `power`, `grid_size`, `flags`, row-major world-space `positions` and `alphas` (0–255). `preview: true` inspects the rendered draft; omitted or false reads committed terrain.
+
+- `preview_terrain_resolution` takes `power: 2|3|4` and optional `faces`. It samples the old triangles into a new grid while preserving shared heights/blends on refinement; coarsening can lose detail. Source and Undo history stay fixed until `commit_face_preview` with `state.preview_token`; `cancel_face_preview` discards it. Unsupported topology data reject atomically and preserve the last valid draft. Start corners and face metadata stay fixed. UI: **Change resolution… → Grid resolution → Preview → Apply / Cancel**.
+
 - `remove_terrain` removes displacement data from 1–16 selected or explicit faces, rejecting missing, ambiguous or ordinary faces atomically. The response gives `surfaces_removed` and shared face state. Geometry, IDs, material, mapping and lighting stay fixed; undo restores all imported grid rows and extras. A parent regains its brush volume once no terrain faces remain. Imported entity terrain can also be removed. UI: **Remove terrain**.
 
 **Compiling**

@@ -14,6 +14,38 @@ pub struct ChainPaint {
 }
 
 impl Session {
+    pub fn terrain_grids(
+        &self,
+        faces: &[FaceId],
+        preview: bool,
+    ) -> Result<Vec<map_core::displacement::edit::TerrainGrid>, String> {
+        let document = if preview {
+            self.render_document()
+        } else {
+            &self.document
+        };
+        map_core::displacement::edit::inspect(document, faces).map_err(|error| error.to_string())
+    }
+
+    pub fn preview_terrain_resolution(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        power: u32,
+    ) -> Result<usize, String> {
+        self.terrain_grids(faces, false)?;
+        self.edit_faces(
+            actor,
+            faces,
+            SurfaceEdit {
+                terrain: Some(map_core::displacement::Operation::Resolution(power)),
+                ..Default::default()
+            },
+            false,
+            true,
+        )
+    }
+
     pub fn terrain_creation_faces(
         &self,
         faces: &[FaceId],
@@ -264,6 +296,70 @@ mod tests {
             session.undo(actor).unwrap();
             assert_eq!(*session.document().vmf(), before);
             assert!(session.terrain_creation_error().is_none());
+        }
+    }
+
+    #[test]
+    fn terrain_resolution_previews_are_shared_atomic_and_keep_source_until_commit() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let ObjectId::Solid(solid) = session
+                .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let shape = session.document().solid(solid).unwrap();
+            let target = FaceId {
+                solid,
+                side: shape
+                    .sides
+                    .iter()
+                    .find(|side| {
+                        map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                    })
+                    .unwrap()
+                    .id,
+            };
+            let ordinary = FaceId {
+                solid,
+                side: shape
+                    .sides
+                    .iter()
+                    .find(|side| side.id != target.side)
+                    .unwrap()
+                    .id,
+            };
+            session
+                .select_faces(&[target], SelectMode::Replace)
+                .unwrap();
+            session.create_terrain(actor, &[target], 2, 3).unwrap();
+            let before = session.document().vmf().clone();
+            let history = session.document().undo_labels().count();
+            session
+                .preview_terrain_resolution(actor, &[target], 4)
+                .unwrap();
+            assert_eq!(*session.document().vmf(), before);
+            assert_eq!(session.document().undo_labels().count(), history);
+            assert_eq!(session.terrain_grids(&[target], true).unwrap()[0].power, 4);
+            let token = session.face_preview_token();
+            assert!(
+                session
+                    .preview_terrain_resolution(actor, &[target, ordinary], 3)
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), token);
+            assert_eq!(session.terrain_grids(&[target], true).unwrap()[0].power, 4);
+            session.cancel_face_preview();
+            assert_eq!(*session.document().vmf(), before);
+            session
+                .preview_terrain_resolution(actor, &[target], 3)
+                .unwrap();
+            session.commit_face_preview(actor).unwrap();
+            assert_eq!(session.document().undo_labels().count(), history + 1);
+            assert_eq!(session.selected_faces(), vec![target]);
+            session.undo(actor).unwrap();
+            assert_eq!(*session.document().vmf(), before);
         }
     }
 

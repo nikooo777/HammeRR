@@ -5,6 +5,12 @@ use crate::brush::Face;
 
 pub mod edit;
 pub mod neighbors;
+pub mod resample;
+
+#[derive(Debug, Clone)]
+pub enum Operation {
+    Resolution(u32),
+}
 
 /// The surface of a displaced face: a `size` x `size` vertex grid.
 #[derive(Debug, Clone, PartialEq)]

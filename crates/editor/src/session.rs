@@ -41,6 +41,7 @@ mod recovery;
 pub mod saved_views;
 pub mod statistics;
 mod surfaces;
+pub mod terrain_triangles;
 pub mod volume;
 pub use clipping::ClipPreview;
 #[cfg(test)]
@@ -128,6 +129,8 @@ pub struct Session {
     face_mode: bool,
     face_preview: Option<FacePreview>,
     face_preview_serial: u64,
+    terrain_triangle_highlight: Option<terrain_triangles::Highlight>,
+    terrain_triangle_serial: u64,
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
     checks: checks::State,
@@ -226,6 +229,8 @@ impl Session {
             face_mode: false,
             face_preview: None,
             face_preview_serial: 0,
+            terrain_triangle_highlight: None,
+            terrain_triangle_serial: 0,
             surface_sample: None,
             recovery: recovery::State::default(),
             checks: checks::State::default(),
@@ -1898,6 +1903,7 @@ impl Session {
         self.append_context_guides(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
+        self.append_terrain_triangle_guides(&mut mesh);
         self.append_clip_points(&mut mesh);
         mesh
     }

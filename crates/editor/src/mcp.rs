@@ -1426,6 +1426,27 @@ pub struct TerrainTriangleTagsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainTriangleTargetsArgs {
+    pub targets: Vec<TerrainTriangleTarget>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainTriangleFrameArgs {
+    pub targets: Vec<TerrainTriangleTarget>,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainTrianglePickArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub origin: [f64; 3],
+    pub direction: [f64; 3],
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TerrainCollisionArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub physics_collision: Option<bool>,
@@ -5160,6 +5181,99 @@ impl EditorServer {
                 },
             )?;
             Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Read the current transient terrain triangle highlights, token and stale state. Does not change VMF/history/face selection. Stale highlights do not draw; query current triangle IDs before replacing them.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_triangle_highlight(&self) -> ToolResult {
+        ok(self.session().terrain_triangle_highlight_json())
+    }
+
+    #[tool(
+        description = "Highlight arbitrary native triangle subsets in both viewport and render_view. targets=[{face:{solid,side},triangles:[IDs]}] supports1–16 faces; [] creates an empty highlight. Does not alter VMF/history or face selection. Invalid batches preserve previous highlights. Returned token guards clear_terrain_triangle_highlight; replacing the map/source or previewing another grid power makes this highlight stale. UI: Terrain triangles… checkboxes and Select surface."
+    )]
+    fn highlight_terrain_triangles(
+        &self,
+        Parameters(args): Parameters<TerrainTriangleTargetsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| (face_id(&target.face), target.triangles.clone()))
+                .collect::<Vec<_>>();
+            session.highlight_terrain_triangles(Actor::Agent, &targets)?;
+            Ok(session.terrain_triangle_highlight_json())
+        })
+    }
+
+    #[tool(
+        description = "Clear the current terrain triangle highlight, optionally guarded by token from highlight_terrain_triangles. A replaced token rejects without clearing another actor's guides. No map/history/selection edit. UI: Cancel or Clear selection in Terrain triangles…."
+    )]
+    fn clear_terrain_triangle_highlight(
+        &self,
+        Parameters(args): Parameters<FacePreviewArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.clear_terrain_triangle_highlight(
+                args.token.as_deref().map(parse_token).transpose()?,
+            )?;
+            Ok(session.terrain_triangle_highlight_json())
+        })
+    }
+
+    #[tool(
+        description = "Pick a native terrain triangle from a finite world ray, normalized internally. faces defaults to selected terrain faces (1–16). Uses rendered preview geometry, front faces, hidden owners, tool-material visibility and nearest visible brush-face occlusion. Returns hit=null if blocked or missed. IDs follow get_terrain_triangles(preview=true). Read-only: use highlight_terrain_triangles for guides and preview_terrain_triangle_tags for edits. UI: Pick triangle in viewport….",
+        annotations(read_only_hint = true)
+    )]
+    fn pick_terrain_triangle(
+        &self,
+        Parameters(args): Parameters<TerrainTrianglePickArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let hit = session.pick_terrain_triangle(
+                &Ray {
+                    origin: vec3(args.origin),
+                    direction: vec3(args.direction),
+                },
+                &faces,
+            )?;
+            Ok(
+                json!({"hit":hit.map(|hit|json!({"solid":hit.triangle.face.solid,"side":hit.triangle.face.side,"triangle":hit.triangle.triangle,"power":hit.power,"point":hit.point.to_array(),"distance":hit.distance}))}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Frame visible terrain triangle subsets using the same rendered source positions and camera policy as the human Frame selected control. targets=[{face:{solid,side},triangles:[IDs]}], optional positive finite aspect (default16/9). No VMF/history/face selection changes. Hidden/tool-filtered triangles do not frame; invalid/empty selections reject without moving the camera."
+    )]
+    fn frame_terrain_triangles(
+        &self,
+        Parameters(args): Parameters<TerrainTriangleFrameArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| (face_id(&target.face), target.triangles.clone()))
+                .collect::<Vec<_>>();
+            session.frame_terrain_triangles(
+                Actor::Agent,
+                &targets,
+                args.aspect.unwrap_or(16.0 / 9.0),
+            )?;
+            Ok(json!({"camera":camera_json(&session.camera())}))
         })
     }
 

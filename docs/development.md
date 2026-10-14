@@ -197,3 +197,9 @@ python3 -B scripts/validate_terrain_removal_probe.py --bsp /tmp/hammerr-terrain-
 ```
 
 This private runtime probe adds the native removal bit to every terrain triangle while retaining all other data, then compares the render, ray hits and player positions against the original. A changed engine behavior requires reviewing hole support before changing the compiler.
+
+```sh
+python3 -B scripts/validate_terrain_triangle_picking.py --output /tmp/hammerr-terrain-picking-check
+```
+
+Checks native ray picks at powers2–4, normalized directions, draft geometry, offscreen highlighted/cleared renders, invalid-batch preservation, replaced highlight tokens, changed-power guards, framing, hidden detail owners, mixed tool faces and occlusion. Source/history remain unchanged during the read/view operations. The software UI test `terrain_triangle_batch_controls_pick_frame_and_keep_foreign_guides` covers retained surface subsets, viewport picking cancellation, batch Apply/Undo and foreign guide ownership.

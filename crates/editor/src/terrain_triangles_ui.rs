@@ -1,10 +1,15 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 use map_core::{
     displacement::triangles::{Choice, Settings},
+    query::Ray,
     surface::FaceId,
 };
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     TerrainTriangleRow, TerrainTrianglesWindow,
@@ -17,6 +22,8 @@ struct Target {
     generation: u64,
     revision: u64,
     preview: Option<u64>,
+    highlight: Option<u64>,
+    selected: BTreeMap<FaceId, BTreeSet<usize>>,
 }
 
 impl Target {
@@ -32,17 +39,42 @@ impl Target {
         Ok(())
     }
 
-    fn cancel(&mut self, session: &mut Session) {
+    fn cancel_preview(&mut self, session: &mut Session) {
         if self.preview.is_some() && self.preview == session.face_preview_token() {
             session.cancel_face_preview();
         }
         self.preview = None;
+    }
+
+    fn clear_highlight(&mut self, session: &mut Session) {
+        if let Some(token) = self.highlight.take() {
+            let _ = session.clear_terrain_triangle_highlight(Some(token));
+        }
+    }
+
+    fn cancel(&mut self, session: &mut Session) {
+        self.cancel_preview(session);
+        self.clear_highlight(session);
+    }
+
+    fn targets(&self) -> Vec<(FaceId, Vec<usize>)> {
+        self.selected
+            .iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .map(|(face, ids)| (*face, ids.iter().copied().collect()))
+            .collect()
+    }
+
+    fn highlight(&mut self, session: &mut Session) -> Result<(), String> {
+        self.highlight = Some(session.highlight_terrain_triangles(Actor::User, &self.targets())?);
+        Ok(())
     }
 }
 
 pub struct Controller {
     pub window: TerrainTrianglesWindow,
     target: Rc<RefCell<Option<Target>>>,
+    picking: Rc<Cell<bool>>,
 }
 
 fn choice(index: i32) -> Result<Option<Choice>, String> {
@@ -55,36 +87,22 @@ fn choice(index: i32) -> Result<Option<Choice>, String> {
     }
 }
 
-fn update_selection(window: &TerrainTrianglesWindow) {
-    let rows = window.get_triangles();
-    let selected = rows.iter().filter(|row| row.selected).count();
-    window.set_selection_label(
-        format!("{selected} of {} triangles selected", rows.row_count()).into(),
-    );
+fn face(window: &TerrainTrianglesWindow, target: &Target) -> Result<FaceId, String> {
+    target
+        .faces
+        .get(window.get_face_index() as usize)
+        .copied()
+        .ok_or("Choose a terrain surface".into())
 }
 
 fn populate(
     window: &TerrainTrianglesWindow,
     session: &Session,
     target: &Target,
-    preview: bool,
-    preserve_selection: bool,
 ) -> Result<(), String> {
     target.check(session)?;
-    let face = *target
-        .faces
-        .get(window.get_face_index() as usize)
-        .ok_or("Choose a terrain surface")?;
-    let selected = if preserve_selection {
-        window
-            .get_triangles()
-            .iter()
-            .filter(|row| row.selected)
-            .map(|row| row.id)
-            .collect::<std::collections::BTreeSet<_>>()
-    } else {
-        Default::default()
-    };
+    let face = face(window, target)?;
+    let preview = target.preview.is_some() && target.preview == session.face_preview_token();
     let report = session.terrain_triangles(&[face], preview)?;
     let label = |enabled, forced| {
         format!(
@@ -121,50 +139,64 @@ fn populate(
                     }
                 )
                 .into(),
-                selected: selected.contains(&(triangle.id as i32)),
+                selected: target
+                    .selected
+                    .get(&face)
+                    .is_some_and(|ids| ids.contains(&triangle.id)),
             }
         })
         .collect::<Vec<_>>();
     window.set_triangles(ModelRc::new(VecModel::from(rows)));
-    update_selection(window);
+    window.set_selection_label(
+        format!(
+            "{} triangles across {} surfaces",
+            target.selected.values().map(BTreeSet::len).sum::<usize>(),
+            target
+                .selected
+                .values()
+                .filter(|ids| !ids.is_empty())
+                .count()
+        )
+        .into(),
+    );
     Ok(())
 }
 
-fn edited(window: &TerrainTrianglesWindow, session: &mut Session, target: &mut Option<Target>) {
-    if let Some(target) = target {
-        target.cancel(session);
-        if let Err(error) = populate(window, session, target, false, true) {
-            window.set_message(error.into());
-            return;
-        }
-    }
+fn edited(
+    window: &TerrainTrianglesWindow,
+    session: &mut Session,
+    target: &mut Target,
+) -> Result<(), String> {
+    target.check(session)?;
+    target.cancel_preview(session);
+    populate(window, session, target)?;
     window.set_ready(false);
     window.set_message("Preview the selected triangle settings before applying.".into());
+    Ok(())
 }
 
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = TerrainTrianglesWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
+        let picking = Rc::new(Cell::new(false));
         window.on_edited({
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
             move || {
-                edited(
-                    &window.unwrap(),
-                    &mut lock(&shared),
-                    &mut target.borrow_mut(),
-                )
+                let window = window.unwrap();
+                if let Some(target) = target.borrow_mut().as_mut()
+                    && let Err(error) = edited(&window, &mut lock(&shared), target)
+                {
+                    window.set_message(error.into());
+                }
             }
         });
         window.on_face_changed({
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
             move || {
                 let window = window.unwrap();
-                let mut session = lock(&shared);
-                let mut target = target.borrow_mut();
-                edited(&window, &mut session, &mut target);
-                if let Some(target) = target.as_ref()
-                    && let Err(error) = populate(&window, &session, target, false, false)
+                if let Some(target) = target.borrow().as_ref()
+                    && let Err(error) = populate(&window, &lock(&shared), target)
                 {
                     window.set_message(error.into());
                 }
@@ -172,51 +204,125 @@ impl Controller {
         });
         window.on_toggle_triangle({
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
-            move |index, selected| {
+            move |id, selected| {
                 let window = window.unwrap();
-                let rows = window.get_triangles();
-                if let Some(mut row) = rows.row_data(index as usize) {
-                    row.selected = selected;
-                    rows.set_row_data(index as usize, row);
+                let mut session = lock(&shared);
+                let mut target = target.borrow_mut();
+                let Some(target) = target.as_mut() else {
+                    return;
+                };
+                let result = target.check(&session).and_then(|_| {
+                    let face = face(&window, target)?;
+                    let valid = session.terrain_triangles(&[face], false)?[0]
+                        .triangles
+                        .len();
+                    let id = usize::try_from(id).map_err(|_| "Choose a valid triangle")?;
+                    if id >= valid {
+                        return Err("Choose a valid triangle".into());
+                    }
+                    let ids = target.selected.entry(face).or_default();
+                    if selected {
+                        ids.insert(id);
+                    } else {
+                        ids.remove(&id);
+                    }
+                    target.highlight(&mut session)?;
+                    edited(&window, &mut session, target)
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
                 }
-                update_selection(&window);
-                edited(&window, &mut lock(&shared), &mut target.borrow_mut());
             }
         });
         window.on_select_all({
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
             move |selected| {
                 let window = window.unwrap();
-                let rows = window.get_triangles();
-                for index in 0..rows.row_count() {
-                    let mut row = rows.row_data(index).unwrap();
-                    row.selected = selected;
-                    rows.set_row_data(index, row);
-                }
-                update_selection(&window);
-                edited(&window, &mut lock(&shared), &mut target.borrow_mut());
-            }
-        });
-        window.on_preview_edit({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
-            move || {
-                let window = window.unwrap();
                 let mut session = lock(&shared);
                 let mut target = target.borrow_mut();
-                let Some(target) = target.as_mut() else { return };
+                let Some(target) = target.as_mut() else {
+                    return;
+                };
                 let result = target.check(&session).and_then(|_| {
-                    let face = *target.faces.get(window.get_face_index() as usize).ok_or("Choose a terrain surface")?;
-                    let selected = window.get_triangles().iter().filter(|row| row.selected).map(|row| row.id as usize).collect::<Vec<_>>();
-                    session.preview_terrain_triangle_tags(Actor::User, &[(face, selected)], Settings {walkable:choice(window.get_walkable_index())?, buildable:choice(window.get_buildable_index())?})
+                    if selected {
+                        let face = face(&window, target)?;
+                        let report = session.terrain_triangles(&[face], false)?;
+                        target.selected.insert(
+                            face,
+                            report[0]
+                                .triangles
+                                .iter()
+                                .map(|triangle| triangle.id)
+                                .collect(),
+                        );
+                    } else {
+                        target.selected.clear();
+                    }
+                    target.highlight(&mut session)?;
+                    edited(&window, &mut session, target)
                 });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
+            }
+        });
+        window.on_pick_triangle({
+            let (window, shared, target, picking) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                picking.clone(),
+            );
+            move || {
+                let window = window.unwrap();
+                let result = target
+                    .borrow()
+                    .as_ref()
+                    .ok_or("Reopen terrain triangles".into())
+                    .and_then(|target| target.check(&lock(&shared)));
                 match result {
-                    Ok(count) => { target.preview = session.face_preview_token(); if let Err(error) = populate(&window, &session, target, true, true) { window.set_message(error.into()); return; } window.set_ready(true); window.set_message(format!("Preview changes {count} terrain surfaces. Apply keeps one undo step.").into()); }
+                    Ok(()) => {
+                        picking.set(true);
+                        let _ = window.hide();
+                    }
                     Err(error) => window.set_message(error.into()),
                 }
             }
         });
-        window.on_apply({
+        window.on_frame_selected({
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                if let Some(target) = target.borrow().as_ref() {
+                    let result = target.check(&session).and_then(|_| {
+                        session.frame_terrain_triangles(
+                            Actor::User,
+                            &target.targets(),
+                            window.get_aspect(),
+                        )
+                    });
+                    if let Err(error) = result {
+                        window.set_message(error.into());
+                    }
+                }
+            }
+        });
+        window.on_preview_edit({
+            let (window,shared,target)=(window.as_weak(),shared.clone(),target.clone());
+            move || {
+                let window=window.unwrap();let mut session=lock(&shared);let mut target=target.borrow_mut();let Some(target)=target.as_mut() else {return};
+                let result=target.check(&session).and_then(|_|session.preview_terrain_triangle_tags(Actor::User,&target.targets(),Settings {walkable:choice(window.get_walkable_index())?,buildable:choice(window.get_buildable_index())?}));
+                match result {Ok(count)=>{target.preview=session.face_preview_token();if let Err(error)=populate(&window,&session,target) {window.set_message(error.into());return;}window.set_ready(true);window.set_message(format!("Preview changes {count} terrain surfaces. Apply keeps one undo step.").into());},Err(error)=>window.set_message(error.into())}
+            }
+        });
+        window.on_apply({
+            let (window, shared, target, picking) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                picking.clone(),
+            );
             move || {
                 let window = window.unwrap();
                 let mut session = lock(&shared);
@@ -234,6 +340,8 @@ impl Controller {
                 match result {
                     Ok(_) => {
                         target.preview = None;
+                        target.clear_highlight(&mut session);
+                        picking.set(false);
                         window.set_ready(false);
                         let _ = window.hide();
                     }
@@ -242,24 +350,35 @@ impl Controller {
             }
         });
         window.on_cancel({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, shared, target, picking) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                picking.clone(),
+            );
             move || {
                 if let Some(target) = target.borrow_mut().as_mut() {
                     target.cancel(&mut lock(&shared));
                 }
+                picking.set(false);
                 let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
-            let (shared, target) = (shared.clone(), target.clone());
+            let (shared, target, picking) = (shared.clone(), target.clone(), picking.clone());
             move || {
                 if let Some(target) = target.borrow_mut().as_mut() {
                     target.cancel(&mut lock(&shared));
                 }
+                picking.set(false);
                 slint::CloseRequestResponse::HideWindow
             }
         });
-        Ok(Self { window, target })
+        Ok(Self {
+            window,
+            target,
+            picking,
+        })
     }
 
     pub fn initialize(&self, session: &mut Session) -> Result<(), String> {
@@ -268,6 +387,7 @@ impl Controller {
         if let Some(target) = self.target.borrow_mut().as_mut() {
             target.cancel(session);
         }
+        self.picking.set(false);
         self.window.set_faces(ModelRc::new(VecModel::from(
             faces
                 .iter()
@@ -282,12 +402,65 @@ impl Controller {
             generation: session.document_generation(),
             revision: session.document().revision(),
             preview: None,
+            highlight: None,
+            selected: BTreeMap::new(),
         };
-        populate(&self.window, session, &target, false, false)?;
+        populate(&self.window, session, &target)?;
         *self.target.borrow_mut() = Some(target);
-        self.window.set_message("Select triangles, choose their settings, then Preview. Cancel leaves the map unchanged.".into());
+        self.window.set_message(
+            "Select triangles in the list or viewport, choose settings, then Preview.".into(),
+        );
         self.refresh(session);
         Ok(())
+    }
+
+    pub fn is_picking(&self) -> bool {
+        self.picking.get()
+    }
+
+    pub fn cancel_pick(&self) {
+        self.picking.set(false);
+        self.window
+            .set_message("Triangle picking cancelled. Selection and fields are unchanged.".into());
+        let _ = self.window.show();
+    }
+
+    pub fn select_at_ray(&self, session: &mut Session, ray: &Ray) -> Result<usize, String> {
+        if !self.picking.get() {
+            return Err("Triangle picking is not active".into());
+        }
+        let mut target = self.target.borrow_mut();
+        let target = target.as_mut().ok_or("Reopen terrain triangles")?;
+        target.check(session)?;
+        let hit = session
+            .pick_terrain_triangle(ray, &target.faces)?
+            .ok_or("Click visible selected terrain, or cancel picking")?;
+        if session.terrain_grids(&[hit.triangle.face], false)?[0].power != hit.power {
+            return Err("Finish the grid-resolution preview before selecting triangles".into());
+        }
+        self.window.set_face_index(
+            target
+                .faces
+                .iter()
+                .position(|face| *face == hit.triangle.face)
+                .unwrap() as i32,
+        );
+        target
+            .selected
+            .entry(hit.triangle.face)
+            .or_default()
+            .insert(hit.triangle.triangle);
+        target.highlight(session)?;
+        edited(&self.window, session, target)?;
+        self.picking.set(false);
+        self.window.set_message(
+            format!(
+                "Selected triangle {}. Its yellow outline appears in the viewport.",
+                hit.triangle.triangle
+            )
+            .into(),
+        );
+        Ok(hit.triangle.triangle)
     }
 
     pub fn refresh(&self, session: &Session) {
@@ -300,6 +473,9 @@ impl Controller {
                     && target.preview == session.face_preview_token(),
             );
             if let Some(error) = error {
+                if self.picking.replace(false) {
+                    let _ = self.window.show();
+                }
                 self.window.set_message(error.into());
             }
         }

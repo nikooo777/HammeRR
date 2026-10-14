@@ -29,6 +29,31 @@ pub struct Hit {
     pub point: DVec3,
 }
 
+pub fn pick_displacement_triangle(
+    ray: &Ray,
+    mesh: &crate::DisplacementMesh,
+) -> Option<(usize, f64)> {
+    if !ray.origin.is_finite()
+        || !ray.direction.is_finite()
+        || ![5, 9, 17].contains(&mesh.size)
+        || mesh.positions.len() != mesh.size * mesh.size
+    {
+        return None;
+    }
+    let indices = crate::displacement::triangles::indices((mesh.size - 1).ilog2()).ok()?;
+    let mut nearest: Option<(usize, f64)> = None;
+    for (id, [a, b, c]) in indices.into_iter().enumerate() {
+        let distance =
+            terrain::triangle(ray, mesh.positions[a], mesh.positions[b], mesh.positions[c]);
+        if let Some(distance) = distance
+            && nearest.is_none_or(|(_, old)| distance < old - 1e-9)
+        {
+            nearest = Some((id, distance));
+        }
+    }
+    nearest
+}
+
 /// Entry distance and side index of a ray into a convex brush, ignoring
 /// brushes that contain the ray origin.
 fn ray_solid(ray: &Ray, solid: &Solid) -> Option<(f64, usize)> {

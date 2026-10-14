@@ -328,4 +328,57 @@ mod tests {
         info.triangle_tags.as_mut().unwrap()[0].pop();
         assert!(source_tags(&info).is_err());
     }
+
+    #[test]
+    fn native_triangle_rays_match_centers_at_all_powers_and_reject_backfaces() {
+        for power in 2..=4 {
+            let size = (1usize << power) + 1;
+            for rotation in 0..4 {
+                let positions = (0..size)
+                    .flat_map(|row| {
+                        (0..size).map(move |col| {
+                            let point =
+                                DVec3::new(col as f64, row as f64, ((row * col) % 3) as f64 * 0.2);
+                            match rotation {
+                                0 => point,
+                                1 => DVec3::new(-point.y, point.x, point.z),
+                                2 => DVec3::new(-point.x, -point.y, point.z),
+                                _ => DVec3::new(point.y, -point.x, point.z),
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let mesh = DisplacementMesh {
+                    size,
+                    base_positions: positions.clone(),
+                    alphas: vec![0.0; positions.len()],
+                    positions,
+                };
+                for (id, indices) in indices(power).unwrap().into_iter().enumerate() {
+                    let center = indices
+                        .map(|index| mesh.positions[index])
+                        .into_iter()
+                        .sum::<DVec3>()
+                        / 3.0;
+                    let ray = crate::query::Ray {
+                        origin: center + DVec3::Z * 64.0,
+                        direction: DVec3::NEG_Z,
+                    };
+                    let hit = crate::query::pick_displacement_triangle(&ray, &mesh).unwrap();
+                    assert_eq!(hit.0, id);
+                    assert!((hit.1 - 64.0).abs() < 1e-9);
+                }
+                assert!(
+                    crate::query::pick_displacement_triangle(
+                        &crate::query::Ray {
+                            origin: mesh.positions[0] - DVec3::Z * 64.0,
+                            direction: DVec3::Z
+                        },
+                        &mesh
+                    )
+                    .is_none()
+                );
+            }
+        }
+    }
 }

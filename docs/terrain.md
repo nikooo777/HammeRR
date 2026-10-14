@@ -86,13 +86,17 @@ Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsuppor
 
 1. Select terrain faces under **Selection → Faces · materials & textures**, then click **Terrain triangles…**.
 2. Choose **Surface**. Each row shows a native triangle ID, its center in world coordinates, and its current **Walkable** and **Buildable** classifications, marked **automatic** or **forced**.
-3. Tick any triangle subset, or use **Select all** and **Clear selection**. IDs run from 0–31 at power 2, 0–127 at power 3, and 0–511 at power 4.
-4. Under **Walkability** and **Buildability**, choose **Keep current**, **Automatic · from slope**, **Enabled** or **Disabled**. Automatic clears that override and recomputes the selected triangles from their source slope. Keep current retains each triangle's value.
-5. Click **Preview** to inspect the proposed classifications, then **Apply** to keep one undo step or **Cancel** to discard them. **Undo** restores the original tag rows, including their absence.
+3. Tick any triangle subset. Changing **Surface** retains its checks, so one edit can span several surfaces. **Select surface** selects every triangle on the displayed surface; **Clear selection** clears the complete batch. IDs run from 0–31 at power 2, 0–127 at power 3, and 0–511 at power 4.
+4. Click **Pick triangle in viewport…**, then click visible terrain in the selected face scope. The dialog returns with that native triangle checked. **Escape** or **Cancel picking** restores the dialog without changing its fields or checks.
+5. Selected triangles have yellow outlines in the viewport. Click **Frame selected** to frame all visible checked triangles. Hidden owners and tool-material filtering apply to both picking and guides.
+6. Under **Walkability** and **Buildability**, choose **Keep current**, **Automatic · from slope**, **Enabled** or **Disabled**. Automatic clears that override and recomputes the selected triangles from their source slope. Keep current retains each triangle's value.
+7. Click **Preview** to inspect the proposed classifications, then **Apply** to keep one undo step or **Cancel** to discard them. **Undo** restores the original tag rows, including their absence.
 
-![Terrain triangle selection and classification controls](images/terrain-triangle-tags.png)
+![Terrain triangle selection, picking and classification controls](images/terrain-triangle-picking.png)
 
-Limits: 1–16 selected terrain faces; the dialog edits one surface at a time. These are engine classifications, not collision switches: disabling Walkability does not make a player fall through terrain. Buildability applies to games that consume that legacy classification. Geometry, blend values, mapping, IDs, collision settings and unselected tags stay fixed. Malformed rows and invalid triangle IDs reject atomically. Imported removal and unknown tags remain inspectable but cannot compile; hole authoring and viewport triangle picking remain planned. IDs belong to a face's current power and start corner; query again after changing its topology.
+![Selected terrain triangles outlined in the viewport](images/terrain-triangle-highlighted.png)
+
+Limits: 1–16 selected terrain faces; subsets across surfaces apply in one undo step. These are engine classifications, not collision switches: disabling Walkability does not make a player fall through terrain. Buildability applies to games that consume that legacy classification. Geometry, blend values, mapping, IDs, collision settings and unselected tags stay fixed. Malformed rows and invalid triangle IDs reject atomically. Imported removal and unknown tags remain inspectable but cannot compile; hole authoring remains planned. IDs belong to a face's current power and start corner; query again after changing its topology. The outlines follow compatible source previews. A different-power preview hides them; finish it before framing or selecting draft IDs. Map/source changes make highlights stale. Cancel clears this dialog's own preview and outlines while retaining another actor's replacements.
 
 ## Remove terrain
 

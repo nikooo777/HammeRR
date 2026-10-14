@@ -51,7 +51,7 @@ fn intersects_box(ray: &Ray, mins: DVec3, maxs: DVec3) -> bool {
     true
 }
 
-fn triangle(ray: &Ray, a: DVec3, b: DVec3, c: DVec3) -> Option<f64> {
+pub(super) fn triangle(ray: &Ray, a: DVec3, b: DVec3, c: DVec3) -> Option<f64> {
     let ab = b - a;
     let ac = c - a;
     let p = ray.direction.cross(ac);

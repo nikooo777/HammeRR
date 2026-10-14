@@ -1588,6 +1588,8 @@ export component AppWindow inherits Window {
     callback selection-mode-changed(int);
     callback edit-face-textures();
     callback edit-face-lighting();
+    callback create-terrain(int);
+    in property <string> terrain-creation-error;
     callback replace-materials();
     callback map-face-group();
     callback select-volume();
@@ -2052,6 +2054,7 @@ export component AppWindow inherits Window {
                 width: 360px;
                 background: #16181d;
 
+                ScrollView {
                 VerticalLayout {
                     padding: 12px;
                     spacing: 8px;
@@ -2076,6 +2079,14 @@ export component AppWindow inherits Window {
                         selected => { root.selection-mode-changed(self.current-index); }
                     }
 
+                        if root.has-faces: VerticalLayout {
+                            spacing: 6px;
+                            SectionTitle { text: "TERRAIN"; }
+                            Text { text: "Terrain grid"; color: #c8ccd4; }
+                            terrain-grid := ComboBox { model: ["5 × 5 · power 2", "9 × 9 · power 3", "17 × 17 · power 4"]; current-index: 0; }
+                            Button { text: "Create terrain"; enabled: root.terrain-creation-error == ""; clicked => { root.create-terrain(terrain-grid.current-index + 2); } }
+                            Text { text: root.terrain-creation-error == "" ? "Creates a terrain surface. Terrain does not seal maps. Undo restores the brush." : root.terrain-creation-error; wrap: word-wrap; color: #919aaa; font-size: 12px; }
+                        }
                     Button { text: "Select a volume…"; clicked => { root.select-volume(); } }
 
                     HorizontalLayout {
@@ -2336,6 +2347,7 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                }
                 }
             }
         }

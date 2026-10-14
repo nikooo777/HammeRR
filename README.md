@@ -173,6 +173,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Opaque distance-fading window](docs/images/areaportal-window-closed.png) |
 | Fade rendered windows to opaque with distance and hide the area beyond. |
 
+| Terrain creation |
+| --- |
+| ![A flat terrain grid created from a quad face](docs/images/terrain-creation.png) |
+| Turn selected world quads into flat 5×5, 9×9 or 17×17 terrain grids. |
+
 | Connected terrain lighting |
 | --- |
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |

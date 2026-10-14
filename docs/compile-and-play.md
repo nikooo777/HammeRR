@@ -316,7 +316,7 @@ Not yet: baked prop lighting, prop shadows and exact placement in the BSP tree.
 
 ### Terrain (displacements)
 
-Connected terrain can keep its lighting continuous across patch seams.
+Create flat terrain with [Terrain grid and Create terrain](terrain.md), or open imported patches. Connected terrain can keep its lighting continuous across patch seams.
 
 1. Click **Open…** and choose a VMF with adjacent terrain patches. Their powers and complete edge grids must match.
 2. Open **Build settings…** and choose **Direct LDR**. Add a light or sun using **Place entity** if the map has none.

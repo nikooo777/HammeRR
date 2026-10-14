@@ -1375,6 +1375,12 @@ pub struct ReplaceMaterialsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CreateTerrainArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub power: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EditFacesArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub material: Option<String>,
@@ -4823,6 +4829,24 @@ impl EditorServer {
                 args.preview,
             )?;
             Ok(json!({"faces_changed":count, "state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Create flat terrain on 1–16 selected or explicit world quad faces, one per ordinary parent brush. power is 2, 3 or 4 (default 2), producing 5x5, 9x9 or 17x17 grids. Preserves IDs, materials, projections and lighting; rejects existing terrain, entity parents, ambiguous/nonquad targets and invalid powers atomically. One undo step. Parent brushes do not seal maps or become collision boxes. Sculpting/blending remain unfinished. UI: Terrain grid and Create terrain in the face inspector."
+    )]
+    fn create_terrain(&self, Parameters(args): Parameters<CreateTerrainArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let power = args.power.unwrap_or(2);
+            let count = session.create_terrain(Actor::Agent, &faces, power)?;
+            Ok(
+                json!({"surfaces_created": count, "power": power, "grid_size": (1_u32 << power) + 1, "state": face_state(&session)}),
+            )
         })
     }
 

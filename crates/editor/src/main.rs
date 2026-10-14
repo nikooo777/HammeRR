@@ -489,6 +489,33 @@ fn refresh_texture_brush_sample(app: &AppWindow, session: &mut Session) {
     }
 }
 
+fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
+    app.on_create_terrain({
+        let app = app.as_weak();
+        move |power| {
+            let mut session = lock(&shared);
+            let faces = session.selected_faces();
+            let result = u32::try_from(power)
+                .map_err(|_| "Invalid terrain power".to_owned())
+                .and_then(|power| session.create_terrain(Actor::User, &faces, power));
+            let app = app.unwrap();
+            app.set_terrain_creation_error(
+                session.terrain_creation_error().unwrap_or_default().into(),
+            );
+            app.set_message(
+                match result {
+                    Ok(count) => format!(
+                        "Created {count} terrain surface{}",
+                        if count == 1 { "" } else { "s" }
+                    ),
+                    Err(error) => error,
+                }
+                .into(),
+            );
+        }
+    });
+}
+
 fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
     app.on_transform_tool_changed({
         let (app, shared) = (app.as_weak(), shared.clone());
@@ -2443,6 +2470,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_has_selection(!session.selection().is_empty());
     app.set_face_mode(session.face_mode());
     app.set_has_faces(!session.selected_faces().is_empty());
+    app.set_terrain_creation_error(session.terrain_creation_error().unwrap_or_default().into());
     app.set_can_sample_face(session.selected_faces().len() == 1);
     app.set_selection_pivot(
         session
@@ -3577,6 +3605,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = controller.window.show();
         }
     });
+    bind_terrain_controls(&app, session_of(&ui));
     app.on_edit_face_lighting({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -9415,6 +9444,72 @@ mod tests {
         assert_dialog_button_visible(&app, "Keep textures attached while shearing");
         state.cancel_transform_preview();
         assert_eq!(state.document().vmf(), &before);
+    }
+
+    #[test]
+    fn terrain_creation_controls_use_shared_conversion_and_explain_existing_grids() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let app = AppWindow::new().unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = state
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = state
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let target = map_core::surface::FaceId { solid, side };
+        state
+            .select_faces(&[target], session::SelectMode::Replace)
+            .unwrap();
+        let before = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        bind_terrain_controls(&app, shared.clone());
+        app.set_has_faces(true);
+        app.set_face_mode(true);
+        app.set_surface_view(2);
+        app.set_can_apply_material(true);
+        app.set_material("brick/test".into());
+        if let Some(frame) = std::env::var_os("HAMMERR_TERRAIN_FRAME") {
+            app.set_frame(slint::Image::load_from_path(Path::new(&frame)).unwrap());
+        }
+        app.window()
+            .set_size(slint::LogicalSize::new(1100.0, 800.0));
+        app.show().unwrap();
+        save_ui_snapshot(app.window(), "terrain-creation");
+        app.invoke_create_terrain(4);
+        assert!(app.get_message().contains("Created 1 terrain surface"));
+        assert!(
+            app.get_terrain_creation_error()
+                .contains("already has terrain")
+        );
+        let after = lock(&shared).document().vmf().clone();
+        app.invoke_create_terrain(2);
+        assert_eq!(*lock(&shared).document().vmf(), after);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        app.hide().unwrap();
     }
 
     #[test]

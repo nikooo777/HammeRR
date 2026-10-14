@@ -14,6 +14,8 @@ const CONTACT_TOLERANCE: f64 = 0.01;
 const AXIS_TOLERANCE: f64 = 1e-12;
 const MAX_BRUSH_SIDES: usize = 256;
 const MAX_BLOCKER_NAMES: usize = 4;
+#[path = "spawns/terrain.rs"]
+mod terrain;
 const PLAYER_BLOCKING_CONTENTS: i32 =
     contents::SOLID | contents::WINDOW | contents::PLAYERCLIP | contents::GRATE;
 const TEAMS: [(&str, &str); 2] = [
@@ -21,7 +23,7 @@ const TEAMS: [(&str, &str); 2] = [
     ("info_player_counterterrorist", "Counter-Terrorist"),
 ];
 
-pub(super) const SCOPE: &str = "Spawn clearance checks the 32 × 32 × 72 standing hull at the authored origin against visible world and func_detail brushes with known player-blocking material contents. Touching within 0.01 units is allowed. Trigger, hint, origin and areaportal brushes are excluded. Other brush entities, models, displacements, runtime spawn placement, ground support, player counts and objectives are unchecked.";
+pub(super) const SCOPE: &str = "Spawn clearance checks the 32 × 32 × 72 standing hull at the authored origin against visible world/func_detail brushes and world terrain sheets with known player-blocking materials and player collision enabled. Touching within 0.01 units is allowed; terrain parent volumes do not block. Trigger, hint, origin and areaportal brushes are excluded. Other brush entities, models, removed terrain triangles, compiler LOD snapping, runtime spawn placement, ground support, player counts and objectives are unchecked.";
 
 struct Spawn {
     location: Location,
@@ -194,6 +196,7 @@ pub(super) fn check(
         game,
         cache: BTreeMap::new(),
     };
+    let mut terrain_budget = terrain::Budget::default();
     for (index, solid) in vmf
         .world
         .solids
@@ -212,6 +215,7 @@ pub(super) fn check(
             &mut materials,
             &mut spawns,
             report,
+            &mut terrain_budget,
         );
     }
     for (index, entity) in vmf.entities.iter().enumerate().filter(|(_, e)| !e.hidden) {
@@ -242,6 +246,7 @@ pub(super) fn check(
                 &mut materials,
                 &mut spawns,
                 report,
+                &mut terrain_budget,
             );
         }
     }
@@ -272,8 +277,10 @@ fn inspect_brush(
     materials: &mut Materials<'_>,
     spawns: &mut [Spawn],
     report: &mut Report,
+    terrain_budget: &mut terrain::Budget,
 ) {
     if solid.sides.iter().any(|side| side.displacement.is_some()) {
+        terrain::inspect(solid, location, materials, spawns, report, terrain_budget);
         return;
     }
     let geometry = match checked_geometry(solid) {
@@ -325,9 +332,6 @@ fn inspect_brush(
 fn checked_geometry(solid: &Solid) -> Result<BrushGeometry, &'static str> {
     if solid.sides.len() > MAX_BRUSH_SIDES {
         return Err("more than 256 sides");
-    }
-    if solid.sides.iter().any(|side| side.displacement.is_some()) {
-        return Err("displacement collision is unchecked");
     }
     let geometry = BrushGeometry::from_solid(solid).map_err(|_| "invalid brush geometry")?;
     if !geometry.mins.is_finite()

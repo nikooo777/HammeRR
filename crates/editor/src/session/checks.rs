@@ -319,13 +319,36 @@ impl Session {
                 ..Default::default()
             };
             if solid.sides.iter().any(|side| side.displacement.is_some()) && !hidden {
-                result.add(
+                if matches!(owner, Some(ObjectId::Entity(_))) {
+                    result.add(
                     Severity::Warning,
                     "compiler_displacement",
                     &base,
-                    "The native compiler currently omits brushes with displacements.",
+                    "Terrain on brush entities is not supported by the native compiler. Detach its parent to world geometry before building.",
                     None,
                 );
+                }
+                for side in &solid.sides {
+                    let Some(info) = &side.displacement else {
+                        continue;
+                    };
+                    let mut location = base.clone();
+                    location.face = Some(FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    });
+                    location.ambiguous |= side.id == 0 || face_counts[&side.id] != 1;
+                    if info.flags.unwrap_or(0) & !14 != 0 {
+                        result.add(Severity::Warning,"compiler_displacement_flags",&location,"Terrain has unsupported native collision/bump flags. Keep supported physics, player and ray collision settings before building.",None);
+                    }
+                    if info
+                        .triangle_tags
+                        .as_ref()
+                        .is_some_and(|rows| rows.iter().flatten().any(|tag| tag & 0x20 != 0))
+                    {
+                        result.add(Severity::Warning,"compiler_displacement_triangles",&location,"Removed terrain triangles are not supported by the native compiler yet.",None);
+                    }
+                }
             }
             if asset_checks {
                 for side in &solid.sides {

@@ -88,7 +88,10 @@ def validate(client, output):
         "Checking preserves map data, history, selection and camera",
     )
     check(
-        any("models, displacements" in note for note in report["notes"])
+        any(
+            "models" in note and "compiler LOD snapping" in note
+            for note in report["notes"]
+        )
         and len(issues(client, "spawn_clearance_scope")) == 1,
         "Shared report states unchecked collision and runtime limits",
     )

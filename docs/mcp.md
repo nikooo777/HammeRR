@@ -170,6 +170,10 @@ These details aren't obvious from the tool list.
 - `begin_property_edit` takes `world: true` or entity `ids`. Each entry in `changes` uses `action`: `set`, `remove`, `default`, `flag` or `component`.
 - `get_object_report` filters by `query`, `classname`, `targetname`, `material`, `kind`, `hidden` and `within`.
 
+**Map checks**
+
+- `run_map_checks` / `get_map_checks` include standing-hull intersections with supported visible world terrain sheets. They use the authored 32×32×72 hull, 0.01-unit contact tolerance, known solid materials and positive player-collision state. Terrain parent volumes are excluded. No-physics/no-ray flags do not disable player clearance. Unknown materials, unsupported owners/flags, malformed geometry, removed triangles and exhausted work produce explicit unchecked warnings. The terrain pass has a one-million-work limit and native triangle cap. Pending previews, compiler LOD snapping, models and runtime spawn placement are excluded. Existing issue navigation retains source/token guards; malformed terrain smoothing and tag rows receive face issues.
+
 **Terrain**
 
 - `create_terrain` converts selected or explicit `faces: [{solid, side}]` into flat surfaces. `power` is `2` (default), `3` or `4`, producing 5×5, 9×9 or 17×17 grids. `start_corner` is `0`–`3` (default `0`) in the winding order reported by `get_terrain_creation`; rows follow the next corner and columns the previous one. It accepts 1–16 world quad faces, one per ordinary parent brush, and rejects existing terrain, entity parents, ambiguous/nonquad targets and invalid powers atomically. The response gives `surfaces_created`, `power`, `grid_size`, `start_corner` and shared face state. IDs, materials, mapping and lighting stay fixed; one undo step and face selection remain shared. `get_objects` reports each face's `displacement` power. UI equivalents are **Terrain grid**, **Start corner** and **Create terrain**. Parents do not seal maps or become collision boxes. Sculpting and blending use the shared terrain-preview tools.

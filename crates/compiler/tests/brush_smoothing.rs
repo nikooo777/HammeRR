@@ -75,9 +75,6 @@ fn corner_normals(bsp: &Bsp, point: DVec3) -> Vec<DVec3> {
     let normals = bsp.values::<[f32; 3]>(lump::VERTNORMALS).unwrap();
     let mut result = Vec::new();
     for face in bsp.records::<Face>().unwrap() {
-        if face.smoothing_groups == 0 {
-            continue;
-        }
         for index in face.first_edge as usize..face.first_edge as usize + face.edge_count as usize {
             let edge = surfedges[index];
             let vertex = edges[edge.unsigned_abs() as usize].0[usize::from(edge < 0)] as usize;
@@ -256,4 +253,143 @@ fn subdivision_and_hidden_sources_keep_checked_native_normals() {
     let hidden = output(&vmf);
     assert_eq!(hidden.stats.smoothed_faces, 0);
     assert_eq!(hidden.stats.smoothed_corners, 0);
+}
+
+fn angle_output(vmf: &Vmf, angle: u8) -> compiler::Output {
+    let result = compiler::compile_with_options(
+        vmf,
+        &common::empty_game(),
+        Options {
+            lighting: LightingMode::DirectLdr,
+            smoothing_angle: angle,
+            ..Default::default()
+        },
+    );
+    assert!(!result.report.has_errors(), "{:?}", result.report);
+    result
+}
+
+#[test]
+fn automatic_angle_preserves_zero_and_obeys_boundaries_and_explicit_masks() {
+    let (mut vmf, id) = fixture();
+    let baseline = output(&vmf).bsp.unwrap();
+    let lower = angle_output(&vmf, 89);
+    assert_eq!(lower.stats.smoothed_faces, 0);
+    assert!(lower.bsp.unwrap().to_bytes() == baseline.to_bytes());
+    let boundary = angle_output(&vmf, 90);
+    assert_eq!(boundary.stats.smoothing_angle, 90);
+    assert!(boundary.stats.smoothed_faces >= 6);
+    let normals = corner_normals(&boundary.bsp.unwrap(), DVec3::new(64.0, 64.0, 160.0));
+    assert_eq!(normals.len(), 3);
+    assert!(
+        normals
+            .iter()
+            .all(|normal| normal.distance(DVec3::ONE.normalize()) < 2e-7)
+    );
+    paint(&mut vmf, id, &[1 | (1 << 24); 6], None);
+    let hard = angle_output(&vmf, 90).bsp.unwrap();
+    let hard = corner_normals(&hard, DVec3::new(64.0, 64.0, 160.0));
+    assert!(hard.iter().all(|normal| {
+        [DVec3::X, DVec3::Y, DVec3::Z]
+            .iter()
+            .any(|axis| normal.distance(*axis) < 2e-7)
+    }));
+    paint(&mut vmf, id, &[1; 6], None);
+    assert_eq!(
+        top_sample(
+            &angle_output(&vmf, 0).bsp.unwrap(),
+            DVec3::new(-32.0, 0.0, 160.0)
+        ),
+        top_sample(
+            &angle_output(&vmf, 90).bsp.unwrap(),
+            DVec3::new(-32.0, 0.0, 160.0)
+        )
+    );
+    let solid = vmf
+        .world
+        .solids
+        .iter_mut()
+        .find(|solid| solid.id == id)
+        .unwrap();
+    for side in &mut solid.sides {
+        side.smoothing_groups = Some(
+            if map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99 {
+                1
+            } else {
+                0
+            },
+        );
+    }
+    let mixed = angle_output(&vmf, 90).bsp.unwrap();
+    let mixed = corner_normals(&mixed, DVec3::new(64.0, 64.0, 160.0));
+    assert_eq!(
+        mixed
+            .iter()
+            .filter(|normal| normal.distance(DVec3::Z) < 2e-7)
+            .count(),
+        1
+    );
+    assert_eq!(
+        mixed
+            .iter()
+            .filter(|normal| normal.distance((DVec3::X + DVec3::Y).normalize()) < 2e-7)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn automatic_cylinder_sides_smooth_at_their_angle_and_invalid_settings_preserve_output() {
+    use map_core::primitive::{self, Axis, Shape, Spec};
+    let mut document = Document::new(common::room());
+    document
+        .edit("cylinder", |tx| {
+            primitive::create(
+                tx,
+                &Spec {
+                    shape: Shape::Cylinder,
+                    axis: Axis::Z,
+                    segments: 12,
+                    mins: DVec3::new(-64.0, -64.0, 32.0),
+                    maxs: DVec3::new(64.0, 64.0, 160.0),
+                    material: "dev/dev_measuregeneric01".into(),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let source = document.vmf().clone();
+    assert_eq!(angle_output(document.vmf(), 29).stats.smoothed_faces, 0);
+    assert!(angle_output(document.vmf(), 30).stats.smoothed_faces >= 12);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("previous.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    let result = compiler::compile_with_options(
+        document.vmf(),
+        &common::empty_game(),
+        Options {
+            lighting: LightingMode::DirectLdr,
+            smoothing_angle: 91,
+            ..Default::default()
+        },
+    );
+    assert!(result.report.has_errors() && !result.write(&path).unwrap());
+    assert_eq!(std::fs::read(path).unwrap(), b"previous BSP");
+    let fullbright = compiler::compile_with_options(
+        document.vmf(),
+        &common::empty_game(),
+        Options {
+            smoothing_angle: 45,
+            ..Default::default()
+        },
+    );
+    assert_eq!(fullbright.stats.smoothing_angle, 0);
+    assert!(
+        fullbright.bsp.unwrap().to_bytes()
+            == compiler::compile(document.vmf(), &common::empty_game())
+                .bsp
+                .unwrap()
+                .to_bytes()
+    );
+    assert_eq!(*document.vmf(), source);
 }

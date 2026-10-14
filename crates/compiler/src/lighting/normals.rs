@@ -73,6 +73,7 @@ pub(super) fn build(
     bsp: &mut Bsp,
     faces: &[Face],
     bindings: &[Option<Arc<crate::faces::SmoothingSource>>],
+    smoothing_angle: u8,
     budget: &mut Budget<'_>,
 ) -> Result<Plan, String> {
     let world = bsp
@@ -89,9 +90,10 @@ pub(super) fn build(
         return Err("Brush smoothing source bindings do not match emitted faces".into());
     }
     budget.consume(world.len())?;
-    if !world
-        .iter()
-        .any(|face| face.dispinfo < 0 && face.smoothing_groups != 0)
+    if smoothing_angle == 0
+        && !world
+            .iter()
+            .any(|face| face.dispinfo < 0 && face.smoothing_groups != 0)
     {
         return Ok(Plan::default());
     }
@@ -121,7 +123,7 @@ pub(super) fn build(
         let Some(source) = &bindings[index] else {
             continue;
         };
-        if face.dispinfo >= 0 || face.smoothing_groups == 0 {
+        if face.dispinfo >= 0 || face.smoothing_groups == 0 && smoothing_angle == 0 {
             continue;
         }
         let key = Arc::as_ptr(source) as usize;
@@ -162,6 +164,7 @@ pub(super) fn build(
         };
         targets.push((index, source_id));
     }
+    let threshold = f64::from(smoothing_angle).to_radians().cos();
     let mut fields = Vec::with_capacity(sources.len());
     for source in &sources {
         let mut shading = Vec::with_capacity(source.points.len());
@@ -173,7 +176,14 @@ pub(super) fn build(
             for &neighbor in neighbors {
                 let other = &sources[neighbor];
                 let common = source.groups & other.groups;
-                if std::ptr::eq(source, other) || common != 0 && common & HARD_GROUPS == 0 {
+                let automatic = source.groups == 0
+                    && other.groups == 0
+                    && smoothing_angle != 0
+                    && source.normal.dot(other.normal) + 1e-6 >= threshold;
+                if std::ptr::eq(source, other)
+                    || automatic
+                    || common != 0 && common & HARD_GROUPS == 0
+                {
                     sum += other.normal;
                 }
             }

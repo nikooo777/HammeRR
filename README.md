@@ -188,6 +188,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Authored smoothing on a brush cube in Counter-Strike: Source](docs/images/compiled-brush-smoothing.png) |
 | Blend baked lighting across selected brush faces with shared smoothing groups. |
 
+| Angle smoothing |
+| --- |
+| ![Automatic brush smoothing on a cylinder in Counter-Strike: Source](docs/images/compiled-angle-smoothing.png) |
+| Smooth unassigned brush faces with a shared build angle. |
+
 | Bounced light |
 | --- |
 | ![Reflected light beneath a shelf in Counter-Strike: Source](docs/images/compiled-bounce.png) |

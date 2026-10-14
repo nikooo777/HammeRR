@@ -12,6 +12,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Physics bodies**: **CS:S engine physics** if the map needs physics bodies.
    - **Visibility quality**: **Fast (conservative)** for a quick build, or **Detailed (portal clipping)** to remove more hidden areas from visible sets.
    - **Indirect light**: **Direct only** (default) or **One diffuse bounce** to reflect light from world brushes and terrain.
+   - **Brush smoothing angle**: **0°** keeps unassigned brush faces flat; higher angles blend eligible neighbors. Assigned face groups keep their rules.
    - **Sampling quality**, for Direct LDR sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
@@ -61,6 +62,11 @@ Visibility quality applies to both lighting modes. It is separate from the light
 
 - **Direct only** (default): bake direct emitters and sky ambient.
 - **One diffuse bounce**: reflect direct light from world/detail brushes and terrain into other surfaces. It also reaches model ambient through the resulting lightmaps.
+
+**Brush smoothing angle** (Direct LDR only)
+
+- Whole degrees from **0** (default, flat unassigned faces) to **90**, using the input or slider. **45°** is a starting point for curved brushes.
+- Automatic blending needs two unassigned neighboring world/detail faces. Assigned smoothing/hard groups retain their rules. See [Face lighting](textures.md#smooth-by-angle).
 
 **Sampling quality** (Direct LDR only)
 
@@ -190,7 +196,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Named or animated lights, invalid falloff values and invalid sun angles fail with a diagnostic that names the object.
 
-Not yet: other light types, transparent shadows, automatic brush angle smoothing, brush-model smoothing and bump maps, multiple light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, brush-model smoothing and bump maps, multiple light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

@@ -85,6 +85,16 @@ fn result_json(result: &CompileResult) -> Value {
     })
 }
 
+#[derive(Default)]
+pub struct BuildSettingsUpdate<'a> {
+    pub lighting: Option<&'a str>,
+    pub physics: Option<&'a str>,
+    pub sky_quality: Option<&'a str>,
+    pub visibility: Option<&'a str>,
+    pub bounces: Option<u8>,
+    pub smoothing_angle: Option<u8>,
+}
+
 impl Session {
     pub fn compile_options(&self) -> compiler::Options {
         self.compilation.options
@@ -97,7 +107,7 @@ impl Session {
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let sky_choices = [compiler::SkyQuality::Fast, compiler::SkyQuality::Balanced, compiler::SkyQuality::Detailed].map(|quality| json!({"name":quality.name(), "label":quality.label(), "directions":quality.directions()}));
         let visibility_choices = [compiler::VisibilityMode::Fast, compiler::VisibilityMode::Detailed].map(|mode| json!({"name":mode.name(), "label":mode.label(), "description":mode.description()}));
-        json!({"bounces":self.compilation.options.bounces,"bounce_choices":[{"bounces":0,"label":"Direct only"},{"bounces":1,"label":"One diffuse bounce"}],"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+        json!({"smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":[{"bounces":0,"label":"Direct only"},{"bounces":1,"label":"One diffuse bounce"}],"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
@@ -133,12 +143,36 @@ impl Session {
         visibility: Option<&str>,
         bounces: Option<u8>,
     ) -> Result<Value, String> {
+        self.update_build_settings(
+            actor,
+            BuildSettingsUpdate {
+                lighting,
+                physics,
+                sky_quality,
+                visibility,
+                bounces,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn update_build_settings(
+        &mut self,
+        actor: Actor,
+        update: BuildSettingsUpdate<'_>,
+    ) -> Result<Value, String> {
+        let BuildSettingsUpdate {
+            lighting,
+            physics,
+            sky_quality,
+            visibility,
+            bounces,
+            smoothing_angle,
+        } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
-        if bounces > 1 {
-            return Err("Light bounces must be 0 or 1".into());
-        }
         let options = compiler::Options {
             bounces,
+            smoothing_angle: smoothing_angle.unwrap_or(self.compilation.options.smoothing_angle),
             visibility: visibility
                 .map(compiler::VisibilityMode::parse)
                 .transpose()?
@@ -155,7 +189,8 @@ impl Session {
                 .map(compiler::PhysicsMode::parse)
                 .transpose()?
                 .unwrap_or(self.compilation.options.physics),
-        };
+        }
+        .validate()?;
         if self.closing {
             return Err("The editor is closing".into());
         }
@@ -169,11 +204,12 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
-                    options.bounces
+                    options.bounces,
+                    options.smoothing_angle
                 ),
             );
         }
@@ -338,7 +374,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "settings":{"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "settings":{"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {
@@ -422,6 +458,30 @@ mod tests {
             assert_eq!(session.compile_settings()["sky_quality"], "fast");
             assert_eq!(session.compile_settings()["visibility"], "fast");
             assert_eq!(session.compile_settings()["bounces"], 0);
+            assert_eq!(session.compile_settings()["smoothing_angle"], 0);
+            session
+                .update_build_settings(
+                    actor,
+                    BuildSettingsUpdate {
+                        smoothing_angle: Some(30),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let selected = session.compile_settings();
+            assert!(
+                session
+                    .update_build_settings(
+                        actor,
+                        BuildSettingsUpdate {
+                            lighting: Some("direct_ldr"),
+                            smoothing_angle: Some(91),
+                            ..Default::default()
+                        }
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.compile_settings(), selected);
             session
                 .update_compile_options(actor, None, None, None, None, Some(1))
                 .unwrap();
@@ -485,6 +545,21 @@ mod tests {
             assert_eq!(session.document.vmf().write(&Default::default()), before);
             assert_eq!(session.document.revision(), revision);
             let request = session.begin_compile(actor, None).unwrap();
+            assert_eq!(
+                session.compile_status()["job"]["settings"]["smoothing_angle"],
+                30
+            );
+            assert!(
+                session
+                    .update_build_settings(
+                        actor,
+                        BuildSettingsUpdate {
+                            smoothing_angle: Some(0),
+                            ..Default::default()
+                        }
+                    )
+                    .is_err()
+            );
             assert_eq!(session.compile_status()["job"]["settings"]["bounces"], 1);
             assert!(
                 session
@@ -540,6 +615,26 @@ mod tests {
         );
         let result = session.begin_compile(Actor::User, None).unwrap().run();
         session.finish_compile(Actor::User, &result);
+        assert!(session.launch_readiness().is_ok());
+        session
+            .update_build_settings(
+                Actor::Agent,
+                BuildSettingsUpdate {
+                    smoothing_angle: Some(45),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(session.launch_readiness().is_err());
+        session
+            .update_build_settings(
+                Actor::User,
+                BuildSettingsUpdate {
+                    smoothing_angle: Some(0),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         assert!(session.launch_readiness().is_ok());
         session
             .update_compile_options(Actor::Agent, None, None, None, None, Some(1))

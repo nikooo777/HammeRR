@@ -335,6 +335,7 @@ pub struct Stats {
     pub displacement_corner_neighbor_pairs: usize,
     pub displacement_mixed_power_pairs: usize,
     pub displacement_half_edge_pairs: usize,
+    pub displacement_smoothing_overrides: usize,
     pub displacement_lod_disabled_vertices: usize,
     pub displacement_lod_snapped_vertices: usize,
     pub clusters: usize,
@@ -467,6 +468,11 @@ fn build(
         .iter()
         .map(|terrain| terrain.triangles.len())
         .sum();
+    output.stats.displacement_smoothing_overrides = map
+        .terrains
+        .iter()
+        .filter(|terrain| terrain.smoothing_angle.is_some())
+        .count();
     for info in map.materials.iter().filter(|m| !m.found) {
         output.report.diagnostics.push(Diagnostic::warning(
             format!("material {} was not found", info.name),

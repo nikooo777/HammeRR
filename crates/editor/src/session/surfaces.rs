@@ -1026,3 +1026,104 @@ mod tests {
         assert!(session.surface_sample().is_none());
     }
 }
+#[test]
+fn terrain_smoothing_preview_repairs_fields_and_preserves_geometry_for_both_actors() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                actor,
+                glam::DVec3::ZERO,
+                glam::DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = FaceId { solid, side };
+        session.create_terrain(actor, &[face], 2, 0).unwrap();
+        let source = session.document().vmf().clone();
+        let before = session
+            .terrain_grids(&[face], false)
+            .unwrap()
+            .remove(0)
+            .mesh;
+        session
+            .preview_terrain_edit(
+                actor,
+                &[face],
+                map_core::displacement::Operation::Smoothing(Some(45.5)),
+            )
+            .unwrap();
+        let preview = session.terrain_grids(&[face], true).unwrap().remove(0);
+        assert_eq!(preview.smoothing_angle, Some(45.5));
+        assert_eq!(preview.mesh, before);
+        let token = session.face_preview_token();
+        assert!(
+            session
+                .preview_terrain_edit(
+                    actor,
+                    &[face],
+                    map_core::displacement::Operation::Smoothing(Some(181.0))
+                )
+                .is_err()
+        );
+        assert_eq!(session.face_preview_token(), token);
+        session.commit_face_preview(actor).unwrap();
+        assert_eq!(
+            session.document().undo_labels().next(),
+            Some("edit terrain border smoothing")
+        );
+        session.undo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &source);
+        session
+            .edit(actor, "invalid smooth field", |tx| {
+                tx.solid_mut(solid)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap()
+                    .displacement
+                    .as_mut()
+                    .unwrap()
+                    .extra_properties
+                    .set("smooth", "invalid");
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            session.terrain_grids(&[face], false).unwrap()[0]
+                .smoothing_error
+                .is_some()
+        );
+        session
+            .preview_terrain_edit(
+                actor,
+                &[face],
+                map_core::displacement::Operation::Smoothing(None),
+            )
+            .unwrap();
+        assert!(
+            session.terrain_grids(&[face], true).unwrap()[0]
+                .smoothing_error
+                .is_none()
+        );
+        session.cancel_face_preview();
+        assert!(
+            session.terrain_grids(&[face], false).unwrap()[0]
+                .smoothing_error
+                .is_some()
+        );
+    }
+}

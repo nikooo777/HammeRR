@@ -601,7 +601,7 @@ pub(crate) fn bake(
     }
 
     if !map.terrains.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Direct LDR shares terrain border normals across verified full/half edges, using each surface’s Automatic, hard-border or angle-limit choice; other fractional spans and subdivision generation remain unfinished", None, None));
     }
     report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, HDR and prop lightmaps remain unfinished", None, None));
     let count: usize = plans

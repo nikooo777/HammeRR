@@ -318,9 +318,9 @@ Not yet: baked prop lighting, prop shadows and exact placement in the BSP tree.
 
 Create flat terrain with [Terrain grid and Create terrain](terrain.md), or open imported patches. Connected terrain can keep its lighting continuous across patch seams.
 
-1. Click **Open…** and choose a VMF with adjacent terrain patches. Their powers and complete edge grids must match.
+1. Click **Open…** and choose a VMF with adjacent terrain patches. Their complete edges or whole-to-half borders must match at common samples.
 2. Open **Build settings…** and choose **Direct LDR**. Add a light or sun using **Place entity** if the map has none.
-3. Click **Close**, then **Compile** or **Run Map**. Normal sewing happens automatically, and the viewport uses it too.
+3. Click **Close**, then **Compile** or **Run Map**. Border normal blending follows each terrain surface's **Automatic**, **Hard borders** or **Angle limit** choice, and the viewport uses the same rules.
 4. Open **Build details…** and check **Neighbor pairs**. Unmatched or ambiguous edges are listed in **Diagnostics**.
 
 ![Continuous baked lighting across rotated terrain patches](images/terrain-seams.png)
@@ -329,7 +329,7 @@ Create flat terrain with [Terrain grid and Create terrain](terrain.md), or open 
 - Terrain doesn't seal the map, and its parent brush doesn't become a solid box.
 - With engine physics, terrain gets collision meshes.
 - Neighboring patches that share a full edge or exact whole-to-half spans and matching coarse samples are linked in the BSP, including different powers. Compilation disables unsupported fine vertices and snaps them onto the compatible surface; lighting and physics use that geometry. Ambiguous edges and mismatched coarse heights stay unlinked, with a diagnostic.
-- Direct LDR lights terrain of every size, with smooth normals sewn across matching equal-power full edges, and raised terrain shades the world beneath it. Terrain with unlit materials needs **Fullbright** for now.
+- Direct LDR lights terrain of every size, with border normals blended across matching full/half edges according to each terrain surface’s smoothing choice, and raised terrain shades the world beneath it. Terrain with unlit materials needs **Fullbright** for now.
 
 Corner-only contacts receive reciprocal native lists when base and displaced corners match, including different powers. **Build details…** reports **Corner pairs** separately from full-edge **Neighbor pairs**.
 
@@ -337,7 +337,7 @@ Corner-only contacts receive reciprocal native lists when base and displaced cor
 
 Imported grids marked as already subdivided compile their saved vertex rows. Building does not generate new subdivision geometry.
 
-Not yet: generating subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles and other fractional edge spans. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
+Not yet: generating subdivision, removed triangles, terrain on entities or detail brushes, other fractional edge spans. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
 
 ## Overlays
 

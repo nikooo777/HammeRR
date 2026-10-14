@@ -9,12 +9,14 @@ pub mod edit;
 pub mod neighbors;
 pub mod resample;
 pub mod sew;
+pub mod smoothing;
 
 #[derive(Debug, Clone)]
 pub enum Operation {
     Resolution(u32),
     Sewn(Box<source_formats::vmf::DispInfo>),
     Collision(collision::Settings),
+    Smoothing(Option<f64>),
     Sculpt {
         brush: brush::Brush,
         operation: brush::Sculpt,

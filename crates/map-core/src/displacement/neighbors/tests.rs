@@ -1,6 +1,60 @@
 use super::*;
 
 #[test]
+fn terrain_border_smoothing_honors_both_angle_limits_and_exact_boundaries() {
+    let a = patch(2, 0, 0.0, 0.0);
+    let b = patch(4, 3, 128.0, 0.0);
+    let planar = |points: &[DVec3]| {
+        points
+            .iter()
+            .map(|point| DVec3::new(point.x, point.y, 16.0 + (point.x - 128.0).abs()))
+            .collect::<Vec<_>>()
+    };
+    let pa = planar(&a.1);
+    let pb = planar(&b.1);
+    let grids = [
+        SurfaceGrid {
+            power: 2,
+            corners: a.0,
+            positions: &pa,
+        },
+        SurfaceGrid {
+            power: 4,
+            corners: b.0,
+            positions: &pb,
+        },
+    ];
+    let pairs = find_mixed(&grids, &mut |_| Ok(())).unwrap().pairs;
+    let pair = pairs[0];
+    let local = vertex_normals(&grids, &[], &mut |_| Ok(())).unwrap();
+    for (angles, sewn) in [
+        ([None, None], true),
+        ([Some(0.0), None], false),
+        ([Some(89.0), Some(180.0)], false),
+        ([Some(90.0), Some(90.0)], true),
+        ([Some(90.0), Some(89.0)], false),
+    ] {
+        let normals =
+            vertex_normals_with_smoothing(&grids, &pairs, &angles, &mut |_| Ok(())).unwrap();
+        for (i, j) in common_edge_indices(2, pair.first_edge, 4, pair.second_edge).unwrap() {
+            if sewn {
+                assert_eq!(normals[0][i], normals[1][j]);
+            } else {
+                assert_eq!(normals[0][i], local[0][i]);
+                assert_eq!(normals[1][j], local[1][j]);
+            }
+        }
+    }
+    for angles in [
+        vec![None],
+        vec![Some(f64::NAN), None],
+        vec![Some(181.0), None],
+    ] {
+        assert!(vertex_normals_with_smoothing(&grids, &pairs, &angles, &mut |_| Ok(())).is_err());
+    }
+}
+
+#[test]
 fn mixed_edges_match_only_shared_coarse_samples_and_share_their_normals() {
     let a = patch(2, 1, 0.0, 0.0);
     let b = patch(4, 3, 128.0, 0.0);

@@ -1027,7 +1027,7 @@ fn invalid_or_unsupported_terrain_preserves_previous_output() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("existing.bsp");
     std::fs::write(&path, b"previous BSP").unwrap();
-    for case in 0..6 {
+    for case in 0..7 {
         let mut invalid = vmf.clone();
         let solid = invalid
             .world
@@ -1051,6 +1051,7 @@ fn invalid_or_unsupported_terrain_preserves_previous_output() {
                 disp.normals.as_mut().unwrap()[0].pop();
             }
             5 => disp.triangle_tags = Some(vec![vec![0x20; 8]; 4]),
+            6 => disp.extra_properties.set("smooth", "NaN"),
             _ => unreachable!(),
         }
         let source = invalid.write(&Default::default());
@@ -1064,6 +1065,34 @@ fn invalid_or_unsupported_terrain_preserves_previous_output() {
         assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
         assert_eq!(invalid.write(&Default::default()), source);
     }
+}
+
+#[test]
+fn authored_terrain_angles_emit_native_fields_without_changing_grid_or_topology() {
+    let mut vmf = adjacent_fixture([2, 4], [1, 3]);
+    let baseline = compiler::compile(&vmf, &common::empty_game()).bsp.unwrap();
+    for solid in &mut vmf.world.solids {
+        for side in &mut solid.sides {
+            if let Some(info) = side.displacement.as_mut() {
+                info.extra_properties.set("smooth", "45.5");
+            }
+        }
+    }
+    let source = vmf.clone();
+    let result = compiler::compile(&vmf, &common::empty_game());
+    assert!(!result.report.has_errors(), "{:?}", result.report);
+    assert_eq!(result.stats.displacement_smoothing_overrides, 2);
+    let bsp = result.bsp.unwrap();
+    let data = bsp.displacements().unwrap().unwrap();
+    let old = baseline.displacements().unwrap().unwrap();
+    assert!(data.infos.iter().all(|info| info.smoothing_angle == 45.5));
+    assert_eq!(data.vertices, old.vertices);
+    assert_eq!(data.triangles, old.triangles);
+    for (a, b) in data.infos.iter().zip(&old.infos) {
+        assert_eq!(a.edges, b.edges);
+        assert_eq!(a.allowed_vertices, b.allowed_vertices);
+    }
+    assert_eq!(vmf, source);
 }
 
 #[test]

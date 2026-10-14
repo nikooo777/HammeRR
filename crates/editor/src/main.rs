@@ -9962,6 +9962,24 @@ mod tests {
         assert!(window.get_ready(), "{}", window.get_message());
         window.invoke_apply();
         assert_eq!(*lock(&shared).document().vmf(), before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(10);
+        window.set_smoothing_index(2);
+        window.set_smoothing_angle("45.5".into());
+        window.invoke_edited();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-border-smoothing");
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        assert!(
+            lock(&shared)
+                .terrain_grids(&faces, true)
+                .unwrap()
+                .iter()
+                .all(|grid| grid.smoothing_angle == Some(45.5))
+        );
+        window.invoke_cancel();
+        assert_eq!(*lock(&shared).document().vmf(), before);
     }
 
     #[test]

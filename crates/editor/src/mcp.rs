@@ -6130,7 +6130,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Begin a paint-selection preview at a viewport point and return its token. Uses a circular brush on a fixed 2-pixel sample lattice, nearest visible object/face hits and a spatial picking index. Does not change selection/history until commit. Optional camera override leaves the user's camera unchanged. Width/height stay fixed during the stroke. Map, camera, selection, visibility or incompatible tool changes invalidate it. Terrain uses supporting faces; face strokes ignore point helpers. Inspect limits before large strokes."
+        description = "Begin a paint-selection preview at a viewport point and return its token. Uses a circular brush on a fixed 2-pixel sample lattice, nearest visible object/face hits and a spatial picking index. Does not change selection/history until commit. Optional camera override leaves the user's camera unchanged. Width/height stay fixed during the stroke. Map, camera, selection, visibility or incompatible tool changes invalidate it. Terrain uses actual displaced sheets; face strokes ignore point helpers. Inspect limits before large strokes."
     )]
     fn begin_paint_selection(&self, Parameters(args): Parameters<BeginPaintArgs>) -> ToolResult {
         run(|| {

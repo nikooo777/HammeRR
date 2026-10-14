@@ -227,3 +227,9 @@ python3 -B scripts/validate_terrain_corner_sewing.py --output /tmp/hammerr-terra
 ```
 
 Checks mixed-power rotated corner-only contacts, one original-value height/alpha average, untouched vertices, owned preview/Cancel, Undo/Redo/reopen, exact repeated no-ops, reciprocal native corner links and exact foreground/background builds. The existing `terrain_sewing_topology` check covers full/half borders; core sewing tests verify the shared junction average and metadata preservation.
+
+```sh
+python3 -B scripts/validate_terrain_vertices.py --output /tmp/hammerr-terrain-vertices-check
+```
+
+Checks exact vertex IDs and masks on rotated power-2/3/4 grids, single-sample sculpt/blend writes, picking, framing, guarded box selection, unknown arguments, stale topology, selection replacement, Cancel/Undo/Redo/reopen and native sample agreement through both build paths. Existing triangle picking and mask scripts cover the other selection kind; software UI tests exercise the selection-mode switch and brush flow.

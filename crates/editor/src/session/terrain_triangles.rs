@@ -23,11 +23,12 @@ pub struct Hit {
 }
 
 pub(super) struct Highlight {
-    generation: u64,
-    revision: u64,
-    token: u64,
-    powers: BTreeMap<FaceId, u32>,
+    pub(super) generation: u64,
+    pub(super) revision: u64,
+    pub(super) token: u64,
+    pub(super) powers: BTreeMap<FaceId, u32>,
     selected: BTreeSet<TriangleRef>,
+    pub(super) vertices: Option<BTreeSet<super::terrain_vertices::VertexRef>>,
 }
 
 struct Targets {
@@ -76,6 +77,16 @@ impl Session {
         targets: &[(FaceId, Vec<usize>)],
     ) -> Result<u64, String> {
         let Targets { powers, selected } = self.validate_terrain_triangle_targets(targets)?;
+        Ok(self.install_terrain_highlight(actor, powers, selected, None))
+    }
+
+    pub(super) fn install_terrain_highlight(
+        &mut self,
+        actor: Actor,
+        powers: BTreeMap<FaceId, u32>,
+        selected: BTreeSet<TriangleRef>,
+        vertices: Option<BTreeSet<super::terrain_vertices::VertexRef>>,
+    ) -> u64 {
         self.terrain_triangle_serial = self.terrain_triangle_serial.wrapping_add(1);
         let token = self.terrain_triangle_serial;
         self.terrain_triangle_highlight = Some(Highlight {
@@ -84,10 +95,11 @@ impl Session {
             token,
             powers,
             selected,
+            vertices,
         });
         self.scene_serial += 1;
-        self.log(actor, "highlighted terrain triangles");
-        Ok(token)
+        self.log(actor, "highlighted terrain selection");
+        token
     }
 
     pub fn clear_terrain_triangle_highlight(&mut self, token: Option<u64>) -> Result<(), String> {
@@ -106,7 +118,7 @@ impl Session {
         Ok(())
     }
 
-    fn terrain_highlight_stale(&self, highlight: &Highlight) -> bool {
+    pub(super) fn terrain_highlight_stale(&self, highlight: &Highlight) -> bool {
         if highlight.generation != self.document_generation()
             || highlight.revision != self.document.revision()
         {
@@ -126,14 +138,14 @@ impl Session {
 
     pub fn terrain_triangle_highlight_json(&self) -> Value {
         match &self.terrain_triangle_highlight {
-            None => json!({"token":null,"stale":false,"triangles":[]}),
+            None => json!({"token":null,"stale":false,"kind":null,"triangles":[],"vertices":[]}),
             Some(highlight) => {
-                json!({"token":highlight.token.to_string(),"stale":self.terrain_highlight_stale(highlight),"triangles":highlight.selected.iter().map(|selected|json!({"solid":selected.face.solid,"side":selected.face.side,"triangle":selected.triangle})).collect::<Vec<_>>()})
+                json!({"token":highlight.token.to_string(),"stale":self.terrain_highlight_stale(highlight),"kind":if highlight.vertices.is_some() {"vertices"} else {"triangles"},"triangles":highlight.selected.iter().map(|selected|json!({"solid":selected.face.solid,"side":selected.face.side,"triangle":selected.triangle})).collect::<Vec<_>>(),"vertices":highlight.vertices.iter().flatten().map(|selected|json!({"solid":selected.face.solid,"side":selected.face.side,"vertex":selected.vertex})).collect::<Vec<_>>()})
             }
         }
     }
 
-    fn hidden_terrain_tool_faces(&mut self) -> HashSet<FaceId> {
+    pub(super) fn hidden_terrain_tool_faces(&mut self) -> HashSet<FaceId> {
         let mut hidden = HashSet::new();
         if !self.view.tool_textures {
             let faces = self
@@ -261,6 +273,14 @@ impl Session {
     }
 
     pub fn append_terrain_triangle_guides(&mut self, mesh: &mut render::SceneMesh) {
+        if self
+            .terrain_triangle_highlight
+            .as_ref()
+            .is_some_and(|highlight| highlight.vertices.is_some())
+        {
+            self.append_terrain_vertex_guides(mesh);
+            return;
+        }
         let Some(highlight) = &self.terrain_triangle_highlight else {
             return;
         };
@@ -310,12 +330,14 @@ pub struct VertexMask {
 
 impl VertexMask {
     pub fn summary(&self) -> String {
+        let count = self
+            .faces
+            .iter()
+            .map(|face| face.vertices.len())
+            .sum::<usize>();
         format!(
-            "{} vertices on {} surface{}",
-            self.faces
-                .iter()
-                .map(|face| face.vertices.len())
-                .sum::<usize>(),
+            "{count} {} on {} surface{}",
+            if count == 1 { "vertex" } else { "vertices" },
             self.faces.len(),
             if self.faces.len() == 1 { "" } else { "s" }
         )
@@ -336,14 +358,36 @@ impl Session {
         let highlight = self
             .terrain_triangle_highlight
             .as_ref()
-            .ok_or("Select terrain triangles before using a vertex mask")?;
+            .ok_or("Select terrain triangles or vertices before using a vertex mask")?;
         if token.is_some_and(|token| token != highlight.token) {
             return Err("Terrain vertex mask was replaced; inspect the current selection".into());
         }
         if self.terrain_highlight_stale(highlight) {
-            return Err("Terrain vertex mask is stale; select triangles again".into());
+            return Err("Terrain vertex mask is stale; select terrain components again".into());
         }
         let faces = faces.iter().copied().collect::<BTreeSet<_>>();
+        if let Some(vertices) = &highlight.vertices {
+            let mut selected = BTreeMap::<FaceId, Vec<usize>>::new();
+            for vertex in vertices {
+                if faces.contains(&vertex.face) {
+                    selected.entry(vertex.face).or_default().push(vertex.vertex);
+                }
+            }
+            if selected.is_empty() {
+                return Err("No highlighted vertices on these terrain faces".into());
+            }
+            return Ok(VertexMask {
+                token: highlight.token,
+                faces: selected
+                    .into_iter()
+                    .map(|(face, vertices)| VertexMaskFace {
+                        face,
+                        vertices,
+                        triangles: 0,
+                    })
+                    .collect(),
+            });
+        }
         let indices = highlight
             .powers
             .iter()
@@ -430,7 +474,7 @@ impl Session {
     }
 }
 
-pub struct VolumeTriangles {
+pub struct VolumeSelection {
     pub token: u64,
     pub targets: Vec<(FaceId, Vec<usize>)>,
 }
@@ -441,10 +485,10 @@ impl Session {
         actor: Actor,
         faces: &[FaceId],
         token: u64,
-    ) -> Result<VolumeTriangles, String> {
+    ) -> Result<VolumeSelection, String> {
         let targets = self.terrain_triangles_in_volume(faces, token)?;
         let token = self.highlight_terrain_triangles(actor, &targets)?;
-        Ok(VolumeTriangles { token, targets })
+        Ok(VolumeSelection { token, targets })
     }
 
     pub fn terrain_triangles_in_volume(

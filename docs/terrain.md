@@ -58,7 +58,7 @@ Limits: the current box token, source map and rule must still match. A replaced/
 
 1. Open **Terrain triangles…**, select a subset across surfaces, then click **Use selection**. The dialog closes and keeps its yellow outlines without changing the map.
 2. Select the terrain faces to edit and open **Edit terrain…**. Choose **Raise / lower**, **Flatten**, **Smooth**, **Noise**, **Paint blend**, **Fill blend** or **Invert blend**.
-3. Enable **Affect only highlighted triangle vertices**. **Selection mask** reports the affected vertex and surface counts. Faces outside the retained selection stay fixed.
+3. Enable **Affect only selected terrain vertices**. **Selection mask** reports the affected vertex and surface counts. Faces outside the retained selection stay fixed.
 4. Set the brush controls, then click **Preview**. Radius and falloff still apply. Smooth reads the original neighbors, but writes only to selected vertices. Fill and invert use the same selection mask.
 5. Click **Apply** or **Cancel**. An applied masked edit keeps its selection available for the next brush action; **Undo** restores the original source.
 
@@ -66,7 +66,23 @@ Limits: the current box token, source map and rule must still match. A replaced/
 
 ![A terrain edit confined to highlighted vertices](images/terrain-masked.png)
 
-Limits: the mask is the union of each selected triangle's three vertices. Shared vertices can reshape adjoining triangles or spread a blend across them. Geometry and alpha outside that union stay fixed; other source flags, tags and metadata remain. Grid resolution, sewing, border shading and collision controls use their complete-surface scopes. Replaced mask tokens, topology previews and external source changes reject the masked brush; retain a fresh selection and reopen **Edit terrain…**. Saving/reopening clears the mask's validity; it is not stored in the VMF.
+Limits: a triangle selection masks the union of its three vertices; an explicit vertex selection masks only its checked IDs. Shared vertices can reshape adjoining triangles or spread a blend across them. Geometry and alpha outside the mask stay fixed; other source flags, tags and metadata remain. Grid resolution, sewing, border shading and collision controls use their complete-surface scopes. Replaced mask tokens, topology previews and external source changes reject the masked brush; retain a fresh selection and reopen **Edit terrain…**. Saving/reopening clears the mask's validity; it is not stored in the VMF.
+
+## Select exact vertices
+
+Choose individual terrain samples for a precise height or blend edit.
+
+1. Select terrain faces and open **Terrain triangles…**. Under **Selection type**, choose **Vertices · exact brush masks**.
+2. Choose **Surface**, then tick vertices by ID, row and column. Each row shows its world coordinates and blend value. Switching **Surface** retains its checks. **Select surface** checks every vertex on that surface; **Clear selection** clears the batch.
+3. To choose from the map, click **Pick vertex in viewport…**. Click visible selected terrain; the nearest corner of the hit triangle is checked. **Escape** or **Cancel picking** keeps the prior selection. Cyan markers show checked vertices. **Frame selected** frames visible checked samples.
+4. For a box selection, open **Select a volume…**, set its coordinates and click **Preview matches**. Return to the vertex dialog and click **Select in volume**. Both box rules select point samples inside the box.
+5. Click **Use selection**, then open **Edit terrain…**. Choose a sculpting or blend operation and enable **Affect only selected terrain vertices**. Set the brush controls, then **Preview → Apply / Cancel**. Only checked samples are written; radius and falloff still apply. **Undo** restores the source.
+
+![Explicit terrain vertex selection controls](images/terrain-explicit-vertices.png)
+
+![Three individual terrain samples raised with an exact vertex mask](images/terrain-selected-vertices.png)
+
+Limits: 1–16 surfaces at powers 2–4, with row-major IDs from 0–24, 0–80 or 0–288. Start-corner rotation determines their world placement. Changing **Selection type** clears this dialog's selection. Triangle and vertex selections share one retained mask; a new selection replaces the old one. Compatible geometry previews move the markers; changed topology, external edits, Undo/Redo or reopening stale them. Hidden owners and tool-material visibility apply to picking, guides, framing and box queries. Moving one sample reshapes adjoining triangles. Live brush strokes and direct vertex drag handles remain planned.
 
 ## Paint a material blend
 

@@ -3991,7 +3991,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     app.set_message(match result {
                         Ok(id) => {
                             let _ = controller.window.show();
-                            format!("Selected terrain triangle {id}.").into()
+                            format!("Selected terrain component {id}.").into()
                         }
                         Err(error) => error.into(),
                     });
@@ -10370,6 +10370,47 @@ mod tests {
         assert_eq!(alpha.iter().filter(|&&value| value == 200.0).count(), 3);
         window.invoke_cancel();
         lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), source);
+        picker.initialize(&mut lock(&shared)).unwrap();
+        picker.window.set_kind_index(1);
+        picker.window.invoke_kind_changed();
+        picker.window.invoke_toggle_triangle(12, true);
+        picker.window.show().unwrap();
+        save_ui_snapshot(picker.window.window(), "terrain-explicit-vertices");
+        picker.window.invoke_frame_selected();
+        picker.window.invoke_pick_triangle();
+        let point = before.positions[12];
+        assert_eq!(
+            picker
+                .select_at_ray(
+                    &mut lock(&shared),
+                    &Ray {
+                        origin: point + DVec3::new(0.01, 0.01, 64.0),
+                        direction: -DVec3::Z
+                    }
+                )
+                .unwrap(),
+            12
+        );
+        picker.window.invoke_use_selection();
+        let mask = lock(&shared).terrain_vertex_mask(&[face], None).unwrap();
+        assert_eq!(mask.faces[0].vertices, [12]);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(1);
+        window.set_use_mask(true);
+        window.set_radius("8192".into());
+        window.set_amount("16".into());
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        let draft = lock(&shared)
+            .terrain_grids(&[face], true)
+            .unwrap()
+            .remove(0)
+            .mesh;
+        for (index, (a, b)) in before.positions.iter().zip(&draft.positions).enumerate() {
+            assert_eq!(a != b, index == 12);
+        }
+        window.invoke_cancel();
         assert_eq!(*lock(&shared).document().vmf(), source);
     }
 

@@ -714,7 +714,7 @@ export component TerrainWindow inherits Window {
             ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew borders & corners", "Border smoothing"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
             if root.operation-index >= 1 && root.operation-index <= 7: VerticalLayout {
                 spacing: 4px;
-                CheckBox {text:"Affect only highlighted triangle vertices";checked <=> root.use-mask;enabled:root.mask-available && !root.stale;toggled=>{root.edited();}}
+                CheckBox {text:"Affect only selected terrain vertices";checked <=> root.use-mask;enabled:root.mask-available && !root.stale;toggled=>{root.edited();}}
                 Text {text:root.mask-label;wrap:word-wrap;color:#a7adb8;font-size:12px;}
             }
             if root.operation-index == 0: VerticalLayout {
@@ -2249,7 +2249,7 @@ export component AppWindow inherits Window {
                                 Button {text:"Cancel picking"; clicked=>{root.cancel-terrain-center-pick();}}
                             }
                             if root.terrain-triangle-picking: VerticalLayout {
-                                Text {text:"Click selected terrain to select a triangle. Escape cancels.";wrap:word-wrap;color:#91b9e9;}
+                                Text {text:"Click selected terrain to pick a triangle or vertex. Escape cancels.";wrap:word-wrap;color:#91b9e9;}
                                 Button {text:"Cancel picking";clicked=>{root.cancel-terrain-triangle-pick();}}
                             }
                             if !root.can-remove-terrain: VerticalLayout {

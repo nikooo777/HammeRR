@@ -193,6 +193,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Automatic brush smoothing on a cylinder in Counter-Strike: Source](docs/images/compiled-angle-smoothing.png) |
 | Smooth unassigned brush faces with a shared build angle. |
 
+| Brush entity lightmaps |
+| --- |
+| ![Baked direct lighting on moving brush entities](docs/images/compiled-brush-models.png) |
+| Carry baked lighting with doors and moving brushes. |
+
 | Switchable lights |
 | --- |
 | ![Named lights switched on in Counter-Strike: Source](docs/images/light-styles-on.png) |

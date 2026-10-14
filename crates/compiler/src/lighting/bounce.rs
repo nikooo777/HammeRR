@@ -68,7 +68,7 @@ pub(super) fn bake(
     colors: &mut [RgbExp32],
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
-    for plan in ctx.plans {
+    for plan in ctx.plans.iter().filter(|plan| plan.model == 0) {
         budget.consume(1)?;
         let info = ctx.infos[ctx.faces[plan.face].texinfo as usize];
         let material = ctx
@@ -93,7 +93,7 @@ pub(super) fn bake(
         rays: 0,
         samples: 0,
     };
-    for plan in ctx.plans {
+    for plan in ctx.plans.iter().filter(|plan| plan.model == 0) {
         budget.consume(1)?;
         let first = usize::try_from(ctx.faces[plan.face].light_offset)
             .ok()

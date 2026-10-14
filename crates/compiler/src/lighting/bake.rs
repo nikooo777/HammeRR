@@ -24,6 +24,8 @@ pub(crate) struct BakeStats {
     pub styled_faces: usize,
     pub light_style_maps: usize,
     pub faces: usize,
+    pub models: usize,
+    pub model_faces: usize,
     pub samples: usize,
     pub bytes: usize,
     pub work: usize,
@@ -40,6 +42,8 @@ pub(crate) struct BakeStats {
 
 pub(super) struct Plan {
     pub face: usize,
+    pub model: usize,
+    offset: DVec3,
     surface: Surface,
 }
 
@@ -87,7 +91,7 @@ impl Plan {
                 } else {
                     *normal
                 };
-                Ok((point, shading))
+                Ok((point + self.offset, shading))
             }
             Surface::Terrain(plan) => {
                 budget.consume(1)?;
@@ -254,13 +258,18 @@ fn lights(
     Ok(lights)
 }
 
-fn occluders(map: &Map, report: &mut Report, control: &Control) -> Result<Vec<Occluder>, String> {
+fn occluders(
+    map: &Map,
+    entity: usize,
+    report: &mut Report,
+    control: &Control,
+) -> Result<Vec<Occluder>, String> {
     let mut result = Vec::new();
-    for brush in &map.brushes {
+    let offset = map.entities[entity].origin.unwrap_or(DVec3::ZERO);
+    for &index in &map.entities[entity].brushes {
         control.checkpoint()?;
-        if brush.entity != 0
-            || brush.contents & (contents::SOLID | contents::WINDOW | contents::GRATE) == 0
-        {
+        let brush = &map.brushes[index];
+        if brush.contents & (contents::SOLID | contents::WINDOW | contents::GRATE) == 0 {
             continue;
         }
         if brush.contents & (contents::WINDOW | contents::TRANSLUCENT | contents::GRATE) != 0 {
@@ -274,7 +283,7 @@ fn occluders(map: &Map, report: &mut Report, control: &Control) -> Result<Vec<Oc
                 let plane = map.planes.get(side.plane);
                 Plane {
                     normal: plane.normal,
-                    dist: plane.dist,
+                    dist: plane.dist + plane.normal.dot(offset),
                 }
             })
             .collect();
@@ -284,7 +293,8 @@ fn occluders(map: &Map, report: &mut Report, control: &Control) -> Result<Vec<Oc
             .filter(|side| !side.bevel)
             .map(|side| map.texinfos.infos[side.texinfo].flags & (surf::SKY | surf::SKY2D) != 0)
             .collect();
-        result.push(Occluder::new(planes, brush.mins, brush.maxs)?.with_sky(sky)?);
+        result
+            .push(Occluder::new(planes, brush.mins + offset, brush.maxs + offset)?.with_sky(sky)?);
     }
     Ok(result)
 }
@@ -295,13 +305,9 @@ fn plans(
     faces: &mut [Face],
     infos: &mut Vec<TexInfo>,
     normals: &mut super::normals::Plan,
-    control: &Control,
+    scopes: &[super::models::Scope],
     budget: &mut Budget<'_>,
 ) -> Result<Vec<Plan>, String> {
-    let models = bsp.records::<Model>().map_err(|error| error.to_string())?;
-    let world = models
-        .first()
-        .ok_or("Direct lighting needs a world model")?;
     let planes = bsp
         .records::<bsp::Plane>()
         .map_err(|error| error.to_string())?;
@@ -312,87 +318,94 @@ fn plans(
     let mut sample_records: usize = 0;
     let mut terrain_fields =
         super::terrain::fields(&map.terrains, &mut |amount| budget.consume(amount))?;
-    for (index, face) in faces
-        .iter_mut()
-        .enumerate()
-        .skip(world.first_face as usize)
-        .take(world.face_count as usize)
-    {
-        control.checkpoint()?;
-        let info = infos[face.texinfo as usize];
-        if face.dispinfo >= 0 {
-            let terrain = &map.terrains[face.dispinfo as usize];
-            let material = map.materials.get(map.texdata[info.texdata as usize]);
-            if !material.lit() {
-                return Err(format!(
-                    "Direct LDR terrain needs a lit material on solid:{} side:{}; use Fullbright for unlit terrain",
-                    terrain.solid, terrain.side
-                ));
+    for (model, scope) in scopes.iter().enumerate() {
+        for (local, face) in faces[scope.faces.clone()].iter_mut().enumerate() {
+            let index = scope.faces.start + local;
+            budget.consume(0)?;
+            let info = infos[face.texinfo as usize];
+            if face.dispinfo >= 0 {
+                let terrain = &map.terrains[face.dispinfo as usize];
+                let material = map.materials.get(map.texdata[info.texdata as usize]);
+                if !material.lit() {
+                    return Err(format!(
+                        "Direct LDR terrain needs a lit material on solid:{} side:{}; use Fullbright for unlit terrain",
+                        terrain.solid, terrain.side
+                    ));
+                }
+                let dimensions = TerrainPlan::dimensions(terrain, &info).map_err(|error| {
+                    format!("solid:{} side:{}: {error}", terrain.solid, terrain.side)
+                })?;
+                sample_records = sample_records
+                    .checked_add(dimensions[0] * dimensions[1] + 1)
+                    .filter(|&count| count <= MAX_LIGHTING_BYTES / size_of::<RgbExp32>())
+                    .ok_or("Direct LDR lighting exceeds Source's 16 MiB limit")?;
+                let terrain = TerrainPlan::new(
+                    terrain,
+                    &terrain_fields.positions[face.dispinfo as usize],
+                    std::mem::take(&mut terrain_fields.normals[face.dispinfo as usize]),
+                    dimensions,
+                    &mut |amount| budget.consume(amount),
+                )?;
+                let texinfo = i16::try_from(infos.len())
+                    .map_err(|_| "Terrain lighting texinfo count exceeds native short limits")?;
+                infos.push(TexInfo {
+                    flags: info.flags & !(surf::NOLIGHT | surf::BUMPLIGHT),
+                    ..info
+                });
+                face.texinfo = texinfo;
+                face.lightmap_size = dimensions.map(|value| (value - 1) as i32);
+                if model != 0 {
+                    return Err("Terrain lighting requires world-model faces".into());
+                }
+                plans.push(Plan {
+                    face: index,
+                    model,
+                    offset: scope.offset,
+                    surface: Surface::Terrain(terrain),
+                });
+                continue;
             }
-            let dimensions = TerrainPlan::dimensions(terrain, &info).map_err(|error| {
-                format!("solid:{} side:{}: {error}", terrain.solid, terrain.side)
-            })?;
+            if info.flags & (surf::NOLIGHT | surf::SKY | surf::SKY2D | surf::WARP | surf::NODRAW)
+                != 0
+            {
+                continue;
+            }
+            let plane = planes[face.plane as usize];
+            let plane = Plane {
+                normal: DVec3::from_array(plane.normal.map(f64::from)),
+                dist: f64::from(plane.dist),
+            };
+            let frame = LuxelFrame::new(plane, &info, face.lightmap_mins, face.lightmap_size)?;
             sample_records = sample_records
-                .checked_add(dimensions[0] * dimensions[1] + 1)
-                .filter(|&count| count <= MAX_LIGHTING_BYTES / size_of::<RgbExp32>())
-                .ok_or("Direct LDR lighting exceeds Source's 16 MiB limit")?;
-            let terrain = TerrainPlan::new(
-                terrain,
-                &terrain_fields.positions[face.dispinfo as usize],
-                std::mem::take(&mut terrain_fields.normals[face.dispinfo as usize]),
-                dimensions,
-                &mut |amount| budget.consume(amount),
-            )?;
-            let texinfo = i16::try_from(infos.len())
-                .map_err(|_| "Terrain lighting texinfo count exceeds native short limits")?;
-            infos.push(TexInfo {
-                flags: info.flags & !(surf::NOLIGHT | surf::BUMPLIGHT),
-                ..info
-            });
-            face.texinfo = texinfo;
-            face.lightmap_size = dimensions.map(|value| (value - 1) as i32);
+                .checked_add(frame.sample_count() + 1)
+                .ok_or("Direct lighting allocation count overflow")?;
+            if sample_records > MAX_LIGHTING_BYTES / size_of::<RgbExp32>() {
+                return Err("Direct LDR lighting exceeds Source's 16 MiB limit".into());
+            }
+            let points = surfedges
+                [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
+                .iter()
+                .map(|&surfedge| {
+                    let edge = edges[surfedge.unsigned_abs() as usize].0;
+                    let vertex = edge[usize::from(surfedge < 0)];
+                    DVec3::from_array(vertices[vertex as usize].map(f64::from))
+                })
+                .collect::<Vec<_>>();
+            if points.len() < 3 || points.iter().any(|point| !point.is_finite()) {
+                return Err("Direct lighting face has invalid corners".into());
+            }
             plans.push(Plan {
                 face: index,
-                surface: Surface::Terrain(terrain),
+                model,
+                offset: scope.offset,
+                surface: Surface::Plane {
+                    frame,
+                    normal: plane.normal.normalize(),
+                    points,
+                    normals: normals.fields.remove(&index),
+                },
             });
-            continue;
         }
-        if info.flags & (surf::NOLIGHT | surf::SKY | surf::SKY2D | surf::WARP | surf::NODRAW) != 0 {
-            continue;
-        }
-        let plane = planes[face.plane as usize];
-        let plane = Plane {
-            normal: DVec3::from_array(plane.normal.map(f64::from)),
-            dist: f64::from(plane.dist),
-        };
-        let frame = LuxelFrame::new(plane, &info, face.lightmap_mins, face.lightmap_size)?;
-        sample_records = sample_records
-            .checked_add(frame.sample_count() + 1)
-            .ok_or("Direct lighting allocation count overflow")?;
-        if sample_records > MAX_LIGHTING_BYTES / size_of::<RgbExp32>() {
-            return Err("Direct LDR lighting exceeds Source's 16 MiB limit".into());
-        }
-        let points = surfedges
-            [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
-            .iter()
-            .map(|&surfedge| {
-                let edge = edges[surfedge.unsigned_abs() as usize].0;
-                let vertex = edge[usize::from(surfedge < 0)];
-                DVec3::from_array(vertices[vertex as usize].map(f64::from))
-            })
-            .collect::<Vec<_>>();
-        if points.len() < 3 || points.iter().any(|point| !point.is_finite()) {
-            return Err("Direct lighting face has invalid corners".into());
-        }
-        plans.push(Plan {
-            face: index,
-            surface: Surface::Plane {
-                frame,
-                normal: plane.normal.normalize(),
-                points,
-                normals: normals.fields.remove(&index),
-            },
-        });
     }
     Ok(plans)
 }
@@ -423,6 +436,7 @@ fn sky_visible(
     origin: DVec3,
     shadows: &ShadowIndex<Occluder>,
     terrain: &ShadowIndex<Triangle>,
+    model: &Option<ShadowIndex<Occluder>>,
     budget: &mut Budget<'_>,
 ) -> Result<bool, String> {
     budget.consume(1)?;
@@ -430,18 +444,31 @@ fn sky_visible(
     if let Some(fraction) =
         shadows.sky_fraction(origin, end, &mut |amount| budget.consume(amount))?
     {
-        Ok(!terrain.blocked(
-            origin,
-            origin.lerp(end, fraction) + direction * super::sky::SKY_HIT_BIAS,
-            &mut |amount| budget.consume(amount),
-        )?)
+        let hit = origin.lerp(end, fraction) + direction * super::sky::SKY_HIT_BIAS;
+        Ok(
+            !terrain.blocked(origin, hit, &mut |amount| budget.consume(amount))?
+                && !model_blocked(model, origin, hit, budget)?,
+        )
     } else {
         Ok(false)
     }
 }
 
+fn model_blocked(
+    model: &Option<ShadowIndex<Occluder>>,
+    start: DVec3,
+    end: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    match model {
+        Some(model) => model.blocked(start, end, &mut |amount| budget.consume(amount)),
+        None => Ok(false),
+    }
+}
+
 pub(crate) struct Settings<'a> {
     pub options: crate::Options,
+    pub model_entities: &'a [usize],
     pub smoothing_sources: &'a [Option<std::sync::Arc<crate::faces::SmoothingSource>>],
 }
 
@@ -473,7 +500,7 @@ pub(crate) fn bake(
             "Direct lighting exceeds the 8,192 world-light limit including sky ambient".into(),
         );
     }
-    let occluders = occluders(map, report, control)?;
+    let world_hulls = occluders(map, 0, report, control)?;
     let mut faces = bsp.records::<Face>().map_err(|error| error.to_string())?;
     let mut infos = bsp
         .records::<TexInfo>()
@@ -488,22 +515,41 @@ pub(crate) fn bake(
         &mut budget,
     )?;
     let normal_work = budget.work - normal_start;
+    let model_records = bsp.records::<Model>().map_err(|error| error.to_string())?;
+    let scopes = super::models::scopes(map, &model_records, settings.model_entities, faces.len())?;
     let plans = plans(
         map,
         bsp,
         &mut faces,
         &mut infos,
         &mut normals,
-        control,
+        &scopes,
         &mut budget,
     )?;
-    if bsp
-        .records::<Model>()
-        .map_err(|error| error.to_string())?
-        .len()
-        > 1
-    {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR does not bake brush-model lighting yet; only world and detail faces receive samples", None, None));
+    let mut has_receivers = vec![false; scopes.len()];
+    let mut model_faces = 0;
+    for plan in &plans {
+        has_receivers[plan.model] = true;
+        model_faces += usize::from(plan.model != 0);
+    }
+    let mut model_shadows = Vec::with_capacity(scopes.len());
+    for (model, scope) in scopes.iter().enumerate() {
+        let shadows = if model != 0 && has_receivers[model] {
+            Some(ShadowIndex::new(
+                occluders(map, scope.entity, report, control)?,
+                &mut |amount| budget.consume(amount),
+            )?)
+        } else {
+            None
+        };
+        model_shadows.push(shadows);
+    }
+    if model_faces != 0 && options.bounces != 0 {
+        report.diagnostics.push(Diagnostic::warning(
+            "Brush entities receive direct lightmaps; model bounce receivers remain unfinished",
+            None,
+            None,
+        ));
     }
     if infos.iter().any(|info| info.flags & surf::BUMPLIGHT != 0) {
         report.diagnostics.push(Diagnostic::warning("Direct LDR disables bump-light sample maps; world/detail brush smoothing is supported, while bump-light baking remains unfinished", None, None));
@@ -515,10 +561,10 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; multiple bounces, HDR and baked prop/model lightmaps remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct maps with isolated self shadows; model smoothing/bounces, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
-    let shadows = ShadowIndex::new(occluders, &mut |amount| budget.consume(amount))?;
+    let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
     let ambient_directions = super::sky::ambient_directions(sky_quality);
     let sun_directions = lights
@@ -558,6 +604,7 @@ pub(crate) fn bake(
                                     origin,
                                     &shadows,
                                     &terrain_shadows,
+                                    &model_shadows[plan.model],
                                     &mut budget,
                                 )
                             },
@@ -576,6 +623,12 @@ pub(crate) fn bake(
                                     light.origin,
                                     &mut |amount| budget.consume(amount),
                                 )?
+                                && !model_blocked(
+                                    &model_shadows[plan.model],
+                                    origin,
+                                    light.origin,
+                                    &mut budget,
+                                )?
                             {
                                 channels.add(light.style, contribution, &mut color, &mut budget)?;
                             }
@@ -590,6 +643,7 @@ pub(crate) fn bake(
                                         origin,
                                         &shadows,
                                         &terrain_shadows,
+                                        &model_shadows[plan.model],
                                         &mut budget,
                                     )
                                 },
@@ -713,6 +767,8 @@ pub(crate) fn bake(
         styled_faces,
         light_style_maps: style_maps,
         faces: plans.len(),
+        models: has_receivers.iter().skip(1).filter(|&&lit| lit).count(),
+        model_faces,
         samples: count - plans.len(),
         bytes: colors.len() * size_of::<RgbExp32>(),
         work: budget.work,

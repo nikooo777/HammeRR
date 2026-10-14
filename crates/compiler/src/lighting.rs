@@ -6,6 +6,7 @@ use crate::map::MapEntity;
 mod bake;
 mod bounce;
 mod falloff;
+mod models;
 mod normals;
 mod probes;
 mod radiance;

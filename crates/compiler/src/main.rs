@@ -123,6 +123,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lighting_bytes
     );
     println!(
+        "brush entity lightmaps: {} models · {} faces",
+        stats.lit_brush_models, stats.model_lighting_faces
+    );
+    println!(
         "light styles: {} · styled faces: {} · lightmaps: {} · switched groups: {}",
         stats.light_styles,
         stats.styled_faces,

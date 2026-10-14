@@ -101,8 +101,8 @@ impl Map<'_> {
         extra_contents: i32,
         control: &Control,
     ) -> Result<Vec<Terrain>, String> {
-        if entity != 0 || extra_contents != 0 {
-            return Err("Only world displacement surfaces are compiled; detach this terrain from its brush entity".into());
+        if entity != 0 || extra_contents & !contents::DETAIL != 0 {
+            return Err("Only world and func_detail terrain surfaces are compiled; detach this terrain from its runtime brush entity".into());
         }
         let mut terrains = Vec::new();
         for face in &geometry.faces {
@@ -142,13 +142,14 @@ impl Map<'_> {
             let material = self.materials.load(&side.material);
             let material_info = self.materials.get(material);
             if !material_info.draws
-                || material_info.contents != contents::SOLID
+                || material_info.contents & !contents::DETAIL != contents::SOLID
                 || material_info.surface & (surf::SKY | surf::SKY2D | surf::WARP) != 0
             {
                 return Err(
                     "Displacements currently require a visible ordinary solid material".into(),
                 );
             }
+            let terrain_contents = material_info.contents | extra_contents;
             let plane = support::find_authored(&mut self.planes, geometry, face, control)?
                 .ok_or("Cannot preserve displacement base plane support")?;
             let source_texinfo = self.texinfo(side, material, DVec3::ZERO);
@@ -174,6 +175,7 @@ impl Map<'_> {
                 power: disp.power as i32,
                 min_tessellation: i32::MIN | disp.flags.unwrap_or(0) as i32,
                 smoothing_angle: smoothing_angle.unwrap_or(0.0) as f32,
+                contents: terrain_contents,
                 ..Default::default()
             };
             let vertices = mesh
@@ -312,7 +314,7 @@ impl Map<'_> {
             });
         }
         if !self.terrains.is_empty() {
-            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map. Native neighbor metadata supports matching equal-power full edges; corner-only contacts have reciprocal lists; mixed-power edges and partial spans remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
+            report.diagnostics.push(Diagnostic::warning("World and func_detail terrain surfaces do not seal the map. Native full/whole-to-half links include compatible mixed powers, LOD masks and snapping; corner-only contacts have reciprocal lists. Other fractional spans and subdivision generation remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
         }
         Ok(faces)
     }

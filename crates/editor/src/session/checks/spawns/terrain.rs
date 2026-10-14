@@ -111,14 +111,6 @@ pub(super) fn inspect(
             side: side.id,
         });
         location.position = Some((mins + maxs) * 0.5);
-        if !matches!(location.object, Some(ObjectId::Solid(_))) {
-            unchecked(
-                &location,
-                report,
-                "brush-entity terrain collision is unchecked",
-            );
-            continue;
-        }
         if info.flags.unwrap_or(0) & !14 != 0
             || info.normals.is_some() != info.distances.is_some()
             || !info.start_position.is_finite()
@@ -154,7 +146,7 @@ pub(super) fn inspect(
             continue;
         }
         if !semantics.draws
-            || semantics.contents != contents::SOLID
+            || semantics.contents & !contents::DETAIL != contents::SOLID
             || semantics.surface & (surf::SKY | surf::SKY2D | surf::WARP) != 0
         {
             unchecked(

@@ -23,7 +23,7 @@ const TEAMS: [(&str, &str); 2] = [
     ("info_player_counterterrorist", "Counter-Terrorist"),
 ];
 
-pub(super) const SCOPE: &str = "Spawn clearance checks the 32 × 32 × 72 standing hull at the authored origin against visible world/func_detail brushes and world terrain sheets with known player-blocking materials and player collision enabled. Touching within 0.01 units is allowed; terrain parent volumes do not block. Trigger, hint, origin and areaportal brushes are excluded. Other brush entities, models, removed terrain triangles, compiler LOD snapping, runtime spawn placement, ground support, player counts and objectives are unchecked.";
+pub(super) const SCOPE: &str = "Spawn clearance checks the 32 × 32 × 72 standing hull at the authored origin against visible world/func_detail brushes and world/func_detail terrain sheets with known player-blocking materials and player collision enabled. Touching within 0.01 units is allowed; terrain parent volumes do not block. Trigger, hint, origin and areaportal brushes are excluded. Other brush entities, models, removed terrain triangles, compiler LOD snapping, runtime spawn placement, ground support, player counts and objectives are unchecked.";
 
 struct Spawn {
     location: Location,

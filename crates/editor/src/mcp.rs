@@ -2802,7 +2802,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Check applied map data for geometry/ID problems, invalid UVs, entity properties/connections, missing material/model paths, visible team spawns and standing-hull clearance against visible world/func_detail brushes with known player-blocking materials, plus native-compiler gaps. Does not change map data; replaces the shared issue report and repair preview. Hidden content is diagnosed but excluded from spawn collision. Reports explain unchecked collision and runtime limits. This is not a leak or playability test."
+        description = "Check applied map data for geometry/ID problems, invalid UVs, entity properties/connections, missing material/model paths, visible team spawns and standing-hull clearance against visible world/func_detail brushes and terrain sheets with known player-blocking materials, plus native-compiler gaps. Does not change map data; replaces the shared issue report and repair preview. Hidden content is diagnosed but excluded from spawn collision. Reports explain unchecked collision and runtime limits. This is not a leak or playability test."
     )]
     fn run_map_checks(&self) -> ToolResult {
         run(|| {

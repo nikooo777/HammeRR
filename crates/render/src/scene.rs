@@ -124,10 +124,17 @@ fn local_normals(mesh: &DisplacementMesh) -> Vec<[f64; 3]> {
 fn world_displacements(vmf: &Vmf) -> HashMap<FaceId, Displacement> {
     use map_core::displacement::neighbors::{self, SurfaceGrid};
     let mut meshes = Vec::new();
-    for solid in
-        vmf.world.solids.iter().filter(|solid| {
-            !solid.hidden && solid.sides.iter().any(|side| side.displacement.is_some())
-        })
+    for solid in vmf
+        .world
+        .solids
+        .iter()
+        .chain(
+            vmf.entities
+                .iter()
+                .filter(|entity| !entity.hidden && entity.classname() == Some("func_detail"))
+                .flat_map(|entity| &entity.solids),
+        )
+        .filter(|solid| !solid.hidden && solid.sides.iter().any(|side| side.displacement.is_some()))
     {
         let Ok(brush) = BrushGeometry::from_solid(solid) else {
             continue;

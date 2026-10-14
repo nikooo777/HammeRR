@@ -1157,6 +1157,40 @@ fn terrain_parent_cannot_seal_a_leak_and_brush_entities_are_rejected() {
 }
 
 #[test]
+fn consumed_detail_terrain_preserves_explicit_grids_and_world_bindings() {
+    for power in 2..=4 {
+        let (vmf, id) = fixture(power);
+        let baseline = compiler::compile(&vmf, &common::empty_game())
+            .bsp
+            .unwrap()
+            .displacements()
+            .unwrap()
+            .unwrap();
+        let mut document = Document::new(vmf);
+        document
+            .edit("detail terrain", |tx| {
+                edit::tie_to_entity(tx, &[id], "func_detail", &[])
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let result = compiler::compile(document.vmf(), &common::empty_game());
+        assert!(!result.report.has_errors(), "{:?}", result.report);
+        assert_eq!(result.stats.displacements, 1);
+        assert_eq!(result.stats.models, 1);
+        let bsp = result.bsp.unwrap();
+        let data = bsp.displacements().unwrap().unwrap();
+        assert_eq!(
+            data.infos[0].contents,
+            bsp::contents::SOLID | bsp::contents::DETAIL
+        );
+        assert_eq!(data.vertices, baseline.vertices);
+        assert_eq!(data.triangles, baseline.triangles);
+        assert!(bsp.records::<bsp::Face>().unwrap()[data.infos[0].face as usize].dispinfo >= 0);
+        assert_eq!(document.vmf(), &source);
+    }
+}
+
+#[test]
 fn world_bounds_include_displaced_peaks() {
     let (mut vmf, id) = fixture(2);
     let disp = vmf

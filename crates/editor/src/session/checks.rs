@@ -319,12 +319,13 @@ impl Session {
                 ..Default::default()
             };
             if solid.sides.iter().any(|side| side.displacement.is_some()) && !hidden {
-                if matches!(owner, Some(ObjectId::Entity(_))) {
+                let detail_owner=owner.is_some_and(|owner| matches!(owner,ObjectId::Entity(id) if self.document.entity(id).is_some_and(|entity|entity.classname()==Some("func_detail") && entity.properties.get_all("classname").count()==1)));
+                if matches!(owner, Some(ObjectId::Entity(_))) && !detail_owner {
                     result.add(
                     Severity::Warning,
                     "compiler_displacement",
                     &base,
-                    "Terrain on brush entities is not supported by the native compiler. Detach its parent to world geometry before building.",
+                    "Terrain on runtime brush entities is not supported by the native compiler. Detach its parent to world geometry or use func_detail before building.",
                     None,
                 );
                 }

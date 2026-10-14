@@ -10281,6 +10281,99 @@ mod tests {
     }
 
     #[test]
+    fn terrain_mask_controls_retain_selection_and_confine_sculpt_and_blend() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::new(64.0, 64.0, 16.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = map_core::surface::FaceId { solid, side };
+        session.create_terrain(Actor::Agent, &[face], 2, 0).unwrap();
+        session.select_faces(&[face], SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let picker = terrain_triangles_ui::Controller::new(&shared).unwrap();
+        picker.initialize(&mut lock(&shared)).unwrap();
+        picker.window.invoke_toggle_triangle(0, true);
+        picker.window.invoke_use_selection();
+        let mask = lock(&shared).terrain_vertex_mask(&[face], None).unwrap();
+        assert_eq!(mask.faces[0].vertices, [0, 5, 6]);
+        let controller = terrain_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        assert!(window.get_mask_available());
+        window.set_operation_index(1);
+        window.set_use_mask(true);
+        window.set_radius("8192".into());
+        window.set_amount("16".into());
+        window.invoke_edited();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-vertex-mask");
+        let before = lock(&shared)
+            .terrain_grids(&[face], false)
+            .unwrap()
+            .remove(0)
+            .mesh;
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        let draft = lock(&shared)
+            .terrain_grids(&[face], true)
+            .unwrap()
+            .remove(0)
+            .mesh;
+        for (index, (old, new)) in before.positions.iter().zip(&draft.positions).enumerate() {
+            assert_eq!(old != new, mask.faces[0].vertices.contains(&index));
+        }
+        window.invoke_apply();
+        assert!(
+            lock(&shared)
+                .terrain_vertex_mask(&[face], Some(mask.token))
+                .is_ok()
+        );
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(6);
+        window.set_use_mask(true);
+        window.set_blend_value("200".into());
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        let alpha = lock(&shared)
+            .terrain_grids(&[face], true)
+            .unwrap()
+            .remove(0)
+            .mesh
+            .alphas;
+        assert_eq!(alpha.iter().filter(|&&value| value == 200.0).count(), 3);
+        window.invoke_cancel();
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), source);
+    }
+
+    #[test]
     fn terrain_center_picking_uses_rendered_hits_and_preserves_foreign_drafts() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

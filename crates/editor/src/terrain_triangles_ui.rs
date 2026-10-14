@@ -316,6 +316,39 @@ impl Controller {
                 match result {Ok(count)=>{target.preview=session.face_preview_token();if let Err(error)=populate(&window,&session,target) {window.set_message(error.into());return;}window.set_ready(true);window.set_message(format!("Preview changes {count} terrain surfaces. Apply keeps one undo step.").into());},Err(error)=>window.set_message(error.into())}
             }
         });
+        window.on_use_selection({
+            let (window, shared, target, picking) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                picking.clone(),
+            );
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let mut target = target.borrow_mut();
+                let Some(target) = target.as_mut() else {
+                    return;
+                };
+                let result = target.check(&session).and_then(|_| {
+                    if target.targets().is_empty() {
+                        return Err("Select triangles before using a brush mask".into());
+                    }
+                    target.cancel_preview(&mut session);
+                    target.highlight(&mut session)?;
+                    target.highlight = None;
+                    Ok(())
+                });
+                match result {
+                    Ok(()) => {
+                        picking.set(false);
+                        window.set_ready(false);
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
+                }
+            }
+        });
         window.on_apply({
             let (window, shared, target, picking) = (
                 window.as_weak(),

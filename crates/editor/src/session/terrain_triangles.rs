@@ -297,6 +297,138 @@ impl Session {
     }
 }
 
+pub struct VertexMaskFace {
+    pub face: FaceId,
+    pub vertices: Vec<usize>,
+    pub triangles: usize,
+}
+
+pub struct VertexMask {
+    pub token: u64,
+    pub faces: Vec<VertexMaskFace>,
+}
+
+impl VertexMask {
+    pub fn summary(&self) -> String {
+        format!(
+            "{} vertices on {} surfaces",
+            self.faces
+                .iter()
+                .map(|face| face.vertices.len())
+                .sum::<usize>(),
+            self.faces.len()
+        )
+    }
+
+    pub fn json(&self) -> Value {
+        json!({"token":self.token.to_string(),"vertex_count":self.faces.iter().map(|face|face.vertices.len()).sum::<usize>(),"faces":self.faces.iter().map(|face|json!({"solid":face.face.solid,"side":face.face.side,"vertices":face.vertices,"triangle_count":face.triangles})).collect::<Vec<_>>()})
+    }
+}
+
+impl Session {
+    pub fn terrain_vertex_mask(
+        &self,
+        faces: &[FaceId],
+        token: Option<u64>,
+    ) -> Result<VertexMask, String> {
+        self.terrain_grids(faces, false)?;
+        let highlight = self
+            .terrain_triangle_highlight
+            .as_ref()
+            .ok_or("Select terrain triangles before using a vertex mask")?;
+        if token.is_some_and(|token| token != highlight.token) {
+            return Err("Terrain vertex mask was replaced; inspect the current selection".into());
+        }
+        if self.terrain_highlight_stale(highlight) {
+            return Err("Terrain vertex mask is stale; select triangles again".into());
+        }
+        let faces = faces.iter().copied().collect::<BTreeSet<_>>();
+        let indices = highlight
+            .powers
+            .iter()
+            .filter(|(face, _)| faces.contains(face))
+            .map(|(face, power)| {
+                map_core::displacement::triangles::indices(*power)
+                    .map(|indices| (*face, indices))
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let mut selected = BTreeMap::<FaceId, BTreeSet<usize>>::new();
+        let mut counts = BTreeMap::<FaceId, usize>::new();
+        for triangle in &highlight.selected {
+            if !faces.contains(&triangle.face) {
+                continue;
+            }
+            let vertices = indices[&triangle.face]
+                .get(triangle.triangle)
+                .ok_or("Terrain triangle IDs changed")?;
+            selected.entry(triangle.face).or_default().extend(*vertices);
+            *counts.entry(triangle.face).or_default() += 1;
+        }
+        if selected.is_empty() {
+            return Err("No highlighted triangle vertices on these terrain faces".into());
+        }
+        Ok(VertexMask {
+            token: highlight.token,
+            faces: selected
+                .into_iter()
+                .map(|(face, vertices)| VertexMaskFace {
+                    face,
+                    vertices: vertices.into_iter().collect(),
+                    triangles: counts[&face],
+                })
+                .collect(),
+        })
+    }
+
+    pub fn preview_terrain_masked_edit(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        operation: map_core::displacement::Operation,
+        token: u64,
+    ) -> Result<usize, String> {
+        if !matches!(
+            operation,
+            map_core::displacement::Operation::Sculpt { .. }
+                | map_core::displacement::Operation::Blend { .. }
+        ) {
+            return Err("Only sculpting and blending accept a terrain vertex mask".into());
+        }
+        let mask = self.terrain_vertex_mask(faces, Some(token))?;
+        let edits = mask
+            .faces
+            .into_iter()
+            .map(|face| {
+                (
+                    face.face,
+                    map_core::surface::SurfaceEdit {
+                        terrain: Some(map_core::displacement::Operation::Masked {
+                            operation: Box::new(operation.clone()),
+                            vertices: face.vertices,
+                        }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let changed = self.preview_or_apply_faces(actor, edits, true)?;
+        self.face_preview.as_mut().unwrap().terrain_mask_token = Some(token);
+        Ok(changed)
+    }
+
+    pub(super) fn refresh_terrain_mask_after_commit(&mut self, token: u64) {
+        let generation = self.document_generation();
+        let revision = self.document.revision();
+        if let Some(highlight) = self.terrain_triangle_highlight.as_mut()
+            && highlight.token == token
+        {
+            highlight.generation = generation;
+            highlight.revision = revision;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,5 +693,95 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+    #[test]
+    fn terrain_vertex_masks_share_subset_writes_reuse_and_atomic_token_guards() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, faces) = fixture();
+            let source = session.document().vmf().clone();
+            let token = session
+                .highlight_terrain_triangles(actor, &[(faces[0], vec![0, 1])])
+                .unwrap();
+            let mask = session.terrain_vertex_mask(&faces, Some(token)).unwrap();
+            assert_eq!(mask.faces.len(), 1);
+            assert_eq!(mask.faces[0].vertices, [0, 1, 5, 6]);
+            let brush = Brush {
+                center: DVec3::new(32.0, 32.0, 16.0),
+                radius: 8192.0,
+                axis: Axis::WorldZ,
+            };
+            session
+                .preview_terrain_masked_edit(
+                    actor,
+                    &faces,
+                    Operation::Sculpt {
+                        brush,
+                        operation: Sculpt::Raise(16.0),
+                    },
+                    token,
+                )
+                .unwrap();
+            let before = session.terrain_grids(&faces, false).unwrap();
+            let draft = session.terrain_grids(&faces, true).unwrap();
+            for (index, (old, new)) in before[0]
+                .mesh
+                .positions
+                .iter()
+                .zip(&draft[0].mesh.positions)
+                .enumerate()
+            {
+                assert_eq!(old != new, mask.faces[0].vertices.contains(&index));
+            }
+            assert_eq!(before[1].mesh, draft[1].mesh);
+            assert_eq!(session.document().vmf(), &source);
+            session.commit_face_preview(actor).unwrap();
+            assert!(session.terrain_vertex_mask(&faces, Some(token)).is_ok());
+            let raised = session.document().vmf().clone();
+            session
+                .preview_terrain_masked_edit(
+                    actor,
+                    &faces,
+                    Operation::Blend {
+                        brush,
+                        operation: map_core::displacement::brush::Blend::Fill(200.0),
+                    },
+                    token,
+                )
+                .unwrap();
+            let values = session.terrain_grids(&faces, true).unwrap();
+            for (index, &value) in values[0].mesh.alphas.iter().enumerate() {
+                assert_eq!(
+                    value,
+                    if mask.faces[0].vertices.contains(&index) {
+                        200.0
+                    } else {
+                        0.0
+                    }
+                );
+            }
+            let preview = session.face_preview_token();
+            session
+                .highlight_terrain_triangles(actor, &[(faces[1], vec![0])])
+                .unwrap();
+            assert!(
+                session
+                    .preview_terrain_masked_edit(
+                        actor,
+                        &faces,
+                        Operation::Sculpt {
+                            brush,
+                            operation: Sculpt::Raise(32.0)
+                        },
+                        token
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), preview);
+            session.cancel_face_preview();
+            assert_eq!(session.document().vmf(), &raised);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &source);
+            assert!(session.terrain_vertex_mask(&faces, None).is_err());
+        }
     }
 }

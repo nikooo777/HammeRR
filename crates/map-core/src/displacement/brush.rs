@@ -1,5 +1,6 @@
 use glam::DVec3;
 use source_formats::vmf::DispInfo;
+use std::collections::BTreeSet;
 
 use super::DisplacementMesh;
 use crate::{EditError, brush::Face, primitive::MAX_COORDINATE};
@@ -118,6 +119,25 @@ pub fn sculpt(
     brush: Brush,
     operation: Sculpt,
 ) -> Result<DispInfo, EditError> {
+    sculpt_masked(face, info, brush, operation, None)
+}
+
+fn validate_mask(mesh: &DisplacementMesh, mask: Option<&BTreeSet<usize>>) -> Result<(), EditError> {
+    if mask.is_some_and(|mask| {
+        mask.is_empty() || mask.iter().any(|&index| index >= mesh.positions.len())
+    }) {
+        return Err(invalid("Choose valid terrain vertices for the brush mask"));
+    }
+    Ok(())
+}
+
+fn sculpt_masked(
+    face: &Face,
+    info: &DispInfo,
+    brush: Brush,
+    operation: Sculpt,
+    mask: Option<&BTreeSet<usize>>,
+) -> Result<DispInfo, EditError> {
     let axis = axis(face, brush)?;
     match operation {
         Sculpt::Raise(value)
@@ -127,6 +147,7 @@ pub fn sculpt(
         Sculpt::Flatten(value) | Sculpt::Smooth(value) => strength(value)?,
     }
     let mesh = mesh(face, info)?;
+    validate_mask(&mesh, mask)?;
     if info.offset_normals.as_ref().is_some_and(|rows| {
         rows.len() != mesh.size
             || rows
@@ -146,6 +167,9 @@ pub fn sculpt(
     for (row, offset_row) in offsets.iter_mut().enumerate() {
         for (col, offset) in offset_row.iter_mut().enumerate() {
             let index = row * mesh.size + col;
+            if mask.is_some_and(|mask| !mask.contains(&index)) {
+                continue;
+            }
             let point = mesh.positions[index];
             let falloff = weight(point, brush, axis);
             let delta = match operation {
@@ -192,6 +216,16 @@ pub fn blend(
     brush: Brush,
     operation: Blend,
 ) -> Result<DispInfo, EditError> {
+    blend_masked(face, info, brush, operation, None)
+}
+
+fn blend_masked(
+    face: &Face,
+    info: &DispInfo,
+    brush: Brush,
+    operation: Blend,
+    mask: Option<&BTreeSet<usize>>,
+) -> Result<DispInfo, EditError> {
     let axis = match operation {
         Blend::Paint { .. } => axis(face, brush)?,
         _ => DVec3::Z,
@@ -214,6 +248,7 @@ pub fn blend(
         Blend::Invert => {}
     }
     let mesh = mesh(face, info)?;
+    validate_mask(&mesh, mask)?;
     let mut result = info.clone();
     let mut rows = Vec::with_capacity(mesh.size);
     let mut changed = false;
@@ -222,6 +257,10 @@ pub fn blend(
         for col in 0..mesh.size {
             let index = row * mesh.size + col;
             let old = mesh.alphas[index];
+            if mask.is_some_and(|mask| !mask.contains(&index)) {
+                values.push(old);
+                continue;
+            }
             let value = match operation {
                 Blend::Paint { value, strength } => {
                     old + (value - old) * strength * weight(mesh.positions[index], brush, axis)
@@ -239,6 +278,26 @@ pub fn blend(
         result.alphas = Some(rows);
     }
     Ok(result)
+}
+
+pub fn masked(
+    face: &Face,
+    info: &DispInfo,
+    operation: &super::Operation,
+    vertices: &[usize],
+) -> Result<DispInfo, EditError> {
+    let vertices = vertices.iter().copied().collect::<BTreeSet<_>>();
+    match operation {
+        super::Operation::Sculpt { brush, operation } => {
+            sculpt_masked(face, info, *brush, *operation, Some(&vertices))
+        }
+        super::Operation::Blend { brush, operation } => {
+            blend_masked(face, info, *brush, *operation, Some(&vertices))
+        }
+        _ => Err(invalid(
+            "Only sculpting and blending accept a terrain vertex mask",
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -448,5 +507,92 @@ mod tests {
         assert!(blend(&face, &info, brush, Blend::Fill(256.0)).is_err());
         info.elevation = 65470.0;
         assert!(sculpt(&face, &info, brush, Sculpt::Raise(16.0)).is_err());
+    }
+    #[test]
+    fn masked_brushes_preserve_unselected_positions_alpha_and_metadata() {
+        let (face, info, mut brush) = fixture();
+        brush.radius = 8192.0;
+        let before = DisplacementMesh::build(&face, &info).unwrap();
+        let selected = [0, 5, 6];
+        let raised = masked(
+            &face,
+            &info,
+            &super::super::Operation::Sculpt {
+                brush,
+                operation: Sculpt::Raise(16.0),
+            },
+            &selected,
+        )
+        .unwrap();
+        let after = DisplacementMesh::build(&face, &raised).unwrap();
+        for (index, (a, b)) in before.positions.iter().zip(&after.positions).enumerate() {
+            assert_eq!(a != b, selected.contains(&index));
+        }
+        let mut preserved = raised.clone();
+        preserved.offsets = info.offsets.clone();
+        assert_eq!(preserved, info);
+        for operation in [Blend::Fill(255.0), Blend::Invert] {
+            let changed = masked(
+                &face,
+                &info,
+                &super::super::Operation::Blend { brush, operation },
+                &selected,
+            )
+            .unwrap();
+            let values = DisplacementMesh::build(&face, &changed).unwrap().alphas;
+            for (index, (&old, &new)) in before.alphas.iter().zip(&values).enumerate() {
+                assert_eq!(old != new, selected.contains(&index));
+            }
+            let mut preserved = changed.clone();
+            preserved.alphas = info.alphas.clone();
+            assert_eq!(preserved, info);
+        }
+        assert!(
+            masked(
+                &face,
+                &info,
+                &super::super::Operation::Sculpt {
+                    brush,
+                    operation: Sculpt::Raise(16.0)
+                },
+                &[25]
+            )
+            .is_err()
+        );
+        assert!(
+            masked(
+                &face,
+                &info,
+                &super::super::Operation::Resolution(3),
+                &selected
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn masked_smoothing_reads_immutable_unselected_neighbors() {
+        let (face, mut info, mut brush) = fixture();
+        info.distances.as_mut().unwrap()[2][2] = 32.0;
+        let before = DisplacementMesh::build(&face, &info).unwrap();
+        brush.center = before.positions[12];
+        let changed = masked(
+            &face,
+            &info,
+            &super::super::Operation::Sculpt {
+                brush,
+                operation: Sculpt::Smooth(1.0),
+            },
+            &[12],
+        )
+        .unwrap();
+        let after = DisplacementMesh::build(&face, &changed).unwrap();
+        for (index, (&old, &new)) in before.positions.iter().zip(&after.positions).enumerate() {
+            if index == 12 {
+                assert!((new.z - (old.z - 32.0)).abs() < 1e-9);
+            } else {
+                assert_eq!(old, new);
+            }
+        }
     }
 }

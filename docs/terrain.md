@@ -43,6 +43,20 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; use **Sew edges** to join matching full/half borders across grid sizes; sewing is not automatic.
 
+## Limit brushes to selected vertices
+
+1. Open **Terrain triangles…**, select a subset across surfaces, then click **Use selection**. The dialog closes and keeps its yellow outlines without changing the map.
+2. Select the terrain faces to edit and open **Edit terrain…**. Choose **Raise / lower**, **Flatten**, **Smooth**, **Noise**, **Paint blend**, **Fill blend** or **Invert blend**.
+3. Enable **Affect only highlighted triangle vertices**. **Selection mask** reports the affected vertex and surface counts. Faces outside the retained selection stay fixed.
+4. Set the brush controls, then click **Preview**. Radius and falloff still apply. Smooth reads the original neighbors, but writes only to selected vertices. Fill and invert use the same selection mask.
+5. Click **Apply** or **Cancel**. An applied masked edit keeps its selection available for the next brush action; **Undo** restores the original source.
+
+![Terrain brush controls limited to three selected vertices](images/terrain-vertex-mask.png)
+
+![A terrain edit confined to highlighted vertices](images/terrain-masked.png)
+
+Limits: the mask is the union of each selected triangle's three vertices. Shared vertices can reshape adjoining triangles or spread a blend across them. Geometry and alpha outside that union stay fixed; other source flags, tags and metadata remain. Grid resolution, sewing, border shading and collision controls use their complete-surface scopes. Replaced mask tokens, topology previews and external source changes reject the masked brush; retain a fresh selection and reopen **Edit terrain…**. Saving/reopening clears the mask's validity; it is not stored in the VMF.
+
 ## Paint a material blend
 
 1. Assign a two-texture material through **Browse materials…**, **Use material**, then **Apply**. A single-texture material cannot show the alpha blend.

@@ -101,7 +101,7 @@ Click **Preview settings**, then **Apply settings**.
 
 To see the settings, use the **Lightmap density** and **Group membership** views (also available as [viewport modes](basics.md#viewport-modes)).
 
-Direct LDR builds use each face's lightmap scale and assigned smoothing groups on world/detail brushes. Terrain uses its own sewn grid normals.
+Direct LDR builds use each face's lightmap scale and assigned smoothing groups on world/detail brushes and rendered brush entities. Terrain uses its own sewn grid normals.
 
 ### Bake smooth brush lighting
 
@@ -115,7 +115,19 @@ Direct LDR builds use each face's lightmap scale and assigned smoothing groups o
 
 ![Smoothing where a small face meets the middle of a longer edge](images/compiled-brush-junctions.png)
 
-Limits: explicitly assigned masks on world/detail brushes, with adjacency at matching source vertices and corners landing inside eligible neighboring edges. Unassigned faces keep flat normals when **Brush smoothing angle** is zero. Original fan centers stay fixed when junction points are added. Edge matching uses canonical native positions within 0.000001 world units. The smoothing fan is retained across lightmap subdivision; geometry, texture axes and collision stay fixed. Brush-model smoothing and bump-light maps remain unfinished. Degenerate or backward normals fall back to the geometric face normal. Source allocation is capped at four million retained points, native normals at 65,536 entries, and work shares the lighting budget. The viewport's **Group membership** mode shows assignment; compiled shading is viewed in game.
+Limits: explicitly assigned masks on world/detail brushes and rendered brush entities, with adjacency at matching source vertices and corners landing inside eligible neighboring edges. Unassigned faces keep flat normals when **Brush smoothing angle** is zero. Original fan centers stay fixed when junction points are added. Edge matching uses canonical native positions within 0.000001 world units. The smoothing fan is retained across lightmap subdivision; geometry, texture axes and collision stay fixed. Bump-light maps remain unfinished. Degenerate or backward normals fall back to the geometric face normal. Source allocation shares one cap of four million retained points across all world/model sources and added junctions, native normals at 65,536 entries, and work shares the lighting budget. The viewport's **Group membership** mode shows assignment; compiled shading is viewed in game.
+
+### Smooth a brush model
+
+1. Tie the brushes to a rendered entity, such as `func_brush` or `func_rotating`.
+2. Select its faces using **Selection → Faces · materials & textures**.
+3. Use **Face lighting…** to assign shared smooth groups or hard-edge groups, then **Preview settings** and **Apply settings**. **Cancel** keeps the original values.
+4. Alternatively leave the faces unassigned and set **Brush smoothing angle** in **Build settings…**.
+5. Compile with **Build lighting → Direct LDR**. The compiled lightmaps and native corner normals stay attached as the model moves.
+
+![Scoped smoothing on a curved brush model in Counter-Strike: Source](images/compiled-model-smoothing.png)
+
+Limits: adjacency is isolated within each model, including source edge junctions. Identical local coordinates in separate models do not blend. Original source centers/fans survive lightmap subdivision; sample bias uses geometric normals. Terrain, model bounce, dynamic relighting, independently rotated initial poses and bump/HDR/prop lightmaps remain separate limits.
 
 ### Smooth by angle
 
@@ -126,7 +138,7 @@ Limits: explicitly assigned masks on world/detail brushes, with adjacency at mat
 
 ![Automatic angle smoothing on a cylinder in Counter-Strike: Source](images/compiled-angle-smoothing.png)
 
-Limits: automatic blending requires both neighboring world/detail faces to be unassigned. Assigned smooth/hard groups keep their rules. Matching source vertices, interior edge junctions and retained source fans determine adjacency; model-local coordinates and terrain are separate. This is a session build setting and does not change VMF groups, selection or undo history. **Fullbright** retains the angle and does no smoothing work. The same native/source/work budgets apply.
+Limits: automatic blending requires both neighboring faces within the world/detail scope or one brush model to be unassigned. Assigned smooth/hard groups keep their rules. Matching source vertices, interior edge junctions and retained source fans determine adjacency; each model's local coordinates, the world and terrain are separate. This is a session build setting and does not change VMF groups, selection or undo history. **Fullbright** retains the angle and does no smoothing work. The same native/source/work budgets apply.
 
 | Face lighting controls | Lightmap density on brushes with different scales |
 | --- | --- |

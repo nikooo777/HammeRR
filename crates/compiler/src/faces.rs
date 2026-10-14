@@ -104,6 +104,13 @@ fn subdivide(
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SourceRetention {
+    None,
+    Assigned,
+    All,
+}
+
 pub fn build(map: &Map, tree: &Tree, entity: usize) -> Vec<Face> {
     build_controlled(map, tree, entity, &Control::default()).expect("uncancelled faces")
 }
@@ -114,7 +121,12 @@ pub fn build_controlled(
     entity: usize,
     control: &Control,
 ) -> Result<Vec<Face>, String> {
-    build_with_smoothing(map, tree, entity, control, false)
+    let retention = if entity == 0 {
+        SourceRetention::Assigned
+    } else {
+        SourceRetention::None
+    };
+    build_with_smoothing(map, tree, entity, control, retention, &mut 0)
 }
 
 pub fn build_with_smoothing(
@@ -122,7 +134,8 @@ pub fn build_with_smoothing(
     tree: &Tree,
     entity: usize,
     control: &Control,
-    retain_unassigned: bool,
+    retention: SourceRetention,
+    retained_points: &mut usize,
 ) -> Result<Vec<Face>, String> {
     control.checkpoint()?;
     type Group = (Option<usize>, usize, usize, u32, Arc<[usize]>);
@@ -187,7 +200,6 @@ pub fn build_with_smoothing(
         }
     }
     let mut output = Vec::new();
-    let mut retained_points = 0_usize;
     for (_, mut faces) in groups {
         let mut i = 0;
         while i < faces.len() {
@@ -215,11 +227,11 @@ pub fn build_with_smoothing(
             i += 1;
         }
         for mut face in faces {
-            if entity == 0
-                && (face.smoothing_groups != 0 || retain_unassigned)
+            if retention != SourceRetention::None
+                && (face.smoothing_groups != 0 || retention == SourceRetention::All)
                 && face.displacement.is_none()
             {
-                retained_points = retained_points
+                *retained_points = retained_points
                     .checked_add(face.winding.0.len())
                     .filter(|&count| count <= MAX_SMOOTH_SOURCE_POINTS)
                     .ok_or(

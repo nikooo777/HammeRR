@@ -193,6 +193,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Automatic brush smoothing on a cylinder in Counter-Strike: Source](docs/images/compiled-angle-smoothing.png) |
 | Smooth unassigned brush faces with a shared build angle. |
 
+| Model smoothing |
+| --- |
+| ![Smooth baked lighting on a rotating brush model](docs/images/compiled-model-smoothing.png) |
+| Smooth each brush model with face groups or a build angle. |
+
 | Brush entity lightmaps |
 | --- |
 | ![Baked direct lighting on moving brush entities](docs/images/compiled-brush-models.png) |

@@ -200,8 +200,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Brush entity lightmaps |
 | --- |
-| ![Baked direct lighting on moving brush entities](docs/images/compiled-brush-models.png) |
-| Carry baked lighting with doors and moving brushes. |
+| ![Reflected world light on a brush entity beneath a shelf](docs/images/compiled-model-bounce.png) |
+| Carry direct and reflected world light with doors and moving brushes. |
 
 | Switchable lights |
 | --- |

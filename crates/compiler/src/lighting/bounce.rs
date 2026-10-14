@@ -16,12 +16,15 @@ pub(super) struct Context<'a> {
     pub faces: &'a [Face],
     pub infos: &'a [TexInfo],
     pub shadows: &'a ShadowIndex<Occluder>,
+    pub model_shadows: &'a [Option<ShadowIndex<Occluder>>],
     pub quality: SkyQuality,
 }
 
 pub(super) struct Stats {
     pub rays: usize,
     pub samples: usize,
+    pub model_faces: usize,
+    pub model_samples: usize,
 }
 
 fn directions(count: usize) -> Vec<DVec3> {
@@ -92,9 +95,12 @@ pub(super) fn bake(
     let mut stats = Stats {
         rays: 0,
         samples: 0,
+        model_faces: 0,
+        model_samples: 0,
     };
-    for plan in ctx.plans.iter().filter(|plan| plan.model == 0) {
+    for plan in ctx.plans {
         budget.consume(1)?;
+        stats.model_faces += usize::from(plan.model != 0);
         let first = usize::try_from(ctx.faces[plan.face].light_offset)
             .ok()
             .filter(|offset| offset % size_of::<RgbExp32>() == 0)
@@ -114,10 +120,22 @@ pub(super) fn bake(
                 let origin = plan.origin(point, normal);
                 let bounce = gather(normal, &directions, &mut |direction| {
                     stats.rays += 1;
-                    Ok(surfaces
+                    let hit = surfaces
                         .trace(origin, direction, cone, ctx.shadows, budget)?
-                        .filter(|hit| !hit.sky && hit.front)
-                        .map_or(DVec3::ZERO, |hit| hit.color * LIGHTMAP_SCALE))
+                        .filter(|hit| !hit.sky && hit.front);
+                    match hit {
+                        Some(hit)
+                            if !super::bake::model_blocked(
+                                &ctx.model_shadows[plan.model],
+                                origin,
+                                hit.point,
+                                budget,
+                            )? =>
+                        {
+                            Ok(hit.color * LIGHTMAP_SCALE)
+                        }
+                        _ => Ok(DVec3::ZERO),
+                    }
                 })?;
                 let slot = &mut samples[1 + t * width + s];
                 if bounce != DVec3::ZERO {
@@ -125,6 +143,7 @@ pub(super) fn bake(
                 }
                 total += bounce;
                 stats.samples += usize::from(bounce.max_element() > 0.0);
+                stats.model_samples += usize::from(plan.model != 0 && bounce.max_element() > 0.0);
             }
         }
         if total != DVec3::ZERO {

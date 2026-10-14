@@ -235,6 +235,7 @@ pub(super) fn build(
 
 pub(super) struct Hit {
     pub color: DVec3,
+    pub point: DVec3,
     pub sky: bool,
     pub front: bool,
 }
@@ -294,8 +295,10 @@ impl SurfaceIndex {
             return Ok(None);
         }
         let distance = fraction * super::sky::TRACE_LENGTH;
+        let position = point + direction * distance;
         Ok(Some(Hit {
-            color: radiance.at(point + direction * distance, uv, distance, cone),
+            color: radiance.at(position, uv, distance, cone),
+            point: position,
             sky: radiance.sky,
             front,
         }))

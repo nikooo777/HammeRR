@@ -399,12 +399,24 @@ impl Controller {
                 )
             })
             .unwrap_or_default();
+        let model_bounce = result["stats"]["model_bounce_faces"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                format!(
+                    "\nBrush entity bounce: {count} faces · {} samples lit",
+                    result["stats"]["model_bounce_samples"]
+                        .as_u64()
+                        .unwrap_or_default()
+                )
+            })
+            .unwrap_or_default();
         let bounce = result["stats"]["bounces"]
             .as_u64()
             .filter(|&count| count > 0)
             .map(|count| {
                 format!(
-                    "\nIndirect light: {count} diffuse bounce · {} rays · {} samples lit",
+                    "\nIndirect light: {count} diffuse bounce · {} rays · {} samples lit{model_bounce}",
                     result["stats"]["bounce_rays"].as_u64().unwrap_or_default(),
                     result["stats"]["bounce_samples"]
                         .as_u64()

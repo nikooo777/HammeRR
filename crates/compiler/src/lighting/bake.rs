@@ -35,6 +35,8 @@ pub(crate) struct BakeStats {
     pub bounce_rays: usize,
     pub bounce_samples: usize,
     pub bounce_work: usize,
+    pub model_bounce_faces: usize,
+    pub model_bounce_samples: usize,
     pub smoothed_faces: usize,
     pub smoothed_corners: usize,
     pub normal_work: usize,
@@ -459,7 +461,7 @@ fn sky_visible(
     }
 }
 
-fn model_blocked(
+pub(super) fn model_blocked(
     model: &Option<ShadowIndex<Occluder>>,
     start: DVec3,
     end: DVec3,
@@ -551,13 +553,6 @@ pub(crate) fn bake(
         };
         model_shadows.push(shadows);
     }
-    if model_faces != 0 && options.bounces != 0 {
-        report.diagnostics.push(Diagnostic::warning(
-            "Brush entities receive direct lightmaps; model bounce receivers remain unfinished",
-            None,
-            None,
-        ));
-    }
     if infos.iter().any(|info| info.flags & surf::BUMPLIGHT != 0) {
         report.diagnostics.push(Diagnostic::warning("Direct LDR disables bump-light sample maps; scoped world/model brush smoothing is supported, while bump-light baking remains unfinished", None, None));
         for info in &mut infos {
@@ -568,7 +563,7 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct maps with isolated self shadows; model bounces, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
     let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
@@ -699,6 +694,7 @@ pub(crate) fn bake(
                 faces: &faces,
                 infos: &infos,
                 shadows: &shadows,
+                model_shadows: &model_shadows,
                 quality: sky_quality,
             },
             bsp,
@@ -712,6 +708,8 @@ pub(crate) fn bake(
         super::bounce::Stats {
             rays: 0,
             samples: 0,
+            model_faces: 0,
+            model_samples: 0,
         }
     };
     let bounce_work = budget.work - bounce_start;
@@ -797,6 +795,8 @@ pub(crate) fn bake(
         bounce_rays: bounce.rays,
         bounce_samples: bounce.samples,
         bounce_work,
+        model_bounce_faces: bounce.model_faces,
+        model_bounce_samples: bounce.model_samples,
         smoothed_faces: normals.faces,
         smoothed_corners: normals.corners,
         normal_work,

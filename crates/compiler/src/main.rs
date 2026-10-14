@@ -141,8 +141,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.switchable_light_groups
     );
     println!(
-        "indirect light: {} bounces, {} rays, {} samples lit, {} work units",
-        stats.bounces, stats.bounce_rays, stats.bounce_samples, stats.bounce_work
+        "indirect light: {} bounces, {} rays, {} samples lit, {} model faces, {} model samples lit, {} work units",
+        stats.bounces,
+        stats.bounce_rays,
+        stats.bounce_samples,
+        stats.model_bounce_faces,
+        stats.model_bounce_samples,
+        stats.bounce_work
     );
     println!(
         "brush smoothing: {} faces, {} corners, {} work units",

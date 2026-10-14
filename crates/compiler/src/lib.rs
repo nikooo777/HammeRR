@@ -205,7 +205,7 @@ impl PhysicsMode {
                 "Keeps BSP brush hulls and static-prop asset collisions; omits compiled brush/fluid bodies."
             }
             Self::Engine => {
-                "Adds world, clip, brush-model, water and terrain collision. Static props use model assets. Custom surface materials and masses remain unfinished."
+                "Adds world, clip, brush-model, water and terrain collision with world/terrain material surfaces. Static props use model assets. Model surfaces, density and compiler-derived masses remain unfinished."
             }
         }
     }
@@ -356,6 +356,7 @@ pub struct Stats {
     pub physics_bytes: usize,
     pub physics_fluids: usize,
     pub physics_mesh_triangles: usize,
+    pub physics_surface_properties: usize,
     #[serde(rename = "elapsed_ms", serialize_with = "serialize_elapsed")]
     pub elapsed: Duration,
 }
@@ -693,6 +694,7 @@ fn build(
         output.stats.physics_bytes = stats.bytes;
         output.stats.physics_fluids = stats.fluids;
         output.stats.physics_mesh_triangles = stats.mesh_triangles;
+        output.stats.physics_surface_properties = stats.surface_properties;
     }
     control.checkpoint()?;
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();

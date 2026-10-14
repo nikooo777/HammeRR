@@ -15,6 +15,7 @@ pub struct MaterialInfo {
     /// Contents this side gives its brush; 0 for hint/skip.
     pub contents: i32,
     pub surface: i32,
+    pub surface_prop: String,
     /// Whether sides with this material become visible faces.
     pub draws: bool,
     pub hint: bool,
@@ -37,6 +38,7 @@ impl MaterialInfo {
             name: name.to_ascii_uppercase(),
             contents: contents::SOLID,
             surface: 0,
+            surface_prop: "default".into(),
             draws: true,
             hint: false,
             skip: false,
@@ -55,6 +57,9 @@ impl MaterialInfo {
         info.draws = semantics.draws;
         info.hint = semantics.hint;
         info.skip = semantics.skip;
+        if let Some(value) = m.get("$surfaceprop") {
+            info.surface_prop = value.trim().to_ascii_lowercase();
+        }
         info.unsupported_flags = semantics.unsupported_flags;
         info
     }

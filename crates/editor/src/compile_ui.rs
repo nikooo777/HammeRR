@@ -547,7 +547,8 @@ impl Controller {
                     "fluid regions"
                 };
                 format!(
-                    "\nPhysics: {count} {label} · {convexes} hulls · {fluids} {fluid_label}{mesh}"
+                    "\nPhysics: {count} {label} · {convexes} hulls · {fluids} {fluid_label}{mesh} · Surface properties: {}",
+                    result["stats"]["physics_surface_properties"].as_u64().unwrap_or_default()
                 )
             })
             .unwrap_or_default();

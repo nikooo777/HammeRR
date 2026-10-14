@@ -332,6 +332,7 @@ pub struct Stats {
     pub displacement_vertices: usize,
     pub displacement_triangles: usize,
     pub displacement_neighbor_pairs: usize,
+    pub displacement_corner_neighbor_pairs: usize,
     pub clusters: usize,
     pub visibility_portals: usize,
     pub visibility_bytes: usize,
@@ -475,7 +476,10 @@ fn build(
     if options.lighting == LightingMode::DirectLdr {
         output.stats.switchable_light_groups = lighting::styles::prepare(&mut map, control)?;
     }
-    output.stats.displacement_neighbor_pairs = map.connect_terrain(&mut output.report, control)?;
+    (
+        output.stats.displacement_neighbor_pairs,
+        output.stats.displacement_corner_neighbor_pairs,
+    ) = map.connect_terrain(&mut output.report, control)?;
     let structural: Vec<usize> = map.entities[0]
         .brushes
         .iter()

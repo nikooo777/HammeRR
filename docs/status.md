@@ -19,7 +19,7 @@ HammeRR is in active development.
 | Materials and textures | Works. |
 | Entities, connections and renaming | Works. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawns. Models, terrain, objectives, full asset dependencies and engine limits are planned. |
-| Terrain (displacements) | Flat power-2/3/4 terrain creation with chosen start corners and guarded resolution changes/removal work, with undo and preserved materials/mapping. Imported terrain displays, can be selected and compiles. Raise/lower, flatten, smoothing, seeded noise and blend paint/fill/invert work through guarded previews. Selection/framing follow displaced surfaces and previews; imported entity terrain can be inspected/cleaned up. Equal-power full edges sew positions and optional alpha; complete-surface collision settings work. Viewport center picking works. Live strokes, subdivision, mixed-power/partial edges and remapping restricted topology remain planned. |
+| Terrain (displacements) | Creation, chosen corners, resolution edits, sculpting, blend paint, full-edge sewing and collision controls work with guarded previews and Undo. Viewport center picking and framing follow displaced terrain. Live strokes, subdivision, mixed-power/partial edges and restricted-topology remapping remain planned. |
 | Models | Static props compile, but models aren't drawn in the viewport yet. |
 
 ## Compiler
@@ -36,7 +36,7 @@ HammeRR is in active development.
 | Water | Flat world water, fog regions, floating objects | Depth and below-water materials, currents, water in detail brushes or brush entities |
 | Cubemaps | Sample positions and sizes | Baked reflections |
 | Static props | Models, transforms, collision, skins, fading, named lighting origins | Prop lighting and shadows, exact placement in the BSP tree |
-| Terrain | Power 2/3/4 surfaces, collision, lighting normals sewn across matching equal-power full edges, neighbor links | Authored smoothing angles, LOD between different powers or partial edges, corner neighbors, subdivision, removed triangles |
+| Terrain | Power 2/3/4 surfaces, collision, lighting normals sewn across matching equal-power full edges, full-edge and reciprocal corner-only links | Authored smoothing angles, LOD between different powers or partial edges, subdivision, removed triangles |
 | Overlays | Imported `info_overlay` projections on world, detail and terrain surfaces; materials, render order, distance fading and named accessors | Placement, corner editing, viewport projection, geometry-edit rebinding, brush-model targets, water transitions and decals |
 
 ## Next

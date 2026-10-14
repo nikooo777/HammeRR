@@ -48,9 +48,9 @@ def fixture(args):
     client = Client(None, args.binary, args.output)
     try:
         settings = client.call("get_compile_settings")
-        assert settings["bounces"] == 0 and len(settings["bounce_choices"]) == 2
+        assert settings["bounces"] == 0 and len(settings["bounce_choices"]) == 5
         client.call(
-            "set_compile_settings", {"bounces": 2, "lighting": "direct_ldr"}, error=True
+            "set_compile_settings", {"bounces": 5, "lighting": "direct_ldr"}, error=True
         )
         assert client.call("get_compile_settings") == settings
         objects = []

@@ -57,7 +57,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. One style-preserving diffuse bounce reaches world, terrain and brush entities. HDR and prop lightmaps remain unfinished."
+                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. Up to four style-preserving diffuse bounces reach world, terrain and brush entities. HDR and prop lightmaps remain unfinished."
             }
         }
     }
@@ -121,10 +121,28 @@ pub struct Options {
     pub smoothing_angle: u8,
 }
 
+pub const MAX_LIGHT_BOUNCES: u8 = 4;
+pub const BOUNCE_LABELS: [&str; MAX_LIGHT_BOUNCES as usize + 1] = [
+    "Direct only",
+    "One diffuse bounce",
+    "Two diffuse bounces",
+    "Three diffuse bounces",
+    "Four diffuse bounces",
+];
+
+pub fn bounce_label(count: u8) -> &'static str {
+    BOUNCE_LABELS
+        .get(usize::from(count))
+        .copied()
+        .unwrap_or("Unsupported bounce count")
+}
+
 impl Options {
     pub fn validate(self) -> Result<Self, String> {
-        if self.bounces > 1 {
-            return Err("Light bounces must be 0 or 1".into());
+        if self.bounces > MAX_LIGHT_BOUNCES {
+            return Err(format!(
+                "Light bounces must be between 0 and {MAX_LIGHT_BOUNCES}"
+            ));
         }
         if self.smoothing_angle > 90 {
             return Err("Brush smoothing angle must be a whole number from 0 to 90 degrees".into());

@@ -147,11 +147,20 @@ fn check_base_maps(plain: &Bsp, bumped: &Bsp) {
 fn native_directional_style_maps_keep_base_samples_averages_and_order() {
     let (_plain_dir, plain_game) = game(false);
     let (_bump_dir, bump_game) = game(true);
-    let mut document = Document::new(common::room());
+    let mut source = common::room();
+    for side in source
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.lightmap_scale = 64;
+    }
+    let mut document = Document::new(source);
     light(&mut document, false);
     light(&mut document, true);
     let source = document.vmf().clone();
-    for bounces in [0, 1] {
+    for bounces in [0, 1, 2] {
         let plain = built(&document, &plain_game, bounces).bsp.unwrap();
         let result = built(&document, &bump_game, bounces);
         assert!(result.stats.bump_faces > 0 && result.stats.bump_lightmaps > 0);

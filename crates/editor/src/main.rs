@@ -7507,6 +7507,15 @@ mod tests {
         controller.refresh(&lock(&shared));
         assert_eq!(lock(&shared).compile_settings()["sky_quality"], "balanced");
         assert_eq!(controller.window.get_selected_bounces(), "Direct only");
+        for choice in [2, 3, 4] {
+            controller.window.invoke_change_bounces(choice);
+            controller.refresh(&lock(&shared));
+            assert_eq!(
+                controller.window.get_selected_bounces(),
+                compiler::bounce_label(choice as u8)
+            );
+            assert_eq!(lock(&shared).compile_settings()["bounces"], choice);
+        }
         controller.window.invoke_change_bounces(1);
         controller.refresh(&lock(&shared));
         assert_eq!(
@@ -7777,7 +7786,7 @@ mod tests {
             controller
                 .window
                 .get_details()
-                .contains("Indirect light: 1 diffuse bounce")
+                .contains("Indirect light: One diffuse bounce")
         );
         assert_eq!(stats["lighting_mode"], "direct_ldr");
         assert_eq!(stats["world_lights"], 1);

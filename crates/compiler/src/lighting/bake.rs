@@ -154,7 +154,7 @@ impl Budget<'_> {
             .checked_add(amount)
             .ok_or("Direct lighting work count overflow")?;
         if self.work > MAX_LIGHTING_WORK {
-            return Err("Direct LDR exceeded its 100-million work-unit limit; choose Fast sampling, larger lightmap scales, Direct only or Fullbright".into());
+            return Err("Direct LDR exceeded its 100-million work-unit limit; choose Fast sampling, fewer bounces, larger lightmap scales or Fullbright".into());
         }
         Ok(())
     }
@@ -603,7 +603,7 @@ pub(crate) fn bake(
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional style-preserving diffuse world-light bounce is supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, HDR and prop lightmaps remain unfinished", None, None));
     let count: usize = plans
         .iter()
         .map(|plan| plan.sample_count() * plan.map_count() + 1)
@@ -790,24 +790,38 @@ pub(crate) fn bake(
     bsp.set_records(&faces);
     bsp.set_records(&infos);
     let bounce_start = budget.work;
-    let bounce = if options.bounces == 1 {
-        let stats = super::bounce::bake(
-            &mut super::bounce::Context {
-                map,
-                plans: &plans,
-                faces: &mut faces,
-                infos: &infos,
-                shadows: &shadows,
-                model_shadows: &model_shadows,
-                quality: sky_quality,
-            },
-            bsp,
-            &mut colors,
-            &mut budget,
-        )?;
-        bsp.set_lighting(LightingKind::Ldr, &colors)
-            .map_err(|error| error.to_string())?;
-        bsp.set_records(&faces);
+    let bounce = if options.bounces > 0 {
+        let direct = (options.bounces > 1).then(|| bsp.clone());
+        let mut final_stats = super::bounce::Stats {
+            rays: 0,
+            samples: 0,
+            model_faces: 0,
+            model_samples: 0,
+        };
+        let mut rays = 0;
+        for _ in 0..options.bounces {
+            control.checkpoint()?;
+            final_stats = super::bounce::bake(
+                &mut super::bounce::Context {
+                    map,
+                    plans: &plans,
+                    faces: &mut faces,
+                    infos: &infos,
+                    shadows: &shadows,
+                    model_shadows: &model_shadows,
+                    quality: sky_quality,
+                },
+                bsp,
+                direct.as_ref().unwrap_or(bsp),
+                &mut colors,
+                &mut budget,
+            )?;
+            rays += final_stats.rays;
+            bsp.set_lighting(LightingKind::Ldr, &colors)
+                .map_err(|error| error.to_string())?;
+            bsp.set_records(&faces);
+        }
+        final_stats.rays = rays;
         used_styles.clear();
         styled_faces = 0;
         style_maps = 0;
@@ -823,7 +837,7 @@ pub(crate) fn bake(
             style_maps += styles.len() * plan.map_count();
             bump_lightmaps += styles.len() * (plan.map_count() - 1);
         }
-        stats
+        final_stats
     } else {
         super::bounce::Stats {
             rays: 0,

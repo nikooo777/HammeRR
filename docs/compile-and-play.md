@@ -11,7 +11,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Build lighting**: **Fullbright** for a geometry check, or **Direct LDR** to bake lights.
    - **Physics bodies**: **CS:S engine physics** if the map needs physics bodies.
    - **Visibility quality**: **Fast (conservative)** for a quick build, or **Detailed (portal clipping)** to remove more hidden areas from visible sets.
-   - **Indirect light**: **Direct only** (default) or **One diffuse bounce** to reflect light from world brushes and terrain.
+   - **Indirect light**: **Direct only** (default), or **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces** to reflect light from world brushes and terrain.
    - **Brush smoothing angle**: **0°** keeps unassigned brush faces flat; higher angles blend eligible neighbors. Assigned face groups keep their rules.
    - **Sampling quality**, for Direct LDR sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
@@ -61,7 +61,7 @@ Visibility quality applies to both lighting modes. It is separate from the light
 **Indirect light** (Direct LDR only)
 
 - **Direct only** (default): bake direct emitters and sky ambient.
-- **One diffuse bounce**: reflect direct light from world/detail brushes and terrain into world, terrain and brush-entity receivers. It also reaches model ambient through the resulting lightmaps.
+- **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces**: reflect light from world/detail brushes and terrain into world, terrain and brush-entity receivers. It also reaches model ambient through the resulting lightmaps.
 
 **Brush smoothing angle** (Direct LDR only)
 
@@ -180,15 +180,19 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 #### Bounced light
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR**.
-2. Choose **Indirect light → One diffuse bounce**. Use **Direct only** to compare the direct lighting.
+2. Choose **Indirect light → One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces**. More bounces carry light farther through shaded spaces and take longer. Use **Direct only** to compare.
 3. Choose **Sampling quality**: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**. More directions reduce sampling variation and take longer.
-4. Click **Close**, then **Compile** or **Run Map**. **Build details…** reports **Indirect light**, rays and samples that received reflected light, plus **Brush entity bounce** when the map has model receivers.
+4. Click **Close**, then **Compile** or **Run Map**. **Build details…** reports the chosen **Indirect light** count, total rays and samples receiving reflected light in the final pass, plus **Brush entity bounce** when the map has model receivers.
 
 | World surface | Brush entity |
 | --- | --- |
 | ![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png) | ![Reflected world light reaches a brush entity beneath the shelf](images/compiled-model-bounce.png) |
 
-Limits: one diffuse bounce from direct world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate models do not cast permanent bounce shadows or supply reflected light. Props, more bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+| One bounce | Four bounces |
+| --- | --- |
+| ![One reflected styled-light pass on the shadowed model](images/styled-bounce-on.png) | ![Four reflected styled-light passes on the same model](images/four-bounce-on.png) |
+
+Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate models do not cast permanent bounce shadows or supply reflected light. Props, more than four bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Normal-map lighting
 
@@ -241,7 +245,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent shadows, second-normal-map-only materials, multiple light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, second-normal-map-only materials, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

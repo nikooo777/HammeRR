@@ -209,7 +209,7 @@ fn unsupported_bounce_settings_and_albedo_preserve_previous_output() {
     let (directory, game) = albedo_game([2.0, 0.5, 0.5]);
     let path = directory.path().join("previous.bsp");
     std::fs::write(&path, b"previous BSP").unwrap();
-    for options in [settings(2), settings(1)] {
+    for options in [settings(5), settings(1)] {
         let output = compiler::compile_with_options(document.vmf(), &game, options);
         assert!(output.report.has_errors());
         assert!(!output.write(&path).unwrap());
@@ -254,7 +254,7 @@ fn unsupported_bounce_settings_and_albedo_preserve_previous_output() {
         document.vmf(),
         &game,
         Options {
-            bounces: 1,
+            bounces: 4,
             ..Default::default()
         },
     );
@@ -604,4 +604,92 @@ fn newly_overlapping_bounce_styles_reject_before_replacing_output() {
     );
     assert!(!bounced.write(&path).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+}
+
+#[test]
+fn multiple_bounces_keep_direct_energy_bounded_and_zero_albedo_exact() {
+    for albedo in [0.0, 0.1] {
+        let (_directory, game) = albedo_game([albedo; 3]);
+        let mut source = model_receiver(DVec3::new(101.5, -67.25, 32.125), false, false)
+            .vmf()
+            .clone();
+        for solid in source.world.solids.iter_mut().chain(
+            source
+                .entities
+                .iter_mut()
+                .flat_map(|entity| &mut entity.solids),
+        ) {
+            for side in &mut solid.sides {
+                side.lightmap_scale = 64;
+            }
+        }
+        let mut direct = None;
+        let mut first_rays = 0;
+        let mut first_model = DVec3::ZERO;
+        let mut maximum = 0.0_f64;
+        for bounces in [0, 1, 2, 4] {
+            let output = compiler::compile_with_options(
+                &source,
+                &game,
+                Options {
+                    sky_quality: SkyQuality::Fast,
+                    ..settings(bounces)
+                },
+            );
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            assert_eq!(output.stats.bounces, bounces);
+            let bsp = output.bsp.unwrap();
+            let colors = bsp.lighting(LightingKind::Ldr).unwrap().unwrap().samples();
+            let peak = colors
+                .iter()
+                .map(|value| DVec3::from_array(value.linear()).max_element())
+                .fold(0.0_f64, f64::max);
+            if bounces == 0 {
+                maximum = peak;
+                direct = Some(bsp.to_bytes());
+            } else {
+                if bounces == 1 {
+                    first_rays = output.stats.bounce_rays;
+                }
+                assert_eq!(output.stats.bounce_rays, first_rays * usize::from(bounces));
+                assert!(
+                    peak <= maximum / (1.0 - f64::from(albedo)) + 2.0,
+                    "Direct energy was added repeatedly: {peak} > {maximum}"
+                );
+                if albedo == 0.0 {
+                    assert_eq!(bsp.to_bytes(), *direct.as_ref().unwrap());
+                } else {
+                    let model = model_top(&bsp, DVec3::new(101.5, -67.25, 32.125));
+                    if bounces == 1 {
+                        first_model = model;
+                    } else {
+                        assert!(model.x > first_model.x, "{model} <= {first_model}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn multiple_bounces_share_one_work_budget_and_preserve_previous_output() {
+    let (_directory, game) = albedo_game([0.5; 3]);
+    let document = model_receiver(DVec3::new(101.5, -67.25, 32.125), false, false);
+    let first = compiler::compile_with_options(document.vmf(), &game, settings(1));
+    assert!(!first.report.has_errors(), "{:?}", first.report);
+    assert!(first.stats.lighting_work > 50_000_000);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("guarded.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    let second = compiler::compile_with_options(document.vmf(), &game, settings(2));
+    assert!(second.report.has_errors());
+    assert!(
+        second
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("100-million work-unit"))
+    );
+    assert!(!second.write(&path).unwrap());
+    assert_eq!(std::fs::read(path).unwrap(), b"previous BSP");
 }

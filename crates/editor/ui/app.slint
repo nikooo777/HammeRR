@@ -694,6 +694,9 @@ export component TerrainWindow inherits Window {
     in-out property <string> strength: "0.5";
     in-out property <string> blend-value: "128";
     in-out property <string> seed: "1";
+    in-out property <string> vertex-x: "0";
+    in-out property <string> vertex-y: "0";
+    in-out property <string> vertex-z: "0";
     in-out property <float> radius-slider: 128;
     in-out property <float> amount-slider: 16;
     in-out property <float> strength-slider: 0.5;
@@ -712,7 +715,22 @@ export component TerrainWindow inherits Window {
             spacing: 14px;
             Text {text: root.selection-label; font-size: 17px; wrap: word-wrap;}
             Text {text: "Operation";}
-            ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew borders & corners", "Border smoothing"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
+            ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew borders & corners", "Border smoothing", "Move selected vertices"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
+            if root.operation-index == 11: VerticalLayout {
+                spacing:8px;
+                Text {text:root.mask-label;wrap:word-wrap;color:#b6bac3;}
+                Text {text:"World offset · units";}
+                HorizontalLayout {
+                    spacing:8px;
+                    Text {text:"X";vertical-alignment:center;}
+                    LineEdit {text <=> root.vertex-x;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
+                    Text {text:"Y";vertical-alignment:center;}
+                    LineEdit {text <=> root.vertex-y;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
+                    Text {text:"Z";vertical-alignment:center;}
+                    LineEdit {text <=> root.vertex-z;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
+                }
+                Text {text:"Moves only the retained vertex selection by exact world coordinates. X/Y reshape the terrain sideways; Z changes height. Each offset can be −4096 to 4096 units. Neighboring triangles follow their shared vertices.";wrap:word-wrap;color:#b6bac3;}
+            }
             if root.operation-index >= 1 && root.operation-index <= 7: VerticalLayout {
                 spacing: 4px;
                 CheckBox {text:"Affect only selected terrain vertices";checked <=> root.use-mask;enabled:root.mask-available && !root.stale;toggled=>{root.edited();}}
@@ -800,7 +818,7 @@ export component TerrainWindow inherits Window {
                 Text {text:"Changes border shading in the viewport and Direct LDR builds. Both neighboring surfaces must allow the blend. Geometry and collision stay fixed."; wrap:word-wrap;color:#b6bac3;}
             }
             if root.operation-index == 9: CheckBox {text:"Also sew blend values"; checked <=> root.sew-blend; toggled=>{root.edited();}}
-            if root.operation-index != 0 && root.operation-index != 10: Text {text:root.operation-index == 9 ? "Join full/half borders or matching corners at different resolutions. Shared points are averaged; finer border points follow the coarser grid. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
+            if root.operation-index != 0 && root.operation-index != 10 && root.operation-index != 11: Text {text:root.operation-index == 9 ? "Join full/half borders or matching corners at different resolutions. Shared points are averaged; finer border points follow the coarser grid. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
             Rectangle {vertical-stretch: 1;}
             if root.operation-index >= 1 && root.operation-index <= 5: Text {text:"A stroke applies this brush at each sample. Overlapping samples build up the edit.";wrap:word-wrap;font-size:12px;color:#b6bac3;}
             if root.operation-index >= 1 && root.operation-index <= 5: Button {text:"Draw stroke in viewport…";enabled:!root.stale;clicked=>{root.draw-stroke();}}

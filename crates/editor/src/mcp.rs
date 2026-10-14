@@ -1468,6 +1468,14 @@ pub struct TerrainVertexFrameArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct TerrainVertexMoveArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub offset: [f64; 3],
+    pub mask_token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TerrainVertexMaskArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub token: Option<String>,
@@ -5440,6 +5448,29 @@ impl EditorServer {
                 args.aspect.unwrap_or(16.0 / 9.0),
             )?;
             Ok(json!({"camera":camera_json(&session.camera())}))
+        })
+    }
+
+    #[tool(
+        description = "Preview exact world XYZ movement of a retained terrain vertex mask. offset=[x,y,z] is within±4096 per axis; mask_token from get_terrain_vertex_mask is required; faces defaults to selected terrain(1–16). Explicit vertices or triangle-derived unions work. Writes selected offset rows only; base/start corners, IDs, alpha, normals/distances, material/mapping, tags and flags remain. Zero is an exact no-op. Invalid coordinates/caches/stale or replaced tokens preserve the last valid preview. Inspect get_terrain_vertices(preview=true), then commit/cancel_face_preview with state.preview_token. Apply refreshes its matching selection and makes one Undo step. UI: Edit terrain… → Move selected vertices → World offset · units."
+    )]
+    fn preview_terrain_vertex_move(
+        &self,
+        Parameters(args): Parameters<TerrainVertexMoveArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let changed = session.preview_terrain_vertex_move(
+                Actor::Agent,
+                &faces,
+                vec3(args.offset),
+                parse_token(&args.mask_token)?,
+            )?;
+            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
         })
     }
 

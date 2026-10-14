@@ -10540,6 +10540,32 @@ mod tests {
         }
         window.invoke_cancel();
         assert_eq!(*lock(&shared).document().vmf(), source);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(11);
+        window.set_vertex_x("3.5".into());
+        window.set_vertex_y("-2".into());
+        window.set_vertex_z("12".into());
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-vertex-move");
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        let draft = lock(&shared)
+            .terrain_grids(&[face], true)
+            .unwrap()
+            .remove(0)
+            .mesh;
+        for (index, (a, b)) in before.positions.iter().zip(&draft.positions).enumerate() {
+            assert_eq!(
+                *b,
+                *a + if index == 12 {
+                    DVec3::new(3.5, -2.0, 12.0)
+                } else {
+                    DVec3::ZERO
+                }
+            );
+        }
+        window.invoke_cancel();
+        assert_eq!(*lock(&shared).document().vmf(), source);
     }
 
     #[test]

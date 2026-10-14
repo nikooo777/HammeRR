@@ -647,6 +647,9 @@ impl Session {
                 }
                 map_core::displacement::Operation::Blend { .. } => "edit terrain blend",
                 map_core::displacement::Operation::Stroke { .. } => "edit terrain brush stroke",
+                map_core::displacement::Operation::VertexMove { .. } => {
+                    "move selected terrain vertices"
+                }
             })
             .unwrap_or("edit face settings");
         let changed = self.edit(actor, label, |tx| {

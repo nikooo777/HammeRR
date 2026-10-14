@@ -100,6 +100,19 @@ Choose individual terrain samples for a precise height or blend edit.
 
 Limits: 1–16 surfaces at powers 2–4, with row-major IDs from 0–24, 0–80 or 0–288. Start-corner rotation determines their world placement. Changing **Selection type** clears this dialog's selection. Triangle and vertex selections share one retained mask; a new selection replaces the old one. Compatible geometry previews move the markers; changed topology, external edits, Undo/Redo or reopening stale them. Hidden owners and tool-material visibility apply to picking, guides, framing and box queries. Moving one sample reshapes adjoining triangles. Direct vertex drag handles remain planned.
 
+## Move selected vertices
+
+Move retained terrain samples by exact world coordinates, including sideways edits.
+
+1. In **Terrain triangles…**, choose a triangle union or **Vertices · exact brush masks**, then click **Use selection**.
+2. Select the terrain surfaces to edit and open **Edit terrain…**. Choose **Operation → Move selected vertices**. **Selection mask** reports the affected samples and surfaces.
+3. Enter **World offset · units** under **X**, **Y** and **Z**. X/Y move sideways; positive Z raises. These are total offsets from the current source, rather than accumulated preview changes.
+4. Click **Preview** and inspect the shape. Click **Apply** to keep one Undo step or **Cancel** to restore the source. An applied move retains its matching selection for another edit.
+
+![Exact world XYZ terrain vertex movement](images/terrain-vertex-move.png)
+
+Limits: offsets must be finite and between −4096 and 4096 per axis, with final positions within ±65536. Only selected offset rows change; other samples, normals/distances, alpha, tags, flags, base/start corners, materials and mapping remain fixed. Zero is an exact no-op. Shared vertices reshape adjoining triangles. Stale/replaced masks or unsupported imported geometry/cache data reject without replacing a valid draft. Viewport drag handles remain planned.
+
 ## Paint a material blend
 
 1. Assign a two-texture material through **Browse materials…**, **Use material**, then **Apply**. A single-texture material cannot show the alpha blend.

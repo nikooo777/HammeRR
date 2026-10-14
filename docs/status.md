@@ -19,7 +19,7 @@ HammeRR is in active development.
 | Materials and textures | Works. |
 | Entities, connections and renaming | Works. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths and spawns. Models, terrain, objectives, full asset dependencies and engine limits are planned. |
-| Terrain (displacements) | Creation, chosen corners, resolution edits, sculpting, blend paint, full-edge sewing and collision controls work with guarded previews and Undo. Viewport center picking and framing follow displaced terrain. Compatible mixed-power full and whole-to-half edges compile with native LOD masks and snapping. Live strokes, subdivision, other partial spans and restricted-topology remapping remain planned. |
+| Terrain (displacements) | Creation, chosen corners, resolution edits, sculpting, blend paint, full/half-edge sewing across grid resolutions and collision controls work with guarded previews and Undo. Viewport center picking and framing follow displaced terrain. Compatible mixed-power full and whole-to-half edges compile with native LOD masks and snapping. Live strokes, subdivision, other partial spans and restricted-topology remapping remain planned. |
 | Models | Static props compile, but models aren't drawn in the viewport yet. |
 
 ## Compiler

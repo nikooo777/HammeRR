@@ -13,6 +13,22 @@ pub struct ChainPaint {
     pub source_in_targets: bool,
 }
 
+pub struct TerrainSew {
+    pub changed: usize,
+    pub pairs: usize,
+    pub vertices: usize,
+    pub interpolated_vertices: usize,
+}
+
+impl TerrainSew {
+    pub fn summary(&self) -> String {
+        format!(
+            "Preview: {} joined borders across {} surfaces. {} fine border points resampled. Apply to keep this edit.",
+            self.pairs, self.changed, self.interpolated_vertices
+        )
+    }
+}
+
 impl Session {
     pub fn terrain_grids(
         &self,
@@ -32,7 +48,7 @@ impl Session {
         actor: Actor,
         faces: &[FaceId],
         blend: bool,
-    ) -> Result<(usize, usize, usize), String> {
+    ) -> Result<TerrainSew, String> {
         let plan = map_core::displacement::sew::plan(&self.document, faces, blend)
             .map_err(|error| error.to_string())?;
         let edits = plan
@@ -49,7 +65,12 @@ impl Session {
             })
             .collect();
         let changed = self.preview_or_apply_faces(actor, edits, true)?;
-        Ok((changed, plan.pairs, plan.vertices))
+        Ok(TerrainSew {
+            changed,
+            pairs: plan.pairs,
+            vertices: plan.vertices,
+            interpolated_vertices: plan.interpolated_vertices,
+        })
     }
 
     pub fn preview_terrain_resolution(
@@ -539,7 +560,12 @@ mod tests {
                         .id,
                 };
                 session
-                    .create_terrain(actor, &[face], 2, faces.len() as u32)
+                    .create_terrain(
+                        actor,
+                        &[face],
+                        if faces.is_empty() { 2 } else { 4 },
+                        faces.len() as u32,
+                    )
                     .unwrap();
                 faces.push(face);
             }
@@ -561,7 +587,8 @@ mod tests {
                 .unwrap();
             let before = session.document().vmf().clone();
             let result = session.preview_terrain_sew(actor, &faces, false).unwrap();
-            assert_eq!(result.1, 1);
+            assert_eq!(result.pairs, 1);
+            assert_eq!(result.interpolated_vertices, 12);
             assert_eq!(*session.document().vmf(), before);
             let token = session.face_preview_token();
             assert!(

@@ -209,10 +209,10 @@ impl Controller {
                 let mut session=lock(&shared);
                 if let Some(target)=target.borrow_mut().as_mut() {
                     let result=target.check(&session).and_then(|_|{
-                        if window.get_operation_index()==9 {session.preview_terrain_sew(Actor::User,&target.faces,window.get_sew_blend()).map(|result|result.0)} else {session.preview_terrain_edit(Actor::User,&target.faces,operation(&window)?)}
+                        if window.get_operation_index()==9 {session.preview_terrain_sew(Actor::User,&target.faces,window.get_sew_blend()).map(|result|result.summary())} else {session.preview_terrain_edit(Actor::User,&target.faces,operation(&window)?).map(|count|format!("Preview changes {count} terrain surfaces. Apply to keep this edit."))}
                     });
                     match result {
-                        Ok(count)=>{target.preview=session.face_preview_token();window.set_ready(true);window.set_message(format!("Preview changes {count} terrain surfaces. Apply to keep this edit.").into());}
+                        Ok(message)=>{target.preview=session.face_preview_token();window.set_ready(true);window.set_message(message.into());}
                         Err(error)=>window.set_message(error.into()),
                     }
                 }

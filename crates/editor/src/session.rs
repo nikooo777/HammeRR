@@ -1327,13 +1327,14 @@ impl Session {
             return Err("Viewport aspect must be positive and finite".into());
         }
         let bounds = if self.selection.is_empty() && self.face_selection.is_empty() {
+            let document = self.render_document();
             query::union(
-                self.document
+                document
                     .objects()
-                    .filter_map(|id| query::bounds(&self.document, id)),
+                    .filter_map(|id| query::bounds(document, id)),
             )
         } else {
-            self.selection_bounds()
+            self.selection_bounds_in(self.render_document())
         };
         let (mins, maxs) = bounds.ok_or("No objects to frame")?;
         self.set_camera(
@@ -1345,21 +1346,16 @@ impl Session {
     }
 
     pub fn selection_bounds(&self) -> Option<(DVec3, DVec3)> {
+        self.selection_bounds_in(&self.document)
+    }
+
+    fn selection_bounds_in(&self, document: &Document) -> Option<(DVec3, DVec3)> {
         if !self.face_mode {
-            return query::bounds_of(&self.document, &self.selected_ids());
+            return query::bounds_of(document, &self.selected_ids());
         }
         query::union(self.face_selection.iter().filter_map(|selected| {
-            let solid = surface::solid(&self.document, selected.solid)?;
-            let index = solid
-                .sides
-                .iter()
-                .position(|side| side.id == selected.side)?;
-            let brush = map_core::BrushGeometry::from_solid(solid).ok()?;
-            let face = brush.faces.iter().find(|face| face.side == index)?;
-            Some(face.vertices.iter().fold(
-                (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
-                |(lo, hi), point| (lo.min(*point), hi.max(*point)),
-            ))
+            let solid = surface::solid(document, selected.solid)?;
+            query::face_bounds(solid, selected.side)
         }))
     }
 

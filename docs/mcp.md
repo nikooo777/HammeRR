@@ -190,6 +190,8 @@ These details aren't obvious from the tool list.
 
 - `remove_terrain` removes displacement data from 1–16 selected or explicit faces, rejecting missing, ambiguous or ordinary faces atomically. The response gives `surfaces_removed` and shared face state. Geometry, IDs, material, mapping and lighting stay fixed; undo restores all imported grid rows and extras. A parent regains its brush volume once no terrain faces remain. Imported entity terrain can also be removed. UI: **Remove terrain**.
 
+- `raycast` and `pick_at_pixel` intersect rendered terrain triangles, retaining owner/side identity and visibility filters. `frame_selection` uses displaced bounds and active previews; `get_objects` reports committed visible bounds. Invisible parent faces are excluded from terrain hits. Imported entity terrain supports grid inspection and cleanup with Undo, while native entity-terrain compilation remains unsupported.
+
 **Compiling**
 
 - `set_compile_settings` takes `lighting` (`fullbright` or `direct_ldr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`) and `smoothing_angle` (whole degrees `0`–`90`). It changes only the fields you pass, and invalid combinations leave every setting unchanged.

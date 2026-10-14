@@ -1,5 +1,7 @@
 //! Read-only queries: picking and bounds.
 
+mod terrain;
+
 use glam::DVec3;
 use source_formats::vmf::{Entity, Solid};
 
@@ -94,6 +96,12 @@ fn pick_with_points(
     include_face: impl Fn(&Solid, &source_formats::vmf::Side, DVec3) -> bool,
     include_points: bool,
 ) -> Option<Hit> {
+    if !ray.origin.is_finite()
+        || !ray.direction.is_finite()
+        || ray.direction.length_squared() < 1e-24
+    {
+        return None;
+    }
     let ray = Ray {
         origin: ray.origin,
         direction: ray.direction.normalize(),
@@ -102,8 +110,13 @@ fn pick_with_points(
         if solid.hidden || !include_solid(solid) {
             return None;
         }
-        let (t, side) = ray_solid(&ray, solid)?;
-        if !include_face(solid, &solid.sides[side], ray.origin + ray.direction * t) {
+        let displaced = solid.sides.iter().any(|side| side.displacement.is_some());
+        let (t, side) = if displaced {
+            terrain::pick(&ray, solid, &include_face)?
+        } else {
+            ray_solid(&ray, solid)?
+        };
+        if !displaced && !include_face(solid, &solid.sides[side], ray.origin + ray.direction * t) {
             return None;
         }
         Some(Hit {
@@ -152,7 +165,29 @@ fn pick_with_points(
         .min_by(|a, b| a.distance.total_cmp(&b.distance))
 }
 
+pub fn face_bounds(solid: &Solid, side_id: u32) -> Option<(DVec3, DVec3)> {
+    let geometry = BrushGeometry::from_solid(solid).ok()?;
+    let index = solid.sides.iter().position(|side| side.id == side_id)?;
+    let face = geometry.faces.iter().find(|face| face.side == index)?;
+    let points = if let Some(info) = &solid.sides[index].displacement {
+        crate::DisplacementMesh::build(face, info).ok()?.positions
+    } else {
+        face.vertices.clone()
+    };
+    if points.iter().any(|point| !point.is_finite()) {
+        return None;
+    }
+    union(points.into_iter().map(|point| (point, point)))
+}
+
 pub fn solid_bounds(solid: &Solid) -> Option<(DVec3, DVec3)> {
+    if solid.sides.iter().any(|side| side.displacement.is_some()) {
+        return union(
+            terrain::points(solid)
+                .into_iter()
+                .map(|point| (point, point)),
+        );
+    }
     let brush = BrushGeometry::from_solid(solid).ok()?;
     Some((brush.mins, brush.maxs))
 }
@@ -272,8 +307,12 @@ pub fn bounds_in_basis(
             }
         };
         for solid in solids {
-            let shape = BrushGeometry::from_solid(solid).ok()?;
-            points.extend(shape.faces.into_iter().flat_map(|face| face.vertices));
+            if solid.sides.iter().any(|side| side.displacement.is_some()) {
+                points.extend(terrain::points(solid));
+            } else {
+                let shape = BrushGeometry::from_solid(solid).ok()?;
+                points.extend(shape.faces.into_iter().flat_map(|face| face.vertices));
+            }
         }
     }
     union(points.into_iter().map(|point| {
@@ -286,6 +325,7 @@ pub fn bounds_in_basis(
 mod tests {
     use super::*;
     use crate::edit::{create_block, create_entity};
+    use crate::surface::FaceId;
 
     #[test]
     fn local_bounds_use_brush_vertices_after_oblique_rotation() {
@@ -420,5 +460,158 @@ mod tests {
                 DVec3::splat(LIGHT_ENTITY_HALF_SIZE)
             ))
         );
+    }
+    fn raised_terrain() -> (Document, FaceId) {
+        use crate::surface::FaceId;
+        let mut doc = Document::empty();
+        let ObjectId::Solid(id) = doc
+            .edit("parent", |tx| {
+                create_block(
+                    tx,
+                    DVec3::new(-64.0, -64.0, 0.0),
+                    DVec3::new(64.0, 64.0, 16.0),
+                    "brick/test",
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let face = FaceId {
+            solid: id,
+            side: doc
+                .solid(id)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id,
+        };
+        doc.edit("terrain", |tx| {
+            crate::displacement::edit::create(tx, &[face], 2, 0)
+        })
+        .unwrap();
+        doc.edit("raise", |tx| {
+            crate::surface::edit_faces(
+                tx,
+                &[face],
+                &crate::surface::SurfaceEdit {
+                    terrain: Some(crate::displacement::Operation::Sculpt {
+                        brush: crate::displacement::brush::Brush {
+                            center: DVec3::new(0.0, 0.0, 16.0),
+                            radius: 32.0,
+                            axis: crate::displacement::brush::Axis::WorldZ,
+                        },
+                        operation: crate::displacement::brush::Sculpt::Raise(64.0),
+                    }),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        (doc, face)
+    }
+
+    #[test]
+    fn displaced_peaks_drive_surface_hits_and_world_local_bounds() {
+        let (doc, face) = raised_terrain();
+        let ray = Ray {
+            origin: DVec3::new(0.0, 0.0, 200.0),
+            direction: DVec3::NEG_Z,
+        };
+        let hit = pick_face(&doc, &ray, |_| true).unwrap();
+        assert_eq!(hit.point, DVec3::new(0.0, 0.0, 80.0));
+        assert_eq!(hit.side, Some(face.side));
+        let id = ObjectId::Solid(face.solid);
+        assert_eq!(
+            bounds(&doc, id),
+            Some((DVec3::new(-64.0, -64.0, 16.0), DVec3::new(64.0, 64.0, 80.0)))
+        );
+        assert_eq!(
+            bounds_in_basis(&doc, &[id], glam::DMat3::IDENTITY),
+            bounds(&doc, id)
+        );
+        assert!(pick_face_filtered(&doc, &ray, |_| true, |_, _, _| false).is_none());
+        assert!(pick_face(&doc, &ray, |_| false).is_none());
+    }
+
+    #[test]
+    fn terrain_offsets_entity_owners_and_hidden_scopes_keep_rendered_identity() {
+        let (mut doc, face) = raised_terrain();
+        doc.edit("offset", |tx| {
+            let side = tx
+                .solid_mut(face.solid)?
+                .sides
+                .iter_mut()
+                .find(|side| side.id == face.side)
+                .unwrap();
+            for row in side
+                .displacement
+                .as_mut()
+                .unwrap()
+                .offsets
+                .as_mut()
+                .unwrap()
+            {
+                for point in row {
+                    *point += DVec3::X * 200.0;
+                }
+            }
+            crate::edit::tie_to_entity(tx, &[face.solid], "func_brush", &[])
+        })
+        .unwrap();
+        let owner = doc.owner_of_solid(face.solid).unwrap();
+        let ray = Ray {
+            origin: DVec3::new(200.0, 0.0, 200.0),
+            direction: DVec3::NEG_Z,
+        };
+        let hit = pick_face(&doc, &ray, |_| true).unwrap();
+        assert_eq!(hit.object, owner);
+        assert_eq!(hit.point, DVec3::new(200.0, 0.0, 80.0));
+        assert_eq!(bounds(&doc, owner).unwrap().0.x, 136.0);
+        let miss = Ray {
+            origin: DVec3::new(0.0, 0.0, 200.0),
+            direction: DVec3::NEG_Z,
+        };
+        assert!(pick_face(&doc, &miss, |_| true).is_none());
+        doc.edit("hidden", |tx| {
+            let ObjectId::Entity(entity) = owner else {
+                unreachable!()
+            };
+            tx.entity_mut(entity)?
+                .solids
+                .iter_mut()
+                .find(|solid| solid.id == face.solid)
+                .unwrap()
+                .hidden = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(pick_face(&doc, &ray, |_| true).is_none());
+    }
+
+    #[test]
+    fn malformed_terrain_does_not_fall_back_to_invisible_parent_faces() {
+        let (mut doc, face) = raised_terrain();
+        doc.edit("malformed", |tx| {
+            tx.solid_mut(face.solid)?
+                .sides
+                .iter_mut()
+                .find(|side| side.id == face.side)
+                .unwrap()
+                .displacement
+                .as_mut()
+                .unwrap()
+                .power = 5;
+            Ok(())
+        })
+        .unwrap();
+        let ray = Ray {
+            origin: DVec3::new(0.0, 0.0, 200.0),
+            direction: DVec3::NEG_Z,
+        };
+        assert!(pick(&doc, &ray, |_| true).is_none());
+        assert!(bounds(&doc, ObjectId::Solid(face.solid)).is_none());
     }
 }

@@ -2,20 +2,33 @@ import argparse
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 from pathlib import Path
 
 import validate_native_runtime as runtime
+from validate_authored_planes import records
+from validate_compile_jobs import wait_job
+from validate_direct_lighting import FACE_FORMAT, lightmaps
 from validate_face_lighting import ROOT, Client, detail
 from validate_visibility import ROOM
 
-OBSERVER = runtime.OBSERVER.replace(
-    "stage <- 0;",
-    'stage <- 0;\nmotion_stage <- 0;\nmotion_next <- 0.0;\nfunction HammeRRTrigger() { printl("HAMMERR_TRIGGER_TOUCH"); }',
-).replace(
-    '    local player = Entities.FindByClassname(null, "player");',
-    """
+OBSERVER = (
+    runtime.OBSERVER.replace(
+        "stage <- 0;",
+        'stage <- 0;\nmotion_stage <- 0;\nmotion_next <- 0.0;\nfunction HammeRRTrigger() { printl("HAMMERR_TRIGGER_TOUCH"); }',
+    )
+    .replace(
+        "sv_cheats 1; joystick 0;", "sv_cheats 1; joystick 0; bot_quota 0; bot_kick;"
+    )
+    .replace(
+        "setpos -64 -64 32; setang 25 45 0; mat_fullbright",
+        "setpos -64 -64 32; setang 25 45 0; r_drawothermodels 0; r_drawviewmodel 0; mat_fullbright",
+    )
+    .replace(
+        '    local player = Entities.FindByClassname(null, "player");',
+        """
     foreach (name in ["slide_door", "hinge_door", "spin_brush"]) {
         local ent = Entities.FindByName(null, name);
         if (ent != null) {
@@ -36,7 +49,33 @@ OBSERVER = runtime.OBSERVER.replace(
     }
     local player = Entities.FindByClassname(null, "player");
 """,
+    )
 )
+
+
+def payload(data, index):
+    offset, size = struct.unpack_from("<2i", data, 8 + index * 16)
+    return data[offset : offset + size]
+
+
+def check_lightmaps(data, stats):
+    models = records(data, 14, "<9f3i")
+    faces = records(data, 7, FACE_FORMAT)
+    colors = lightmaps(data)
+    count = 0
+    for model in models[1:4]:
+        lit = False
+        for face in faces[model[10] : model[10] + model[11]]:
+            assert face[8:12] == (0, 255, 255, 255) and face[12] >= 4
+            size = (face[16] + 1) * (face[17] + 1) * 4
+            samples = colors[face[12] : face[12] + size]
+            assert len(samples) == size
+            lit |= any(
+                sum(samples[index : index + 3]) > 0 for index in range(0, size, 4)
+            )
+            count += 1
+        assert lit, model
+    assert stats["lit_brush_models"] == 3 and stats["model_lighting_faces"] == count
 
 
 def fixture(args):
@@ -165,11 +204,27 @@ def fixture(args):
         client.call("save_map", {"path": str(vmf)})
         source = vmf.read_bytes()
         client.call(
-            "set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"}
+            "set_compile_settings", {"lighting": "fullbright", "physics": "engine"}
         )
+        unlit = args.output / "fullbright.bsp"
+        client.call("compile_map", {"path": str(unlit)})
+        unlit = unlit.read_bytes()
+        client.call("set_compile_settings", {"lighting": "direct_ldr"})
         bsp = args.output / "brush-runtime.bsp"
         compiled = client.call("compile_map", {"path": str(bsp)})
         assert compiled["success"] and compiled["stats"]["models"] == 5
+        data = bsp.read_bytes()
+        check_lightmaps(data, compiled["stats"])
+        for index in [1, 3, 5, 10, 12, 13, 14, 18, 19, 29]:
+            assert payload(data, index) == payload(unlit, index), (
+                f"Geometry/physics lump {index} changed"
+            )
+        background = args.output / "background.bsp"
+        client.call("start_compile", {"path": str(background)})
+        assert (
+            wait_job(client)["status"] == "completed"
+            and background.read_bytes() == data
+        )
         assert (
             detail(client, targets) == before
             and client.call("get_map_info")["undo"] == history

@@ -44,7 +44,7 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 **Build lighting**
 
 - **Fullbright** (default): no lighting. Fastest, for checking geometry.
-- **Direct LDR**: bakes direct light from static, switchable and animated point/spot lights and the sun, plus diffuse sky ambient, into lightmaps with shadows. See [Lighting](#lighting).
+- **Direct LDR**: bakes direct light from static, switchable and animated point/spot lights and the sun, plus diffuse sky ambient, into world, terrain and brush-entity lightmaps with shadows. See [Lighting](#lighting).
 
 **Physics bodies**
 
@@ -142,10 +142,23 @@ With **Direct LDR**:
 
 - `light` and `light_spot` support static, switchable and animated appearances. `light_environment` remains static. All are baked in color.
 - Opaque world brushes, detail brushes and terrain cast shadows.
+- Rendered brush entities receive pivot-aware direct lightmaps that move with the model. Their own brushes can shadow one another; they do not cast permanent shadows into the world.
 - Each face uses its [lightmap scale and assigned smoothing groups](textures.md#face-lighting). World/detail brush smoothing retains the same fan across lightmap subdivisions.
 - Terrain is lit using its real raised surface, with smooth normals within patches and across matching equal-power full edges. The viewport uses the same normal construction.
 
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
+
+#### Brush-entity lightmaps
+
+1. Select the world brushes and click **Tie to entity…**. Choose a rendered class such as `func_brush`, `func_door` or `func_door_rotating`, then **Tie selected brushes to entity**.
+2. Set **Origin (X Y Z)** or use an [origin brush](#brush-entities-and-pivots) for its pivot. Fractional pivots are supported.
+3. Place lights around its authored position and choose its materials and face lightmap scales.
+4. Open **Build settings…**, choose **Build lighting → Direct LDR**, then **Close** and **Compile** or **Run Map**. **Build details…** reports **Brush entity lightmaps**, models and faces.
+5. Use [Connections](entities.md#connections-inputs-and-outputs) to move a door. Its baked lightmap stays attached while it moves.
+
+![Pivot-aware direct lighting on moving brush entities](images/compiled-brush-models.png)
+
+Limits: direct point/spot styles and sun/sky lighting at the authored pose, with geometric face normals and isolated self-shadow hulls. Moving models do not add permanent world shadows or supply/receive bounced light. Model smoothing, independently rotated initial poses, dynamic relighting, bump/HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
 
 #### Switchable lights and appearances
 
@@ -160,7 +173,7 @@ With **Direct LDR**:
 | --- | --- |
 | ![Named red lights start dark while static blue lighting remains](images/light-styles-off.png) | ![The same lights switched on through a relay](images/light-styles-on.png) |
 
-Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct world/detail/terrain lightmaps; styled bounces, switching model-ambient cubes, sun/sky styles and baked moving-model/prop lightmaps remain unfinished. A styled build with **One diffuse bounce** fails with a recovery instruction. The common lighting allocation/work limits apply.
+Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct world/detail/terrain lightmaps; styled bounces, switching model-ambient cubes, sun/sky styles model smoothing/bounces and baked prop lightmaps remain unfinished. A styled build with **One diffuse bounce** fails with a recovery instruction. The common lighting allocation/work limits apply.
 
 #### Bounced light
 
@@ -171,7 +184,7 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 
 ![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png)
 
-Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows; props and brush models do not cast bounce shadows or supply reflected light. More bounces, HDR, emissive materials and baked prop/model lightmaps remain unfinished. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows; props and brush models do not cast bounce shadows or supply reflected light. Model bounce receivers, more bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Falloff
 
@@ -211,7 +224,7 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent shadows, brush-model smoothing and bump maps, multiple or styled light bounces, HDR, baked prop lighting and moving brush lightmaps. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent shadows, brush-model smoothing and bump maps, multiple or styled light bounces, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 

@@ -174,6 +174,7 @@ fn append_entity(
 }
 
 pub struct Emission {
+    pub model_entities: Vec<usize>,
     pub bsp: Bsp,
     pub smoothing_sources: Vec<Option<Arc<crate::faces::SmoothingSource>>>,
 }
@@ -503,6 +504,7 @@ pub fn build(
         }
     }
     Ok(Emission {
+        model_entities: models.iter().map(|model| model.entity).collect(),
         bsp,
         smoothing_sources,
     })

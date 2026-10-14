@@ -130,7 +130,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | Script | Checks |
 | --- | --- |
 | `native_runtime` | Player spawn and teleport, baked red lightmaps, a physics crate with and without collision bodies. `--fluid` adds a pool and checks that the crate floats. |
-| `brush_runtime` | Sliding and rotating doors, a continuously rotating brush, and trigger outputs. |
+| `brush_runtime` | Sliding and rotating doors, a continuously rotating brush, trigger outputs, pivot-aware model lightmaps, exact shared builds, and unchanged geometry/collision. |
 | `static_props --runtime` | Static prop collision settings. |
 | `terrain --runtime` | Terrain with uneven heights, power-4 and mixed-size lighting, player collision, ray flags and moving objects. `--runtime-cases power-four mixed` limits the game checks to those two fixtures; `--runtime-cases neighbors` runs the linked-edge fixture. |
 | `areaportals --runtime` | Native area/portal bindings, hidden and invalid boundaries, exact MCP build output, and visible-area/client portal bits through close/reopen from both sides. |

@@ -56,6 +56,21 @@ fn operation(window: &TerrainWindow) -> Result<map_core::displacement::Operation
         brush::{Axis, Blend, Brush, Sculpt},
     };
     let mode = window.get_operation_index();
+    if mode == 8 {
+        let choice = |index| match index {
+            0 => Ok(None),
+            1 => Ok(Some(true)),
+            2 => Ok(Some(false)),
+            _ => Err("Choose a valid collision setting".to_owned()),
+        };
+        return Ok(Operation::Collision(
+            map_core::displacement::collision::Settings {
+                physics: choice(window.get_physics_index())?,
+                player: choice(window.get_player_index())?,
+                ray: choice(window.get_ray_index())?,
+            },
+        ));
+    }
     if mode == 0 {
         let index = u32::try_from(window.get_grid_index())
             .ok()
@@ -167,7 +182,9 @@ impl Controller {
                 let window=window.unwrap();
                 let mut session=lock(&shared);
                 if let Some(target)=target.borrow_mut().as_mut() {
-                    let result=target.check(&session).and_then(|_|session.preview_terrain_edit(Actor::User,&target.faces,operation(&window)?));
+                    let result=target.check(&session).and_then(|_|{
+                        if window.get_operation_index()==9 {session.preview_terrain_sew(Actor::User,&target.faces,window.get_sew_blend()).map(|result|result.0)} else {session.preview_terrain_edit(Actor::User,&target.faces,operation(&window)?)}
+                    });
                     match result {
                         Ok(count)=>{target.preview=session.face_preview_token();window.set_ready(true);window.set_message(format!("Preview changes {count} terrain surfaces. Apply to keep this edit.").into());}
                         Err(error)=>window.set_message(error.into()),
@@ -238,6 +255,23 @@ impl Controller {
         self.window.set_center_z(format!("{:.3}", center.z).into());
         self.window.set_operation_index(0);
         sync_sliders(&self.window);
+        let current = |field: fn(&map_core::displacement::edit::TerrainGrid) -> bool| {
+            let first = field(&grids[0]);
+            if grids.iter().all(|grid| field(grid) == first) {
+                if first { "enabled" } else { "disabled" }
+            } else {
+                "mixed"
+            }
+        };
+        self.window
+            .set_physics_current(current(|grid| grid.collision.physics).into());
+        self.window
+            .set_player_current(current(|grid| grid.collision.player).into());
+        self.window
+            .set_ray_current(current(|grid| grid.collision.ray).into());
+        self.window.set_physics_index(0);
+        self.window.set_player_index(0);
+        self.window.set_ray_index(0);
         let power = grids[0].power;
         let common = grids.iter().all(|grid| grid.power == power);
         self.window

@@ -428,6 +428,10 @@ pub fn edit_faces(
                 .as_ref()
                 .ok_or_else(|| invalid("Every target must contain terrain"))?;
             side.displacement = Some(match operation {
+                crate::displacement::Operation::Sewn(info) => (**info).clone(),
+                crate::displacement::Operation::Collision(settings) => {
+                    crate::displacement::collision::apply(info, *settings)
+                }
                 crate::displacement::Operation::Resolution(power) => {
                     crate::displacement::resample::change(&geometry, info, *power)?
                 }

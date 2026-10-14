@@ -4,13 +4,17 @@ use source_formats::vmf::DispInfo;
 use crate::brush::Face;
 
 pub mod brush;
+pub mod collision;
 pub mod edit;
 pub mod neighbors;
 pub mod resample;
+pub mod sew;
 
 #[derive(Debug, Clone)]
 pub enum Operation {
     Resolution(u32),
+    Sewn(Box<source_formats::vmf::DispInfo>),
+    Collision(collision::Settings),
     Sculpt {
         brush: brush::Brush,
         operation: brush::Sculpt,

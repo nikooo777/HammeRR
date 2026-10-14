@@ -107,7 +107,12 @@ impl Session {
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let sky_choices = [compiler::SkyQuality::Fast, compiler::SkyQuality::Balanced, compiler::SkyQuality::Detailed].map(|quality| json!({"name":quality.name(), "label":quality.label(), "directions":quality.directions()}));
         let visibility_choices = [compiler::VisibilityMode::Fast, compiler::VisibilityMode::Detailed].map(|mode| json!({"name":mode.name(), "label":mode.label(), "description":mode.description()}));
-        json!({"smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":[{"bounces":0,"label":"Direct only"},{"bounces":1,"label":"One diffuse bounce"}],"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+        let bounce_choices = compiler::BOUNCE_LABELS
+            .iter()
+            .enumerate()
+            .map(|(count, label)| json!({"bounces": count, "label": label}))
+            .collect::<Vec<_>>();
+        json!({"smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
@@ -488,7 +493,7 @@ mod tests {
             let selected = session.compile_settings();
             assert!(
                 session
-                    .update_compile_options(actor, Some("direct_ldr"), None, None, None, Some(2))
+                    .update_compile_options(actor, Some("direct_ldr"), None, None, None, Some(5))
                     .is_err()
             );
             assert_eq!(session.compile_settings(), selected);
@@ -526,6 +531,19 @@ mod tests {
             );
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
             assert_eq!(session.compile_settings()["sky_quality"], "balanced");
+            assert_eq!(
+                session.compile_settings()["bounce_choices"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                5
+            );
+            for count in [2, 3, 4, 1] {
+                session
+                    .update_compile_options(actor, None, None, None, None, Some(count))
+                    .unwrap();
+                assert_eq!(session.compile_settings()["bounces"], count);
+            }
             let result = session.set_compile_settings(actor, "direct_ldr").unwrap();
             assert_eq!(result["lighting"], "direct_ldr");
             assert!(

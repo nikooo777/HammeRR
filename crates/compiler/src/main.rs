@@ -5,7 +5,7 @@ use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0|1] [--smoothing-angle 0..90]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -37,8 +37,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Some("--bounces") => {
                 let value = args.next().ok_or(USAGE)?;
                 options.bounces = value.to_str().ok_or(USAGE)?.parse::<u8>()?;
-                if options.bounces > 1 {
-                    return Err("Light bounces must be 0 or 1".into());
+                if options.bounces > compiler::MAX_LIGHT_BOUNCES {
+                    return Err(format!(
+                        "Light bounces must be between 0 and {}",
+                        compiler::MAX_LIGHT_BOUNCES
+                    )
+                    .into());
                 }
             }
             Some("--visibility") => {

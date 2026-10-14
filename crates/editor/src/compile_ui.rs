@@ -428,7 +428,8 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 format!(
-                    "\nIndirect light: {count} diffuse bounce · {} rays · {} samples lit{model_bounce}",
+                    "\nIndirect light: {} · {} rays · {} samples lit{model_bounce}",
+                    compiler::bounce_label(count as u8),
                     result["stats"]["bounce_rays"].as_u64().unwrap_or_default(),
                     result["stats"]["bounce_samples"]
                         .as_u64()
@@ -560,7 +561,7 @@ impl Controller {
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::VisibilityMode::parse(job["settings"]["visibility"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::SkyQuality::parse(job["settings"]["sky_quality"].as_str().unwrap_or_default()).unwrap_or_default().label(),
-                if job["settings"]["bounces"] == 1 { "One diffuse bounce" } else { "Direct only" },
+                compiler::bounce_label(job["settings"]["bounces"].as_u64().unwrap_or_default() as u8),
                 job["settings"]["smoothing_angle"].as_u64().unwrap_or_default(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,

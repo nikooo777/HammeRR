@@ -187,7 +187,7 @@ def fixture(args):
             {
                 "lighting": "direct_ldr",
                 "physics": "engine",
-                "bounces": 1 if args.bounced_model else 0,
+                "bounces": args.bounces if args.bounced_model else 0,
             },
         )
         before = detail(client, objects)
@@ -216,6 +216,7 @@ def fixture(args):
             assert (
                 stats["model_bounce_samples"] > 0 and stats["model_bounce_faces"] == 6
             )
+            assert stats["bounces"] == args.bounces
             assert model_top_color(data, 32)[0] > 0
         else:
             client.call("set_compile_settings", {"bounces": 1})
@@ -378,6 +379,7 @@ def main():
     )
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--bounced-model", action="store_true")
+    parser.add_argument("--bounces", type=int, choices=[1, 2, 3, 4], default=1)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(

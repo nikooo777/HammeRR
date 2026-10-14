@@ -68,6 +68,7 @@ fn gather(
 pub(super) fn bake(
     ctx: &mut Context<'_>,
     bsp: &Bsp,
+    direct: &Bsp,
     colors: &mut Vec<RgbExp32>,
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
@@ -98,15 +99,18 @@ pub(super) fn bake(
         model_faces: 0,
         model_samples: 0,
     };
-    let lighting = bsp
+    let lighting = direct
         .lighting(source_formats::bsp::LightingKind::Ldr)
         .map_err(|error| error.to_string())?
         .ok_or("Bounce source lighting is missing")?;
     let mut emitted = Vec::with_capacity(colors.len());
+    let direct_faces = direct
+        .records::<Face>()
+        .map_err(|error| error.to_string())?;
     for plan in ctx.plans {
         budget.consume(1)?;
         stats.model_faces += usize::from(plan.model != 0);
-        let face = ctx.faces[plan.face];
+        let face = direct_faces[plan.face];
         let info = ctx.infos[face.texinfo as usize];
         let source = lighting
             .face(&face, &info)

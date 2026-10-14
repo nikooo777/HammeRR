@@ -1046,7 +1046,10 @@ fn invalid_or_unsupported_terrain_preserves_previous_output() {
             1 => disp.distances.as_mut().unwrap()[0][0] = f64::NAN,
             2 => disp.start_position = DVec3::ZERO,
             3 => disp.flags = Some(16),
-            4 => disp.subdivided = true,
+            4 => {
+                disp.subdivided = true;
+                disp.normals.as_mut().unwrap()[0].pop();
+            }
             5 => disp.triangle_tags = Some(vec![vec![0x20; 8]; 4]),
             _ => unreachable!(),
         }
@@ -1060,6 +1063,40 @@ fn invalid_or_unsupported_terrain_preserves_previous_output() {
         assert!(!output.write(&path).unwrap());
         assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
         assert_eq!(invalid.write(&Default::default()), source);
+    }
+}
+
+#[test]
+fn already_subdivided_explicit_grids_preserve_native_bytes_at_every_power() {
+    for power in 2..=4 {
+        let (mut vmf, _) = fixture(power);
+        let baseline = compiler::compile(&vmf, &common::empty_game())
+            .bsp
+            .unwrap()
+            .to_bytes();
+        let disp = vmf
+            .world
+            .solids
+            .iter_mut()
+            .flat_map(|solid| &mut solid.sides)
+            .find_map(|side| side.displacement.as_mut())
+            .unwrap();
+        disp.subdivided = true;
+        let source = vmf.clone();
+        let output = compiler::compile(&vmf, &common::empty_game());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.bsp.unwrap().to_bytes(), baseline);
+        assert_eq!(vmf, source);
+        let parsed = Vmf::parse(&vmf.write(&Default::default())).unwrap();
+        assert!(
+            parsed
+                .world
+                .solids
+                .iter()
+                .flat_map(|solid| &solid.sides)
+                .filter_map(|side| side.displacement.as_ref())
+                .all(|disp| disp.subdivided)
+        );
     }
 }
 

@@ -2,7 +2,7 @@
 
 # Terrain
 
-Turn world quad faces into flat terrain surfaces at three grid resolutions. Sculpt heights and paint two-material blends through shared previews. Imported terrain also displays and compiles.
+Turn world quad faces into flat terrain surfaces at three grid resolutions. Sculpt heights and paint two-material blends through shared previews. Imported terrain also displays and compiles, including saved grids marked as already subdivided.
 
 ## Create a terrain surface
 
@@ -69,7 +69,7 @@ Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can r
 
 ![Different terrain grids joined across full and half borders](images/terrain-sewn.png)
 
-Limits: full or exact whole-to-half base edges at powers 2–4. Missing matches, ambiguous overlaps and unsupported subdivision/cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and subdivision remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
+Limits: full or exact whole-to-half base edges at powers 2–4. Missing matches, ambiguous overlaps and unsupported subdivision/cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and subdivision authoring remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
 
 ## Set collision behavior
 
@@ -110,7 +110,7 @@ Limits: powers 2–4, complete base edges with matching common heights, and boun
 
 ![Compiled terrain across a split border](images/terrain-half-edge.png)
 
-Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans, subdivision and holes remain planned. Source grids stay unchanged.
+Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans, subdivision generation and holes remain planned. Imported subdivided grids compile their saved rows; source-editing tools still require cache remapping. Source grids stay unchanged.
 
 ## Connected lighting
 

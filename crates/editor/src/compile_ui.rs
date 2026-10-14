@@ -52,6 +52,28 @@ impl Controller {
             .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
             .collect::<Vec<_>>();
         window.set_bounce_modes(Rc::new(slint::VecModel::from(bounce_labels)).into());
+        window.on_change_smoothing_angle({
+            let (shared, window) = (shared.clone(), window.as_weak());
+            move |angle| {
+                let result = u8::try_from(angle)
+                    .map_err(|_| "Choose an angle from 0 to 90 degrees".to_string())
+                    .and_then(|angle| {
+                        lock(&shared).update_build_settings(
+                            Actor::User,
+                            crate::session::compilation::BuildSettingsUpdate {
+                                smoothing_angle: Some(angle),
+                                ..Default::default()
+                            },
+                        )
+                    });
+                window.unwrap().set_message(match result {
+                    Ok(_) => {
+                        "Brush smoothing angle updated. The next build will use this angle.".into()
+                    }
+                    Err(error) => error.into(),
+                });
+            }
+        });
         window.on_change_bounces({
             let (shared, window) = (shared.clone(), window.as_weak());
             move |choice| {
@@ -249,6 +271,8 @@ impl Controller {
         self.window.set_sky_enabled(
             settings["editable"].as_bool().unwrap_or(false) && settings["lighting"] == "direct_ldr",
         );
+        self.window
+            .set_smoothing_angle(settings["smoothing_angle"].as_u64().unwrap_or_default() as i32);
         let bounce_choice = settings["bounce_choices"]
             .as_array()
             .into_iter()
@@ -474,13 +498,14 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {}\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{smoothing}{physics}\n{}",
+                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::VisibilityMode::parse(job["settings"]["visibility"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::SkyQuality::parse(job["settings"]["sky_quality"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 if job["settings"]["bounces"] == 1 { "One diffuse bounce" } else { "Direct only" },
+                job["settings"]["smoothing_angle"].as_u64().unwrap_or_default(),
                 job["stage_label"].as_str().unwrap_or_default(),
                 job["elapsed_ms"].as_u64().unwrap_or_default() as f64 / 1000.0,
                 if job["stale"].as_bool().unwrap_or(false) {

@@ -7519,11 +7519,17 @@ mod tests {
             "One diffuse bounce"
         );
         assert_eq!(lock(&shared).compile_settings()["bounces"], 1);
+        assert_eq!(controller.window.get_smoothing_angle(), 0);
+        controller.window.invoke_change_smoothing_angle(45);
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.window.get_smoothing_angle(), 45);
+        assert_eq!(lock(&shared).compile_settings()["smoothing_angle"], 45);
         save_ui_snapshot(controller.window.window(), "build-settings");
         assert!(lock(&shared).compile_status()["job"].is_null());
         assert_eq!(lock(&shared).document().undo_labels().count(), 0);
         controller.window.invoke_change_sky_quality(0);
         controller.window.invoke_change_visibility(0);
+        controller.window.invoke_change_smoothing_angle(0);
         controller.window.invoke_change_bounces(0);
         controller.window.invoke_change_lighting(0);
         controller.refresh(&lock(&shared));

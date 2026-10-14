@@ -467,7 +467,13 @@ pub(crate) fn bake(
         .map_err(|error| error.to_string())?;
     let mut budget = Budget { work: 0, control };
     let normal_start = budget.work;
-    let mut normals = super::normals::build(bsp, &faces, settings.smoothing_sources, &mut budget)?;
+    let mut normals = super::normals::build(
+        bsp,
+        &faces,
+        settings.smoothing_sources,
+        options.smoothing_angle,
+        &mut budget,
+    )?;
     let normal_work = budget.work - normal_start;
     let plans = plans(
         map,

@@ -1,4 +1,4 @@
-import { Button, ComboBox, ScrollView, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export component CompileWindow inherits Window {
     title: "Build status - HammeRR";
@@ -12,6 +12,8 @@ export component CompileWindow inherits Window {
     in-out property <string> selected-physics <=> physics-selector.current-value;
     in property <[string]> physics-modes;
     in property <string> physics-description;
+    in property <int> smoothing-angle;
+    callback change-smoothing-angle(int);
     in property <[string]> bounce-modes;
     in-out property <string> selected-bounces <=> bounce-selector.current-value;
     callback change-bounces(int);
@@ -74,6 +76,14 @@ export component CompileWindow inherits Window {
                     bounce-selector := ComboBox { model: root.bounce-modes; enabled: root.sky-enabled; selected(value) => { root.change-bounces(self.current-index); } }
                 }
                 Text { text: "One bounce reflects light from world brushes and terrain into shaded surfaces. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Brush smoothing angle"; vertical-alignment: center; }
+                    SpinBox { minimum: 0; maximum: 90; value: root.smoothing-angle; enabled: root.sky-enabled; edited => { root.change-smoothing-angle(self.value); } }
+                    Slider { minimum: 0; maximum: 90; value: root.smoothing-angle; enabled: root.sky-enabled; changed => { root.change-smoothing-angle(round(self.value)); } }
+                    Text { text: "°"; vertical-alignment: center; }
+                }
+                Text { text: "0 keeps unassigned faces flat. Larger angles blend neighboring brush faces. Assigned smooth/hard groups keep their rules."; wrap: word-wrap; color: #bac2ce; }
                 HorizontalLayout {
                     spacing: 12px;
                     Text { text: "Sampling quality"; vertical-alignment: center; }

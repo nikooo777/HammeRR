@@ -114,6 +114,16 @@ pub fn build_controlled(
     entity: usize,
     control: &Control,
 ) -> Result<Vec<Face>, String> {
+    build_with_smoothing(map, tree, entity, control, false)
+}
+
+pub fn build_with_smoothing(
+    map: &Map,
+    tree: &Tree,
+    entity: usize,
+    control: &Control,
+    retain_unassigned: bool,
+) -> Result<Vec<Face>, String> {
     control.checkpoint()?;
     type Group = (Option<usize>, usize, usize, u32, Arc<[usize]>);
     let mut groups: BTreeMap<Group, Vec<Face>> = BTreeMap::new();
@@ -205,7 +215,10 @@ pub fn build_controlled(
             i += 1;
         }
         for mut face in faces {
-            if entity == 0 && face.smoothing_groups != 0 && face.displacement.is_none() {
+            if entity == 0
+                && (face.smoothing_groups != 0 || retain_unassigned)
+                && face.displacement.is_none()
+            {
                 retained_points = retained_points
                     .checked_add(face.winding.0.len())
                     .filter(|&count| count <= MAX_SMOOTH_SOURCE_POINTS)

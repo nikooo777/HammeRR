@@ -2147,6 +2147,8 @@ pub struct CompileArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileSettingsArgs {
+    /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/detail faces.
+    pub smoothing_angle: Option<u8>,
     /// 0 (direct only, default) or 1 (one diffuse world/terrain bounce); Direct LDR only.
     pub bounces: Option<u8>,
     /// fast (default conservative flood) or detailed (bounded portal separator clipping).
@@ -2848,20 +2850,23 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Update shared build lighting (fullbright/direct_ldr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 sky/model ambient and bounce directions) visibility (fast/detailed: conservative flood/portal clipping) or bounces (0/1: direct only/one diffuse world-terrain bounce); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. Detail/model fluids and authored material/mass properties remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
+        description = "Update shared build lighting (fullbright/direct_ldr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 sky/model ambient and bounce directions) visibility (fast/detailed: conservative flood/portal clipping) bounces (0/1: direct only/one diffuse world-terrain bounce) or smoothing_angle (whole degrees 0–90; zero disables automatic unassigned brush smoothing); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. Detail/model fluids and authored material/mass properties remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
     )]
     fn set_compile_settings(
         &self,
         Parameters(args): Parameters<CompileSettingsArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session().update_compile_options(
+            self.session().update_build_settings(
                 Actor::Agent,
-                args.lighting.as_deref(),
-                args.physics.as_deref(),
-                args.sky_quality.as_deref(),
-                args.visibility.as_deref(),
-                args.bounces,
+                crate::session::compilation::BuildSettingsUpdate {
+                    lighting: args.lighting.as_deref(),
+                    physics: args.physics.as_deref(),
+                    sky_quality: args.sky_quality.as_deref(),
+                    visibility: args.visibility.as_deref(),
+                    bounces: args.bounces,
+                    smoothing_angle: args.smoothing_angle,
+                },
             )
         })
     }

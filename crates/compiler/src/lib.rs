@@ -118,6 +118,19 @@ pub struct Options {
     pub sky_quality: SkyQuality,
     pub visibility: VisibilityMode,
     pub bounces: u8,
+    pub smoothing_angle: u8,
+}
+
+impl Options {
+    pub fn validate(self) -> Result<Self, String> {
+        if self.bounces > 1 {
+            return Err("Light bounces must be 0 or 1".into());
+        }
+        if self.smoothing_angle > 90 {
+            return Err("Brush smoothing angle must be a whole number from 0 to 90 degrees".into());
+        }
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -281,6 +294,7 @@ pub struct Stats {
     pub smoothed_faces: usize,
     pub smoothed_corners: usize,
     pub normal_work: usize,
+    pub smoothing_angle: u8,
     pub physics_mode: PhysicsMode,
     pub visibility_mode: VisibilityMode,
     pub brushes: usize,
@@ -397,9 +411,7 @@ fn build(
     options: Options,
     control: &Control,
 ) -> Result<(), String> {
-    if options.bounces > 1 {
-        return Err("Light bounces must be 0 or 1".into());
-    }
+    options.validate()?;
     control.advance(Stage::Loading)?;
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
@@ -512,7 +524,13 @@ fn build(
         None,
     ));
     control.advance(Stage::Faces)?;
-    let mut faces = faces::build_controlled(&map, &tree, 0, control)?;
+    let mut faces = faces::build_with_smoothing(
+        &map,
+        &tree,
+        0,
+        control,
+        options.lighting == LightingMode::DirectLdr && options.smoothing_angle != 0,
+    )?;
     faces.extend(map.terrain_faces(&tree, &mut output.report, control)?);
     if output.report.has_errors() {
         return Ok(());
@@ -604,6 +622,7 @@ fn build(
         output.stats.smoothed_faces = stats.smoothed_faces;
         output.stats.smoothed_corners = stats.smoothed_corners;
         output.stats.normal_work = stats.normal_work;
+        output.stats.smoothing_angle = options.smoothing_angle;
     }
     if options.physics == PhysicsMode::Engine {
         control.advance(Stage::Physics)?;

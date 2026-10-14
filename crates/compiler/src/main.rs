@@ -5,7 +5,7 @@ use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0|1]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0|1] [--smoothing-angle 0..90]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -28,6 +28,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Some("--physics") => {
                 let name = args.next().ok_or(USAGE)?;
                 options.physics = PhysicsMode::parse(name.to_str().ok_or(USAGE)?)?;
+            }
+            Some("--smoothing-angle") => {
+                let value = args.next().ok_or(USAGE)?;
+                options.smoothing_angle = value.to_str().ok_or(USAGE)?.parse::<u8>()?;
+                options.validate()?;
             }
             Some("--bounces") => {
                 let value = args.next().ok_or(USAGE)?;

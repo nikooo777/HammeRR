@@ -41,7 +41,7 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 ![Terrain sculpting controls](images/terrain-sculpt.png)
 
-Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; automatic seam sewing is still planned.
+Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; Use **Sew edges** to join matching equal-power full borders; sewing is not automatic.
 
 ## Paint a material blend
 
@@ -55,7 +55,32 @@ Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise chang
 
 ![Painted grass and dirt on terrain](images/terrain-blending.png)
 
-Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Painting uses a bounded brush center rather than live viewport strokes. Secondary blend-material physics remains unfinished; current physics uses the primary material.
+Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Painting uses a bounded brush center rather than live viewport strokes. **Sew edges** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
+
+## Sew neighboring terrain
+
+1. Select 2–16 terrain faces with matching complete base edges and the same grid resolution.
+2. Click **Edit terrain…**, then choose **Operation → Sew edges**.
+3. Enable **Also sew blend values** to average alpha along those shared borders as well as positions.
+4. Click **Preview**. Shared border vertices average their original positions; multi-patch corners are grouped before averaging. Interior vertices stay fixed.
+5. Click **Apply** or **Cancel**. **Undo** restores all original grids.
+
+![Terrain sewing controls](images/terrain-sewing-controls.png)
+
+![Two terrain surfaces joined along their shared border](images/terrain-sewn.png)
+
+Limits: equal-power full base edges only. Missing matches, ambiguous overlaps, unequal powers and unsupported subdivision/cache data reject atomically. Unmatched borders are unchanged. Partial edges, mixed-power LOD and subdivision remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
+
+## Set collision behavior
+
+1. Select terrain faces and click **Edit terrain… → Operation → Collision**.
+2. Set **Physics collision** for crates and other dynamic objects, **Player collision** for player hulls, and **Ray collision** for traces and shots. Each label shows the committed state, including **mixed** for a batch.
+3. Choose **Keep current**, **Enabled** or **Disabled** for each setting. **Keep current** preserves every face's own value.
+4. Click **Preview**, then **Apply** or **Cancel**. The visible terrain geometry remains; only the chosen collision behavior changes. Use **CS:S engine physics** when compiling physical contact.
+
+![Terrain collision controls](images/terrain-collision.png)
+
+Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsupported imported flags still need compiler support. These controls affect complete surfaces; individual triangle tags/removal remain planned.
 
 ## Remove terrain
 

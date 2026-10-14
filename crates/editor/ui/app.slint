@@ -663,7 +663,7 @@ export component MaterialWindow inherits Window {
 export component TerrainWindow inherits Window {
     title: "Edit terrain";
     preferred-width: 520px;
-    preferred-height: 650px;
+    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 650px;
     in property <string> selection-label;
     in property <string> message;
     in property <bool> stale;
@@ -671,6 +671,13 @@ export component TerrainWindow inherits Window {
     in-out property <int> grid-index;
     in-out property <int> operation-index;
     in-out property <int> direction-index;
+    in property <string> physics-current;
+    in property <string> player-current;
+    in property <string> ray-current;
+    in-out property <int> physics-index;
+    in-out property <int> player-index;
+    in-out property <int> ray-index;
+    in-out property <bool> sew-blend;
     in-out property <string> center-x: "0";
     in-out property <string> center-y: "0";
     in-out property <string> center-z: "0";
@@ -695,7 +702,7 @@ export component TerrainWindow inherits Window {
             spacing: 14px;
             Text {text: root.selection-label; font-size: 17px; wrap: word-wrap;}
             Text {text: "Operation";}
-            ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
+            ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew edges"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
             if root.operation-index == 0: VerticalLayout {
                 spacing: 12px;
                 Text {text: "Grid resolution";}
@@ -752,7 +759,17 @@ export component TerrainWindow inherits Window {
                     LineEdit {preferred-width:90px; horizontal-stretch:0; text <=> root.blend-value; edited=>{root.edited();}}
                 }
             }
-            if root.operation-index != 0: Text {text:root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
+            if root.operation-index == 8: VerticalLayout {
+                spacing:8px;
+                Text {text:"Physics collision · currently " + root.physics-current; wrap:word-wrap;}
+                ComboBox {model:["Keep current", "Enabled", "Disabled"]; current-index <=> root.physics-index; selected=>{root.edited();}}
+                Text {text:"Player collision · currently " + root.player-current;}
+                ComboBox {model:["Keep current", "Enabled", "Disabled"]; current-index <=> root.player-index; selected=>{root.edited();}}
+                Text {text:"Ray collision · currently " + root.ray-current;}
+                ComboBox {model:["Keep current", "Enabled", "Disabled"]; current-index <=> root.ray-index; selected=>{root.edited();}}
+            }
+            if root.operation-index == 9: CheckBox {text:"Also sew blend values"; checked <=> root.sew-blend; toggled=>{root.edited();}}
+            if root.operation-index != 0: Text {text:root.operation-index == 9 ? "Average shared border vertices across matching full edges. Grids must have the same resolution. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
             Rectangle {vertical-stretch: 1;}
             Text {text: root.message; wrap: word-wrap; color: #a7adb8;}
             HorizontalLayout {

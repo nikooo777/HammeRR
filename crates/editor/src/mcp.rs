@@ -1380,6 +1380,20 @@ pub struct TerrainFacesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TerrainSewArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub blend: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TerrainCollisionArgs {
+    pub faces: Option<Vec<FaceRef>>,
+    pub physics_collision: Option<bool>,
+    pub player_collision: Option<bool>,
+    pub ray_collision: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerrainDirection {
     WorldZ,
@@ -4905,6 +4919,51 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Preview sewing 2–16 selected/explicit terrain faces along unambiguous matching equal-power full base edges. Shared vertex groups average original world positions once, including four-patch corners; blend=true also averages alpha(default false). Interiors/IDs/material/mapping/flags remain. Rejects mixed powers, ambiguous edges and unsupported caches atomically. Returns neighbor pairs and stitched vertex groups. Inspect the draft then commit/cancel_face_preview with state.preview_token. Partial edges/subdivision are not supported. UI: Edit terrain… → Sew edges."
+    )]
+    fn preview_terrain_sew(&self, Parameters(args): Parameters<TerrainSewArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let (changed, pairs, vertices) =
+                session.preview_terrain_sew(Actor::Agent, &faces, args.blend.unwrap_or(false))?;
+            Ok(
+                json!({"faces_changed":changed,"neighbor_pairs":pairs,"sewn_vertices":vertices,"state":face_state(&session)}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Preview optional positive physics_collision, player_collision and ray_collision booleans on 1–16 selected/explicit terrain faces. Omitted settings preserve each face. Changes only inverted native bits2/4/8, retaining other flags, geometry, alpha, tags and metadata. Unknown native flags still require compiler support. Commit/cancel the shared face preview with its token. UI: Edit terrain… → Collision, with Keep current/Enabled/Disabled choices. Individual triangle removal remains unsupported."
+    )]
+    fn preview_terrain_collision(
+        &self,
+        Parameters(args): Parameters<TerrainCollisionArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let settings = map_core::displacement::collision::Settings {
+                physics: args.physics_collision,
+                player: args.player_collision,
+                ray: args.ray_collision,
+            };
+            let changed = session.preview_terrain_edit(
+                Actor::Agent,
+                &faces,
+                map_core::displacement::Operation::Collision(settings),
+            )?;
+            Ok(json!({"faces_changed":changed,"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
         description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. No automatic edge sewing. UI: Edit terrain…."
     )]
     fn preview_terrain_sculpt(
@@ -4993,7 +5052,7 @@ impl EditorServer {
             );
             let grids = session.terrain_grids(&faces, args.preview.unwrap_or(false))?;
             Ok(
-                json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"grid_size":grid.mesh.size,"flags":grid.flags,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
+                json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"grid_size":grid.mesh.size,"flags":grid.flags,"physics_collision":grid.collision.physics,"player_collision":grid.collision.player,"ray_collision":grid.collision.ray,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
             )
         })
     }

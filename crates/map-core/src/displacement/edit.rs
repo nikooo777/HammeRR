@@ -175,6 +175,7 @@ pub struct TerrainGrid {
     pub face: FaceId,
     pub power: u32,
     pub flags: u32,
+    pub collision: super::collision::State,
     pub mesh: super::DisplacementMesh,
 }
 
@@ -204,6 +205,7 @@ pub fn inspect(document: &Document, faces: &[FaceId]) -> Result<Vec<TerrainGrid>
                 face: target,
                 power: info.power,
                 flags: info.flags.unwrap_or(0),
+                collision: super::collision::state(info.flags.unwrap_or(0)),
                 mesh,
             })
         })

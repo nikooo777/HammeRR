@@ -616,6 +616,8 @@ impl Session {
             .find_map(|(_, patch)| patch.terrain.as_ref())
             .map(|operation| match operation {
                 map_core::displacement::Operation::Resolution(_) => "change terrain resolution",
+                map_core::displacement::Operation::Sewn(_) => "sew terrain edges",
+                map_core::displacement::Operation::Collision(_) => "edit terrain collision",
                 map_core::displacement::Operation::Sculpt { .. } => "sculpt terrain",
                 map_core::displacement::Operation::Blend { .. } => "edit terrain blend",
             })

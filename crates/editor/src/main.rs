@@ -9820,6 +9820,89 @@ mod tests {
     }
 
     #[test]
+    fn terrain_collision_and_sewing_controls_use_shared_owned_previews() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let mut faces = Vec::new();
+        for x in [-64.0, 0.0] {
+            let ObjectId::Solid(solid) = session
+                .create_block(
+                    Actor::Agent,
+                    DVec3::new(x, 0.0, 0.0),
+                    DVec3::new(x + 64.0, 64.0, 16.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let face = map_core::surface::FaceId {
+                solid,
+                side: session
+                    .document()
+                    .solid(solid)
+                    .unwrap()
+                    .sides
+                    .iter()
+                    .find(|side| {
+                        map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                    })
+                    .unwrap()
+                    .id,
+            };
+            session
+                .create_terrain(Actor::Agent, &[face], 2, faces.len() as u32)
+                .unwrap();
+            faces.push(face);
+        }
+        session
+            .select_faces(&faces, session::SelectMode::Replace)
+            .unwrap();
+        let before = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = terrain_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let window = &controller.window;
+        window.set_operation_index(8);
+        window.set_physics_index(2);
+        window.set_player_index(2);
+        window.set_ray_index(2);
+        window.invoke_edited();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-collision");
+        assert_eq!(window.get_physics_current(), "enabled");
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert!(
+            lock(&shared)
+                .terrain_grids(&faces, true)
+                .unwrap()
+                .iter()
+                .all(|grid| grid.flags == 14)
+        );
+        window.invoke_cancel();
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(9);
+        window.set_sew_blend(true);
+        window.invoke_edited();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-sewing");
+        window.invoke_preview_edit();
+        assert!(window.get_ready(), "{}", window.get_message());
+        window.invoke_apply();
+        assert_eq!(*lock(&shared).document().vmf(), before);
+    }
+
+    #[test]
     fn mirror_controls_share_brush_transform_and_agent_preview() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

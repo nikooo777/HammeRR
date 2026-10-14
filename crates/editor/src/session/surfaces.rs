@@ -27,6 +27,31 @@ impl Session {
         map_core::displacement::edit::inspect(document, faces).map_err(|error| error.to_string())
     }
 
+    pub fn preview_terrain_sew(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        blend: bool,
+    ) -> Result<(usize, usize, usize), String> {
+        let plan = map_core::displacement::sew::plan(&self.document, faces, blend)
+            .map_err(|error| error.to_string())?;
+        let edits = plan
+            .edits
+            .into_iter()
+            .map(|(face, info)| {
+                (
+                    face,
+                    SurfaceEdit {
+                        terrain: Some(map_core::displacement::Operation::Sewn(Box::new(info))),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let changed = self.preview_or_apply_faces(actor, edits, true)?;
+        Ok((changed, plan.pairs, plan.vertices))
+    }
+
     pub fn preview_terrain_resolution(
         &mut self,
         actor: Actor,
@@ -476,6 +501,104 @@ mod tests {
                 session.document().undo_labels().next().unwrap(),
                 "edit terrain blend"
             );
+            session.undo(actor).unwrap();
+            assert_eq!(*session.document().vmf(), before);
+        }
+    }
+
+    #[test]
+    fn terrain_sewing_and_collision_previews_share_actor_history_and_atomicity() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let mut faces = Vec::new();
+            for x in [-64.0, 0.0] {
+                let ObjectId::Solid(solid) = session
+                    .create_block(
+                        actor,
+                        DVec3::new(x, 0.0, 0.0),
+                        DVec3::new(x + 64.0, 64.0, 16.0),
+                        "brick/test",
+                        false,
+                    )
+                    .unwrap()
+                else {
+                    unreachable!()
+                };
+                let face = FaceId {
+                    solid,
+                    side: session
+                        .document()
+                        .solid(solid)
+                        .unwrap()
+                        .sides
+                        .iter()
+                        .find(|side| {
+                            map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                        })
+                        .unwrap()
+                        .id,
+                };
+                session
+                    .create_terrain(actor, &[face], 2, faces.len() as u32)
+                    .unwrap();
+                faces.push(face);
+            }
+            session.select_faces(&faces, SelectMode::Replace).unwrap();
+            session
+                .edit(actor, "different heights", |tx| {
+                    let solid = tx.solid_mut(faces[1].solid)?;
+                    solid
+                        .sides
+                        .iter_mut()
+                        .find(|side| side.id == faces[1].side)
+                        .unwrap()
+                        .displacement
+                        .as_mut()
+                        .unwrap()
+                        .elevation = 16.0;
+                    Ok(())
+                })
+                .unwrap();
+            let before = session.document().vmf().clone();
+            let result = session.preview_terrain_sew(actor, &faces, false).unwrap();
+            assert_eq!(result.1, 1);
+            assert_eq!(*session.document().vmf(), before);
+            let token = session.face_preview_token();
+            assert!(
+                session
+                    .preview_terrain_sew(actor, &faces[..1], true)
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), token);
+            session.commit_face_preview(actor).unwrap();
+            assert_eq!(
+                session.document().undo_labels().next().unwrap(),
+                "sew terrain edges"
+            );
+            session.undo(actor).unwrap();
+            assert_eq!(*session.document().vmf(), before);
+            session
+                .preview_terrain_edit(
+                    actor,
+                    &faces,
+                    map_core::displacement::Operation::Collision(
+                        map_core::displacement::collision::Settings {
+                            physics: Some(false),
+                            player: Some(false),
+                            ray: Some(false),
+                        },
+                    ),
+                )
+                .unwrap();
+            assert!(
+                session
+                    .terrain_grids(&faces, true)
+                    .unwrap()
+                    .iter()
+                    .all(|grid| grid.flags == 14)
+            );
+            assert_eq!(*session.document().vmf(), before);
+            session.commit_face_preview(actor).unwrap();
             session.undo(actor).unwrap();
             assert_eq!(*session.document().vmf(), before);
         }

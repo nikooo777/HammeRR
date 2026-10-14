@@ -37,6 +37,8 @@ pub(crate) struct BakeStats {
     pub bounce_work: usize,
     pub model_bounce_faces: usize,
     pub model_bounce_samples: usize,
+    pub bump_faces: usize,
+    pub bump_lightmaps: usize,
     pub smoothed_faces: usize,
     pub smoothed_corners: usize,
     pub normal_work: usize,
@@ -48,6 +50,7 @@ pub(super) struct Plan {
     pub model: usize,
     offset: DVec3,
     surface: Surface,
+    bump: Option<super::bump::Basis>,
 }
 
 enum Surface {
@@ -61,6 +64,28 @@ enum Surface {
 }
 
 impl Plan {
+    pub(super) fn map_count(&self) -> usize {
+        if self.bump.is_some() {
+            super::bump::MAPS
+        } else {
+            1
+        }
+    }
+
+    pub(super) fn shading_normals(
+        &self,
+        normal: DVec3,
+        budget: &mut Budget<'_>,
+    ) -> Result<[DVec3; super::bump::MAPS], String> {
+        match &self.bump {
+            Some(basis) => {
+                budget.consume(12)?;
+                basis.normals(normal)
+            }
+            None => Ok([normal; super::bump::MAPS]),
+        }
+    }
+
     pub(super) fn dimensions(&self) -> [usize; 2] {
         match &self.surface {
             Surface::Plane { frame, .. } => frame.dimensions(),
@@ -339,11 +364,20 @@ fn plans(
                         terrain.solid, terrain.side
                     ));
                 }
+                let info = TexInfo {
+                    flags: info.flags | (material.surface & surf::BUMPLIGHT),
+                    ..info
+                };
                 let dimensions = TerrainPlan::dimensions(terrain, &info).map_err(|error| {
                     format!("solid:{} side:{}: {error}", terrain.solid, terrain.side)
                 })?;
+                let bump = super::bump::Basis::new(
+                    &info,
+                    DVec3::from_array(planes[face.plane as usize].normal.map(f64::from)),
+                )?;
+                let maps = if bump.is_some() { super::bump::MAPS } else { 1 };
                 sample_records = sample_records
-                    .checked_add(dimensions[0] * dimensions[1] + 1)
+                    .checked_add(dimensions[0] * dimensions[1] * maps + 1)
                     .filter(|&count| count <= MAX_LIGHTING_BYTES / size_of::<RgbExp32>())
                     .ok_or("Direct LDR lighting exceeds Source's 16 MiB limit")?;
                 let terrain = TerrainPlan::new(
@@ -356,7 +390,7 @@ fn plans(
                 let texinfo = i16::try_from(infos.len())
                     .map_err(|_| "Terrain lighting texinfo count exceeds native short limits")?;
                 infos.push(TexInfo {
-                    flags: info.flags & !(surf::NOLIGHT | surf::BUMPLIGHT),
+                    flags: info.flags & !surf::NOLIGHT,
                     ..info
                 });
                 face.texinfo = texinfo;
@@ -369,6 +403,7 @@ fn plans(
                     model,
                     offset: scope.offset,
                     surface: Surface::Terrain(terrain),
+                    bump,
                 });
                 continue;
             }
@@ -383,8 +418,10 @@ fn plans(
                 dist: f64::from(plane.dist),
             };
             let frame = LuxelFrame::new(plane, &info, face.lightmap_mins, face.lightmap_size)?;
+            let bump = super::bump::Basis::new(&info, plane.normal)?;
+            let maps = if bump.is_some() { super::bump::MAPS } else { 1 };
             sample_records = sample_records
-                .checked_add(frame.sample_count() + 1)
+                .checked_add(frame.sample_count() * maps + 1)
                 .ok_or("Direct lighting allocation count overflow")?;
             if sample_records > MAX_LIGHTING_BYTES / size_of::<RgbExp32>() {
                 return Err("Direct LDR lighting exceeds Source's 16 MiB limit".into());
@@ -411,6 +448,7 @@ fn plans(
                     points,
                     normals: normals.fields.remove(&index),
                 },
+                bump,
             });
         }
     }
@@ -471,6 +509,24 @@ pub(super) fn model_blocked(
         Some(model) => model.blocked(start, end, &mut |amount| budget.consume(amount)),
         None => Ok(false),
     }
+}
+
+fn mapped_colors(
+    base: DVec3,
+    normals: &[DVec3; super::bump::MAPS],
+    maps: usize,
+    budget: &mut Budget<'_>,
+    gather: &mut impl FnMut(DVec3, &mut Budget<'_>) -> Result<DVec3, String>,
+) -> Result<[DVec3; super::bump::MAPS], String> {
+    let mut colors = [DVec3::ZERO; super::bump::MAPS];
+    colors[0] = base;
+    if base != DVec3::ZERO {
+        for map in 1..maps {
+            budget.consume(1)?;
+            colors[map] = gather(normals[map], budget)?;
+        }
+    }
+    Ok(colors)
 }
 
 pub(crate) struct Settings<'a> {
@@ -553,18 +609,15 @@ pub(crate) fn bake(
         };
         model_shadows.push(shadows);
     }
-    if infos.iter().any(|info| info.flags & surf::BUMPLIGHT != 0) {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR disables bump-light sample maps; scoped world/model brush smoothing is supported, while bump-light baking remains unfinished", None, None));
-        for info in &mut infos {
-            info.flags &= !surf::BUMPLIGHT;
-        }
-    }
 
     if !map.terrains.is_empty() {
         report.diagnostics.push(Diagnostic::warning("Direct LDR sews terrain lighting normals across verified matching equal-power full edges; authored smoothing angles, mixed-power/partial-edge LOD and corner-only neighbors remain unfinished", None, None));
     }
-    report.diagnostics.push(Diagnostic::info("Direct LDR bakes static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
-    let count: usize = plans.iter().map(|plan| plan.sample_count() + 1).sum();
+    report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; one optional diffuse world-light bounce is supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources, multiple bounces, HDR and prop lightmaps remain unfinished", None, None));
+    let count: usize = plans
+        .iter()
+        .map(|plan| plan.sample_count() * plan.map_count() + 1)
+        .sum();
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
@@ -582,15 +635,18 @@ pub(crate) fn bake(
     let mut used_styles = std::collections::BTreeSet::new();
     let mut styled_faces = 0;
     let mut style_maps = 0;
+    let mut bump_lightmaps = 0;
     for plan in &plans {
         budget.consume(1)?;
-        let mut channels = super::styles::Channels::new(plan.sample_count(), colors.len())?;
+        let mut channels =
+            super::styles::Channels::new(plan.sample_count(), colors.len(), plan.map_count())?;
         let [width, height] = plan.dimensions();
         for t in 0..height {
             for s in 0..width {
                 let (point, normal) = plan.sample(s, t, &mut budget)?;
                 let origin = plan.origin(point, normal);
-                let mut color = [DVec3::ZERO; 4];
+                let normals = plan.shading_normals(normal, &mut budget)?;
+                let mut color = [[DVec3::ZERO; super::bump::MAPS]; 4];
                 let cluster = candidates.cluster(origin, map, tree, visibility, &mut budget)?;
                 let culling_enabled = candidates.enabled();
                 let mut evaluated = 0;
@@ -621,7 +677,30 @@ pub(crate) fn bake(
                                 )
                             },
                         )?;
-                        channels.add(0, contribution, &mut color, &mut budget)?;
+                        let contributions = mapped_colors(
+                            contribution,
+                            &normals,
+                            plan.map_count(),
+                            &mut budget,
+                            &mut |normal, budget| {
+                                budget.consume(ambient_directions.len())?;
+                                light.ambient_contribution(
+                                    normal,
+                                    &ambient_directions,
+                                    &mut |direction| {
+                                        sky_visible(
+                                            direction,
+                                            origin,
+                                            &shadows,
+                                            &terrain_shadows,
+                                            &model_shadows[plan.model],
+                                            budget,
+                                        )
+                                    },
+                                )
+                            },
+                        )?;
+                        channels.add(0, &contributions, &mut color, &mut budget)?;
                     }
                     match light {
                         Emitter::Point(light) => {
@@ -642,7 +721,19 @@ pub(crate) fn bake(
                                     &mut budget,
                                 )?
                             {
-                                channels.add(light.style, contribution, &mut color, &mut budget)?;
+                                let contributions = mapped_colors(
+                                    contribution,
+                                    &normals,
+                                    plan.map_count(),
+                                    &mut budget,
+                                    &mut |normal, _| light.contribution(point, normal),
+                                )?;
+                                channels.add(
+                                    light.style,
+                                    &contributions,
+                                    &mut color,
+                                    &mut budget,
+                                )?;
                             }
                         }
                         Emitter::Sky(light) => {
@@ -660,7 +751,29 @@ pub(crate) fn bake(
                                     )
                                 },
                             )?;
-                            channels.add(0, contribution, &mut color, &mut budget)?;
+                            let contributions = mapped_colors(
+                                contribution,
+                                &normals,
+                                plan.map_count(),
+                                &mut budget,
+                                &mut |normal, budget| {
+                                    light.sun_contribution(
+                                        normal,
+                                        &sun_directions,
+                                        &mut |direction| {
+                                            sky_visible(
+                                                direction,
+                                                origin,
+                                                &shadows,
+                                                &terrain_shadows,
+                                                &model_shadows[plan.model],
+                                                budget,
+                                            )
+                                        },
+                                    )
+                                },
+                            )?;
+                            channels.add(0, &contributions, &mut color, &mut budget)?;
                         }
                     }
                 }
@@ -674,7 +787,8 @@ pub(crate) fn bake(
             .map_err(|error| format!("face:{}: {error}", plan.face))?;
         used_styles.extend(styles.into_iter().filter(|&style| style != 255));
         styled_faces += usize::from(channels > 1);
-        style_maps += channels;
+        style_maps += channels * plan.map_count();
+        bump_lightmaps += channels * (plan.map_count() - 1);
         faces[plan.face].styles = styles;
         faces[plan.face].light_offset = offset;
     }
@@ -786,7 +900,7 @@ pub(crate) fn bake(
         faces: plans.len(),
         models: has_receivers.iter().skip(1).filter(|&&lit| lit).count(),
         model_faces,
-        samples: count - plans.len(),
+        samples: plans.iter().map(Plan::sample_count).sum(),
         bytes: colors.len() * size_of::<RgbExp32>(),
         work: budget.work,
         ambient_samples: ambient.samples,
@@ -797,6 +911,8 @@ pub(crate) fn bake(
         bounce_work,
         model_bounce_faces: bounce.model_faces,
         model_bounce_samples: bounce.model_samples,
+        bump_faces: plans.iter().filter(|plan| plan.map_count() > 1).count(),
+        bump_lightmaps,
         smoothed_faces: normals.faces,
         smoothed_corners: normals.corners,
         normal_work,

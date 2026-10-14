@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class Client:
-    def __init__(self, url, binary, output):
+    def __init__(self, url, binary, output, gameinfo=None):
         self.url = url
         self.sequence = 0
         self.session = None
@@ -21,7 +21,11 @@ class Client:
         if not url:
             self.log = (output / "editor.log").open("w")
             self.process = subprocess.Popen(
-                [str(binary), "--headless"],
+                [
+                    str(binary),
+                    "--headless",
+                    *(["--game", str(gameinfo)] if gameinfo else []),
+                ],
                 cwd=ROOT,
                 env={**os.environ, "HAMMERR_RECOVERY_DIR": str(output / "recovery")},
                 stdin=subprocess.PIPE,

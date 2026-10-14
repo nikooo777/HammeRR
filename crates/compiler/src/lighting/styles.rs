@@ -12,6 +12,7 @@ const FIRST_SWITCHABLE: u8 = 32;
 const MAX_SWITCHABLE_GROUPS: usize = 32;
 const MAX_PATTERN_BYTES: usize = 64;
 const MAX_FACE_STYLES: usize = 4;
+pub(super) type SampleColors = [[DVec3; super::bump::MAPS]; MAX_FACE_STYLES];
 
 fn appearance(entity: &MapEntity, key: &str) -> Result<u8, String> {
     let value = property(entity, key)
@@ -129,14 +130,19 @@ pub(super) struct Channels {
     channels: Vec<Channel>,
     count: usize,
     completed: usize,
+    maps: usize,
 }
 
 impl Channels {
-    pub(super) fn new(count: usize, completed: usize) -> Result<Self, String> {
+    pub(super) fn new(count: usize, completed: usize, maps: usize) -> Result<Self, String> {
+        if ![1, super::bump::MAPS].contains(&maps) {
+            return Err("Lightmap direction count must be one or four".into());
+        }
         let mut result = Self {
             channels: Vec::new(),
             count,
             completed,
+            maps,
         };
         result.allocate(0)?;
         Ok(result)
@@ -146,15 +152,20 @@ impl Channels {
         if self.channels.len() == MAX_FACE_STYLES {
             return Err("A face receives more than four light styles including Normal; reduce overlapping light groups or separate their reach".into());
         }
-        (self.count + 1)
-            .checked_mul(self.channels.len() + 1)
+        let samples = self
+            .count
+            .checked_mul(self.maps)
+            .ok_or("Lightmap sample count overflow")?;
+        samples
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(self.channels.len() + 1))
             .and_then(|count| count.checked_add(self.completed))
             .filter(|&count| count <= MAX_LIGHTING_BYTES / size_of::<RgbExp32>())
             .ok_or("Direct LDR lighting exceeds Source's 16 MiB limit")?;
         let index = self.channels.len();
         self.channels.push(Channel {
             style,
-            samples: vec![RgbExp32::default(); self.count],
+            samples: vec![RgbExp32::default(); samples],
             total: DVec3::ZERO,
         });
         Ok(index)
@@ -163,11 +174,11 @@ impl Channels {
     pub(super) fn add(
         &mut self,
         style: u8,
-        color: DVec3,
-        colors: &mut [DVec3; MAX_FACE_STYLES],
+        color: &[DVec3; super::bump::MAPS],
+        colors: &mut SampleColors,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
-        if color == DVec3::ZERO {
+        if color[..self.maps].iter().all(|&color| color == DVec3::ZERO) {
             return Ok(());
         }
         let index = if let Some(index) = self
@@ -177,23 +188,27 @@ impl Channels {
         {
             index
         } else {
-            budget.consume(self.count + 1)?;
+            budget.consume(self.count * self.maps + 1)?;
             self.allocate(style)?
         };
-        colors[index] += color;
+        for (target, &contribution) in colors[index].iter_mut().zip(color).take(self.maps) {
+            *target += contribution;
+        }
         Ok(())
     }
 
     pub(super) fn finish_sample(
         &mut self,
         index: usize,
-        colors: &[DVec3; MAX_FACE_STYLES],
+        colors: &SampleColors,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
-        budget.consume(self.channels.len() - 1)?;
+        budget.consume(self.channels.len() * self.maps - 1)?;
         for (channel, &color) in self.channels.iter_mut().zip(colors) {
-            channel.samples[index] = encode_color(color)?;
-            channel.total += color;
+            for (map, &color) in color.iter().enumerate().take(self.maps) {
+                channel.samples[map * self.count + index] = encode_color(color)?;
+            }
+            channel.total += color[0];
         }
         Ok(())
     }
@@ -213,5 +228,32 @@ impl Channels {
             colors.extend_from_slice(&channel.samples);
         }
         Ok((styles, offset as i32, self.channels.len()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auxiliary_maps_count_toward_the_shared_limit_before_allocation() {
+        let limit = MAX_LIGHTING_BYTES / size_of::<RgbExp32>();
+        assert!(Channels::new(usize::MAX, 0, super::super::bump::MAPS).is_err());
+        assert!(Channels::new(1, limit - 2, super::super::bump::MAPS).is_err());
+        let mut channels = Channels::new(1, limit - 8, super::super::bump::MAPS).unwrap();
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let mut colors = [[DVec3::ZERO; super::super::bump::MAPS]; MAX_FACE_STYLES];
+        assert!(
+            channels
+                .add(
+                    32,
+                    &[DVec3::X; super::super::bump::MAPS],
+                    &mut colors,
+                    &mut budget
+                )
+                .is_err()
+        );
+        assert_eq!(channels.channels.len(), 1);
     }
 }

@@ -198,6 +198,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Smooth baked lighting on a rotating brush model](docs/images/compiled-model-smoothing.png) |
 | Smooth each brush model with face groups or a build angle. |
 
+| Normal-map lighting |
+| --- |
+| ![Directional shading on a normal-mapped floor](docs/images/compiled-normal-maps.png) |
+| Bake directional lightmaps for normal-mapped world, terrain and brush-model surfaces. |
+
 | Brush entity lightmaps |
 | --- |
 | ![Reflected world light on a brush entity beneath a shelf](docs/images/compiled-model-bounce.png) |

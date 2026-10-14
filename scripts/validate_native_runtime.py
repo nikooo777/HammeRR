@@ -43,7 +43,7 @@ function HammeRRThink() {
 """
 
 
-def private_game(root, output, bsp):
+def private_game(root, output, bsp=None):
     game = output / "cstrike"
     for directory in [
         game / "maps",
@@ -89,7 +89,8 @@ def private_game(root, output, bsp):
     (game / "motd.txt").write_text("HammeRR private validation\n")
     (game / "scripts/vscripts/mapspawn.nut").write_text('printl("HAMMERR_MAPSPAWN");\n')
     (game / "scripts/vscripts/hammerr_observer.nut").write_text(OBSERVER)
-    shutil.copyfile(bsp, game / "maps/hammerr_runtime.bsp")
+    if bsp is not None:
+        shutil.copyfile(bsp, game / "maps/hammerr_runtime.bsp")
     (game / "hammerr-runtime.log").unlink(missing_ok=True)
     return game
 

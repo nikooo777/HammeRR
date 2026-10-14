@@ -166,6 +166,10 @@ impl GameFs {
     }
 
     fn resolve(&self, value: &str) -> PathBuf {
+        let absolute = PathBuf::from(value.replace('\\', "/"));
+        if absolute.is_absolute() {
+            return absolute;
+        }
         let mut rest = value;
         let mut base = &self.base_dir;
         for (token, dir) in [
@@ -361,5 +365,38 @@ mod tests {
             normalize("\\Materials\\DE_CBBLE//./CobbleRoad01.vmt"),
             "materials/de_cbble/cobbleroad01.vmt"
         );
+    }
+
+    #[test]
+    fn absolute_content_and_wildcard_mounts_resolve_from_gameinfo() {
+        let root = tempfile::tempdir().unwrap();
+        let game = root.path().join("game");
+        let content = root.path().join("external content");
+        let addon = root.path().join("addons/first");
+        for folder in [&game, &content, &addon] {
+            fs::create_dir_all(folder.join("materials")).unwrap();
+        }
+        fs::write(content.join("materials/absolute.vmt"), b"absolute content").unwrap();
+        fs::write(addon.join("materials/addon.vmt"), b"wildcard content").unwrap();
+        fs::write(game.join("materials/local.vmt"), b"local content").unwrap();
+        let gameinfo = game.join("gameinfo.txt");
+        fs::write(&gameinfo, format!(
+            "GameInfo {{ FileSystem {{ SearchPaths {{ game \"{}\" game \"{}/*\" game \"|gameinfo_path|.\" }} }} }}",
+            content.display(), root.path().join("addons").display()
+        )).unwrap();
+        let mounted = GameFs::from_gameinfo(&gameinfo).unwrap();
+        for (name, expected) in [
+            ("absolute", b"absolute content".as_slice()),
+            ("addon", b"wildcard content".as_slice()),
+            ("local", b"local content".as_slice()),
+        ] {
+            assert_eq!(
+                mounted
+                    .read(&format!("materials/{name}.vmt"))
+                    .unwrap()
+                    .as_deref(),
+                Some(expected)
+            );
+        }
     }
 }

@@ -147,18 +147,21 @@ fn populate(
         })
         .collect::<Vec<_>>();
     window.set_triangles(ModelRc::new(VecModel::from(rows)));
+    let count = target.selected.values().map(BTreeSet::len).sum::<usize>();
+    let surfaces = target
+        .selected
+        .values()
+        .filter(|ids| !ids.is_empty())
+        .count();
     window.set_selection_label(
         format!(
-            "{} triangles across {} surfaces",
-            target.selected.values().map(BTreeSet::len).sum::<usize>(),
-            target
-                .selected
-                .values()
-                .filter(|ids| !ids.is_empty())
-                .count()
+            "{count} triangle{} across {surfaces} surface{}",
+            if count == 1 { "" } else { "s" },
+            if surfaces == 1 { "" } else { "s" }
         )
         .into(),
     );
+
     Ok(())
 }
 
@@ -314,6 +317,38 @@ impl Controller {
                 let window=window.unwrap();let mut session=lock(&shared);let mut target=target.borrow_mut();let Some(target)=target.as_mut() else {return};
                 let result=target.check(&session).and_then(|_|session.preview_terrain_triangle_tags(Actor::User,&target.targets(),Settings {walkable:choice(window.get_walkable_index())?,buildable:choice(window.get_buildable_index())?}));
                 match result {Ok(count)=>{target.preview=session.face_preview_token();if let Err(error)=populate(&window,&session,target) {window.set_message(error.into());return;}window.set_ready(true);window.set_message(format!("Preview changes {count} terrain surfaces. Apply keeps one undo step.").into());},Err(error)=>window.set_message(error.into())}
+            }
+        });
+        window.on_select_volume({
+            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let mut target = target.borrow_mut();
+                let Some(target) = target.as_mut() else {
+                    return;
+                };
+                let result = target.check(&session).and_then(|_| {
+                    let token = session
+                        .volume_preview()
+                        .ok_or("Preview a box with Select a volume… first")?
+                        .token;
+                    let selected = session.select_terrain_triangles_in_volume(
+                        Actor::User,
+                        &target.faces,
+                        token,
+                    )?;
+                    target.highlight = Some(selected.token);
+                    target.selected = selected
+                        .targets
+                        .into_iter()
+                        .map(|(face, ids)| (face, ids.into_iter().collect()))
+                        .collect();
+                    edited(&window, &mut session, target)
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
             }
         });
         window.on_use_selection({

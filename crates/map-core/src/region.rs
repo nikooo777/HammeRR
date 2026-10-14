@@ -55,7 +55,7 @@ impl Region {
             .all(|plane| plane.distance_to(point) <= crate::plane::ON_EPSILON)
     }
 
-    fn polygon_matches(&self, vertices: &[DVec3], rule: Match) -> bool {
+    pub fn polygon_matches(&self, vertices: &[DVec3], rule: Match) -> bool {
         if rule == Match::Contained {
             return !vertices.is_empty() && vertices.iter().all(|point| self.contains(*point));
         }
@@ -150,6 +150,59 @@ impl Region {
                 let Ok(shape) = BrushGeometry::from_solid(solid) else {
                     continue;
                 };
+                if solid.sides.iter().any(|side| side.displacement.is_some()) {
+                    let surfaces = shape
+                        .faces
+                        .iter()
+                        .filter_map(|face| {
+                            let info = solid.sides[face.side].displacement.as_ref()?;
+                            let mesh = crate::DisplacementMesh::build(face, info).ok()?;
+                            mesh.positions
+                                .iter()
+                                .all(|point| point.is_finite())
+                                .then_some((face.side, mesh))
+                        })
+                        .collect::<Vec<_>>();
+                    let surface_matches = |mesh: &crate::DisplacementMesh| {
+                        if rule == Match::Contained {
+                            mesh.positions.iter().all(|point| self.contains(*point))
+                        } else {
+                            mesh.triangles().any(|indices| {
+                                self.polygon_matches(
+                                    &indices.map(|index| mesh.positions[index]),
+                                    rule,
+                                )
+                            })
+                        }
+                    };
+                    if faces {
+                        result.faces.extend(
+                            surfaces
+                                .iter()
+                                .filter(|(_, mesh)| surface_matches(mesh))
+                                .map(|(side, _)| FaceId {
+                                    solid: solid.id,
+                                    side: solid.sides[*side].id,
+                                }),
+                        );
+                    } else {
+                        matches.push(
+                            !surfaces.is_empty()
+                                && if rule == Match::Contained {
+                                    surfaces.len()
+                                        == solid
+                                            .sides
+                                            .iter()
+                                            .filter(|side| side.displacement.is_some())
+                                            .count()
+                                        && surfaces.iter().all(|(_, mesh)| surface_matches(mesh))
+                                } else {
+                                    surfaces.iter().any(|(_, mesh)| surface_matches(mesh))
+                                },
+                        );
+                    }
+                    continue;
+                }
                 if faces {
                     for face in &shape.faces {
                         if self.polygon_matches(&face.vertices, rule) {
@@ -319,6 +372,110 @@ mod tests {
             area.select(&document, Match::Intersecting, true, |_| true)
                 .faces
                 .is_empty()
+        );
+    }
+    #[test]
+    fn terrain_regions_match_actual_sheets_and_discard_parent_volumes_and_faces() {
+        let mut document = Document::empty();
+        let ObjectId::Solid(id) = document
+            .edit("parent", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(-64.0, -64.0, 0.0),
+                    DVec3::new(64.0, 64.0, 16.0),
+                    "test",
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = document
+            .solid(id)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| crate::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = FaceId { solid: id, side };
+        document
+            .edit("terrain", |tx| {
+                crate::displacement::edit::create(tx, &[face], 2, 0)
+            })
+            .unwrap();
+        document
+            .edit("raise", |tx| {
+                tx.solid_mut(id)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap()
+                    .displacement
+                    .as_mut()
+                    .unwrap()
+                    .distances = Some(vec![vec![64.0; 5]; 5]);
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let sheet = region(DVec3::new(-65.0, -65.0, 79.0), DVec3::new(65.0, 65.0, 81.0));
+        let parent = region(DVec3::new(-65.0, -65.0, -1.0), DVec3::new(65.0, 65.0, 17.0));
+        for rule in [Match::Contained, Match::Intersecting] {
+            assert_eq!(
+                sheet.select(&document, rule, false, |_| true).objects,
+                [ObjectId::Solid(id)]
+            );
+            assert_eq!(sheet.select(&document, rule, true, |_| true).faces, [face]);
+            assert!(
+                parent
+                    .select(&document, rule, false, |_| true)
+                    .objects
+                    .is_empty()
+            );
+            assert!(
+                parent
+                    .select(&document, rule, true, |_| true)
+                    .faces
+                    .is_empty()
+            );
+        }
+        assert_eq!(document.vmf(), &source);
+        document
+            .edit("peak", |tx| {
+                tx.solid_mut(id)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap()
+                    .displacement
+                    .as_mut()
+                    .unwrap()
+                    .distances
+                    .as_mut()
+                    .unwrap()[2][2] = 128.0;
+                Ok(())
+            })
+            .unwrap();
+        let low = region(
+            DVec3::new(-65.0, -65.0, 79.0),
+            DVec3::new(65.0, 65.0, 100.0),
+        );
+        assert!(
+            low.select(&document, Match::Contained, false, |_| true)
+                .objects
+                .is_empty()
+        );
+        assert!(
+            low.select(&document, Match::Contained, true, |_| true)
+                .faces
+                .is_empty()
+        );
+        let peak = region(DVec3::new(-1.0, -1.0, 143.0), DVec3::new(1.0, 1.0, 145.0));
+        assert_eq!(
+            peak.select(&document, Match::Intersecting, true, |_| true)
+                .faces,
+            [face]
         );
     }
 }

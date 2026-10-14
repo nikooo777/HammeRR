@@ -209,3 +209,9 @@ python3 -B scripts/validate_terrain_vertex_masks.py --output /tmp/hammerr-terrai
 ```
 
 Checks deduplicated masks across power2/3/4 grids, exact unselected geometry/alpha, untouched faces, owned previews/Cancel, mask reuse after Apply, replaced-token failures preserving a valid draft, saved source and native geometry/alpha through exact foreground/background builds. The software UI check `terrain_mask_controls_retain_selection_and_confine_sculpt_and_blend` covers **Use selection**, mask counts, sculpt/fill previews, Cancel and Undo. Core tests check destination-only writes and immutable-neighbor smoothing.
+
+```sh
+python3 -B scripts/validate_terrain_regions.py --output /tmp/hammerr-terrain-regions-check
+```
+
+Checks elevated-sheet volume matches in object/face modes, excluded parent volumes/faces, native triangle clipping/containment, atomic box-based highlights/masks, replaced/canceled tokens, side-view marquee height matching, source/history and hidden-owner/tool filtering. Core region tests include interior peaks beyond contained corners. The software UI test `terrain_volume_control_selects_triangles_without_changing_the_map` covers **Select in volume** and **Use selection**.

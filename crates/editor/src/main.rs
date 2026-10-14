@@ -10374,6 +10374,85 @@ mod tests {
     }
 
     #[test]
+    fn terrain_volume_control_selects_triangles_without_changing_the_map() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut session = Session::new(Err("no assets needed".into()));
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::Agent,
+                DVec3::ZERO,
+                DVec3::new(64.0, 64.0, 16.0),
+                "brick/test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let side = session
+            .document()
+            .solid(solid)
+            .unwrap()
+            .sides
+            .iter()
+            .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+            .unwrap()
+            .id;
+        let face = map_core::surface::FaceId { solid, side };
+        session.create_terrain(Actor::Agent, &[face], 2, 0).unwrap();
+        session.select_faces(&[face], SelectMode::Replace).unwrap();
+        let source = session.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = terrain_triangles_ui::Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        let spec = session::volume::Spec {
+            mins: DVec3::new(2.0, 10.0, 15.0),
+            maxs: DVec3::new(6.0, 14.0, 17.0),
+            rule: map_core::region::Match::Intersecting,
+            mode: SelectMode::Replace,
+            faces: true,
+        };
+        let token = lock(&shared).preview_volume_selection(spec).unwrap();
+        controller.window.invoke_select_volume();
+        assert!(
+            controller
+                .window
+                .get_triangles()
+                .row_data(0)
+                .unwrap()
+                .selected
+        );
+        assert!(
+            !controller
+                .window
+                .get_triangles()
+                .row_data(1)
+                .unwrap()
+                .selected
+        );
+        controller.window.show().unwrap();
+        save_ui_snapshot(controller.window.window(), "terrain-volume-triangles");
+        assert_eq!(*lock(&shared).document().vmf(), source);
+        assert_eq!(lock(&shared).volume_preview().unwrap().token, token);
+        controller.window.invoke_use_selection();
+        assert_eq!(
+            lock(&shared)
+                .terrain_vertex_mask(&[face], None)
+                .unwrap()
+                .faces[0]
+                .vertices,
+            [0, 5, 6]
+        );
+    }
+
+    #[test]
     fn terrain_center_picking_uses_rendered_hits_and_preserves_foreign_drafts() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {

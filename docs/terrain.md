@@ -43,6 +43,17 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; use **Sew edges** to join matching full/half borders across grid sizes; sewing is not automatic.
 
+## Select triangles in a box
+
+1. Select 1–16 terrain faces, then open **Select a volume…**. Set **Minimum** and **Maximum** coordinates, then choose **Intersects the box** or **Fully inside the box**.
+2. Click **Preview matches** and leave the box preview active. Terrain matches its actual displaced sheet; ordinary parent faces and the old parent volume are excluded. **Fully inside the box** checks every surface vertex, including interior peaks.
+3. Open **Terrain triangles…** and click **Select in volume**. The triangle checks and yellow outlines are replaced with the matches inside the current box. Face selection and map history stay fixed.
+4. Preview classifications, or click **Use selection** to keep the resulting vertex mask for sculpting and blending. **Cancel** clears this dialog's own triangle draft and outlines.
+
+![Native triangle selected by a volume on elevated terrain](images/terrain-volume-triangle.png)
+
+Limits: the current box token, source map and rule must still match. A replaced/canceled box or changed map rejects the query. Hidden owners and tool-material filtering apply. Crossing accepts clipped triangle overlap, including contact at the boundary; fully contained requires all three triangle vertices inside. Selections use authored terrain rather than compiled LOD geometry. Regular volume and marquee selection also use the displaced surface rather than its parent box.
+
 ## Limit brushes to selected vertices
 
 1. Open **Terrain triangles…**, select a subset across surfaces, then click **Use selection**. The dialog closes and keeps its yellow outlines without changing the map.

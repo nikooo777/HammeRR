@@ -311,12 +311,13 @@ pub struct VertexMask {
 impl VertexMask {
     pub fn summary(&self) -> String {
         format!(
-            "{} vertices on {} surfaces",
+            "{} vertices on {} surface{}",
             self.faces
                 .iter()
                 .map(|face| face.vertices.len())
                 .sum::<usize>(),
-            self.faces.len()
+            self.faces.len(),
+            if self.faces.len() == 1 { "" } else { "s" }
         )
     }
 
@@ -426,6 +427,52 @@ impl Session {
             highlight.generation = generation;
             highlight.revision = revision;
         }
+    }
+}
+
+pub struct VolumeTriangles {
+    pub token: u64,
+    pub targets: Vec<(FaceId, Vec<usize>)>,
+}
+
+impl Session {
+    pub fn select_terrain_triangles_in_volume(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        token: u64,
+    ) -> Result<VolumeTriangles, String> {
+        let targets = self.terrain_triangles_in_volume(faces, token)?;
+        let token = self.highlight_terrain_triangles(actor, &targets)?;
+        Ok(VolumeTriangles { token, targets })
+    }
+
+    pub fn terrain_triangles_in_volume(
+        &mut self,
+        faces: &[FaceId],
+        token: u64,
+    ) -> Result<Vec<(FaceId, Vec<usize>)>, String> {
+        let spec = self.checked_volume(token)?.spec;
+        let region = map_core::region::Region::from_bounds(spec.mins, spec.maxs)?;
+        let rows = self.terrain_triangles(faces, true)?;
+        let hidden = self.hidden_terrain_tool_faces();
+        let mut targets = Vec::new();
+        for row in rows {
+            if self.component_hidden(row.face.solid, &HashSet::new()) || hidden.contains(&row.face)
+            {
+                continue;
+            }
+            let triangles = row
+                .triangles
+                .iter()
+                .filter(|triangle| region.polygon_matches(&triangle.positions, spec.rule))
+                .map(|triangle| triangle.id)
+                .collect::<Vec<_>>();
+            if !triangles.is_empty() {
+                targets.push((row.face, triangles));
+            }
+        }
+        Ok(targets)
     }
 }
 
@@ -783,5 +830,40 @@ mod tests {
             assert_eq!(session.document().vmf(), &source);
             assert!(session.terrain_vertex_mask(&faces, None).is_err());
         }
+    }
+    #[test]
+    fn terrain_volume_queries_share_real_geometry_rules_scope_and_token_guards() {
+        let (mut session, faces) = fixture();
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let spec = super::super::volume::Spec {
+            mins: DVec3::new(2.0, 10.0, 15.0),
+            maxs: DVec3::new(6.0, 14.0, 17.0),
+            rule: map_core::region::Match::Intersecting,
+            mode: super::super::SelectMode::Replace,
+            faces: true,
+        };
+        let token = session.preview_volume_selection(spec).unwrap();
+        assert_eq!(
+            session.terrain_triangles_in_volume(&faces, token).unwrap(),
+            [(faces[0], vec![0])]
+        );
+        let next = session
+            .preview_volume_selection(super::super::volume::Spec {
+                rule: map_core::region::Match::Contained,
+                ..spec
+            })
+            .unwrap();
+        assert!(
+            session
+                .terrain_triangles_in_volume(&faces, next)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(session.terrain_triangles_in_volume(&faces, token).is_err());
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        session.cancel_volume_selection(next).unwrap();
+        assert!(session.terrain_triangles_in_volume(&faces, next).is_err());
     }
 }

@@ -442,7 +442,12 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 let splits = result["stats"]["hint_splits"].as_u64().unwrap_or_default();
-                format!("\nHint surfaces: {count} · Added splits: {splits}")
+                format!(
+                    "\nHint surfaces: {count} · Added splits: {splits} · Initial priority: {}",
+                    result["stats"]["hint_priority_splits"]
+                        .as_u64()
+                        .unwrap_or_default()
+                )
             })
             .unwrap_or_default();
         let terrain = result["stats"]["displacements"]

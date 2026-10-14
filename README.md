@@ -221,7 +221,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Hint planes |
 | --- |
 | ![Hint face and skip bounds in the editor](docs/images/hint-planes.png) |
-| Guide visibility partitions with invisible hint surfaces and skip bounds. |
+| Guide structural and visibility partitions with finite hint surfaces and skip bounds. |
 
 | Imported overlays |
 | --- |

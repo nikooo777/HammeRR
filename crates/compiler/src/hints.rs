@@ -1,6 +1,8 @@
 use glam::DVec3;
+use std::collections::BTreeSet;
 
 use crate::map::{Map, MapSide};
+use crate::planes::PlaneSet;
 use crate::tree::{Polyhedron, Tree};
 use crate::winding::{ON_EPSILON, Side, Winding};
 use crate::{Control, Diagnostic, Report};
@@ -21,6 +23,125 @@ pub(crate) struct Hint {
 pub(crate) struct Stats {
     pub splits: usize,
     pub work: usize,
+    pub priority_splits: usize,
+}
+
+pub(crate) struct Fragment {
+    pub source: usize,
+    pub plane: usize,
+    pub winding: Winding,
+}
+
+#[derive(Default)]
+pub(crate) struct Priority {
+    stats: Stats,
+    nodes: Vec<(usize, Vec<usize>)>,
+}
+
+impl Priority {
+    pub fn consume(&mut self, amount: usize) -> Result<(), String> {
+        self.stats.consume(amount)
+    }
+
+    pub fn fragments(
+        &mut self,
+        hints: &[Hint],
+        volume: &Polyhedron,
+        planes: &PlaneSet,
+        control: &Control,
+    ) -> Result<Vec<Fragment>, String> {
+        let mut fragments = Vec::new();
+        for (source, hint) in hints.iter().enumerate() {
+            let mut winding = Some(hint.winding.clone());
+            for side in &volume.sides {
+                control.checkpoint()?;
+                let Some(current) = winding else {
+                    break;
+                };
+                self.consume(current.0.len())?;
+                let plane = planes.get(side.plane);
+                winding = current.clip_back(plane.normal, plane.dist);
+            }
+            if let Some(winding) = winding
+                && winding.area() > ON_EPSILON.powi(2)
+            {
+                fragments.push(Fragment {
+                    source,
+                    plane: hint.plane,
+                    winding,
+                });
+            }
+        }
+        Ok(fragments)
+    }
+
+    pub fn split(
+        &mut self,
+        hints: Vec<Fragment>,
+        plane: usize,
+        planes: &PlaneSet,
+        control: &Control,
+    ) -> Result<[Vec<Fragment>; 2], String> {
+        let mut halves = [Vec::new(), Vec::new()];
+        let split = planes.get(plane);
+        for hint in hints {
+            control.checkpoint()?;
+            self.consume(hint.winding.0.len())?;
+            if hint.plane == plane {
+                continue;
+            }
+            let [front, back] = {
+                let (front, back) = hint.winding.split(split.normal, split.dist);
+                [front, back]
+            };
+            for (half, winding) in halves.iter_mut().zip([front, back]) {
+                if let Some(winding) = winding
+                    && winding.area() > ON_EPSILON.powi(2)
+                {
+                    half.push(Fragment {
+                        winding,
+                        source: hint.source,
+                        plane: hint.plane,
+                    });
+                }
+            }
+        }
+        Ok(halves)
+    }
+
+    pub fn record(&mut self, node: usize, plane: usize, hints: &[Fragment]) -> Result<(), String> {
+        let sources = hints
+            .iter()
+            .filter(|hint| hint.plane == plane)
+            .map(|hint| hint.source)
+            .collect::<Vec<_>>();
+        if sources.is_empty() {
+            return Ok(());
+        }
+        self.consume(sources.len())?;
+        if self.nodes.len() == MAX_HINT_SPLITS {
+            return Err("Hint priority exceeds its 16,384-split allocation budget".into());
+        }
+        self.nodes.push((node, sources));
+        Ok(())
+    }
+
+    fn retained(mut self, tree: &Tree) -> Result<(Stats, BTreeSet<usize>), String> {
+        if self.nodes.is_empty() {
+            return Ok((self.stats, BTreeSet::new()));
+        }
+        let reached = tree.preorder().into_iter().collect::<BTreeSet<_>>();
+        self.consume(reached.len())?;
+        let mut sources = BTreeSet::new();
+        for (node, hints) in self.nodes {
+            if reached.contains(&node) && tree.nodes[node].split.is_some() {
+                self.stats.splits += 1;
+                sources.extend(hints);
+            }
+        }
+        self.stats.priority_splits = self.stats.splits;
+        Ok((self.stats, sources))
+    }
 }
 
 pub(crate) fn collect(
@@ -91,9 +212,10 @@ pub(crate) fn apply(
     tree: &mut Tree,
     report: &mut Report,
     control: &Control,
+    priority: Priority,
 ) -> Result<Stats, String> {
-    let mut stats = Stats::default();
-    for hint in &map.hints {
+    let (mut stats, prioritized) = priority.retained(tree)?;
+    for (source, hint) in map.hints.iter().enumerate() {
         control.checkpoint()?;
         let before = stats.splits;
         for index in tree.preorder() {
@@ -128,7 +250,7 @@ pub(crate) fn apply(
             tree.split_leaf(index, hint.plane, &map.planes)?;
             stats.splits += 1;
         }
-        if stats.splits == before {
+        if stats.splits == before && !prioritized.contains(&source) {
             report.diagnostics.push(Diagnostic::info(
                 format!("Hint side {} needs no additional split: its plane is already present or its polygon misses non-solid leaf interiors", hint.side),
                 Some(format!("solid:{}", hint.solid)),
@@ -157,4 +279,43 @@ fn intersects(
         clipped = next;
     }
     Ok(clipped.area() > ON_EPSILON * ON_EPSILON)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn priority_checks_work_before_clipping_and_observes_cancellation() {
+        let mut planes = PlaneSet::default();
+        let plane = planes.find(DVec3::X, 0.0);
+        let fragment = || Fragment {
+            source: 0,
+            plane,
+            winding: Winding(vec![
+                DVec3::new(0.0, -1.0, -1.0),
+                DVec3::new(0.0, 1.0, -1.0),
+                DVec3::new(0.0, 1.0, 1.0),
+                DVec3::new(0.0, -1.0, 1.0),
+            ]),
+        };
+        let mut priority = Priority::default();
+        priority.stats.work = MAX_HINT_WORK - 3;
+        assert!(
+            priority
+                .split(vec![fragment()], plane, &planes, &Control::default())
+                .err()
+                .unwrap()
+                .contains("work-unit budget")
+        );
+        let cancelled = Control::default();
+        cancelled.cancel().unwrap();
+        assert!(
+            Priority::default()
+                .split(vec![fragment()], plane, &planes, &cancelled)
+                .err()
+                .unwrap()
+                .contains("cancelled")
+        );
+    }
 }

@@ -181,19 +181,43 @@ fn choose_plane(
     fragments: &[Fragment],
     planes: &PlaneSet,
     control: &Control,
-) -> Result<Option<usize>, String> {
-    let candidates: BTreeSet<usize> = fragments
+    hints: &[crate::hints::Fragment],
+    volume: &Polyhedron,
+    priority: &mut crate::hints::Priority,
+) -> Result<Option<(usize, bool)>, String> {
+    let mut candidates: BTreeSet<usize> = fragments
         .iter()
         .flat_map(|f| &f.shape.sides)
         .filter(|s| !s.tested)
         .map(|s| s.plane & !1)
         .collect();
+    let mut added_planes = BTreeSet::new();
+    let mut hint_planes = BTreeSet::new();
+    for hint in hints {
+        priority.consume(volume.sides.iter().map(|side| side.winding.0.len()).sum())?;
+        if volume.classify(hint.plane, planes) == Side::Cross {
+            hint_planes.insert(hint.plane);
+            if candidates.insert(hint.plane) {
+                added_planes.insert(hint.plane);
+            }
+        }
+    }
     let mut best = None;
-    let mut best_score = i64::MIN;
+    let mut best_score = (false, i64::MIN);
     for candidate in candidates {
         control.checkpoint()?;
         let (mut front, mut back, mut splits, mut coplanar) = (0i64, 0i64, 0i64, 0i64);
         for fragment in fragments {
+            if added_planes.contains(&candidate) {
+                priority.consume(
+                    fragment
+                        .shape
+                        .sides
+                        .iter()
+                        .map(|side| side.winding.0.len() + 1)
+                        .sum(),
+                )?;
+            }
             coplanar += fragment
                 .shape
                 .sides
@@ -208,9 +232,31 @@ fn choose_plane(
             }
         }
         let axial = i64::from(planes.get(candidate).kind < 3);
-        let score = 5 * coplanar - 5 * splits - (front - back).abs() + 5 * axial;
+        let mut cuts_hint = false;
+        if !hint_planes.contains(&candidate) {
+            for hint in hints {
+                control.checkpoint()?;
+                priority.consume(hint.winding.0.len())?;
+                let plane = planes.get(candidate);
+                let front = hint
+                    .winding
+                    .0
+                    .iter()
+                    .any(|&point| plane.distance(point) > ON_EPSILON);
+                let back = hint
+                    .winding
+                    .0
+                    .iter()
+                    .any(|&point| plane.distance(point) < -ON_EPSILON);
+                cuts_hint |= front && back;
+            }
+        }
+        let score = (
+            !cuts_hint,
+            5 * coplanar - 5 * splits - (front - back).abs() + 5 * axial,
+        );
         if score > best_score {
-            best = Some(candidate);
+            best = Some((candidate, added_planes.contains(&candidate)));
             best_score = score;
         }
     }
@@ -232,6 +278,16 @@ impl Tree {
         planes: &mut PlaneSet,
         control: &Control,
     ) -> Result<Self, String> {
+        Self::build_with_hints(brushes, indices, planes, &[], control).map(|(tree, _)| tree)
+    }
+
+    pub(crate) fn build_with_hints(
+        brushes: &[MapBrush],
+        indices: &[usize],
+        planes: &mut PlaneSet,
+        hints: &[crate::hints::Hint],
+        control: &Control,
+    ) -> Result<(Self, crate::hints::Priority), String> {
         control.checkpoint()?;
         if indices.is_empty() {
             return Err("no brushes to build a BSP tree".into());
@@ -262,10 +318,20 @@ impl Tree {
                 brushes: Vec::new(),
             }],
         };
-        let mut pending = vec![(0, fragments)];
-        while let Some((index, fragments)) = pending.pop() {
+        let mut priority = crate::hints::Priority::default();
+        let hints = priority.fragments(hints, &tree.nodes[0].volume, planes, control)?;
+        let mut pending = vec![(0, fragments, hints)];
+        while let Some((index, fragments, hints)) = pending.pop() {
             control.checkpoint()?;
-            let Some(plane) = choose_plane(&fragments, planes, control)? else {
+            let Some((plane, added)) = choose_plane(
+                &fragments,
+                planes,
+                control,
+                &hints,
+                &tree.nodes[index].volume,
+                &mut priority,
+            )?
+            else {
                 let node = &mut tree.nodes[index];
                 node.contents = fragments.iter().fold(0, |c, f| c | f.contents);
                 node.brushes = fragments.iter().map(|f| f.brush).collect();
@@ -276,6 +342,10 @@ impl Tree {
             if tree.nodes.len() + 2 > MAX_TREE_NODES {
                 return Err("BSP tree exceeds the node limit".into());
             }
+            if added {
+                priority.record(index, plane, &hints)?;
+            }
+            let [front_hints, back_hints] = priority.split(hints, plane, planes, control)?;
             let volumes = tree.nodes[index].volume.split(plane, planes);
             let [Some(front_volume), Some(back_volume)] = volumes else {
                 return Err("BSP split produced a degenerate volume".into());
@@ -303,10 +373,10 @@ impl Tree {
                 });
             }
             let [front, back] = halves;
-            pending.push((children[1], back));
-            pending.push((children[0], front));
+            pending.push((children[1], back, back_hints));
+            pending.push((children[0], front, front_hints));
         }
-        Ok(tree)
+        Ok((tree, priority))
     }
 
     pub fn leaf_at(&self, point: DVec3, planes: &PlaneSet) -> usize {

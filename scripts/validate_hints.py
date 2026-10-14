@@ -91,6 +91,7 @@ def fixture(args):
                 result["success"]
                 and result["stats"]["hint_surfaces"] == 1
                 and result["stats"]["hint_splits"] == 1
+                and result["stats"]["hint_priority_splits"] == 1
             )
             assert count == 2 and result["stats"]["brushes"] == 6
             a, b = [cluster_at(data, point) for point in [[0, 0, 32], [16, 0, 32]]]
@@ -117,7 +118,12 @@ def fixture(args):
         client.call("set_object_visibility", {"action": "hide", "ids": [helper]})
         baseline = args.output / "baseline.bsp"
         result = client.call("compile_map", {"path": str(baseline)})
-        assert result["stats"]["hint_surfaces"] == result["stats"]["hint_splits"] == 0
+        assert (
+            result["stats"]["hint_surfaces"]
+            == result["stats"]["hint_splits"]
+            == result["stats"]["hint_priority_splits"]
+            == 0
+        )
         assert result["stats"]["clusters"] == 1
         assert payload(baseline.read_bytes(), 29) == payload(original, 29)
         client.call("open_map", {"path": str(source), "discard_changes": True})

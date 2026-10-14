@@ -80,7 +80,11 @@ def fixture(args):
         source_bytes = source.read_bytes()
         client.call(
             "set_compile_settings",
-            {"visibility": "detailed", "lighting": "direct_ldr", "physics": "engine"},
+            {
+                "visibility": args.visibility,
+                "lighting": "direct_ldr",
+                "physics": "engine",
+            },
         )
         path = args.output / "grid.bsp"
         result = client.call("compile_map", {"path": str(path)})
@@ -137,6 +141,9 @@ def fixture(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument(
+        "--visibility", choices=["fast", "detailed"], default="detailed"
+    )
     parser.add_argument(
         "--output", type=Path, default=Path("/tmp/hammerr-parallel-visibility")
     )

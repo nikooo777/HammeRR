@@ -28,7 +28,7 @@ HammeRR is in active development.
 | --- | --- | --- |
 | Geometry and collision | BSP version 20, with checked brush planes and collision bevels | — |
 | Build settings | Lighting, physics, visibility and sky quality available before the first build; shared with agents and frozen during builds | — |
-| Visibility | Fast conservative sets or Detailed portal separator clipping with bounded parallel source rows; authored hint/skip cuts in open leaves; visible/audible sets, sky visibility, areaportals and distance-fading windows | Parallel base-facing work, hint priority during original plane selection, occluders and broader map coverage |
+| Visibility | Fast conservative sets or Detailed portal separator clipping with bounded parallel portal-facing rows and source flow; authored hint/skip cuts in open leaves; visible/audible sets, sky visibility, areaportals and distance-fading windows | Hint priority during original plane selection, occluders and broader map coverage |
 | Lighting | Fullbright; Direct LDR for static, switchable and animated point/spot lights, one sun and sky ambient; directional normal-map lightmaps, soft sun, Fast/Balanced/Detailed sampling, percentage falloff, opaque shadows, terrain, pivot-aware direct brush-entity maps with self shadows, scoped world/model brush groups or optional angle smoothing, including partial-edge junctions and one optional style-preserving diffuse world/terrain-source bounce into world/model receivers; conservative point/spot visibility and exact-range culling | Adaptive sampling, multiple bounces, HDR, transparent shadows, second-normal-map-only materials, model relighting/reflected sources and baked prop lightmaps |
 | Model ambient | LDR cubes from filtered local world/terrain lightmaps and sky, with up to 1/4/8 safe probes per open leaf by quality; legacy and indexed LDR/HDR data preservation | Adaptive refinement, switching ambient cubes, static-prop occlusion, probes below terrain sheets |
 | Physics | World, clips, brush entities, water and terrain, using CS:S's own collision library | Surface materials, authored masses, broader collision with moving bodies |
@@ -43,4 +43,4 @@ HammeRR is in active development.
 
 **Editor:** free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, model rendering and broader map checks.
 
-**Compiler:** parallel base-facing work and hint priority, multiple light bounces and HDR, broader physics collision, mixed-power terrain LOD, prop lighting, brush-model overlays and water transitions.
+**Compiler:** hint priority, multiple light bounces and HDR, broader physics collision, mixed-power terrain LOD, prop lighting, brush-model overlays and water transitions.

@@ -123,6 +123,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lighting_bytes
     );
     println!(
+        "light styles: {} · styled faces: {} · lightmaps: {} · switched groups: {}",
+        stats.light_styles,
+        stats.styled_faces,
+        stats.light_style_maps,
+        stats.switchable_light_groups
+    );
+    println!(
         "indirect light: {} bounces, {} rays, {} samples lit, {} work units",
         stats.bounces, stats.bounce_rays, stats.bounce_samples, stats.bounce_work
     );

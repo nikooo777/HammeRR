@@ -156,6 +156,59 @@ fn direct_terrain_lighting_uses_native_surface_samples_and_sloped_normals() {
                 .zip(bounced_colors.samples())
                 .all(|(direct, bounced)| bounced.linear()[0] >= direct.linear()[0])
         );
+        let mut styled = source.clone();
+        styled
+            .entities
+            .last_mut()
+            .unwrap()
+            .properties
+            .set("targetname", "terrain_style");
+        let styled = compiler::compile_with_options(
+            &styled,
+            &common::empty_game(),
+            compiler::Options {
+                lighting: compiler::LightingMode::DirectLdr,
+                ..Default::default()
+            },
+        );
+        assert!(!styled.report.has_errors(), "{:?}", styled.report);
+        let styled = styled.bsp.unwrap();
+        let styled_face = styled.records::<bsp::Face>().unwrap()[usize::from(data.infos[0].face)];
+        let styled_info = styled.records::<TexInfo>().unwrap()[styled_face.texinfo as usize];
+        let styled_light = styled.lighting(bsp::LightingKind::Ldr).unwrap().unwrap();
+        let styled_colors = styled_light
+            .face(&styled_face, &styled_info)
+            .unwrap()
+            .unwrap();
+        assert_eq!(styled_colors.styles(), [0, 32]);
+        let direct_face = bsp.records::<bsp::Face>().unwrap()[usize::from(data.infos[0].face)];
+        let direct_info = bsp.records::<TexInfo>().unwrap()[direct_face.texinfo as usize];
+        let direct_colors = direct_colors
+            .face(&direct_face, &direct_info)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            styled_colors.samples(1, 0).unwrap(),
+            direct_colors.samples(0, 0).unwrap()
+        );
+        assert!(
+            styled_colors
+                .samples(0, 0)
+                .unwrap()
+                .iter()
+                .all(|sample| sample.rgb == [0; 3])
+        );
+        for lump in [
+            bsp::lump::DISPINFO,
+            bsp::lump::DISP_VERTS,
+            bsp::lump::DISP_TRIS,
+            bsp::lump::DISP_LIGHTMAP_SAMPLE_POSITIONS,
+        ] {
+            assert!(
+                styled.lumps[lump] == bsp.lumps[lump],
+                "Styled terrain lump {lump} changed"
+            );
+        }
         assert_eq!(*document.vmf(), source);
     }
 }

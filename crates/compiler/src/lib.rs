@@ -57,7 +57,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static point lights, spotlights, sun and sky on world brushes and terrain, with shadows, authored brush smoothing and model ambient. One diffuse bounce is optional. HDR and baked prop/model lightmaps remain unfinished."
+                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes and terrain, with shadows, authored brush smoothing and model ambient. One diffuse bounce is optional. HDR and baked prop/model lightmaps remain unfinished."
             }
         }
     }
@@ -330,6 +330,10 @@ pub struct Stats {
     pub water_leaves: usize,
     pub sky_clusters: usize,
     pub world_lights: usize,
+    pub switchable_light_groups: usize,
+    pub light_styles: usize,
+    pub styled_faces: usize,
+    pub light_style_maps: usize,
     pub lighting_faces: usize,
     pub lightmap_samples: usize,
     pub lighting_bytes: usize,
@@ -437,6 +441,9 @@ fn build(
     }
     if output.report.has_errors() {
         return Ok(());
+    }
+    if options.lighting == LightingMode::DirectLdr {
+        output.stats.switchable_light_groups = lighting::styles::prepare(&mut map, control)?;
     }
     output.stats.displacement_neighbor_pairs = map.connect_terrain(&mut output.report, control)?;
     let structural: Vec<usize> = map.entities[0]
@@ -609,6 +616,9 @@ fn build(
             return Ok(());
         }
         output.stats.world_lights = stats.lights;
+        output.stats.light_styles = stats.light_styles;
+        output.stats.styled_faces = stats.styled_faces;
+        output.stats.light_style_maps = stats.light_style_maps;
         output.stats.lighting_faces = stats.faces;
         output.stats.lightmap_samples = stats.samples;
         output.stats.lighting_bytes = stats.bytes;

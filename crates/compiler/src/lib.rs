@@ -341,6 +341,7 @@ pub struct Stats {
     pub visibility_workers: usize,
     pub hint_surfaces: usize,
     pub hint_splits: usize,
+    pub hint_priority_splits: usize,
     pub hint_work: usize,
     pub areas: usize,
     pub areaportals: usize,
@@ -482,8 +483,13 @@ fn build(
         .filter(|&i| map.brushes[i].structural())
         .collect();
     control.advance(Stage::WorldTree)?;
-    let mut tree =
-        tree::Tree::build_controlled(&map.brushes, &structural, &mut map.planes, control)?;
+    let (mut tree, hint_priority) = tree::Tree::build_with_hints(
+        &map.brushes,
+        &structural,
+        &mut map.planes,
+        &map.hints,
+        control,
+    )?;
     control.advance(Stage::Portals)?;
     let mut portals = portals::build_controlled(&tree, &map.planes, control)?;
     control.advance(Stage::Flood)?;
@@ -499,8 +505,9 @@ fn build(
         return Ok(());
     }
     control.advance(Stage::Hints)?;
-    let hints = hints::apply(&map, &mut tree, &mut output.report, control)?;
+    let hints = hints::apply(&map, &mut tree, &mut output.report, control, hint_priority)?;
     output.stats.hint_splits = hints.splits;
+    output.stats.hint_priority_splits = hints.priority_splits;
     output.stats.hint_work = hints.work;
     if hints.splits > 0 {
         control.advance(Stage::Portals)?;

@@ -161,7 +161,8 @@ fn hint_scope_ignores_other_rooms_solids_and_existing_planes_and_preserves_hidde
             output(&vmf, &game, compiler::VisibilityMode::Fast)
                 .stats
                 .hint_splits,
-            0
+            0,
+            "{low:?} {high:?}"
         );
     }
     let base = common::room();
@@ -268,4 +269,58 @@ fn hints_do_not_seal_leaks_and_invalid_helpers_preserve_prior_output() {
         assert!(!output.write(&path).unwrap());
         assert_eq!(std::fs::read(&path).unwrap(), previous);
     }
+}
+
+#[test]
+fn priority_hint_precedes_structural_planes_crossing_its_finite_polygon() {
+    let (_directory, game) = game();
+    let mut document = Document::new(common::room());
+    document
+        .edit("crossing solid", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-32.0, -32.0, 96.0),
+                DVec3::new(32.0, 32.0, 112.0),
+                "dev/dev_measuregeneric01",
+            )
+        })
+        .unwrap();
+    let (source, _) = hint(
+        document.vmf().clone(),
+        DVec3::new(-8.0, -64.0, 64.0),
+        DVec3::new(0.0, 64.0, 192.0),
+    );
+    let result = output(&source, &game, compiler::VisibilityMode::Detailed);
+    assert!(result.stats.hint_priority_splits > 0);
+    assert!(result.stats.hint_priority_splits <= result.stats.hint_splits);
+    let bsp = result.bsp.unwrap();
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let nodes = bsp.records::<Node>().unwrap();
+    let point = DVec3::new(-16.0, 0.0, 80.0);
+    let mut path = Vec::new();
+    let mut index = bsp.records::<Model>().unwrap()[0].head_node;
+    while index >= 0 {
+        let node = nodes[index as usize];
+        let plane = planes[node.plane as usize];
+        path.push(plane);
+        let distance =
+            DVec3::from_array(plane.normal.map(f64::from)).dot(point) - f64::from(plane.dist);
+        index = node.children[usize::from(distance < 0.0)];
+    }
+    let hint = path
+        .iter()
+        .position(|plane| plane.normal == [1.0, 0.0, 0.0] && plane.dist == 0.0)
+        .expect("Missing priority hint plane");
+    let crossing = path
+        .iter()
+        .position(|plane| {
+            plane.normal == [0.0, 0.0, 1.0] && plane.dist == 96.0
+                || plane.normal == [0.0, 1.0, 0.0] && plane.dist.abs() == 32.0
+        })
+        .expect("Missing structural blocker plane");
+    assert!(
+        hint < crossing,
+        "Hint came after the crossing cut: {path:?}"
+    );
+    assert!(cluster(&bsp, point) >= 0);
 }

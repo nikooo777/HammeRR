@@ -146,7 +146,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `window_portals --runtime` | Rendered and foreground brush models, distance closing, fade-distance inputs, and server/client visibility bits. |
 | `overlays --runtime` | Authored graffiti rendering against a control scene, distance fading and the named accessor's native overlay ID. |
 | `portal_flow --runtime` | Fast/Detailed settings, PVS/PAS rows, independent clear rays, exact MCP builds and paired native rendering through staggered openings. |
-| `hints --runtime` | Shared face/material authoring, intentional cuts, unchanged physics payload, atomic invalid-helper rejection, paired rendering and grounding inside/across the helper. |
+| `hints --runtime` | Shared face/material authoring, retained initial hint priority and finite scope, unchanged physics payload, atomic invalid-helper rejection, paired rendering and grounding inside/across the helper. |
 | `smoothing_angle --runtime` | Zero/below/boundary angles on a cylinder, shared settings and frozen/stale jobs, exact MCP builds and unchanged collision, with paired native shading. |
 | `model_smoothing --runtime` | Model-local angle thresholds, shared settings and exact builds, unchanged collision/source/history, paired curved-model shading and native rotation. |
 | `light_styles --runtime [--bounced-model --bounces 1|2|3|4]` | Named channels and averages, shared relay authoring, exact MCP builds and atomic failures; native Initially dark, TurnOn, TurnOff, custom-pattern brightness and alternating animation. `--bounced-model` checks reflected named light on a shadowed model, including the same native switches and patterns across one through four chosen bounces. |

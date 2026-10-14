@@ -11,9 +11,18 @@ use crate::winding::{ON_EPSILON, Winding};
 
 const MAX_LIGHTMAP_EXTENT: i32 = 32;
 const MAX_PROVENANCE_WORK: usize = 4_000_000;
+const MAX_SMOOTH_SOURCE_POINTS: usize = 4_000_000;
+
+#[derive(Debug)]
+pub struct SmoothingSource {
+    pub plane: usize,
+    pub groups: u32,
+    pub winding: Winding,
+}
 
 #[derive(Debug)]
 pub struct Face {
+    pub smoothing_source: Option<Arc<SmoothingSource>>,
     pub source_sides: Arc<[u32]>,
     pub plane: usize,
     pub texinfo: usize,
@@ -77,6 +86,7 @@ fn subdivide(
             continue;
         };
         pending.push(Face {
+            smoothing_source: face.smoothing_source.clone(),
             source_sides: face.source_sides.clone(),
             plane: face.plane,
             texinfo: face.texinfo,
@@ -150,6 +160,7 @@ pub fn build_controlled(
                             ))
                             .or_default()
                             .push(Face {
+                                smoothing_source: None,
                                 source_sides: source_sides.clone(),
                                 displacement: None,
                                 plane: side.plane,
@@ -166,6 +177,7 @@ pub fn build_controlled(
         }
     }
     let mut output = Vec::new();
+    let mut retained_points = 0_usize;
     for (_, mut faces) in groups {
         let mut i = 0;
         while i < faces.len() {
@@ -192,7 +204,20 @@ pub fn build_controlled(
             }
             i += 1;
         }
-        for face in faces {
+        for mut face in faces {
+            if entity == 0 && face.smoothing_groups != 0 && face.displacement.is_none() {
+                retained_points = retained_points
+                    .checked_add(face.winding.0.len())
+                    .filter(|&count| count <= MAX_SMOOTH_SOURCE_POINTS)
+                    .ok_or(
+                        "Brush smoothing sources exceed their four-million-point allocation budget",
+                    )?;
+                face.smoothing_source = Some(Arc::new(SmoothingSource {
+                    plane: face.plane,
+                    groups: face.smoothing_groups,
+                    winding: face.winding.clone(),
+                }));
+            }
             subdivide(face, map, &mut output, control)?;
         }
     }

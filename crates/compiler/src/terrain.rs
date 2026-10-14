@@ -288,6 +288,7 @@ impl Map<'_> {
                 ));
             }
             faces.push(Face {
+                smoothing_source: None,
                 source_sides: vec![terrain.side].into(),
                 plane: terrain.plane,
                 texinfo: terrain.texinfo,

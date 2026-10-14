@@ -95,13 +95,25 @@ Each face carries two lighting settings that the compiler uses.
 Select faces and open **Face lighting…**:
 
 - **Lightmap scale**: world units per lighting pixel. Presets are 8, 16, 32 and 64. Smaller values give sharper lighting and larger lightmaps. A blank field keeps each face's value.
-- **Smoothing groups**: toggle groups one at a time, so other memberships stay intact across a mixed selection. Groups 1–24 allow smoothing; groups 25–32 prevent it. **Clear all groups** removes every membership; **Reset group changes** restores the current values.
+- **Smoothing groups**: toggle groups one at a time, so other memberships stay intact across a mixed selection. Shared groups 1–24 allow smoothing; shared groups 25–32 keep an edge hard. A shared hard group takes priority over a shared smoothing group. **Clear all groups** removes every membership; **Reset group changes** restores the current values.
 
 Click **Preview settings**, then **Apply settings**.
 
 To see the settings, use the **Lightmap density** and **Group membership** views (also available as [viewport modes](basics.md#viewport-modes)).
 
-Direct LDR builds use each face's lightmap scale. Smoothing groups are kept, but the compiler doesn't smooth lighting across brush faces yet. Terrain is already lit with smooth normals.
+Direct LDR builds use each face's lightmap scale and assigned smoothing groups on world/detail brushes. Terrain uses its own sewn grid normals.
+
+### Bake smooth brush lighting
+
+1. Set **Selection → Faces · materials & textures** and select the adjacent faces that should blend. Ctrl+click toggles faces.
+2. Open **Face lighting…**. Give those faces a shared group under **Smoothing groups · 1–24**, such as **1**. Leave unrelated surfaces in different groups.
+3. For an edge that should stay sharp, give both adjoining faces a shared **Hard-edge groups · 25–32** group.
+4. Click **Preview settings**, then **Apply settings**. **Cancel** leaves the map unchanged.
+5. Open **Build settings…**, choose **Build lighting → Direct LDR**, then **Close** and **Compile** or **Run Map**. **Build details…** reports **Brush smoothing**, faces and corners.
+
+![Authored smoothing groups soften lighting across the cube's faces](images/compiled-brush-smoothing.png)
+
+Limits: explicitly assigned masks on world/detail brushes, with adjacency at matching source vertices. Unassigned faces keep flat normals. The smoothing fan is retained across lightmap subdivision; geometry, texture axes and collision stay fixed. Automatic angle smoothing, T-junction matching, brush-model smoothing and bump-light maps remain unfinished. Degenerate or backward normals fall back to the geometric face normal. Source allocation is capped at four million retained points, native normals at 65,536 entries, and work shares the lighting budget. The viewport's **Group membership** mode shows assignment; compiled shading is viewed in game.
 
 | Face lighting controls | Lightmap density on brushes with different scales |
 | --- | --- |

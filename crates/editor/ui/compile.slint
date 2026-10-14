@@ -1,4 +1,4 @@
-import { Button, ComboBox, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, ScrollView, TextEdit } from "std-widgets.slint";
 
 export component CompileWindow inherits Window {
     title: "Build status - HammeRR";
@@ -43,46 +43,57 @@ export component CompileWindow inherits Window {
         }
     }
     VerticalLayout {
-        padding: 24px;
-        spacing: 14px;
-        Text { text: "Build status"; font-size: 24px; font-weight: 600; }
-        HorizontalLayout {
-            spacing: 12px;
-            Text { text: "Build lighting"; vertical-alignment: center; }
-            lighting-selector := ComboBox { model: root.lighting-modes; enabled: root.lighting-enabled; selected(value) => { root.change-lighting(self.current-index); } }
+        spacing: 0px;
+        ScrollView {
+            content-width: self.width;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                Text { text: "Build status"; font-size: 24px; font-weight: 600; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Build lighting"; vertical-alignment: center; }
+                    lighting-selector := ComboBox { model: root.lighting-modes; enabled: root.lighting-enabled; selected(value) => { root.change-lighting(self.current-index); } }
+                }
+                Text { text: root.lighting-description; wrap: word-wrap; color: #bac2ce; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Physics bodies"; vertical-alignment: center; }
+                    physics-selector := ComboBox { model: root.physics-modes; enabled: root.lighting-enabled; selected(value) => { root.change-physics(self.current-index); } }
+                }
+                Text { text: root.physics-description; wrap: word-wrap; color: #bac2ce; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Visibility quality"; vertical-alignment: center; }
+                    visibility-selector := ComboBox { model: root.visibility-modes; enabled: root.lighting-enabled; selected(value) => { root.change-visibility(self.current-index); } }
+                }
+                Text { text: root.visibility-description; wrap: word-wrap; color: #bac2ce; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Indirect light"; vertical-alignment: center; }
+                    bounce-selector := ComboBox { model: root.bounce-modes; enabled: root.sky-enabled; selected(value) => { root.change-bounces(self.current-index); } }
+                }
+                Text { text: "One bounce reflects light from world brushes and terrain into shaded surfaces. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Sampling quality"; vertical-alignment: center; }
+                    sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
+                }
+                Text { text: "More directions improve soft sun shadows, sky/model ambient and bounced light, and take longer. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+                Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
+                Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
+                Text { text: "Diagnostics"; font-weight: 600; }
+                TextEdit { text: root.diagnostics; read-only: true; min-height: 160px; max-height: 160px; }
+                Text { text: root.launch-details; wrap: word-wrap; color: #bac2ce; }
+                Text { text: root.message; wrap: word-wrap; color: #bac2ce; }
+            }
         }
-        Text { text: root.lighting-description; wrap: word-wrap; color: #bac2ce; }
         HorizontalLayout {
-            spacing: 12px;
-            Text { text: "Physics bodies"; vertical-alignment: center; }
-            physics-selector := ComboBox { model: root.physics-modes; enabled: root.lighting-enabled; selected(value) => { root.change-physics(self.current-index); } }
-        }
-        Text { text: root.physics-description; wrap: word-wrap; color: #bac2ce; }
-        HorizontalLayout {
-            spacing: 12px;
-            Text { text: "Visibility quality"; vertical-alignment: center; }
-            visibility-selector := ComboBox { model: root.visibility-modes; enabled: root.lighting-enabled; selected(value) => { root.change-visibility(self.current-index); } }
-        }
-        Text { text: root.visibility-description; wrap: word-wrap; color: #bac2ce; }
-        HorizontalLayout {
-            spacing: 12px;
-            Text { text: "Indirect light"; vertical-alignment: center; }
-            bounce-selector := ComboBox { model: root.bounce-modes; enabled: root.sky-enabled; selected(value) => { root.change-bounces(self.current-index); } }
-        }
-        Text { text: "One bounce reflects light from world brushes and terrain into shaded surfaces. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
-        HorizontalLayout {
-            spacing: 12px;
-            Text { text: "Sampling quality"; vertical-alignment: center; }
-            sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
-        }
-        Text { text: "More directions improve soft sun shadows, sky/model ambient and bounced light, and take longer. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
-        Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
-        Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
-        Text { text: "Diagnostics"; font-weight: 600; }
-        TextEdit { text: root.diagnostics; read-only: true; vertical-stretch: 1; }
-        Text { text: root.launch-details; wrap: word-wrap; color: #bac2ce; }
-        Text { text: root.message; wrap: word-wrap; color: #bac2ce; }
-        HorizontalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 8px;
+            padding-bottom: 24px;
+            spacing: 8px;
             Button { text: "Cancel build"; enabled: root.cancellable; clicked => { root.cancel-build(); } }
             Button { text: "Play built map"; enabled: root.launch-ready; clicked => { root.play-build(); } }
             Rectangle { horizontal-stretch: 1; }

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use glam::DVec3;
 use source_formats::bsp::{self, Bsp, GameLump, Lump, contents, lump};
@@ -172,6 +173,11 @@ fn append_entity(
     Ok(())
 }
 
+pub struct Emission {
+    pub bsp: Bsp,
+    pub smoothing_sources: Vec<Option<Arc<crate::faces::SmoothingSource>>>,
+}
+
 pub fn build(
     map: &Map,
     models: &[Model],
@@ -180,7 +186,7 @@ pub fn build(
     areas: &crate::areas::Areas,
     revision: i32,
     control: &crate::Control,
-) -> Result<Bsp, String> {
+) -> Result<Emission, String> {
     index::<u16>(map.planes.len().saturating_sub(1), "plane")?;
     index::<i16>(map.texinfos.infos.len().saturating_sub(1), "texinfo")?;
     let mut bsp = Bsp::new();
@@ -214,6 +220,7 @@ pub fn build(
         ..Geometry::default()
     };
     let mut faces = Vec::new();
+    let mut smoothing_sources = Vec::new();
     let mut overlay_bindings = crate::overlays::Bindings::default();
     let mut bsp_models = Vec::new();
     let mut water_distances = vec![u16::MAX; leaves.len()];
@@ -235,6 +242,7 @@ pub fn build(
                     let id = index(faces.len(), "leaf face")?;
                     overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
                     faces.push(geometry.face(face, map, faces.len(), model, water)?);
+                    smoothing_sources.push(face.smoothing_source.clone());
                     for &leaf in &face.leaves {
                         let leaf = (-1 - mapping[leaf]) as usize;
                         leaf_faces[leaf].push(id);
@@ -305,6 +313,7 @@ pub fn build(
             let id = index(faces.len(), "leaf face")?;
             overlay_bindings.add(&face.source_sides, id, &map.overlays)?;
             faces.push(geometry.face(face, map, faces.len(), model, water)?);
+            smoothing_sources.push(face.smoothing_source.clone());
             for &leaf in &face.leaves {
                 leaf_faces[(-1 - mapping[leaf]) as usize].push(id);
             }
@@ -493,5 +502,8 @@ pub fn build(
             }
         }
     }
-    Ok(bsp)
+    Ok(Emission {
+        bsp,
+        smoothing_sources,
+    })
 }

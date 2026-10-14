@@ -127,6 +127,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lit_brush_models, stats.model_lighting_faces
     );
     println!(
+        "light culling: {} evaluated · {} hidden · {} beyond range · {} lookup work units",
+        stats.light_evaluations,
+        stats.light_pvs_skipped,
+        stats.light_range_skipped,
+        stats.light_culling_work
+    );
+    println!(
         "light styles: {} · styled faces: {} · lightmaps: {} · switched groups: {}",
         stats.light_styles,
         stats.styled_faces,

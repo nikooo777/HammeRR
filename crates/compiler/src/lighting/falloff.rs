@@ -86,10 +86,13 @@ impl Falloff {
         Ok(result)
     }
 
-    pub(super) fn factor(self, distance: f64) -> Result<f64, String> {
-        if (self.radius > 0.0 && distance > self.radius)
+    pub(super) fn outside_range(self, distance: f64) -> bool {
+        (self.radius > 0.0 && distance > self.radius)
             || self.fade.is_some_and(|[_, end]| distance >= end)
-        {
+    }
+
+    pub(super) fn factor(self, distance: f64) -> Result<f64, String> {
+        if self.outside_range(distance) {
             return Ok(0.0);
         }
         let distance = distance.max(MIN_LIGHT_DISTANCE);

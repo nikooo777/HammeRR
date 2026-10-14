@@ -492,7 +492,10 @@ impl Controller {
                     "light sources"
                 };
                 format!(
-                    "\nBaked lighting: {count} faces · {samples} samples · {lights} {light_label}\nModel ambient: {} probes · {} bytes",
+                    "\nBaked lighting: {count} faces · {samples} samples · {lights} {light_label}\nLight culling: {} evaluated · {} hidden · {} beyond range\nModel ambient: {} probes · {} bytes",
+                    result["stats"]["light_evaluations"].as_u64().unwrap_or_default(),
+                    result["stats"]["light_pvs_skipped"].as_u64().unwrap_or_default(),
+                    result["stats"]["light_range_skipped"].as_u64().unwrap_or_default(),
                     result["stats"]["ambient_samples"].as_u64().unwrap_or_default(),
                     result["stats"]["ambient_bytes"].as_u64().unwrap_or_default(),
                 )

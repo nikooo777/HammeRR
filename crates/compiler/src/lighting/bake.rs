@@ -38,6 +38,7 @@ pub(crate) struct BakeStats {
     pub smoothed_faces: usize,
     pub smoothed_corners: usize,
     pub normal_work: usize,
+    pub culling: super::culling::Stats,
 }
 
 pub(super) struct Plan {
@@ -115,6 +116,10 @@ pub(super) struct Budget<'a> {
 }
 
 impl Budget<'_> {
+    pub(super) fn new(control: &Control) -> Budget<'_> {
+        Budget { work: 0, control }
+    }
+
     pub(super) fn consume(&mut self, amount: usize) -> Result<(), String> {
         self.control.checkpoint()?;
         self.work = self
@@ -155,7 +160,7 @@ fn inside_or_closest(point: DVec3, points: &[DVec3], normal: DVec3) -> DVec3 {
     if inside { point } else { closest }
 }
 
-enum Emitter {
+pub(super) enum Emitter {
     Point(PointLight),
     Sky(SkyLight),
 }
@@ -505,7 +510,8 @@ pub(crate) fn bake(
     let mut infos = bsp
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;
-    let mut budget = Budget { work: 0, control };
+    let mut budget = Budget::new(control);
+    let mut candidates = super::culling::Candidates::new(&lights, visibility, &mut budget)?;
     let model_records = bsp.records::<Model>().map_err(|error| error.to_string())?;
     let scopes = super::models::scopes(map, &model_records, settings.model_entities, faces.len())?;
     let normal_start = budget.work;
@@ -590,8 +596,18 @@ pub(crate) fn bake(
                 let (point, normal) = plan.sample(s, t, &mut budget)?;
                 let origin = plan.origin(point, normal);
                 let mut color = [DVec3::ZERO; 4];
-                for light in &lights {
+                let cluster = candidates.cluster(origin, map, tree, visibility, &mut budget)?;
+                let culling_enabled = candidates.enabled();
+                let mut evaluated = 0;
+                let mut range_skipped = 0;
+                for &index in candidates.for_cluster(cluster, &lights, &mut budget)? {
+                    let light = &lights[index];
                     budget.consume(1)?;
+                    if culling_enabled && super::culling::outside_range(light, point) {
+                        range_skipped += 1;
+                        continue;
+                    }
+                    evaluated += 1;
                     if let Emitter::Sky(light) = light
                         && light.has_ambient()
                     {
@@ -653,6 +669,8 @@ pub(crate) fn bake(
                         }
                     }
                 }
+                candidates.stats.evaluated += evaluated;
+                candidates.stats.range_skipped += range_skipped;
                 channels.finish_sample(t * width + s, &color, &mut budget)?;
             }
         }
@@ -782,6 +800,7 @@ pub(crate) fn bake(
         smoothed_faces: normals.faces,
         smoothed_corners: normals.corners,
         normal_work,
+        culling: candidates.stats,
     })
 }
 

@@ -8,9 +8,9 @@ export struct TerrainTriangleRow {
 }
 
 export component TerrainTrianglesWindow inherits Window {
-    title: "Terrain triangles";
+    title: "Terrain triangles & vertices";
     preferred-width: 600px;
-    preferred-height: 740px;
+    preferred-height: 800px;
     in property <[string]> faces;
     in-out property <int> face-index;
     in property <[TerrainTriangleRow]> triangles;
@@ -21,6 +21,8 @@ export component TerrainTrianglesWindow inherits Window {
     in property <float> aspect: 1.777778;
     in-out property <int> walkable-index;
     in-out property <int> buildable-index;
+    in-out property <int> kind-index;
+    callback kind-changed();
     callback face-changed();
     callback toggle-triangle(int, bool);
     callback select-all(bool);
@@ -38,7 +40,9 @@ export component TerrainTrianglesWindow inherits Window {
         VerticalLayout {
             padding: 20px;
             spacing: 12px;
-            Text { text: "Choose terrain triangles"; font-size: 20px; }
+            Text { text: root.kind-index == 1 ? "Choose terrain vertices" : "Choose terrain triangles"; font-size: 20px; }
+            Text { text: "Selection type"; }
+            ComboBox {model: ["Triangles · classifications & brush masks", "Vertices · exact brush masks"]; current-index <=> root.kind-index; enabled: !root.stale; selected => {root.kind-changed();}}
             Text { text: "Surface"; }
             ComboBox { model: root.faces; current-index <=> root.face-index; enabled: !root.stale; selected => { root.face-changed(); } }
             HorizontalLayout {
@@ -49,7 +53,7 @@ export component TerrainTrianglesWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 8px;
-                Button {text: "Pick triangle in viewport…"; enabled: !root.stale; clicked => {root.pick-triangle();}}
+                Button {text: root.kind-index == 1 ? "Pick vertex in viewport…" : "Pick triangle in viewport…"; enabled: !root.stale; clicked => {root.pick-triangle();}}
                 Button {text: "Frame selected"; enabled: !root.stale; clicked => {root.frame-selected();}}
                 Button {text: "Select in volume"; enabled: !root.stale; clicked => {root.select-volume();}}
             }
@@ -65,18 +69,21 @@ export component TerrainTrianglesWindow inherits Window {
                     }
                 }
             }
-            Text { text: "Walkability"; }
-            ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.walkable-index; enabled: !root.stale; selected => { root.edited(); } }
-            Text { text: "Buildability"; }
-            ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.buildable-index; enabled: !root.stale; selected => { root.edited(); } }
-            Text { text: "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
+            if root.kind-index == 0: VerticalLayout {
+                spacing: 8px;
+                Text { text: "Walkability"; }
+                ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.walkable-index; enabled: !root.stale; selected => { root.edited(); } }
+                Text { text: "Buildability"; }
+                ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.buildable-index; enabled: !root.stale; selected => { root.edited(); } }
+            }
+            Text { text: root.kind-index == 1 ? "Cyan markers show exact selected vertices. Picking chooses the nearest corner of the visible hit triangle. Use selection retains this brush mask; changing selection type clears this dialog's selection." : "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
             Text { text: root.message; wrap: word-wrap; color: #a7adb8; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Use selection"; enabled: !root.stale; clicked => { root.use-selection(); } }
-                Button { text: "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
-                Button { text: "Apply"; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
+                if root.kind-index == 0: Button { text: "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
+                if root.kind-index == 0: Button { text: "Apply"; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
             }
         }
     }

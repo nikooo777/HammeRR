@@ -42,6 +42,7 @@ pub mod saved_views;
 pub mod statistics;
 mod surfaces;
 pub mod terrain_triangles;
+pub mod terrain_vertices;
 pub mod volume;
 pub use clipping::ClipPreview;
 #[cfg(test)]

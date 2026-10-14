@@ -1448,6 +1448,26 @@ pub struct TerrainTrianglePickArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct TerrainVertexTarget {
+    pub face: FaceRef,
+    pub vertices: Vec<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVertexTargetsArgs {
+    pub targets: Vec<TerrainVertexTarget>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVertexFrameArgs {
+    pub targets: Vec<TerrainVertexTarget>,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TerrainVertexMaskArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub token: Option<String>,
@@ -5065,7 +5085,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. Optional mask_token from get_terrain_vertex_mask confines writes to highlighted triangle vertices. Replaced/stale tokens reject. No automatic edge sewing. UI: Edit terrain…."
+        description = "Preview a terrain brush on up to 16 selected or explicit faces. mode=raise adds signed amount (default16, ±4096); flatten moves toward the center plane; smooth averages immutable local neighbors; noise uses amount and deterministic seed(default1). center is world coordinates, radius is1–8192(default128), direction=world_z(default) or face_normal. flatten/smooth strength is0–1(default0.5). Smooth radial falloff applies. Source/history remain unchanged; inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. Bounds ±65536 and malformed/cache data reject atomically. Optional mask_token from get_terrain_vertex_mask confines writes to selected terrain vertices. Replaced/stale tokens reject. No automatic edge sewing. UI: Edit terrain…."
     )]
     fn preview_terrain_sculpt(
         &self,
@@ -5108,7 +5128,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview terrain alpha painting, full-face fill or invert on up to16 selected/explicit faces. value is0–255(default128); paint moves toward it with strength0–1(default1), smooth radial falloff and required world center. radius is1–8192(default128), direction=world_z(default) or face_normal. fill/invert affect complete grids and do not use brush coordinates. Optional mask_token from get_terrain_vertex_mask confines paint/fill/invert to highlighted triangle vertices. Replaced/stale tokens reject. Geometry/material/mapping remain fixed. A two-material shader is needed to display alpha blending. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain…."
+        description = "Preview terrain alpha painting, full-face fill or invert on up to16 selected/explicit faces. value is0–255(default128); paint moves toward it with strength0–1(default1), smooth radial falloff and required world center. radius is1–8192(default128), direction=world_z(default) or face_normal. fill/invert affect complete grids and do not use brush coordinates. Optional mask_token from get_terrain_vertex_mask confines paint/fill/invert to selected terrain vertices. Replaced/stale tokens reject. Geometry/material/mapping remain fixed. A two-material shader is needed to display alpha blending. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain…."
     )]
     fn preview_terrain_blend(&self, Parameters(args): Parameters<TerrainBlendArgs>) -> ToolResult {
         run(|| {
@@ -5189,6 +5209,136 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Inspect row-major terrain vertex IDs on 1–16 selected/explicit faces. Returns power, grid size and each vertex's row, column, world position, base position and alpha. preview=true reads rendered draft geometry. IDs match get_terrain_grids and native triangle indices; start-corner rotation changes their world placement. No source/history change. UI: Terrain triangles… → Selection type → Vertices · exact brush masks.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_vertices(&self, Parameters(args): Parameters<TerrainGridsArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            session.terrain_vertices_json(&faces, args.preview.unwrap_or(false))
+        })
+    }
+
+    #[tool(
+        description = "Retain exact row-major terrain vertex subsets as cyan viewport/render_view guides and a brush mask. targets=[{face:{solid,side},vertices:[IDs]}], one entry per face, 1–16 faces; [] creates an empty selection. Replaces the shared triangle/vertex highlight atomically, returning kind, token and stale state. Invalid IDs/duplicate faces/unknown arguments preserve the prior selection. VMF/history/face selection stay fixed. Inspect with get_terrain_triangle_highlight, clear with clear_terrain_triangle_highlight and token. Use get_terrain_vertex_mask then mask_token on sculpt/blend. UI: Vertices selection checkboxes or Use selection."
+    )]
+    fn highlight_terrain_vertices(
+        &self,
+        Parameters(args): Parameters<TerrainVertexTargetsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| (face_id(&target.face), target.vertices.clone()))
+                .collect::<Vec<_>>();
+            session.highlight_terrain_vertices(Actor::Agent, &targets)?;
+            Ok(session.terrain_triangle_highlight_json())
+        })
+    }
+
+    #[tool(
+        description = "Pick the nearest vertex of the visible native terrain triangle hit by a finite world ray. faces defaults to selected terrain (1–16). Uses normalized rays, rendered drafts, front faces, nearest brush-face occlusion, hidden owners and tool-material visibility. Stable vertex-ID ties; returns hit=null when blocked/missed. Returns vertex, power, position, hit point and ray distance. Read-only; retain with highlight_terrain_vertices. UI: Vertices mode → Pick vertex in viewport….",
+        annotations(read_only_hint = true)
+    )]
+    fn pick_terrain_vertex(
+        &self,
+        Parameters(args): Parameters<TerrainTrianglePickArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let hit = session.pick_terrain_vertex(
+                &Ray {
+                    origin: vec3(args.origin),
+                    direction: vec3(args.direction),
+                },
+                &faces,
+            )?;
+            Ok(
+                json!({"hit":hit.map(|hit|json!({"solid":hit.vertex.face.solid,"side":hit.vertex.face.side,"vertex":hit.vertex.vertex,"power":hit.power,"position":hit.position.to_array(),"point":hit.point.to_array(),"distance":hit.distance}))}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Frame explicit terrain vertex subsets at rendered draft positions. targets=[{face:{solid,side},vertices:[IDs]}], optional positive finite aspect (default16/9). Hidden/tool-filtered vertices are excluded. Empty/invalid targets or a different-power draft reject without moving the camera. Source/history/face selection stay fixed. UI: Vertices mode → Frame selected."
+    )]
+    fn frame_terrain_vertices(
+        &self,
+        Parameters(args): Parameters<TerrainVertexFrameArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| (face_id(&target.face), target.vertices.clone()))
+                .collect::<Vec<_>>();
+            session.frame_terrain_vertices(
+                Actor::Agent,
+                &targets,
+                args.aspect.unwrap_or(16.0 / 9.0),
+            )?;
+            Ok(json!({"camera":camera_json(&session.camera())}))
+        })
+    }
+
+    #[tool(
+        description = "Find exact terrain vertices inside a current select_volume(preview=true) box. volume_token is required; faces defaults to selected terrain (1–16). Uses displaced draft positions, hidden/tool filtering and inclusive point containment; both box rules produce the same vertex set. Read-only, returning targets for highlight_terrain_vertices. Stale/replaced volume tokens reject. UI: Vertices mode → Select in volume.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_volume_vertices(
+        &self,
+        Parameters(args): Parameters<TerrainVolumeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let targets =
+                session.terrain_vertices_in_volume(&faces, parse_token(&args.volume_token)?)?;
+            Ok(
+                json!({"targets":targets.iter().map(|(face,ids)|json!({"face":{"solid":face.solid,"side":face.side},"vertices":ids})).collect::<Vec<_>>()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Atomically retain exact terrain vertices inside a guarded volume box as the shared cyan selection/brush mask. Arguments and filtering match get_terrain_volume_vertices. Returns targets and highlight token/kind/stale state. Source/history/face selection stay fixed; invalid/stale batches preserve prior guides. UI: preview Select a volume… then Vertices mode → Select in volume."
+    )]
+    fn select_terrain_vertices_in_volume(
+        &self,
+        Parameters(args): Parameters<TerrainVolumeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let selected = session.select_terrain_vertices_in_volume(
+                Actor::Agent,
+                &faces,
+                parse_token(&args.volume_token)?,
+            )?;
+            Ok(
+                json!({"highlight":session.terrain_triangle_highlight_json(),"targets":selected.targets.iter().map(|(face,ids)|json!({"face":{"solid":face.solid,"side":face.side},"vertices":ids})).collect::<Vec<_>>()}),
+            )
+        })
+    }
+
+    #[tool(
         description = "Preview walkability/buildability classifications on arbitrary native triangle subsets in1–16 terrain faces. targets=[{face:{solid,side},triangles:[native IDs]}], one target per face. walkable/buildable accept automatic/enabled/disabled; omitted settings preserve current values. Automatic recomputes selected cached classification from source slope; enabled/disabled author a VMF force override. These are engine classifications, not collision switches. Geometry, alpha, IDs, other triangle tags and metadata remain. Invalid IDs/malformed rows reject atomically. Inspect get_terrain_triangles(preview=true), then commit/cancel_face_preview with state.preview_token. No removal authoring yet. UI: Terrain triangles…."
     )]
     fn preview_terrain_triangle_tags(
@@ -5261,7 +5411,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect highlighted triangles as a deduplicated native vertex mask within selected/explicit terrain faces. Optional token guards the current highlight. Returns token, vertex count and per-face vertex IDs/triangle counts. Empty/stale/replaced selections reject. Use token as mask_token on preview_terrain_sculpt/blend. Only these vertices change. UI: Affect only highlighted triangle vertices.",
+        description = "Inspect explicit selected vertices or highlighted triangles as a deduplicated native vertex mask within selected/explicit terrain faces. Optional token guards the current highlight. Returns token, vertex count and per-face vertex IDs/triangle counts. Empty/stale/replaced selections reject. Use token as mask_token on preview_terrain_sculpt/blend. Only these vertices change. UI: Affect only selected terrain vertices.",
         annotations(read_only_hint = true)
     )]
     fn get_terrain_vertex_mask(
@@ -5281,7 +5431,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Read the current transient terrain triangle highlights, token and stale state. Does not change VMF/history/face selection. Stale highlights do not draw; query current triangle IDs before replacing them.",
+        description = "Read the current shared terrain selection, kind (triangles/vertices), token and stale state. Does not change VMF/history/face selection. Stale highlights do not draw; query current triangle IDs before replacing them.",
         annotations(read_only_hint = true)
     )]
     fn get_terrain_triangle_highlight(&self) -> ToolResult {
@@ -5308,7 +5458,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Clear the current terrain triangle highlight, optionally guarded by token from highlight_terrain_triangles. A replaced token rejects without clearing another actor's guides. No map/history/selection edit. UI: Cancel or Clear selection in Terrain triangles…."
+        description = "Clear the shared terrain triangle/vertex highlight, optionally guarded by its token. A replaced token rejects without clearing another actor's guides. No map/history/selection edit. UI: Cancel or Clear selection in Terrain triangles…."
     )]
     fn clear_terrain_triangle_highlight(
         &self,

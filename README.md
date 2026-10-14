@@ -183,6 +183,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Terrain triangle selection and classifications](docs/images/terrain-triangle-picking.png) |
 | Pick or box-select terrain triangles, then classify, sculpt or blend their vertices. |
 
+| Terrain vertices |
+| --- |
+| ![Exact terrain vertex selection](docs/images/terrain-explicit-vertices.png) |
+| Pick individual terrain vertices and confine height or blend edits to the chosen samples. |
+
 | Connected terrain lighting |
 | --- |
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |

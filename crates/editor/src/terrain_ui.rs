@@ -414,7 +414,7 @@ impl Controller {
         self.window.set_mask_label(
             mask.as_ref()
                 .map_or(
-                    "No retained triangle selection. Use Terrain triangles… → Use selection first."
+                    "No retained terrain selection. Use Terrain triangles… → Use selection first."
                         .to_owned(),
                     |mask| {
                         format!(

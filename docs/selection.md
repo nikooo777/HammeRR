@@ -51,6 +51,6 @@ Brush over visible objects or faces to select them.
 - Passing over the same object twice counts it once.
 - The brush samples every 2 pixels, so very thin features between samples can be missed.
 - In face mode, point helpers are ignored.
-- Imported terrain is selected through its supporting brush faces.
+- Terrain is selected through its actual displaced surface; ordinary parent faces and the old parent volume are excluded.
 
 ![Paint selection with a pixel-radius brush, candidate highlights and Apply/Cancel](images/paint-selection.png)

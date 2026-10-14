@@ -215,3 +215,9 @@ python3 -B scripts/validate_terrain_regions.py --output /tmp/hammerr-terrain-reg
 ```
 
 Checks elevated-sheet volume matches in object/face modes, excluded parent volumes/faces, native triangle clipping/containment, atomic box-based highlights/masks, replaced/canceled tokens, side-view marquee height matching, source/history and hidden-owner/tool filtering. Core region tests include interior peaks beyond contained corners. The software UI test `terrain_volume_control_selects_triangles_without_changing_the_map` covers **Select in volume** and **Use selection**.
+
+```sh
+python3 -B scripts/validate_indexed_terrain.py --output /tmp/hammerr-indexed-terrain-check
+```
+
+Checks power2/3/4 paint strokes against raised sheets, direct-pick parity, excluded parent-volume hits, object/face scopes, Cancel, owner selection and hidden owners. Source/history remain unchanged during stroke previews. Core picking tests also compare displaced/offset sheets outside parent bounds and preserve ordinary brush/entity behavior; the existing `paint_selection` script checks the broader stroke workflow.

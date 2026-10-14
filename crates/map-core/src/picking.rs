@@ -37,12 +37,29 @@ struct Primitive {
     object: ObjectId,
     solid: Option<u32>,
     planes: Vec<(Plane, u32)>,
+    triangles: Vec<(u32, [DVec3; 3])>,
     order: usize,
 }
 
 impl Primitive {
     fn hit(&self, ray: &Ray) -> Option<Hit> {
         let (mut enter, mut exit) = self.bounds.entry(ray)?;
+        if !self.triangles.is_empty() {
+            let (distance, side) = self
+                .triangles
+                .iter()
+                .filter_map(|(side, points)| {
+                    crate::query::ray_triangle(ray, *points).map(|distance| (distance, *side))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))?;
+            return Some(Hit {
+                object: self.object,
+                solid: self.solid,
+                side: Some(side),
+                distance,
+                point: ray.origin + ray.direction * distance,
+            });
+        }
         let mut side = None;
         if self.solid.is_some() {
             enter = f64::NEG_INFINITY;
@@ -101,6 +118,48 @@ impl Picker {
             let Ok(geometry) = BrushGeometry::from_solid(solid) else {
                 return;
             };
+            if solid.sides.iter().any(|side| side.displacement.is_some()) {
+                let triangles = geometry
+                    .faces
+                    .iter()
+                    .filter_map(|face| {
+                        let side = &solid.sides[face.side];
+                        let info = side.displacement.as_ref()?;
+                        let mesh = crate::DisplacementMesh::build(face, info).ok()?;
+                        mesh.positions
+                            .iter()
+                            .all(|point| point.is_finite())
+                            .then_some((side.id, mesh))
+                    })
+                    .flat_map(|(side, mesh)| {
+                        mesh.triangles()
+                            .map(|indices| (side, indices.map(|index| mesh.positions[index])))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                if triangles.is_empty() {
+                    return;
+                }
+                let bounds = triangles.iter().flat_map(|(_, points)| points).fold(
+                    Bounds {
+                        mins: DVec3::splat(f64::INFINITY),
+                        maxs: DVec3::splat(f64::NEG_INFINITY),
+                    },
+                    |bounds, point| Bounds {
+                        mins: bounds.mins.min(*point),
+                        maxs: bounds.maxs.max(*point),
+                    },
+                );
+                primitives.push(Primitive {
+                    bounds,
+                    object,
+                    solid: Some(solid.id),
+                    planes: Vec::new(),
+                    triangles,
+                    order,
+                });
+                return;
+            }
             let planes = solid
                 .sides
                 .iter()
@@ -117,6 +176,7 @@ impl Picker {
                 object,
                 solid: Some(solid.id),
                 planes,
+                triangles: Vec::new(),
                 order,
             });
         };
@@ -144,6 +204,7 @@ impl Picker {
                         object: ObjectId::Entity(entity.id),
                         solid: None,
                         planes: Vec::new(),
+                        triangles: Vec::new(),
                         order,
                     });
                 }
@@ -307,5 +368,137 @@ mod tests {
                 })
                 .is_none()
         );
+    }
+    #[test]
+    fn indexed_terrain_matches_direct_queries_for_raised_offset_and_entity_sheets() {
+        for power in 2..=4 {
+            let mut document = Document::empty();
+            let ObjectId::Solid(id) = document
+                .edit("parent", |tx| {
+                    edit::create_block(
+                        tx,
+                        DVec3::new(-64.0, -64.0, 0.0),
+                        DVec3::new(64.0, 64.0, 16.0),
+                        "test",
+                    )
+                })
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = document
+                .solid(id)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let face = crate::surface::FaceId { solid: id, side };
+            document
+                .edit("terrain", |tx| {
+                    crate::displacement::edit::create(tx, &[face], power, 0)
+                })
+                .unwrap();
+            let size = (1usize << power) + 1;
+            document
+                .edit("displace", |tx| {
+                    let info = tx
+                        .solid_mut(id)?
+                        .sides
+                        .iter_mut()
+                        .find(|side| side.id == face.side)
+                        .unwrap()
+                        .displacement
+                        .as_mut()
+                        .unwrap();
+                    info.distances = Some(
+                        (0..size)
+                            .map(|row| {
+                                (0..size)
+                                    .map(|col| 64.0 + ((row * col) % 7) as f64)
+                                    .collect()
+                            })
+                            .collect(),
+                    );
+                    info.offsets = Some(vec![vec![DVec3::X * 128.0; size]; size]);
+                    Ok(())
+                })
+                .unwrap();
+            let source = document.vmf().clone();
+            for points in [false, true] {
+                let picker = Picker::new(&document, |_| true, points);
+                for x in [70.0, 96.0, 128.0, 160.0, 185.0] {
+                    for y in [-50.0, -16.0, 0.0, 32.0, 50.0] {
+                        let ray = Ray {
+                            origin: DVec3::new(x, y, 256.0),
+                            direction: DVec3::NEG_Z,
+                        };
+                        let a = picker.pick(&ray).unwrap();
+                        let b = query::pick_face(&document, &ray, |_| true).unwrap();
+                        assert_eq!((a.object, a.solid, a.side), (b.object, b.solid, b.side));
+                        assert!(a.point.distance(b.point) < 1e-9);
+                    }
+                }
+                assert!(
+                    picker
+                        .pick(&Ray {
+                            origin: DVec3::new(0.0, 0.0, 128.0),
+                            direction: DVec3::NEG_Z
+                        })
+                        .is_none()
+                );
+                assert!(
+                    picker
+                        .pick(&Ray {
+                            origin: DVec3::new(128.0, 0.0, 64.0),
+                            direction: DVec3::NEG_Z
+                        })
+                        .is_none()
+                );
+                assert!(
+                    picker
+                        .pick(&Ray {
+                            origin: DVec3::new(128.0, 0.0, 32.0),
+                            direction: DVec3::Z
+                        })
+                        .is_none()
+                );
+            }
+            assert_eq!(document.vmf(), &source);
+            let owner = document
+                .edit("owner", |tx| {
+                    edit::tie_to_entity(tx, &[id], "func_detail", &[])
+                })
+                .unwrap();
+            let picker = Picker::new(&document, |_| true, false);
+            assert_eq!(
+                picker
+                    .pick(&Ray {
+                        origin: DVec3::new(128.0, 0.0, 256.0),
+                        direction: DVec3::NEG_Z
+                    })
+                    .unwrap()
+                    .object,
+                owner
+            );
+            let ObjectId::Entity(owner) = owner else {
+                unreachable!()
+            };
+            document
+                .edit("hide", |tx| {
+                    tx.entity_mut(owner)?.hidden = true;
+                    Ok(())
+                })
+                .unwrap();
+            assert!(
+                Picker::new(&document, |_| true, false)
+                    .pick(&Ray {
+                        origin: DVec3::new(128.0, 0.0, 256.0),
+                        direction: DVec3::NEG_Z
+                    })
+                    .is_none()
+            );
+        }
     }
 }

@@ -495,7 +495,7 @@ impl Session {
         }));
         json!({"enabled":self.paint.enabled,"sample_material":self.surface_sample.as_ref().map(|sample|&sample.material),"operation":self.paint.operation.name(),"radius":self.paint.radius,"preview":preview,
             "limits":{"min_radius":MIN_RADIUS,"max_radius":MAX_RADIUS,"max_viewport_side":MAX_VIEWPORT,"points_per_update":MAX_POINTS,"new_samples_per_update":MAX_UPDATE_SAMPLES,"pixel_visits_per_update":MAX_UPDATE_VISITS,"samples_per_stroke":MAX_STROKE_SAMPLES,"matches":MAX_MATCHES},
-            "sample_spacing":SAMPLE_SPACING,"visibility":"Nearest visible hit per sample; hidden objects/brushes and hidden tool brushes are skipped. Faces ignore point helpers; terrain uses supporting faces."})
+            "sample_spacing":SAMPLE_SPACING,"visibility":"Nearest visible hit per sample; hidden objects/brushes and hidden tool brushes are skipped. Faces ignore point helpers; terrain uses actual displaced sheets, excluding ordinary parent faces/volumes."})
     }
 }
 

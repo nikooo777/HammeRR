@@ -29,6 +29,11 @@ pub struct Hit {
     pub point: DVec3,
 }
 
+pub fn ray_triangle(ray: &Ray, positions: [DVec3; 3]) -> Option<f64> {
+    let [a, b, c] = positions;
+    terrain::triangle(ray, a, b, c)
+}
+
 pub fn pick_displacement_triangle(
     ray: &Ray,
     mesh: &crate::DisplacementMesh,

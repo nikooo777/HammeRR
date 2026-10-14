@@ -14,6 +14,23 @@ pub struct ChainPaint {
 }
 
 impl Session {
+    pub fn terrain_creation_error(&self) -> Option<String> {
+        map_core::displacement::edit::validate(&self.document, &self.selected_faces())
+            .err()
+            .map(|error| error.to_string())
+    }
+
+    pub fn create_terrain(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+        power: u32,
+    ) -> Result<usize, String> {
+        self.edit(actor, "create terrain", |tx| {
+            map_core::displacement::edit::create(tx, faces, power)
+        })
+    }
+
     pub fn project_face_group(
         &mut self,
         actor: Actor,
@@ -169,6 +186,42 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terrain_creation_is_shared_atomic_and_undoable_without_changing_selection() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let ObjectId::Solid(solid) = session
+                .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let target = FaceId { solid, side };
+            session
+                .select_faces(&[target], SelectMode::Replace)
+                .unwrap();
+            let before = session.document().vmf().clone();
+            assert!(session.terrain_creation_error().is_none());
+            assert!(session.create_terrain(actor, &[target], 5).is_err());
+            assert_eq!(*session.document().vmf(), before);
+            session.create_terrain(actor, &[target], 4).unwrap();
+            assert_eq!(session.selected_faces(), vec![target]);
+            assert!(session.terrain_creation_error().is_some());
+            session.undo(actor).unwrap();
+            assert_eq!(*session.document().vmf(), before);
+            assert!(session.terrain_creation_error().is_none());
+        }
+    }
 
     #[test]
     fn connected_wrapping_is_guarded_atomic_and_invalidated_by_resampling() {

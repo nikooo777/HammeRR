@@ -170,6 +170,10 @@ These details aren't obvious from the tool list.
 - `begin_property_edit` takes `world: true` or entity `ids`. Each entry in `changes` uses `action`: `set`, `remove`, `default`, `flag` or `component`.
 - `get_object_report` filters by `query`, `classname`, `targetname`, `material`, `kind`, `hidden` and `within`.
 
+**Terrain**
+
+- `create_terrain` converts selected or explicit `faces: [{solid, side}]` into flat surfaces. `power` is `2` (default), `3` or `4`, producing 5×5, 9×9 or 17×17 grids. It accepts 1–16 world quad faces, one per ordinary parent brush, and rejects existing terrain, entity parents, ambiguous/nonquad targets and invalid powers atomically. The response gives `surfaces_created`, `power`, `grid_size` and shared face state. IDs, materials, mapping and lighting stay fixed; one undo step and face selection remain shared. `get_object_details` reports each face's `displacement` power. UI equivalents are **Terrain grid** and **Create terrain**. Parents do not seal maps or become collision boxes. Sculpting and blend painting remain unfinished.
+
 **Compiling**
 
 - `set_compile_settings` takes `lighting` (`fullbright` or `direct_ldr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`) and `smoothing_angle` (whole degrees `0`–`90`). It changes only the fields you pass, and invalid combinations leave every setting unchanged.

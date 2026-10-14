@@ -3,6 +3,7 @@ use source_formats::vmf::DispInfo;
 
 use crate::brush::Face;
 
+pub mod edit;
 pub mod neighbors;
 
 /// The surface of a displaced face: a `size` x `size` vertex grid.

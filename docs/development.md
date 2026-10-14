@@ -115,9 +115,12 @@ python3 -B scripts/validate_smoothing_angle.py --output /tmp/hammerr-angle-check
 python3 -B scripts/validate_brush_junctions.py --output /tmp/hammerr-junction-check
 python3 -B scripts/validate_light_styles.py --output /tmp/hammerr-styles-check
 python3 -B scripts/validate_model_smoothing.py --output /tmp/hammerr-model-smoothing-check
+python3 -B scripts/validate_light_culling.py --output /tmp/hammerr-light-culling-check
 ```
 
 `direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
+
+`light_culling` checks shared counts and exact foreground/background builds in connected/disconnected rooms with finite-range named lights and fractional brush-model pivots. Compiler reference regressions compare complete BSP bytes with culling disabled, including terrain, styles and both visibility modes.
 
 ## In-game checks
 

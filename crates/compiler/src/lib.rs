@@ -340,6 +340,10 @@ pub struct Stats {
     pub lightmap_samples: usize,
     pub lighting_bytes: usize,
     pub lighting_work: usize,
+    pub light_evaluations: usize,
+    pub light_pvs_skipped: usize,
+    pub light_range_skipped: usize,
+    pub light_culling_work: usize,
     pub ambient_samples: usize,
     pub ambient_bytes: usize,
     pub physics_models: usize,
@@ -649,6 +653,10 @@ fn build(
         output.stats.lightmap_samples = stats.samples;
         output.stats.lighting_bytes = stats.bytes;
         output.stats.lighting_work = stats.work;
+        output.stats.light_evaluations = stats.culling.evaluated;
+        output.stats.light_pvs_skipped = stats.culling.pvs_skipped;
+        output.stats.light_range_skipped = stats.culling.range_skipped;
+        output.stats.light_culling_work = stats.culling.work;
         output.stats.ambient_samples = stats.ambient_samples;
         output.stats.ambient_bytes = stats.ambient_bytes;
         output.stats.bounces = stats.bounces;

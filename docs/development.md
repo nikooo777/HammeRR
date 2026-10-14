@@ -233,3 +233,9 @@ python3 -B scripts/validate_terrain_vertices.py --output /tmp/hammerr-terrain-ve
 ```
 
 Checks exact vertex IDs and masks on rotated power-2/3/4 grids, single-sample sculpt/blend writes, picking, framing, guarded box selection, unknown arguments, stale topology, selection replacement, Cancel/Undo/Redo/reopen and native sample agreement through both build paths. Existing triangle picking and mask scripts cover the other selection kind; software UI tests exercise the selection-mode switch and brush flow.
+
+```sh
+python3 -B scripts/validate_terrain_strokes.py --output /tmp/hammerr-terrain-strokes-check
+```
+
+Checks whole/grouped paths at powers 2–4 for raise, flatten, smooth, noise and blend paint, unchanged source/history during preview, stationary pointers, ray-miss segment breaks, invalid update limits, explicit vertex masks, Apply/Cancel, one-step Undo, foreign preview preservation, saved rows and native sample agreement through exact foreground/background builds. Core sampling checks include turns and movement along the brush direction; software UI tests drive the viewport-stroke lifecycle and existing controls.

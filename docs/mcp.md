@@ -108,6 +108,7 @@ To build the map, set the build options once, then compile:
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `propagate_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
 | Texture paint strokes | `begin_texture_stroke`, `update_texture_stroke`, `get_texture_stroke`, `commit_texture_stroke`, `cancel_texture_stroke` |
 | Terrain vertices | `get_terrain_vertices`, `highlight_terrain_vertices`, `pick_terrain_vertex`, `frame_terrain_vertices`, `get_terrain_volume_vertices`, `select_terrain_vertices_in_volume`, `get_terrain_vertex_mask` |
+| Terrain brush strokes | `begin_terrain_stroke`, `update_terrain_stroke`, `get_terrain_stroke`, `break_terrain_stroke`, `finish_terrain_stroke`, `cancel_terrain_stroke` |
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
 | Entities | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
@@ -257,3 +258,12 @@ These details aren't obvious from the tool list.
 - `frame_terrain_vertices` takes explicit vertex targets and optional positive finite aspect. It uses visible rendered positions, including compatible drafts; invalid/empty targets and changed-power drafts reject without moving the camera.
 - `get_terrain_volume_vertices` and `select_terrain_vertices_in_volume` accept selected/explicit faces and a current `volume_token`. Both box rules use inclusive point containment on displaced samples. The query is read-only; selection atomically retains its targets and returns the shared highlight. Stale/canceled/replaced boxes preserve prior guides.
 - UI: **Terrain triangles… → Selection type → Vertices · exact brush masks**, checked rows, **Pick vertex in viewport…**, **Frame selected**, **Select in volume**, **Use selection** and **Cancel**. Classification controls remain under Triangles. Closing or changing selection type clears only this dialog's owned draft/guides.
+
+### Terrain brush strokes
+
+1. Call `begin_terrain_stroke` with exactly one `sculpt` or `blend` object. These use the same arguments as the fixed-preview tools; blend must be `paint`. Faces and optional mask token are captured. An active geometry preview rejects without replacing it.
+2. Call `update_terrain_stroke` with its `token` and either `points: [[x, y, z], ...]` (1–64 world positions) or a finite `origin` and `direction` ray. Rays hit visible selected terrain with shared front-face, nearest brush occlusion and tool/owner filtering. A miss breaks the path; call `break_terrain_stroke` to create an explicit gap with world-point input.
+3. Inspect `get_terrain_stroke`, `get_terrain_grids(preview: true)` or `render_view`. Grouped updates carry sample spacing without compounding a replay. Repeated positions and motion along the captured sampling normal add no dabs. The shared white radius guide appears in both render paths.
+4. Call `finish_terrain_stroke` to retain the existing face draft, then `commit_face_preview` or `cancel_face_preview` with `state.preview_token`. Apply creates one Undo step and refreshes a matching retained mask. `cancel_terrain_stroke` discards only its owned draft; replaced stroke tokens reject, and foreign face previews stay intact.
+
+Spacing is radius/4 clamped to 1–64 units in the brush plane. Face-normal spacing/guide orientation follows the first selected base face; each surface applies its own brush direction. Flatten uses the original supplied center plane. Each sample uses the fixed brush math and immutable-neighbor smoothing; overlapping samples accumulate. Limits are 512 dabs, 4096 input positions, 64 per update and two million vertex/sample evaluations. Invalid/stale/replaced updates preserve the prior draft. UI: **Edit terrain… → Draw stroke in viewport…**, drag, release, **Apply / Cancel**; **Escape** or **Cancel stroke** discards drawing. Losing viewport focus while dragging cancels without opening or focusing a window.

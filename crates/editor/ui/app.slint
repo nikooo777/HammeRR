@@ -664,7 +664,7 @@ export component MaterialWindow inherits Window {
 export component TerrainWindow inherits Window {
     title: "Edit terrain";
     preferred-width: 520px;
-    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 10 ? 480px : root.operation-index == 6 || root.operation-index == 7 ? 470px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 720px;
+    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 10 ? 480px : root.operation-index == 6 || root.operation-index == 7 ? 470px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 760px;
     in property <string> selection-label;
     in property <string> message;
     in property <bool> stale;
@@ -703,6 +703,7 @@ export component TerrainWindow inherits Window {
     callback apply();
     callback cancel();
     callback pick-center();
+    callback draw-stroke();
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape {root.cancel(); accept} else {reject} }
@@ -801,6 +802,8 @@ export component TerrainWindow inherits Window {
             if root.operation-index == 9: CheckBox {text:"Also sew blend values"; checked <=> root.sew-blend; toggled=>{root.edited();}}
             if root.operation-index != 0 && root.operation-index != 10: Text {text:root.operation-index == 9 ? "Join full/half borders or matching corners at different resolutions. Shared points are averaged; finer border points follow the coarser grid. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:#b6bac3;}
             Rectangle {vertical-stretch: 1;}
+            if root.operation-index >= 1 && root.operation-index <= 5: Text {text:"A stroke applies this brush at each sample. Overlapping samples build up the edit.";wrap:word-wrap;font-size:12px;color:#b6bac3;}
+            if root.operation-index >= 1 && root.operation-index <= 5: Button {text:"Draw stroke in viewport…";enabled:!root.stale;clicked=>{root.draw-stroke();}}
             Text {text: root.message; wrap: word-wrap; color: #a7adb8;}
             HorizontalLayout {
                 spacing: 8px;
@@ -1750,6 +1753,8 @@ export component AppWindow inherits Window {
     callback cancel-terrain-triangle-pick();
     in property <bool> terrain-center-picking;
     callback cancel-terrain-center-pick();
+    in property <bool> terrain-stroking;
+    callback cancel-terrain-stroke();
     in property <bool> can-remove-terrain;
     in property <string> terrain-creation-error;
     callback replace-materials();
@@ -2251,6 +2256,10 @@ export component AppWindow inherits Window {
                             if root.terrain-triangle-picking: VerticalLayout {
                                 Text {text:"Click selected terrain to pick a triangle or vertex. Escape cancels.";wrap:word-wrap;color:#91b9e9;}
                                 Button {text:"Cancel picking";clicked=>{root.cancel-terrain-triangle-pick();}}
+                            }
+                            if root.terrain-stroking: VerticalLayout {
+                                Text {text:"Drag on selected terrain, then release to review. Escape cancels.";wrap:word-wrap;color:#91b9e9;}
+                                Button {text:"Cancel stroke";clicked=>{root.cancel-terrain-stroke();}}
                             }
                             if !root.can-remove-terrain: VerticalLayout {
                                 spacing: 6px;

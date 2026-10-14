@@ -188,6 +188,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Exact terrain vertex selection](docs/images/terrain-explicit-vertices.png) |
 | Pick individual terrain vertices and confine height or blend edits to the chosen samples. |
 
+| Terrain brush strokes |
+| --- |
+| ![Live terrain sculpting with a brush-radius guide](docs/images/terrain-stroke-guide.png) |
+| Drag to sculpt or paint terrain, review the draft, then keep the stroke in one Undo step. |
+
 | Connected terrain lighting |
 | --- |
 | ![Continuous light across rotated terrain patches](docs/images/terrain-seams.png) |

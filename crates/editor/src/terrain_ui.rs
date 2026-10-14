@@ -14,6 +14,7 @@ struct Target {
     revision: u64,
     preview: Option<u64>,
     mask_token: Option<u64>,
+    stroke: Option<u64>,
 }
 
 impl Target {
@@ -28,6 +29,9 @@ impl Target {
     }
 
     fn cancel(&mut self, session: &mut Session) {
+        if let Some(token) = self.stroke.take() {
+            let _ = session.cancel_terrain_stroke(token);
+        }
         if self.preview.is_some() && self.preview == session.face_preview_token() {
             session.cancel_face_preview();
         }
@@ -39,6 +43,8 @@ pub struct Controller {
     pub window: TerrainWindow,
     target: Rc<RefCell<Option<Target>>>,
     picking: Rc<Cell<bool>>,
+    stroking: Rc<Cell<bool>>,
+    dragging: Rc<Cell<bool>>,
 }
 
 fn number(value: slint::SharedString, label: &str) -> Result<f64, String> {
@@ -183,6 +189,48 @@ impl Controller {
         let window = TerrainWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
         let picking = Rc::new(Cell::new(false));
+        let stroking = Rc::new(Cell::new(false));
+        let dragging = Rc::new(Cell::new(false));
+        window.on_draw_stroke({
+            let (window, shared, target, stroking, dragging, picking) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                stroking.clone(),
+                dragging.clone(),
+                picking.clone(),
+            );
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                if let Some(target) = target.borrow_mut().as_mut() {
+                    let result = target.check(&session).and_then(|_| {
+                        let operation = operation(&window)?;
+                        let mask =
+                            if window.get_use_mask() {
+                                Some(target.mask_token.ok_or(
+                                    "Retain a terrain selection and reopen terrain editing",
+                                )?)
+                            } else {
+                                None
+                            };
+                        target.cancel(&mut session);
+                        session.begin_terrain_stroke(Actor::User, &target.faces, operation, mask)
+                    });
+                    match result {
+                        Ok(token) => {
+                            target.stroke = Some(token);
+                            stroking.set(true);
+                            dragging.set(false);
+                            picking.set(false);
+                            window.set_ready(false);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
+                }
+            }
+        });
         window.on_pick_center({
             let (window, shared, target, picking) = (
                 window.as_weak(),
@@ -293,20 +341,35 @@ impl Controller {
             }
         });
         window.on_cancel({
-            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            let (window, shared, target, stroking, dragging) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                stroking.clone(),
+                dragging.clone(),
+            );
             move || {
                 if let Some(target) = target.borrow_mut().as_mut() {
                     target.cancel(&mut lock(&shared));
                 }
+                stroking.set(false);
+                dragging.set(false);
                 let _ = window.unwrap().hide();
             }
         });
         window.window().on_close_requested({
-            let (shared, target) = (shared.clone(), target.clone());
+            let (shared, target, stroking, dragging) = (
+                shared.clone(),
+                target.clone(),
+                stroking.clone(),
+                dragging.clone(),
+            );
             move || {
                 if let Some(target) = target.borrow_mut().as_mut() {
                     target.cancel(&mut lock(&shared));
                 }
+                stroking.set(false);
+                dragging.set(false);
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -314,11 +377,15 @@ impl Controller {
             window,
             target,
             picking,
+            stroking,
+            dragging,
         })
     }
 
     pub fn initialize(&self, session: &mut Session) -> Result<(), String> {
         self.picking.set(false);
+        self.stroking.set(false);
+        self.dragging.set(false);
         let faces = session.selected_faces();
         let grids = session.terrain_grids(&faces, false)?;
         if let Some(target) = self.target.borrow_mut().as_mut() {
@@ -431,6 +498,7 @@ impl Controller {
             revision: session.document().revision(),
             preview: None,
             mask_token: mask.map(|mask| mask.token),
+            stroke: None,
         });
         self.window.set_message(
             "Choose an operation and preview the result. Cancel leaves the map unchanged.".into(),
@@ -486,9 +554,73 @@ impl Controller {
         Ok(hit.point)
     }
 
+    pub fn is_stroking(&self) -> bool {
+        self.stroking.get()
+    }
+
+    pub fn stroke_dragging(&self) -> bool {
+        self.dragging.get()
+    }
+
+    pub fn update_stroke(
+        &self,
+        session: &mut Session,
+        ray: &map_core::query::Ray,
+    ) -> Result<usize, String> {
+        let target = self.target.borrow();
+        let target = target.as_ref().ok_or("Reopen terrain editing")?;
+        target.check(session)?;
+        let token = target.stroke.ok_or("Start a terrain stroke first")?;
+        let changed = session.update_terrain_stroke_at_ray(Actor::User, token, ray)?;
+        self.dragging.set(true);
+        Ok(changed)
+    }
+
+    pub fn finish_stroke(&self, session: &mut Session) -> Result<(), String> {
+        let mut target = self.target.borrow_mut();
+        let target = target.as_mut().ok_or("Reopen terrain editing")?;
+        target.check(session)?;
+        let token = target.stroke.ok_or("Start a terrain stroke first")?;
+        target.preview = Some(session.finish_terrain_stroke(Actor::User, token)?);
+        target.stroke = None;
+        self.stroking.set(false);
+        self.dragging.set(false);
+        self.window.set_ready(true);
+        self.window.set_message(
+            "Stroke preview ready. Apply keeps one Undo step; Cancel discards it.".into(),
+        );
+        let _ = self.window.show();
+        Ok(())
+    }
+
+    pub fn cancel_stroke(&self, session: &mut Session) {
+        self.discard_stroke(session);
+        let _ = self.window.show();
+    }
+
+    pub fn discard_stroke(&self, session: &mut Session) {
+        if let Some(target) = self.target.borrow_mut().as_mut() {
+            target.cancel(session);
+        }
+        self.stroking.set(false);
+        self.dragging.set(false);
+        self.window.set_ready(false);
+        self.window
+            .set_message("Stroke cancelled. The source map is unchanged.".into());
+    }
+
     pub fn refresh(&self, session: &Session) {
         if let Some(target) = self.target.borrow().as_ref() {
-            let stale = target.check(session).err();
+            let stale = target
+                .check(session)
+                .and_then(|_| {
+                    if let Some(token) = target.stroke {
+                        session.check_terrain_stroke_token(token)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .err();
             self.window.set_stale(stale.is_some());
             self.window.set_ready(
                 stale.is_none()
@@ -496,9 +628,13 @@ impl Controller {
                     && target.preview == session.face_preview_token(),
             );
             if let Some(error) = stale {
+                if self.stroking.replace(false) {
+                    self.dragging.set(false);
+                }
                 self.window.set_message(error.into());
             } else if session.face_preview_token().is_some()
                 && target.preview != session.face_preview_token()
+                && !self.is_stroking()
             {
                 self.window.set_message(
                     "Another face preview is active. Preview these settings to replace it.".into(),

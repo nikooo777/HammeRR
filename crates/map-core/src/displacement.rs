@@ -10,6 +10,7 @@ pub mod neighbors;
 pub mod resample;
 pub mod sew;
 pub mod smoothing;
+pub mod stroke;
 pub mod triangles;
 
 #[derive(Debug, Clone)]
@@ -33,6 +34,10 @@ pub enum Operation {
     Blend {
         brush: brush::Brush,
         operation: brush::Blend,
+    },
+    Stroke {
+        spec: stroke::Spec,
+        points: Vec<DVec3>,
     },
 }
 

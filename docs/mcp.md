@@ -192,6 +192,8 @@ These details aren't obvious from the tool list.
 
 - `raycast` and `pick_at_pixel` intersect rendered terrain triangles, retaining owner/side identity and visibility filters. `frame_selection` uses displaced bounds and active previews; `get_objects` reports committed visible bounds. Invisible parent faces are excluded from terrain hits. Pass the returned `point` into `preview_terrain_sculpt.center` or `preview_terrain_blend.center` to choose the same brush center as UI **Pick center in viewport…**. Imported entity terrain supports grid inspection and cleanup with Undo, while native entity-terrain compilation remains unsupported.
 
+- Native terrain results include `displacement_neighbor_pairs` for equal-power full edges and `displacement_corner_neighbor_pairs` for reciprocal corner-only contacts, excluding edge-connected pairs. Corner-only contact can use different powers when base and displaced corners match. UI **Build details…** labels these **Neighbor pairs** and **Corner pairs**. Mixed-power edge LOD remains unfinished.
+
 **Compiling**
 
 - `set_compile_settings` takes `lighting` (`fullbright` or `direct_ldr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`) and `smoothing_angle` (whole degrees `0`–`90`). It changes only the fields you pass, and invalid combinations leave every setting unchanged.

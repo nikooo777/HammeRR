@@ -461,8 +461,9 @@ impl Controller {
                     .as_u64()
                     .unwrap_or_default();
                 let neighbors = result["stats"]["displacement_neighbor_pairs"].as_u64().unwrap_or_default();
+                let corners=result["stats"]["displacement_corner_neighbor_pairs"].as_u64().unwrap_or_default();
                 format!(
-                    "\nTerrain surfaces: {count} · Vertices: {vertices} · Triangles: {triangles} · Neighbor pairs: {neighbors}"
+                    "\nTerrain surfaces: {count} · Vertices: {vertices} · Triangles: {triangles} · Neighbor pairs: {neighbors} · Corner pairs: {corners}"
                 )
             })
             .unwrap_or_default();

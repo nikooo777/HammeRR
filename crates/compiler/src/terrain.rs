@@ -54,7 +54,7 @@ impl Map<'_> {
         &mut self,
         report: &mut Report,
         control: &Control,
-    ) -> Result<usize, String> {
+    ) -> Result<(usize, usize), String> {
         neighbors::connect(&mut self.terrains, report, control)
     }
     pub(super) fn add_terrain(
@@ -300,7 +300,7 @@ impl Map<'_> {
             });
         }
         if !self.terrains.is_empty() {
-            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map. Native neighbor metadata supports matching equal-power full edges; mixed powers, partial spans and corner-only neighbors remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
+            report.diagnostics.push(Diagnostic::warning("World displacement surfaces do not seal the map. Native neighbor metadata supports matching equal-power full edges; corner-only contacts have reciprocal lists; mixed-power edges and partial spans remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
         }
         Ok(faces)
     }

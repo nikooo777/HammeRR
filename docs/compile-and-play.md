@@ -331,7 +331,9 @@ Create flat terrain with [Terrain grid and Create terrain](terrain.md), or open 
 - Neighboring patches of the same power that share a full edge are linked to each other in the BSP. Build details and agents report the number of linked pairs. Ambiguous edges, different powers and mismatched surfaces stay unlinked, with a diagnostic.
 - Direct LDR lights terrain of every size, with smooth normals sewn across matching equal-power full edges, and raised terrain shades the world beneath it. Terrain with unlit materials needs **Fullbright** for now.
 
-Not yet: creating or editing terrain in HammeRR, subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles, LOD between different powers or partial edges, and neighbors that touch only at a corner.
+Corner-only contacts receive reciprocal native lists when base and displaced corners match, including different powers. **Build details…** reports **Corner pairs** separately from full-edge **Neighbor pairs**.
+
+Not yet: subdivision, removed triangles, terrain on entities or detail brushes, authored smoothing angles and LOD between different powers or partial edges. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
 
 ## Overlays
 

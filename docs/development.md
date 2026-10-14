@@ -142,6 +142,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `brush_runtime` | Sliding and rotating doors, a continuously rotating brush, trigger outputs, pivot-aware model lightmaps, exact shared builds, and unchanged geometry/collision. |
 | `physics_surfaces --runtime` | Shared face materials and rotated mixed-surface hulls, checked native material tables, exact foreground/background builds and unchanged source/history; paired ice/rubber contact on the same incline. |
 | `static_props --runtime` | Static prop collision settings. |
+| `terrain_corners --runtime` | Reciprocal native corner-only records, rotated start indices, mixed powers, exact shared builds, hidden omission and private native loading/contact. |
 | `terrain_queries` | Raised/draft terrain ray and pixel hits, visible bounds and matching draft/committed framing, read-only history, picked-point brush placement and imported-entity cleanup/undo. |
 | `terrain_sewing_collision --runtime` | Shared seam and alpha sewing, exact cancel/undo, native neighbor metadata and build pairs; independent physics/player/ray toggle records, dynamic-object support, player support and trace behavior. |
 | `terrain_brushes --runtime` | MCP-authored terrain, radial raise/lower, flatten/smoothing cancellation, deterministic noise, atomic invalid updates, blend paint/fill/invert and preserved geometry, save/reopen, exact native builds, player/prop contact and paired native two-texture endpoints. |

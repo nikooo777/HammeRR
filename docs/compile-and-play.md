@@ -61,7 +61,7 @@ Visibility quality applies to both lighting modes. It is separate from the light
 **Indirect light** (Direct LDR only)
 
 - **Direct only** (default): bake direct emitters and sky ambient.
-- **One diffuse bounce**: reflect direct light from world/detail brushes and terrain into other surfaces. It also reaches model ambient through the resulting lightmaps.
+- **One diffuse bounce**: reflect direct light from world/detail brushes and terrain into world, terrain and brush-entity receivers. It also reaches model ambient through the resulting lightmaps.
 
 **Brush smoothing angle** (Direct LDR only)
 
@@ -159,7 +159,7 @@ With **Direct LDR**:
 
 ![Pivot-aware direct lighting on moving brush entities](images/compiled-brush-models.png)
 
-Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Moving models do not add permanent world shadows or supply/receive bounced light. Independently rotated initial poses, dynamic relighting, bump/HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
+Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Independently rotated initial poses, dynamic relighting, bump/HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
 
 #### Switchable lights and appearances
 
@@ -174,18 +174,20 @@ Limits: direct point/spot styles and sun/sky lighting at the authored pose, with
 | --- | --- |
 | ![Named red lights start dark while static blue lighting remains](images/light-styles-off.png) | ![The same lights switched on through a relay](images/light-styles-on.png) |
 
-Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct world/detail/terrain lightmaps; styled bounces, switching model-ambient cubes, sun/sky styles model smoothing/bounces and baked prop lightmaps remain unfinished. A styled build with **One diffuse bounce** fails with a recovery instruction. The common lighting allocation/work limits apply.
+Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct world/detail/terrain and brush-model lightmaps; styled bounces, switching model-ambient cubes, sun/sky styles and baked prop lightmaps remain unfinished. A styled build with **One diffuse bounce** fails with a recovery instruction. The common lighting allocation/work limits apply.
 
 #### Bounced light
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR**.
 2. Choose **Indirect light → One diffuse bounce**. Use **Direct only** to compare the direct lighting.
 3. Choose **Sampling quality**: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**. More directions reduce sampling variation and take longer.
-4. Click **Close**, then **Compile** or **Run Map**. **Build details…** reports **Indirect light**, rays and samples that received reflected light.
+4. Click **Close**, then **Compile** or **Run Map**. **Build details…** reports **Indirect light**, rays and samples that received reflected light, plus **Brush entity bounce** when the map has model receivers.
 
-![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png)
+| World surface | Brush entity |
+| --- | --- |
+| ![One diffuse bounce lights the floor beneath a shelf](images/compiled-bounce.png) | ![Reflected world light reaches a brush entity beneath the shelf](images/compiled-model-bounce.png) |
 
-Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows; props and brush models do not cast bounce shadows or supply reflected light. Model bounce receivers, more bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: one diffuse bounce from static direct world/detail/terrain lightmaps, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate models do not cast permanent bounce shadows or supply reflected light. Props, more bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Falloff
 

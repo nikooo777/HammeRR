@@ -7,8 +7,9 @@ import sys
 from pathlib import Path
 
 import validate_native_runtime as runtime
+from validate_authored_planes import records
 from validate_compile_jobs import wait_job
-from validate_direct_lighting import center_sample
+from validate_direct_lighting import FACE_FORMAT, center_sample, lightmaps
 from validate_face_lighting import ROOT, Client, detail
 from validate_visibility import ROOM
 
@@ -16,6 +17,26 @@ from validate_visibility import ROOM
 def payload(data, index):
     offset, size = struct.unpack_from("<2i", data, 8 + index * 16)
     return data[offset : offset + size]
+
+
+def model_top_color(data):
+    model = records(data, 14, "<9f3i")[1]
+    planes = records(data, 1, "<4fi")
+    faces = records(data, 7, FACE_FORMAT)
+    colors = lightmaps(data)
+    result = []
+    for face in faces[model[10] : model[10] + model[11]]:
+        plane = planes[face[0]]
+        if plane[2] < 0.99 or abs(plane[3] + 32.125 - 40) > 0.001:
+            continue
+        assert face[8:12] == (0, 255, 255, 255)
+        count = (face[16] + 1) * (face[17] + 1)
+        for *rgb, exponent in struct.iter_unpack(
+            "<3Bb", colors[face[12] : face[12] + count * 4]
+        ):
+            result.append([component * 2**exponent for component in rgb])
+    assert result
+    return [sum(color[axis] for color in result) / len(result) for axis in range(3)]
 
 
 def fixture(args):
@@ -33,6 +54,25 @@ def fixture(args):
                 client.call(
                     "create_block",
                     {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
+                )["id"]
+            )
+        if args.model_receiver:
+            receiver = client.call(
+                "create_block",
+                {
+                    "mins": [-48, -48, 16],
+                    "maxs": [48, 48, 40],
+                    "material": "dev/dev_measuregeneric01",
+                },
+            )["id"]
+            objects.append(
+                client.call(
+                    "tie_to_entity",
+                    {
+                        "ids": [receiver],
+                        "classname": "func_brush",
+                        "properties": {"origin": "90.5 -67.25 32.125"},
+                    },
                 )["id"]
             )
         for classname, origin, properties in [
@@ -124,6 +164,16 @@ def fixture(args):
             assert result["success"] and result["stats"]["bounces"] == count
             data = path.read_bytes()
             color = center_sample(data)
+            model_color = model_top_color(data) if args.model_receiver else None
+            if args.model_receiver:
+                assert result["stats"]["lit_brush_models"] == 1
+                if count == 0:
+                    assert model_color == [0, 0, 0], model_color
+                    assert result["stats"]["model_bounce_faces"] == 0
+                else:
+                    assert model_color[0] > model_color[1] > model_color[2], model_color
+                    assert result["stats"]["model_bounce_faces"] == 6
+                    assert result["stats"]["model_bounce_samples"] > 0
             if count == 0:
                 assert color == [0, 0, 0], color
             else:
@@ -155,6 +205,8 @@ def fixture(args):
                 and source.read_bytes() == source_bytes
             )
             results[name] = {"center_color": color, "stats": result["stats"]}
+            if args.model_receiver:
+                results[name]["model_top_color"] = model_color
             files.append((name, path))
             previous = data
         assert not client.call("get_compile_status")["job"]["stale"]
@@ -174,10 +226,12 @@ def worker(args):
         "setpos -64 -64 32; setang 25 45 0; mat_fullbright",
         "setpos -192 -176 32; setang 25 42 0; r_drawothermodels 0; r_drawviewmodel 0; mat_fullbright",
     )
+    if args.model_receiver:
+        runtime.OBSERVER = runtime.OBSERVER.replace("setang 25 42 0", "setang 12 42 0")
     runtime.worker(args)
 
 
-def compare(output):
+def compare(output, model_receiver=False):
     frames = []
     for name in ["direct", "bounced"]:
         magic, dimensions, maximum, pixels = (
@@ -189,7 +243,23 @@ def compare(output):
     gains = [b - a for a, b in zip(frames[0][1], frames[1][1], strict=True)]
     changed = sum(max(pixel) > 3 for pixel in zip(*[iter(gains)] * 3))
     assert changed > 1000, changed
-    return {"brighter_pixels": changed, "mean_component_gain": sum(gains) / len(gains)}
+    result = {
+        "brighter_pixels": changed,
+        "mean_component_gain": sum(gains) / len(gains),
+    }
+    if model_receiver:
+        width, height = map(int, frames[0][0].split())
+        samples = []
+        for _, pixels in frames:
+            red = [
+                pixels[(y * width + x) * 3]
+                for y in range(int(height * 0.434), int(height * 0.446))
+                for x in range(int(width * 0.485), int(width * 0.515))
+            ]
+            samples.append(sum(red) / len(red))
+        assert samples[0] == 0 and samples[1] > 10, samples
+        result["model_top_red"] = samples
+    return result
 
 
 def main():
@@ -199,6 +269,7 @@ def main():
         "--output", type=Path, default=Path("/tmp/hammerr-bounced-lighting")
     )
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--model-receiver", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -232,6 +303,7 @@ def main():
                         "-B",
                         str(Path(__file__).resolve()),
                         "--worker",
+                        *(["--model-receiver"] if args.model_receiver else []),
                         "--bsp",
                         str(bsp),
                         "--output",
@@ -247,7 +319,7 @@ def main():
                     timeout=55,
                 )
         (args.output / "render-results.json").write_text(
-            json.dumps(compare(args.output), indent=2) + "\n"
+            json.dumps(compare(args.output, args.model_receiver), indent=2) + "\n"
         )
     print(json.dumps({"output": str(args.output), "bounced_lighting": True}))
 

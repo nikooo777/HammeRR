@@ -75,7 +75,7 @@ export component CompileWindow inherits Window {
                     Text { text: "Indirect light"; vertical-alignment: center; }
                     bounce-selector := ComboBox { model: root.bounce-modes; enabled: root.sky-enabled; selected(value) => { root.change-bounces(self.current-index); } }
                 }
-                Text { text: "One bounce reflects light from world brushes and terrain into shaded surfaces. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+                Text { text: "One bounce reflects light from world brushes and terrain into shaded world surfaces and brush entities. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
                 HorizontalLayout {
                     spacing: 12px;
                     Text { text: "Brush smoothing angle"; vertical-alignment: center; }

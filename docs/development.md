@@ -110,6 +110,7 @@ python3 -B scripts/validate_portal_flow.py --output /tmp/hammerr-portal-flow-che
 python3 -B scripts/validate_hints.py --output /tmp/hammerr-hints-check
 python3 -B scripts/validate_parallel_visibility.py --output /tmp/hammerr-parallel-check
 python3 -B scripts/validate_bounced_lighting.py --output /tmp/hammerr-bounce-check
+python3 -B scripts/validate_bounced_lighting.py --model-receiver --output /tmp/hammerr-model-bounce-check
 python3 -B scripts/validate_brush_smoothing.py --output /tmp/hammerr-smoothing-check
 python3 -B scripts/validate_smoothing_angle.py --output /tmp/hammerr-angle-check
 python3 -B scripts/validate_brush_junctions.py --output /tmp/hammerr-junction-check
@@ -147,7 +148,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `light_styles --runtime` | Named channels and averages, shared relay authoring, exact MCP builds and atomic failures; native Initially dark, TurnOn, TurnOff, custom-pattern brightness and alternating animation. |
 | `brush_junctions --runtime` | Partial-edge normals, shared smooth/hard masks, exact MCP builds and unchanged source/history/collision, with paired native shading. |
 | `brush_smoothing --runtime` | Shared face mask authoring, smooth and hard-group normals, native short indices, exact MCP builds and unchanged collision, with paired native shading. |
-| `bounced_lighting --runtime` | Shared zero/one-bounce settings, reflected color beneath a shelf, exact MCP builds and unchanged geometry/collision, with paired native rendering. |
+| `bounced_lighting --runtime [--model-receiver]` | Shared zero/one-bounce settings, reflected color beneath a shelf, exact MCP builds and unchanged geometry/collision, with paired native rendering. `--model-receiver` adds pivot-aware brush-model receivers and native top-face samples. |
 | `parallel_visibility --runtime` | An authored 10×10 hint grid, all-cell PVS/PAS, deterministic worker work and exact shared builds, with native grounding/rendering. |
 | `overlay_capacity --runtime` | Current-engine record capacity: 1,024 native records with only the last one drawing, checked against the same scene without overlays. This patches a private MCP-built BSP to isolate capacity; `overlays` covers authored helper compilation. |
 | `terrain_seams --runtime` | Rotated curved neighbors share continuous baked lighting and retain seam contact heights. |

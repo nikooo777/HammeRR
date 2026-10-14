@@ -57,7 +57,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with shadows, scoped world/model brush smoothing and model ambient. One diffuse bounce is optional. HDR, prop lightmaps and model bounces remain unfinished."
+                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with shadows, scoped world/model brush smoothing and model ambient. One diffuse bounce reaches world, terrain and brush entities. HDR and prop lightmaps remain unfinished."
             }
         }
     }
@@ -291,6 +291,8 @@ pub struct Stats {
     pub bounce_rays: usize,
     pub bounce_samples: usize,
     pub bounce_work: usize,
+    pub model_bounce_faces: usize,
+    pub model_bounce_samples: usize,
     pub smoothed_faces: usize,
     pub smoothed_corners: usize,
     pub normal_work: usize,
@@ -663,6 +665,8 @@ fn build(
         output.stats.bounce_rays = stats.bounce_rays;
         output.stats.bounce_samples = stats.bounce_samples;
         output.stats.bounce_work = stats.bounce_work;
+        output.stats.model_bounce_faces = stats.model_bounce_faces;
+        output.stats.model_bounce_samples = stats.model_bounce_samples;
         output.stats.smoothed_faces = stats.smoothed_faces;
         output.stats.smoothed_corners = stats.smoothed_corners;
         output.stats.normal_work = stats.normal_work;

@@ -267,3 +267,212 @@ fn unsupported_bounce_settings_and_albedo_preserve_previous_output() {
         baseline.bsp.unwrap().to_bytes()
     );
 }
+
+fn model_receiver(pivot: DVec3, enclosure: bool, separate: bool) -> Document {
+    use map_core::ObjectId;
+    let mut document = Document::new(common::room());
+    light(&mut document);
+    document
+        .edit("model bounce", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-96.0, -96.0, 48.0),
+                DVec3::new(96.0, 96.0, 64.0),
+                "dev/dev_measuregeneric01",
+            )?;
+            let ObjectId::Solid(receiver) = edit::create_block(
+                tx,
+                DVec3::new(-32.0, -32.0, 8.0),
+                DVec3::new(32.0, 32.0, 24.0),
+                "dev/dev_measuregeneric01",
+            )?
+            else {
+                unreachable!()
+            };
+            let mut ids = vec![receiver];
+            let mut walls = Vec::new();
+            if enclosure {
+                for (mins, maxs) in [
+                    ([-48.0, -48.0, 24.0], [-32.0, 48.0, 96.0]),
+                    ([32.0, -48.0, 24.0], [48.0, 48.0, 96.0]),
+                    ([-32.0, -48.0, 24.0], [32.0, -32.0, 96.0]),
+                    ([-32.0, 32.0, 24.0], [32.0, 48.0, 96.0]),
+                    ([-48.0, -48.0, 96.0], [48.0, 48.0, 112.0]),
+                ] {
+                    let ObjectId::Solid(id) = edit::create_block(
+                        tx,
+                        DVec3::from_array(mins),
+                        DVec3::from_array(maxs),
+                        "dev/dev_measuregeneric01",
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    walls.push(id);
+                }
+            }
+            if !separate {
+                ids.append(&mut walls);
+            }
+            edit::tie_to_entity(
+                tx,
+                &ids,
+                "func_brush",
+                &[("origin".into(), source_formats::vmf::format_vec3(pivot))],
+            )?;
+            if !walls.is_empty() {
+                edit::tie_to_entity(
+                    tx,
+                    &walls,
+                    "func_brush",
+                    &[("origin".into(), "-70.25 83.5 56.125".into())],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    document
+}
+
+fn model_top(bsp: &Bsp, pivot: DVec3) -> DVec3 {
+    let model = bsp.records::<bsp::Model>().unwrap()[1];
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let infos = bsp.records::<TexInfo>().unwrap();
+    let faces = bsp.records::<Face>().unwrap();
+    let light = bsp.lighting(LightingKind::Ldr).unwrap().unwrap();
+    for face in &faces[model.first_face as usize..(model.first_face + model.face_count) as usize] {
+        let plane = planes[face.plane as usize];
+        if plane.normal[2] < 0.99 || (f64::from(plane.dist) + pivot.z - 24.0).abs() > 1e-6 {
+            continue;
+        }
+        let info = infos[face.texinfo as usize];
+        let frame = compiler::lighting::LuxelFrame::new(
+            Plane {
+                normal: DVec3::Z,
+                dist: f64::from(plane.dist),
+            },
+            &info,
+            face.lightmap_mins,
+            face.lightmap_size,
+        )
+        .unwrap();
+        let [width, height] = frame.dimensions();
+        for t in 0..height {
+            for s in 0..width {
+                if (frame.position(s, t).unwrap() + pivot).distance(DVec3::new(0.0, 0.0, 24.0))
+                    < 1e-6
+                {
+                    return DVec3::from_array(
+                        light
+                            .face(face, &info)
+                            .unwrap()
+                            .unwrap()
+                            .samples(0, 0)
+                            .unwrap()[t * width + s]
+                            .linear(),
+                    );
+                }
+            }
+        }
+    }
+    panic!("Missing model bounce receiver");
+}
+
+fn world_lightmaps(bsp: &Bsp) -> Vec<Vec<bsp::RgbExp32>> {
+    let model = bsp.records::<bsp::Model>().unwrap()[0];
+    let infos = bsp.records::<TexInfo>().unwrap();
+    let faces = bsp.records::<Face>().unwrap();
+    let light = bsp.lighting(LightingKind::Ldr).unwrap().unwrap();
+    faces[model.first_face as usize..(model.first_face + model.face_count) as usize]
+        .iter()
+        .filter_map(|face| {
+            light
+                .face(face, &infos[face.texinfo as usize])
+                .unwrap()
+                .map(|samples| samples.samples(0, 0).unwrap().to_vec())
+        })
+        .collect()
+}
+
+#[test]
+fn model_receivers_gain_world_bounce_at_integer_and_fractional_pivots_without_geometry_changes() {
+    let (_directory, game) = albedo_game([0.5, 0.0, 0.0]);
+    let mut reference = None;
+    for pivot in [
+        DVec3::ZERO,
+        DVec3::new(128.0, -64.0, 16.0),
+        DVec3::new(101.5, -67.25, 32.125),
+    ] {
+        let document = model_receiver(pivot, false, false);
+        let source = document.vmf().clone();
+        let direct = compiler::compile_with_options(&source, &game, settings(0));
+        let bounced = compiler::compile_with_options(&source, &game, settings(1));
+        assert!(
+            !direct.report.has_errors() && !bounced.report.has_errors(),
+            "{:?} {:?}",
+            direct.report,
+            bounced.report
+        );
+        assert_eq!(bounced.stats.model_bounce_faces, 6);
+        assert!(bounced.stats.model_bounce_samples > 0);
+        assert_eq!(
+            bounced.stats.bounce_rays,
+            bounced.stats.lightmap_samples * SkyQuality::Balanced.directions()
+        );
+        let direct = direct.bsp.unwrap();
+        let bounced = bounced.bsp.unwrap();
+        assert_eq!(model_top(&direct, pivot), DVec3::ZERO);
+        let value = model_top(&bounced, pivot);
+        assert!(
+            value.x > 1.0 && value.x <= 100.0 && value.y == 0.0 && value.z == 0.0,
+            "{value}"
+        );
+        if let Some((color, world)) = &reference {
+            assert_eq!(&value, color);
+            assert_eq!(&world_lightmaps(&bounced), world);
+        } else {
+            reference = Some((value, world_lightmaps(&bounced)));
+        }
+        for (index, (before, after)) in direct.lumps.iter().zip(&bounced.lumps).enumerate() {
+            if ![
+                bsp::lump::LIGHTING,
+                bsp::lump::LEAF_AMBIENT_LIGHTING,
+                bsp::lump::LEAF_AMBIENT_INDEX,
+            ]
+            .contains(&index)
+            {
+                assert!(before == after, "Model bounce changed lump {index}");
+            }
+        }
+        assert_eq!(*document.vmf(), source);
+    }
+}
+
+#[test]
+fn model_bounce_uses_only_its_own_occluders_and_zero_albedo_preserves_bytes() {
+    let pivot = DVec3::new(101.5, -67.25, 32.125);
+    let (_directory, game) = albedo_game([0.5, 0.0, 0.0]);
+    let mut results = Vec::new();
+    for (enclosure, separate) in [(false, false), (true, false), (true, true)] {
+        let document = model_receiver(pivot, enclosure, separate);
+        let output = compiler::compile_with_options(document.vmf(), &game, settings(1));
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        results.push(output.bsp.unwrap());
+    }
+    let open = model_top(&results[0], pivot);
+    assert!(open.x > 0.0);
+    assert_eq!(model_top(&results[1], pivot), DVec3::ZERO);
+    assert_eq!(model_top(&results[2], pivot), open);
+    assert_eq!(world_lightmaps(&results[0]), world_lightmaps(&results[1]));
+    assert_eq!(world_lightmaps(&results[0]), world_lightmaps(&results[2]));
+    let (_directory, game) = albedo_game([0.0; 3]);
+    let document = model_receiver(pivot, false, false);
+    let direct = compiler::compile_with_options(document.vmf(), &game, settings(0));
+    let bounced = compiler::compile_with_options(document.vmf(), &game, settings(1));
+    assert!(!direct.report.has_errors() && !bounced.report.has_errors());
+    assert_eq!(bounced.stats.model_bounce_samples, 0);
+    assert!(
+        direct.bsp.unwrap().to_bytes() == bounced.bsp.unwrap().to_bytes(),
+        "Zero reflected model energy changed bytes"
+    );
+}

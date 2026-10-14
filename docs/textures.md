@@ -127,7 +127,7 @@ Limits: explicitly assigned masks on world/detail brushes and rendered brush ent
 
 ![Scoped smoothing on a curved brush model in Counter-Strike: Source](images/compiled-model-smoothing.png)
 
-Limits: adjacency is isolated within each model, including source edge junctions. Identical local coordinates in separate models do not blend. Original source centers/fans survive lightmap subdivision; sample bias uses geometric normals. Terrain, model bounce, dynamic relighting, independently rotated initial poses and bump/HDR/prop lightmaps remain separate limits.
+Limits: adjacency is isolated within each model, including source edge junctions. Identical local coordinates in separate models do not blend. Original source centers/fans survive lightmap subdivision; sample bias uses geometric normals. Terrain, dynamic relighting, independently rotated initial poses and bump/HDR/prop lightmaps remain separate limits.
 
 ### Smooth by angle
 

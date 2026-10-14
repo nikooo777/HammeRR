@@ -150,7 +150,9 @@ fn rendered_models_receive_world_space_lighting_at_translated_and_fractional_piv
             },
         );
         assert!(!bounced.report.has_errors(), "{:?}", bounced.report);
-        assert_eq!(top_sample(&bounced.bsp.unwrap(), 1, pivot), expected);
+        assert_eq!(bounced.stats.model_bounce_faces, 6);
+        assert!(bounced.stats.model_bounce_samples > 0);
+        assert!(top_sample(&bounced.bsp.unwrap(), 1, pivot).min_element() > expected.min_element());
         assert_eq!(source, before);
     }
 }

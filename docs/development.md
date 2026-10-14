@@ -151,7 +151,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `brush_junctions --runtime` | Partial-edge normals, shared smooth/hard masks, exact MCP builds and unchanged source/history/collision, with paired native shading. |
 | `brush_smoothing --runtime` | Shared face mask authoring, smooth and hard-group normals, native short indices, exact MCP builds and unchanged collision, with paired native shading. |
 | `bounced_lighting --runtime [--model-receiver]` | Shared zero/one-bounce settings, reflected color beneath a shelf, exact MCP builds and unchanged geometry/collision, with paired native rendering. `--model-receiver` adds pivot-aware brush-model receivers and native top-face samples. |
-| `parallel_visibility --runtime` | An authored 10×10 hint grid, all-cell PVS/PAS, deterministic worker work and exact shared builds, with native grounding/rendering. |
+| `parallel_visibility --runtime [--visibility fast|detailed]` | An authored 10×10 hint grid in Fast or Detailed mode, all-cell PVS/PAS, deterministic worker work and exact shared builds, with native grounding/rendering. |
 | `overlay_capacity --runtime` | Current-engine record capacity: 1,024 native records with only the last one drawing, checked against the same scene without overlays. This patches a private MCP-built BSP to isolate capacity; `overlays` covers authored helper compilation. |
 | `terrain_seams --runtime` | Rotated curved neighbors share continuous baked lighting and retain seam contact heights. |
 | `terrain_normals --runtime` | A curved terrain ridge with smooth normals, shared with the viewport, keeps its collision height in game. |

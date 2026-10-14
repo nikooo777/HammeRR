@@ -10,6 +10,7 @@ use crate::portals::Portal;
 use crate::tree::Tree;
 use crate::winding::Winding;
 
+mod base;
 mod budget;
 mod flow;
 mod parallel;
@@ -204,7 +205,7 @@ fn solve(
     budget: usize,
     mode: VisibilityMode,
 ) -> Result<Solution, String> {
-    let workers = if portals.len() >= 64 && mode == VisibilityMode::Detailed {
+    let workers = if portals.len() >= 64 {
         std::thread::available_parallelism().map_or(1, |count| count.get().min(8))
     } else {
         1
@@ -244,58 +245,30 @@ fn solve_workers(
     }
     let mut refined = (mode == VisibilityMode::Detailed).then(|| rows.clone());
     let mut fallbacks = 0;
-    let mut eligible = vec![false; portals.len()];
-    let mut reached = vec![false; count];
-    let mut pending = Vec::new();
-    let mut fronts = refined
-        .as_ref()
-        .map(|_| vec![vec![0; portals.len().div_ceil(8)]; portals.len()]);
-    let mut bounds = refined
-        .as_ref()
-        .map(|_| vec![vec![0; width]; portals.len()]);
-    for (source_index, source) in portals.iter().enumerate() {
+    let mut workers = if portals.len() >= 64 {
+        requested_workers.clamp(1, 8).min(portals.len())
+    } else {
+        1
+    };
+    let base = base::Graph {
+        portals,
+        edges: &edges,
+        control,
+        detailed: refined.is_some(),
+    }
+    .build(workers, &mut work)?;
+    let mut fronts = refined.as_ref().map(|_| Vec::with_capacity(portals.len()));
+    let mut bounds = refined.as_ref().map(|_| Vec::with_capacity(portals.len()));
+    for row in base {
         control.checkpoint()?;
-        for (index, target) in portals.iter().enumerate() {
-            control.checkpoint()?;
-            work.consume(source.winding.0.len() + target.winding.0.len())?;
-            eligible[index] = target
-                .winding
-                .0
-                .iter()
-                .any(|&point| source.plane.distance_to(point) >= -VISIBILITY_EPSILON)
-                && source
-                    .winding
-                    .0
-                    .iter()
-                    .any(|&point| target.plane.distance_to(point) <= VISIBILITY_EPSILON);
+        for (target, &byte) in rows[portals[row.source].from].iter_mut().zip(&row.clusters) {
+            *target |= byte;
         }
-        if let Some(fronts) = &mut fronts {
-            for (index, &eligible) in eligible.iter().enumerate() {
-                if eligible {
-                    set(&mut fronts[source_index], index);
-                }
-            }
-        }
-        reached.fill(false);
-        reached[source.to] = true;
-        pending.push(source.to);
-        while let Some(cluster) = pending.pop() {
-            control.checkpoint()?;
-            set(&mut rows[source.from], cluster);
-            if let Some(bounds) = &mut bounds {
-                set(&mut bounds[source_index], cluster);
-            }
-            work.consume(edges[cluster].len())?;
-            for &index in &edges[cluster] {
-                let target = &portals[index];
-                if eligible[index] && !reached[target.to] {
-                    reached[target.to] = true;
-                    pending.push(target.to);
-                }
-            }
+        if let (Some(fronts), Some(bounds), Some(front)) = (&mut fronts, &mut bounds, row.fronts) {
+            fronts.push(front);
+            bounds.push(row.clusters);
         }
     }
-    let mut workers = 1;
     if let (Some(refined), Some(fronts), Some(bounds)) = (&mut refined, fronts, bounds) {
         let graph = parallel::Graph {
             portals,
@@ -304,21 +277,22 @@ fn solve_workers(
             bounds: &bounds,
             control,
         };
-        workers = requested_workers.clamp(1, 8).min(
+        let flow_workers = requested_workers.clamp(1, 8).min(
             edges
                 .iter()
                 .filter(|edges| !edges.is_empty())
                 .count()
                 .max(1),
         );
-        if workers == 1 {
+        workers = workers.max(flow_workers);
+        if flow_workers == 1 {
             for (cluster, row) in refined.iter_mut().enumerate() {
                 fallbacks += graph.refine(cluster, row, &mut work)?;
             }
         } else {
             let remaining = Arc::new(budget::Budget::new(work.remaining(), control.clone()));
             work = Work::Shared(budget::Lease::new(remaining.clone()));
-            fallbacks = graph.parallel(refined, workers, remaining)?;
+            fallbacks = graph.parallel(refined, flow_workers, remaining)?;
         }
     }
 
@@ -586,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn detailed_open_grid_preserves_all_cells_within_the_global_budget() {
+    fn parallel_open_grid_preserves_both_modes_and_the_exact_global_budget() {
         const SIZE: usize = 10;
         let mut windings = Vec::new();
         let mut links = Vec::new();
@@ -634,64 +608,81 @@ mod tests {
             .zip(&windings)
             .flat_map(|(&(from, to, plane), winding)| pair(from, to, plane, winding))
             .collect::<Vec<_>>();
-        let started = std::time::Instant::now();
-        let serial = solve_workers(
-            SIZE * SIZE,
-            &portals,
-            &Control::default(),
-            MAX_VISIBILITY_WORK,
-            VisibilityMode::Detailed,
-            1,
-        )
-        .unwrap();
-        let serial_time = started.elapsed();
-        let started = std::time::Instant::now();
-        let solution = solve_workers(
-            SIZE * SIZE,
-            &portals,
-            &Control::default(),
-            MAX_VISIBILITY_WORK,
-            VisibilityMode::Detailed,
-            8,
-        )
-        .unwrap();
-        eprintln!(
-            "open grid: {} work, serial {:?}, eight workers {:?}",
-            solution.work,
-            serial_time,
-            started.elapsed()
-        );
-        assert_eq!(solution.workers, 8);
-        assert_eq!(solution.work, serial.work);
-        assert_eq!(solution.data, serial.data);
-        assert_eq!(solution.fallbacks, serial.fallbacks);
-        let exact = solve_workers(
-            SIZE * SIZE,
-            &portals,
-            &Control::default(),
-            serial.work,
-            VisibilityMode::Detailed,
-            8,
-        )
-        .unwrap();
-        assert_eq!(exact.work, serial.work);
-        assert_eq!(exact.data, serial.data);
+        for mode in [VisibilityMode::Fast, VisibilityMode::Detailed] {
+            let started = std::time::Instant::now();
+            let serial = solve_workers(
+                SIZE * SIZE,
+                &portals,
+                &Control::default(),
+                MAX_VISIBILITY_WORK,
+                mode,
+                1,
+            )
+            .unwrap();
+            let serial_time = started.elapsed();
+            let started = std::time::Instant::now();
+            let solution = solve_workers(
+                SIZE * SIZE,
+                &portals,
+                &Control::default(),
+                MAX_VISIBILITY_WORK,
+                mode,
+                8,
+            )
+            .unwrap();
+            eprintln!(
+                "{mode:?} open grid: {} work, serial {:?}, eight workers {:?}",
+                solution.work,
+                serial_time,
+                started.elapsed()
+            );
+            assert_eq!(solution.workers, 8);
+            assert_eq!(solution.work, serial.work);
+            assert_eq!(solution.data, serial.data);
+            assert_eq!(solution.fallbacks, serial.fallbacks);
+            let exact = solve_workers(
+                SIZE * SIZE,
+                &portals,
+                &Control::default(),
+                serial.work,
+                mode,
+                8,
+            )
+            .unwrap();
+            assert_eq!(exact.work, serial.work);
+            assert_eq!(exact.data, serial.data);
+            assert!(
+                solve_workers(
+                    SIZE * SIZE,
+                    &portals,
+                    &Control::default(),
+                    serial.work - 1,
+                    mode,
+                    8
+                )
+                .is_err()
+            );
+            let parsed = ParsedVisibility::parse(&solution.data).unwrap();
+            for source in 0..SIZE * SIZE {
+                let row = parsed.row(source, VisibilityKind::Visible).unwrap();
+                assert!((0..SIZE * SIZE).all(|target| bit(&row, target)));
+            }
+        }
+        let cancelled = Control::default();
+        cancelled.cancel().unwrap();
         assert!(
             solve_workers(
                 SIZE * SIZE,
                 &portals,
-                &Control::default(),
-                serial.work - 1,
-                VisibilityMode::Detailed,
-                8
+                &cancelled,
+                MAX_VISIBILITY_WORK,
+                VisibilityMode::Fast,
+                8,
             )
-            .is_err()
+            .err()
+            .unwrap()
+            .contains("cancelled")
         );
-        let parsed = ParsedVisibility::parse(&solution.data).unwrap();
-        for source in 0..SIZE * SIZE {
-            let row = parsed.row(source, VisibilityKind::Visible).unwrap();
-            assert!((0..SIZE * SIZE).all(|target| bit(&row, target)));
-        }
     }
 
     #[test]

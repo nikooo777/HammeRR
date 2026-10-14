@@ -2902,6 +2902,13 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         return true;
     }
     if key == key_text(Key::Escape) {
+        if let Some(controller) = &ui.borrow().terrain
+            && controller.is_stroking()
+        {
+            controller.cancel_stroke(&mut lock(&session_of(ui)));
+            app.set_terrain_stroking(false);
+            return true;
+        }
         if let Some(controller) = &ui.borrow().terrain_triangles
             && controller.is_picking()
         {
@@ -3694,6 +3701,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.unwrap().set_terrain_center_picking(false);
         }
     });
+    app.on_cancel_terrain_stroke({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if let Some(controller) = &ui.borrow().terrain {
+                controller.cancel_stroke(&mut lock(&session_of(&ui)));
+            }
+            app.unwrap().set_terrain_stroking(false);
+        }
+    });
     app.on_change_terrain_resolution({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -3963,6 +3979,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut ui = ui.borrow_mut();
             if button == 0 && !down && ui.terrain_pick_release {
                 ui.terrain_pick_release = false;
+                return;
+            }
+            if button == 0
+                && ui
+                    .terrain
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_stroking())
+            {
+                let controller = ui.terrain.as_ref().unwrap();
+                let mut session = lock(&ui.session);
+                let result = if down {
+                    let size = (viewport_size.0.max(1.0), viewport_size.1.max(1.0));
+                    let (origin, direction) = ui.viewport.camera.ray(
+                        2.0 * x / size.0 - 1.0,
+                        1.0 - 2.0 * y / size.1,
+                        size.0 / size.1,
+                    );
+                    controller
+                        .update_stroke(
+                            &mut session,
+                            &Ray {
+                                origin: origin.as_dvec3(),
+                                direction: direction.as_dvec3(),
+                            },
+                        )
+                        .map(|_| "Terrain stroke preview. Release to review.".to_owned())
+                } else if controller.stroke_dragging() {
+                    controller
+                        .finish_stroke(&mut session)
+                        .map(|_| "Terrain stroke ready for Apply or Cancel.".to_owned())
+                } else {
+                    Ok("Drag on visible selected terrain, or cancel the stroke.".to_owned())
+                };
+                app.set_terrain_stroking(controller.is_stroking());
+                app.set_message(result.unwrap_or_else(|error| error).into());
                 return;
             }
             if button == 0
@@ -4238,6 +4289,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
             ui.viewport.mouse_moved(x, y, size.1);
+            if let Some(controller) = &ui.terrain
+                && controller.is_stroking()
+            {
+                if controller.stroke_dragging() {
+                    let size = (size.0.max(1.0), size.1.max(1.0));
+                    let (origin, direction) = ui.viewport.camera.ray(
+                        2.0 * x / size.0 - 1.0,
+                        1.0 - 2.0 * y / size.1,
+                        size.0 / size.1,
+                    );
+                    if let Err(error) = controller.update_stroke(
+                        &mut lock(&ui.session),
+                        &Ray {
+                            origin: origin.as_dvec3(),
+                            direction: direction.as_dvec3(),
+                        },
+                    ) {
+                        app.set_message(error.into());
+                    }
+                }
+                return;
+            }
             if let Some(drag) = ui.clip_drag {
                 let shared = ui.session.clone();
                 let mut session = lock(&shared);
@@ -4323,6 +4396,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             {
                 let mut ui = ui.borrow_mut();
+                if let Some(controller) = &ui.terrain
+                    && controller.is_stroking()
+                    && controller.stroke_dragging()
+                {
+                    controller.discard_stroke(&mut lock(&ui.session));
+                    app.unwrap().set_terrain_stroking(false);
+                }
                 if ui.interaction.active() {
                     let shared = ui.session.clone();
                     ui.interaction.cancel(&mut lock(&shared));
@@ -4419,7 +4499,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.terrain
-                        && controller.window.window().is_visible()
+                        && (controller.window.window().is_visible() || controller.is_stroking())
                     {
                         controller.refresh(&session);
                     }
@@ -4650,6 +4730,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.terrain
                     .as_ref()
                     .is_some_and(|controller| controller.is_picking()),
+            );
+            app.set_terrain_stroking(
+                ui.terrain
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_stroking()),
             );
             let scale = app.window().scale_factor();
             let size = (
@@ -9973,6 +10058,49 @@ mod tests {
         assert!(!window.get_ready());
         assert!(window.get_message().contains("0–255"));
         window.invoke_cancel();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(1);
+        window.set_radius("32".into());
+        window.set_amount("4".into());
+        window.show().unwrap();
+        save_ui_snapshot(window.window(), "terrain-stroke-controls");
+        window.invoke_draw_stroke();
+        assert!(controller.is_stroking(), "{}", window.get_message());
+        for x in [-32.0, 0.0, 32.0] {
+            controller
+                .update_stroke(
+                    &mut lock(&shared),
+                    &Ray {
+                        origin: DVec3::new(x, 0.0, 128.0),
+                        direction: -DVec3::Z,
+                    },
+                )
+                .unwrap();
+        }
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        controller.finish_stroke(&mut lock(&shared)).unwrap();
+        assert!(window.get_ready());
+        assert!(!controller.is_stroking());
+        window.invoke_apply();
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), before);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(5);
+        window.set_blend_value("200".into());
+        window.invoke_draw_stroke();
+        controller
+            .update_stroke(
+                &mut lock(&shared),
+                &Ray {
+                    origin: DVec3::new(0.0, 0.0, 128.0),
+                    direction: -DVec3::Z,
+                },
+            )
+            .unwrap();
+        controller.cancel_stroke(&mut lock(&shared));
+        assert!(!lock(&shared).has_face_preview());
+        assert!(!controller.is_stroking());
+        assert_eq!(*lock(&shared).document().vmf(), before);
     }
 
     #[test]

@@ -1488,14 +1488,14 @@ pub struct TerrainCollisionArgs {
     pub ray_collision: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerrainDirection {
     WorldZ,
     FaceNormal,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerrainSculptMode {
     Raise,
@@ -1518,7 +1518,7 @@ pub struct TerrainSculptArgs {
     pub seed: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerrainBlendMode {
     Paint,
@@ -1537,6 +1537,77 @@ pub struct TerrainBlendArgs {
     pub direction: Option<TerrainDirection>,
     pub value: Option<f64>,
     pub strength: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainStrokeArgs {
+    pub sculpt: Option<TerrainSculptArgs>,
+    pub blend: Option<TerrainBlendArgs>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainStrokeTokenArgs {
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainStrokeUpdateArgs {
+    pub token: String,
+    pub points: Option<Vec<[f64; 3]>>,
+    pub origin: Option<[f64; 3]>,
+    pub direction: Option<[f64; 3]>,
+}
+
+fn terrain_sculpt_operation(args: &TerrainSculptArgs) -> map_core::displacement::Operation {
+    use map_core::displacement::{
+        Operation,
+        brush::{Brush, Sculpt},
+    };
+    let brush = Brush {
+        center: vec3(args.center),
+        radius: args.radius.unwrap_or(128.0),
+        axis: terrain_direction(args.direction),
+    };
+    let operation = match args.mode {
+        TerrainSculptMode::Raise => Sculpt::Raise(args.amount.unwrap_or(16.0)),
+        TerrainSculptMode::Flatten => Sculpt::Flatten(args.strength.unwrap_or(0.5)),
+        TerrainSculptMode::Smooth => Sculpt::Smooth(args.strength.unwrap_or(0.5)),
+        TerrainSculptMode::Noise => Sculpt::Noise {
+            amplitude: args.amount.unwrap_or(16.0),
+            seed: args.seed.unwrap_or(1),
+        },
+    };
+    Operation::Sculpt { brush, operation }
+}
+
+fn terrain_blend_operation(
+    args: &TerrainBlendArgs,
+) -> Result<map_core::displacement::Operation, String> {
+    use map_core::displacement::{
+        Operation,
+        brush::{Blend, Brush},
+    };
+    let center = match args.mode {
+        TerrainBlendMode::Paint => args.center.ok_or("center is required for blend painting")?,
+        _ => [0.0; 3],
+    };
+    let brush = Brush {
+        center: vec3(center),
+        radius: args.radius.unwrap_or(128.0),
+        axis: terrain_direction(args.direction),
+    };
+    let operation = match args.mode {
+        TerrainBlendMode::Paint => Blend::Paint {
+            value: args.value.unwrap_or(128.0),
+            strength: args.strength.unwrap_or(1.0),
+        },
+        TerrainBlendMode::Fill => Blend::Fill(args.value.unwrap_or(128.0)),
+        TerrainBlendMode::Invert => Blend::Invert,
+    };
+    Ok(Operation::Blend { brush, operation })
 }
 
 fn terrain_direction(value: Option<TerrainDirection>) -> map_core::displacement::brush::Axis {
@@ -5092,27 +5163,12 @@ impl EditorServer {
         Parameters(args): Parameters<TerrainSculptArgs>,
     ) -> ToolResult {
         run(|| {
-            use map_core::displacement::brush::{Brush, Sculpt};
             let mut session = self.session();
             let faces = args.faces.as_ref().map_or_else(
                 || session.selected_faces(),
                 |faces| faces.iter().map(face_id).collect(),
             );
-            let brush = Brush {
-                center: DVec3::from_array(args.center),
-                radius: args.radius.unwrap_or(128.0),
-                axis: terrain_direction(args.direction),
-            };
-            let operation = match args.mode {
-                TerrainSculptMode::Raise => Sculpt::Raise(args.amount.unwrap_or(16.0)),
-                TerrainSculptMode::Flatten => Sculpt::Flatten(args.strength.unwrap_or(0.5)),
-                TerrainSculptMode::Smooth => Sculpt::Smooth(args.strength.unwrap_or(0.5)),
-                TerrainSculptMode::Noise => Sculpt::Noise {
-                    amplitude: args.amount.unwrap_or(16.0),
-                    seed: args.seed.unwrap_or(1),
-                },
-            };
-            let operation = map_core::displacement::Operation::Sculpt { brush, operation };
+            let operation = terrain_sculpt_operation(&args);
             let count = if let Some(token) = args.mask_token {
                 session.preview_terrain_masked_edit(
                     Actor::Agent,
@@ -5132,32 +5188,12 @@ impl EditorServer {
     )]
     fn preview_terrain_blend(&self, Parameters(args): Parameters<TerrainBlendArgs>) -> ToolResult {
         run(|| {
-            use map_core::displacement::brush::{Blend, Brush};
             let mut session = self.session();
             let faces = args.faces.as_ref().map_or_else(
                 || session.selected_faces(),
                 |faces| faces.iter().map(face_id).collect(),
             );
-            let center = match args.mode {
-                TerrainBlendMode::Paint => {
-                    args.center.ok_or("center is required for blend painting")?
-                }
-                _ => [0.0; 3],
-            };
-            let brush = Brush {
-                center: DVec3::from_array(center),
-                radius: args.radius.unwrap_or(128.0),
-                axis: terrain_direction(args.direction),
-            };
-            let operation = match args.mode {
-                TerrainBlendMode::Paint => Blend::Paint {
-                    value: args.value.unwrap_or(128.0),
-                    strength: args.strength.unwrap_or(1.0),
-                },
-                TerrainBlendMode::Fill => Blend::Fill(args.value.unwrap_or(128.0)),
-                TerrainBlendMode::Invert => Blend::Invert,
-            };
-            let operation = map_core::displacement::Operation::Blend { brush, operation };
+            let operation = terrain_blend_operation(&args)?;
             let count = if let Some(token) = args.mask_token {
                 session.preview_terrain_masked_edit(
                     Actor::Agent,
@@ -5205,6 +5241,121 @@ impl EditorServer {
             Ok(
                 json!({"faces":rows.iter().map(|row|json!({"solid":row.face.solid,"side":row.face.side,"triangles":row.triangles.iter().map(|triangle|json!({"id":triangle.id,"indices":triangle.indices,"positions":triangle.positions.map(|p|p.to_array()),"centroid":triangle.centroid.to_array(),"source_tags":triangle.source_tags,"walkable":triangle.walkable,"buildable":triangle.buildable,"walkable_override":triangle.walkable_override,"buildable_override":triangle.buildable_override,"removed":triangle.removed,"unknown_tags":triangle.unknown_tags})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
             )
+        })
+    }
+
+    #[tool(
+        description = "Begin a bounded terrain brush stroke without editing source/history. Supply exactly one sculpt or blend object using the same arguments as preview_terrain_sculpt/blend; blend must be paint. Selected/explicit faces and optional mask_token are captured. An active geometry preview rejects rather than replacing it. Flatten keeps the supplied center plane; other brush centers follow the path. Returns stroke token, spacing and limits. UI: Edit terrain… → Draw stroke in viewport…."
+    )]
+    fn begin_terrain_stroke(&self, Parameters(args): Parameters<TerrainStrokeArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let (faces, operation, mask) = match (&args.sculpt, &args.blend) {
+                (Some(args), None) => (
+                    args.faces.as_ref(),
+                    terrain_sculpt_operation(args),
+                    args.mask_token.as_deref(),
+                ),
+                (None, Some(args)) => (
+                    args.faces.as_ref(),
+                    terrain_blend_operation(args)?,
+                    args.mask_token.as_deref(),
+                ),
+                _ => return Err("Supply exactly one sculpt or blend brush".into()),
+            };
+            let faces = faces.map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            session.begin_terrain_stroke(
+                Actor::Agent,
+                &faces,
+                operation,
+                mask.map(parse_token).transpose()?,
+            )?;
+            Ok(session.terrain_stroke_json())
+        })
+    }
+
+    #[tool(
+        description = "Append terrain stroke input using its token and either points (1–64 finite world positions) or origin+direction (one visible terrain ray hit). Dabs are spaced at radius/4 clamped1–64 brush-plane units, carried across updates; motion along the captured sampling normal adds no dabs. Face-normal spacing follows the first selected base face. Each preview replays ordered dabs from captured source, so inspection does not accumulate edits. A ray miss breaks continuity; next hit starts a new segment. Invalid/stale/replaced updates preserve prior drafts. Bounds ±65536, max512 dabs/4096 input points/two-million vertex-sample work. Masks, radius/falloff and immutable-neighbor smoothing stay shared. Returns stroke plus face preview state. UI: drag on selected terrain."
+    )]
+    fn update_terrain_stroke(
+        &self,
+        Parameters(args): Parameters<TerrainStrokeUpdateArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let token = parse_token(&args.token)?;
+            let changed = match (args.points, args.origin, args.direction) {
+                (Some(points), None, None) => session.update_terrain_stroke(
+                    Actor::Agent,
+                    token,
+                    &points.into_iter().map(vec3).collect::<Vec<_>>(),
+                )?,
+                (None, Some(origin), Some(direction)) => session.update_terrain_stroke_at_ray(
+                    Actor::Agent,
+                    token,
+                    &Ray {
+                        origin: vec3(origin),
+                        direction: vec3(direction),
+                    },
+                )?,
+                _ => return Err("Supply points or both origin and direction".into()),
+            };
+            Ok(
+                json!({"faces_changed":changed,"stroke":session.terrain_stroke_json(),"state":face_state(&session)}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Inspect the active terrain stroke, token, source/preview/mask stale state, captured mode/radius, sample spacing/counts, cursor and work limits. Does not change source/history or compound the draft.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_stroke(&self) -> ToolResult {
+        ok(self.session().terrain_stroke_json())
+    }
+
+    #[tool(
+        description = "Break terrain stroke continuity using its token, keeping existing dabs/draft. The next world point or ray hit starts a new segment. Ray misses do this automatically. Invalid/stale tokens preserve the prior state. UI: move off visible selected terrain during a stroke."
+    )]
+    fn break_terrain_stroke(
+        &self,
+        Parameters(args): Parameters<TerrainStrokeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.interrupt_terrain_stroke(parse_token(&args.token)?)?;
+            Ok(session.terrain_stroke_json())
+        })
+    }
+
+    #[tool(
+        description = "Finish an owned terrain stroke into its existing face preview. Requires at least one dab and current source/mask/preview tokens. Source/history stay fixed; inspect get_terrain_grids(preview=true) or render_view, then commit_face_preview/cancel_face_preview using state.preview_token. One Apply makes one Undo step. UI: release the terrain stroke."
+    )]
+    fn finish_terrain_stroke(
+        &self,
+        Parameters(args): Parameters<TerrainStrokeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.finish_terrain_stroke(Actor::Agent, parse_token(&args.token)?)?;
+            Ok(json!({"stroke":session.terrain_stroke_json(),"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Cancel a terrain stroke by token and discard only its owned face preview. A replaced stroke token rejects; a foreign face preview remains intact. Source/history stay fixed. UI: Escape or Cancel stroke while drawing."
+    )]
+    fn cancel_terrain_stroke(
+        &self,
+        Parameters(args): Parameters<TerrainStrokeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_terrain_stroke(parse_token(&args.token)?)?;
+            Ok(json!({"stroke":session.terrain_stroke_json(),"state":face_state(&session)}))
         })
     }
 

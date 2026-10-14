@@ -41,7 +41,23 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 ![Terrain sculpting controls with viewport center picking](images/terrain-center-picker.png)
 
-Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Brushes use a world-space center rather than a live viewport stroke; use **Sew borders & corners** to join matching full/half borders across grid sizes; sewing is not automatic.
+Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Fixed previews use the entered world-space center; use **Draw stroke in viewport…** for a path. **Sew borders & corners** joins matching full/half borders across grid sizes; sewing is not automatic.
+
+## Draw a brush stroke
+
+Sculpt or paint a blend along a visible terrain path, then review it before keeping the edit.
+
+1. Select terrain faces and open **Edit terrain…**. Choose **Raise / lower**, **Flatten**, **Smooth**, **Noise** or **Paint blend** under **Operation**.
+2. Set **Radius · world units**, direction and the operation's amount, strength or blend value. For **Flatten**, the entered **Brush center · world coordinates** sets the target plane for the whole stroke. Enable **Affect only selected terrain vertices** to use a retained triangle or vertex mask.
+3. Click **Draw stroke in viewport…**. Drag with the left mouse button on visible selected terrain. A white circle shows the current brush radius. Moving off a visible terrain surface breaks the path; the next hit starts another segment.
+4. Release to return to the dialog and inspect the draft. Click **Apply** to keep one Undo step, or **Cancel** to discard it. During drawing, **Escape** or **Cancel stroke** discards the owned draft and returns to the dialog. Losing viewport focus while dragging discards that stroke.
+5. Use **Undo** to restore every original grid. An applied masked stroke keeps its matching selection available for the next brush action.
+
+![Terrain controls with the live stroke entry point](images/terrain-stroke-controls.png)
+
+![A live sculpt stroke and shared brush-radius guide](images/terrain-stroke-guide.png)
+
+Limits: samples are spaced at one quarter of the radius, clamped to 1–64 units, measured in the brush plane. Face-normal mode uses the first selected base face for path spacing and the circle; each surface keeps its own brush direction. Overlapping samples accumulate the selected operation; stationary pointer positions add no samples. Flatten keeps its original target plane. Smoothing reads original neighbors within each sample. Each stroke supports at most 512 samples, 4096 input points and two million vertex/sample evaluations. Invalid updates retain the last good draft. Source, history and unselected samples stay fixed until **Apply**; other actors' replacement previews or masks reject further stroke updates. Fill, invert, sewing, collision and resolution edits use their existing complete-action controls.
 
 ## Select triangles in a box
 
@@ -82,7 +98,7 @@ Choose individual terrain samples for a precise height or blend edit.
 
 ![Three individual terrain samples raised with an exact vertex mask](images/terrain-selected-vertices.png)
 
-Limits: 1–16 surfaces at powers 2–4, with row-major IDs from 0–24, 0–80 or 0–288. Start-corner rotation determines their world placement. Changing **Selection type** clears this dialog's selection. Triangle and vertex selections share one retained mask; a new selection replaces the old one. Compatible geometry previews move the markers; changed topology, external edits, Undo/Redo or reopening stale them. Hidden owners and tool-material visibility apply to picking, guides, framing and box queries. Moving one sample reshapes adjoining triangles. Live brush strokes and direct vertex drag handles remain planned.
+Limits: 1–16 surfaces at powers 2–4, with row-major IDs from 0–24, 0–80 or 0–288. Start-corner rotation determines their world placement. Changing **Selection type** clears this dialog's selection. Triangle and vertex selections share one retained mask; a new selection replaces the old one. Compatible geometry previews move the markers; changed topology, external edits, Undo/Redo or reopening stale them. Hidden owners and tool-material visibility apply to picking, guides, framing and box queries. Moving one sample reshapes adjoining triangles. Direct vertex drag handles remain planned.
 
 ## Paint a material blend
 
@@ -96,7 +112,7 @@ Limits: 1–16 surfaces at powers 2–4, with row-major IDs from 0–24, 0–80 
 
 ![Painted grass and dirt on terrain](images/terrain-blending.png)
 
-Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Use **Pick center in viewport…** or exact coordinates to place the bounded brush. Live viewport strokes remain planned. **Sew borders & corners** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
+Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Use **Pick center in viewport…** or exact coordinates for a fixed brush, or **Draw stroke in viewport…** for blend paint. **Sew borders & corners** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
 
 ## Sew neighboring terrain
 

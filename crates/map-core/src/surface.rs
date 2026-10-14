@@ -456,6 +456,9 @@ pub fn edit_faces(
                 crate::displacement::Operation::Blend { brush, operation } => {
                     crate::displacement::brush::blend(&geometry, info, *brush, *operation)?
                 }
+                crate::displacement::Operation::Stroke { spec, points } => {
+                    crate::displacement::stroke::apply(&geometry, info, *spec, points, None)?
+                }
             });
         }
         changed += usize::from(*side != before);

@@ -294,6 +294,13 @@ pub fn masked(
         super::Operation::Blend { brush, operation } => {
             blend_masked(face, info, *brush, *operation, Some(&vertices))
         }
+        super::Operation::Stroke { spec, points } => super::stroke::apply(
+            face,
+            info,
+            *spec,
+            points,
+            Some(&vertices.iter().copied().collect::<Vec<_>>()),
+        ),
         _ => Err(invalid(
             "Only sculpting and blending accept a terrain vertex mask",
         )),

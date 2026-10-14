@@ -437,6 +437,7 @@ impl Session {
             operation,
             map_core::displacement::Operation::Sculpt { .. }
                 | map_core::displacement::Operation::Blend { .. }
+                | map_core::displacement::Operation::Stroke { .. }
         ) {
             return Err("Only sculpting and blending accept a terrain vertex mask".into());
         }

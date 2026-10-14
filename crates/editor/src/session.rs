@@ -41,6 +41,7 @@ mod recovery;
 pub mod saved_views;
 pub mod statistics;
 mod surfaces;
+pub mod terrain_strokes;
 pub mod terrain_triangles;
 pub mod terrain_vertices;
 pub mod volume;
@@ -133,6 +134,7 @@ pub struct Session {
     face_preview_serial: u64,
     terrain_triangle_highlight: Option<terrain_triangles::Highlight>,
     terrain_triangle_serial: u64,
+    terrain_strokes: terrain_strokes::State,
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
     checks: checks::State,
@@ -233,6 +235,7 @@ impl Session {
             face_preview_serial: 0,
             terrain_triangle_highlight: None,
             terrain_triangle_serial: 0,
+            terrain_strokes: terrain_strokes::State::default(),
             surface_sample: None,
             recovery: recovery::State::default(),
             checks: checks::State::default(),
@@ -636,10 +639,14 @@ impl Session {
                         map_core::displacement::Operation::Sculpt { .. } => {
                             "sculpt selected terrain vertices"
                         }
+                        map_core::displacement::Operation::Stroke { .. } => {
+                            "edit selected terrain stroke"
+                        }
                         _ => "blend selected terrain vertices",
                     }
                 }
                 map_core::displacement::Operation::Blend { .. } => "edit terrain blend",
+                map_core::displacement::Operation::Stroke { .. } => "edit terrain brush stroke",
             })
             .unwrap_or("edit face settings");
         let changed = self.edit(actor, label, |tx| {
@@ -1919,6 +1926,7 @@ impl Session {
         self.append_volume_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
         self.append_terrain_triangle_guides(&mut mesh);
+        self.append_terrain_stroke_guides(&mut mesh);
         self.append_clip_points(&mut mesh);
         mesh
     }

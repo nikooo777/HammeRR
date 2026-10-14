@@ -103,6 +103,21 @@ pub fn find(
     grids: &[SurfaceGrid<'_>],
     consume: &mut impl FnMut(usize) -> Result<(), String>,
 ) -> Result<Neighbors, String> {
+    find_edges(grids, false, consume)
+}
+
+pub fn find_mixed(
+    grids: &[SurfaceGrid<'_>],
+    consume: &mut impl FnMut(usize) -> Result<(), String>,
+) -> Result<Neighbors, String> {
+    find_edges(grids, true, consume)
+}
+
+fn find_edges(
+    grids: &[SurfaceGrid<'_>],
+    mixed: bool,
+    consume: &mut impl FnMut(usize) -> Result<(), String>,
+) -> Result<Neighbors, String> {
     let mut budget = Budget {
         work: 0,
         limit: MAX_TOPOLOGY_WORK,
@@ -140,16 +155,12 @@ pub fn find(
             neighbors.ambiguous += 1;
             continue;
         }
-        if a.power != b.power {
+        if a.power != b.power && !mixed {
             neighbors.unequal_power += 1;
             continue;
         }
-        let size = (1 << a.power) + 1;
         let mut matches = true;
-        for (i, j) in edge_indices(size, first_edge)?
-            .into_iter()
-            .zip(edge_indices(size, second_edge)?.into_iter().rev())
-        {
+        for (i, j) in common_edge_indices(a.power, first_edge, b.power, second_edge)? {
             budget.consume(1)?;
             if a.positions[i].distance(b.positions[j]) > EDGE_TOLERANCE {
                 matches = false;
@@ -168,6 +179,28 @@ pub fn find(
         }
     }
     Ok(neighbors)
+}
+
+pub fn common_edge_indices(
+    first_power: u32,
+    first_edge: usize,
+    second_power: u32,
+    second_edge: usize,
+) -> Result<Vec<(usize, usize)>, String> {
+    if !(2..=4).contains(&first_power) || !(2..=4).contains(&second_power) {
+        return Err("Terrain power must be 2, 3 or 4".into());
+    }
+    let a = edge_indices((1 << first_power) + 1, first_edge)?;
+    let b = edge_indices((1 << second_power) + 1, second_edge)?;
+    let steps = (a.len() - 1).min(b.len() - 1);
+    Ok((0..=steps)
+        .map(|i| {
+            (
+                a[i * (a.len() - 1) / steps],
+                b[b.len() - 1 - i * (b.len() - 1) / steps],
+            )
+        })
+        .collect())
 }
 
 fn root<F: FnMut(usize) -> Result<(), String>>(
@@ -211,14 +244,10 @@ pub fn vertex_normals(
         let b = grids
             .get(pair.second)
             .ok_or("Terrain normal neighbor index is invalid")?;
-        if pair.first == pair.second || a.power != b.power {
-            return Err("Terrain normals require distinct equal-power neighbors".into());
+        if pair.first == pair.second {
+            return Err("Terrain normals require distinct neighbors".into());
         }
-        let size = (1 << a.power) + 1;
-        for (i, j) in edge_indices(size, pair.first_edge)?
-            .into_iter()
-            .zip(edge_indices(size, pair.second_edge)?.into_iter().rev())
-        {
+        for (i, j) in common_edge_indices(a.power, pair.first_edge, b.power, pair.second_edge)? {
             budget.consume(1)?;
             if a.positions[i].distance(b.positions[j]) > EDGE_TOLERANCE {
                 return Err("Terrain normal neighbor surfaces do not match".into());

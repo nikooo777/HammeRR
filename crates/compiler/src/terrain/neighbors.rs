@@ -2,13 +2,13 @@ use map_core::displacement::neighbors::{self, SurfaceGrid};
 use source_formats::bsp::{DisplacementCorner, DisplacementNeighbor};
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::Terrain;
+use super::{NeighborStats, Terrain};
 use crate::emit::stored_vertex;
 use crate::{Control, Diagnostic, Report};
 
 const MAX_WORK: usize = 2_000_000;
 
-fn consume(work: &mut usize, amount: usize, control: &Control) -> Result<(), String> {
+pub(super) fn consume(work: &mut usize, amount: usize, control: &Control) -> Result<(), String> {
     control.checkpoint()?;
     *work = work
         .checked_add(amount)
@@ -23,7 +23,7 @@ pub(super) fn connect(
     terrains: &mut [Terrain],
     report: &mut Report,
     control: &Control,
-) -> Result<(usize, usize), String> {
+) -> Result<NeighborStats, String> {
     let mut work = 0;
     let mut positions = Vec::with_capacity(terrains.len());
     for terrain in terrains.iter() {
@@ -49,7 +49,8 @@ pub(super) fn connect(
             }
         })
         .collect::<Vec<_>>();
-    let neighbors = neighbors::find(&grids, &mut |amount| consume(&mut work, amount, control))?;
+    let neighbors =
+        neighbors::find_mixed(&grids, &mut |amount| consume(&mut work, amount, control))?;
     let mut pending = vec![[[DisplacementNeighbor::default(); 2]; 4]; terrains.len()];
     for pair in &neighbors.pairs {
         for (index, edge, other, other_edge) in [
@@ -64,15 +65,37 @@ pub(super) fn connect(
         }
     }
     let (corners, corner_pairs) = corner_neighbors(&grids, &pending, &mut work, control)?;
+    let mixed_pairs = neighbors
+        .pairs
+        .iter()
+        .filter(|pair| grids[pair.first].power != grids[pair.second].power)
+        .count();
+    let (lod, stats) = super::lod::prepare(terrains, &grids, &neighbors.pairs, &mut work, control)?;
     control.checkpoint()?;
-    for ((terrain, edges), corners) in terrains.iter_mut().zip(pending).zip(corners) {
+    for (((terrain, edges), corners), lod) in terrains.iter_mut().zip(pending).zip(corners).zip(lod)
+    {
         terrain.info.edges = edges;
         terrain.info.corners = corners;
+        if let Some(lod) = lod {
+            terrain.info.allowed_vertices = lod.mask;
+            terrain.mesh.positions = lod.positions;
+            terrain.vertices = lod.vertices;
+            terrain.indices = lod.indices;
+        }
     }
-    if neighbors.ambiguous + neighbors.unequal_power + neighbors.mismatched != 0 {
-        report.diagnostics.push(Diagnostic::warning(format!("Terrain shared edges left unlinked: {} ambiguous, {} unequal-power, {} mismatched surfaces. Neighbor metadata currently supports exact native base edges with matching equal-power grids", neighbors.ambiguous, neighbors.unequal_power, neighbors.mismatched), None, None));
+    if neighbors.ambiguous + neighbors.mismatched != 0 {
+        report.diagnostics.push(Diagnostic::warning(format!("Terrain shared edges left unlinked: {} ambiguous, {} mismatched surfaces. Full native base edges require matching common samples; partial spans are not connected yet", neighbors.ambiguous, neighbors.mismatched), None, None));
     }
-    Ok((neighbors.pairs.len(), corner_pairs))
+    if stats.snapped != 0 {
+        report.diagnostics.push(Diagnostic::warning(format!("Terrain LOD snapped {} inactive vertices onto the compatible surface; editable terrain remains unchanged", stats.snapped), None, None));
+    }
+    Ok(NeighborStats {
+        pairs: neighbors.pairs.len(),
+        corner_pairs,
+        mixed_pairs,
+        disabled_vertices: stats.disabled,
+        snapped_vertices: stats.snapped,
+    })
 }
 
 fn corner_neighbors(

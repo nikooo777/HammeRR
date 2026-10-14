@@ -69,7 +69,7 @@ Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can r
 
 ![Two terrain surfaces joined along their shared border](images/terrain-sewn.png)
 
-Limits: equal-power full base edges only. Missing matches, ambiguous overlaps, unequal powers and unsupported subdivision/cache data reject atomically. Unmatched borders are unchanged. Partial edges, mixed-power LOD and subdivision remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
+Limits: equal-power full base edges only. Missing matches, ambiguous overlaps, unequal powers and unsupported subdivision/cache data reject atomically. Unmatched borders are unchanged. Partial-edge authoring and subdivision remain planned. Compilation can link compatible mixed-power full edges without sewing the source grids. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
 
 ## Set collision behavior
 
@@ -89,6 +89,17 @@ Limits: 1–16 faces; other flags, geometry, alpha and tags stay fixed. Unsuppor
 3. Use **Undo** to restore the complete grid, including imported heights, alpha, tags and extra data.
 
 Limits: every target must contain terrain, with 1–16 faces per action. Invalid or mixed ordinary/terrain targets reject together. IDs, brush planes, material, mapping and lighting remain. Imported brush-entity terrain can be removed to repair it, while its native compilation remains unsupported.
+
+## Compile different grid resolutions together
+
+1. Create adjacent terrain faces whose complete base edges match. Set their powers independently with **Terrain grid** during creation or **Edit terrain… → Operation → Grid resolution** afterward.
+2. Keep the heights at shared coarse vertices aligned. Refining an existing grid preserves those samples; independently sculpted borders may need repair.
+3. Open **Build settings…**, choose **Direct LDR** and **CS:S engine physics**, then **Close** and **Compile**.
+4. Open **Build details…** and inspect **Mixed-power pairs**, **LOD disabled vertices** and **Snapped vertices**. Read **Diagnostics** for unmatched edges or reduced fine detail.
+
+![Compiled terrain with adjacent grid resolutions](images/terrain-mixed-resolution.png)
+
+Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Partial spans, subdivision and holes remain planned. **Sew edges** still edits equal-power grids only.
 
 ## Connected lighting
 

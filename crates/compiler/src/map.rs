@@ -26,6 +26,9 @@ mod origins;
 #[path = "cubemaps.rs"]
 mod cubemaps;
 
+#[path = "occluders.rs"]
+pub(crate) mod occluders;
+
 #[path = "terrain.rs"]
 mod terrain;
 pub use terrain::Terrain;
@@ -53,7 +56,6 @@ const CONSUMED: &[&str] = &["func_detail"];
 const UNSUPPORTED: &[&str] = &[
     "info_overlay_transition",
     "func_viscluster",
-    "func_occluder",
     "func_instance",
 ];
 
@@ -161,6 +163,7 @@ pub struct Map<'a> {
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
     pub cubemaps: Vec<bsp::Cubemap>,
+    pub(crate) occluders: Vec<occluders::Definition>,
     pub terrains: Vec<Terrain>,
     pub(crate) area_portals: Vec<crate::areas::PortalBrush>,
     pub(crate) overlays: crate::overlays::Plan,
@@ -188,6 +191,7 @@ impl<'a> Map<'a> {
             brushes: Vec::new(),
             entities: Vec::new(),
             cubemaps: Vec::new(),
+            occluders: Vec::new(),
             terrains: Vec::new(),
             area_portals: Vec::new(),
             overlays: crate::overlays::Plan::default(),
@@ -243,6 +247,10 @@ impl<'a> Map<'a> {
             }
             if classname.eq_ignore_ascii_case("env_cubemap") {
                 map.add_cubemap(entity, report);
+                continue;
+            }
+            if classname.eq_ignore_ascii_case("func_occluder") {
+                map.add_occluder(entity, report, control)?;
                 continue;
             }
             if classname.eq_ignore_ascii_case("info_overlay") {

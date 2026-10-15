@@ -736,6 +736,15 @@ impl Controller {
                 )
             })
             .unwrap_or_default();
+        let occluders = result["stats"]["occluders"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let polygons = result["stats"]["occluder_polygons"].as_u64().unwrap_or_default();
+                let vertices = result["stats"]["occluder_vertex_refs"].as_u64().unwrap_or_default();
+                format!("\nOccluders: {count} · Polygons: {polygons} · Vertex references: {vertices}")
+            })
+            .unwrap_or_default();
         let overlays = result["stats"]["overlays"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -816,7 +825,7 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

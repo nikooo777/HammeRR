@@ -64,8 +64,8 @@ impl Session {
             "preview": preview,
             "limits": {"sources":repeat::MAX_SOURCES,"copies":repeat::MAX_COPIES,"objects_including_owned_brushes":repeat::MAX_OBJECTS,"sides":repeat::MAX_SIDES,"name_bytes":repeat::MAX_NAME_BYTES},
             "transform_policy":"Copy n uses the original objects, n × world XYZ rotation about one fixed pivot, then n × world translation. Count excludes originals.",
-            "reference_policy":"Unique source targetnames become name_copyN, with a collision suffix when needed. Certain exact internal FGD/I/O/parent references follow that copy; external links and procedural references remain unchanged. Shared names, ambiguous internal matches, wildcard captures of new names and overlay face-ID references reject.",
-            "metadata_policy":"Object and owned-brush context notes copy with their existing authorship/observations and full map budgets. Saved partitions remain attached to originals. Opaque custom/script semantics are preserved verbatim and are not inferred or remapped.",
+            "reference_policy":"Unique source targetnames become name_copyN, with a collision suffix when needed. Certain exact internal FGD/I/O/parent references follow that copy; external links and procedural references remain unchanged. Shared names, ambiguous internal matches, wildcard captures of new names, overlay face-ID references and node IDs reject. Named source sets with scripts or dynamic I/O also reject.",
+            "metadata_policy":"Object and owned-brush context notes copy with their existing authorship/observations and full map budgets. Saved partitions remain attached to originals. Other opaque custom metadata and embedded text stay verbatim; their semantics are not inferred or remapped.",
         })
     }
 

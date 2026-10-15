@@ -51,7 +51,7 @@ fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
 }
 
-fn validate(document: &Document, ids: &[ObjectId], options: Options) -> std::result::Result<(), EditError> {
+fn validate(document: &Document, ids: &[ObjectId], options: Options, catalog: &Catalog) -> std::result::Result<(), EditError> {
     if ids.is_empty() || ids.len() > MAX_SOURCES {
         return Err(invalid("Choose 1–16 source objects"));
     }
@@ -79,8 +79,15 @@ fn validate(document: &Document, ids: &[ObjectId], options: Options) -> std::res
             }
             ObjectId::Entity(id) => {
                 let entity = document.entity(id).ok_or(EditError::NotFound(ObjectId::Entity(id)))?;
+                if entity.properties.0.iter().filter(|(key, _)| key.eq_ignore_ascii_case("classname")).count() != 1 {
+                    return Err(invalid(format!("Entity {id} needs one unambiguous classname before repeating")));
+                }
                 if entity.classname().is_some_and(|class| class.eq_ignore_ascii_case("info_overlay") || class.eq_ignore_ascii_case("info_overlay_transition")) {
                     return Err(invalid("Overlay face-ID references are not supported by repeat arrays"));
+                }
+                let class = entity.classname().and_then(|name| catalog.class(name));
+                if entity.properties.0.iter().any(|(key, value)| !value.is_empty() && (key.eq_ignore_ascii_case("nodeid") || class.and_then(|class| class.property(key)).is_some_and(|property| matches!(property.kind.as_str(), "sidelist" | "side_list" | "node_dest" | "node_id" | "node_source")))) {
+                    return Err(invalid(format!("Entity {id} has node/side IDs that repeat arrays cannot safely remap")));
                 }
                 sides += entity.solids.iter().map(|solid| solid.sides.len()).sum::<usize>();
                 objects += 1 + entity.solids.len();
@@ -91,6 +98,19 @@ fn validate(document: &Document, ids: &[ObjectId], options: Options) -> std::res
         return Err(invalid("Array exceeds 256 new objects including owned brushes, or 8192 new sides"));
     }
     document.vmf().validate_ids().map_err(|error| invalid(error.to_string()))?;
+    Ok(())
+}
+
+fn validate_opaque_links(document: &Document, sources: &BTreeSet<u32>, names: &BTreeMap<String, (u32, String)>) -> std::result::Result<(), EditError> {
+    if names.is_empty() { return Ok(()); }
+    for source in sources {
+        let entity = document.entity(*source).ok_or(EditError::NotFound(ObjectId::Entity(*source)))?;
+        let script = entity.properties.0.iter().any(|(key, value)| !value.trim().is_empty() && (key.eq_ignore_ascii_case("vscripts") || key.eq_ignore_ascii_case("thinkfunction")));
+        let dynamic = entity.connections.iter().flatten().any(|connection| connection.fields().nth(1).is_some_and(|input| ["AddOutput", "RunScriptCode", "RunScriptFile"].iter().any(|dynamic| input.eq_ignore_ascii_case(dynamic))));
+        if script || dynamic {
+            return Err(invalid(format!("Entity {source} has script or dynamic I/O that repeat arrays cannot safely remap while changing names")));
+        }
+    }
     Ok(())
 }
 
@@ -152,10 +172,11 @@ fn copied_reference<'a>(entity: &'a mut source_formats::vmf::Entity, reference: 
 }
 
 pub fn create(tx: &mut Transaction, ids: &[ObjectId], options: Options, catalog: &Catalog) -> std::result::Result<Result, EditError> {
-    validate(tx.document(), ids, options)?;
+    validate(tx.document(), ids, options, catalog)?;
     let names = source_names(tx.document(), ids)?;
     let scan = references::scan(tx.document(), catalog);
     let sources = ids.iter().filter_map(|id| match id { ObjectId::Entity(id) => Some(*id), _ => None }).collect::<BTreeSet<_>>();
+    validate_opaque_links(tx.document(), &sources, &names)?;
     let mut internal = Vec::new();
     for reference in &scan {
         if !sources.contains(&reference.source) { continue; }

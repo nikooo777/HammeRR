@@ -53,7 +53,7 @@ export component RepeatWindow inherits Window {
             Text {text:"Copy n rotates the originals by n × the step about this pivot, then moves by n × the world move step.";wrap:word-wrap;color:#aeb8c6;}
             CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
             Text {text:"Names become unique name_copyN values. Exact internal entity links follow each copy; external links stay. Shared names and ambiguous internal links must be resolved first.";wrap:word-wrap;color:#aeb8c6;}
-            Text {text:"Custom scripts and opaque reference text stay verbatim. Context notes copy within the map budget; saved face partitions stay on the originals.";wrap:word-wrap;color:#aeb8c6;}
+            Text {text:"Named sets with scripts or dynamic I/O cannot be repeated. Other custom metadata stays verbatim. Context notes copy within the map budget; saved partitions stay on originals.";wrap:word-wrap;color:#aeb8c6;}
             Button {text:"Preview array";clicked=>{root.preview();}}
             ScrollView {
                 vertical-stretch:1;

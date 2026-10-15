@@ -142,10 +142,130 @@ fn context_copy_budget_is_enforced_and_rolls_back_the_entire_array() {
     let before = document.vmf().clone();
     let history = document.undo_labels().count();
     let error = document.edit("repeat", |tx| create(tx, &[source], options(4), &Catalog::default())).unwrap_err();
-    assert!(error.to_string().contains("limit"), "{error}");
+    assert!(error.to_string().contains("budget"), "{error}");
     assert_eq!(document.vmf(), &before);
     assert_eq!(document.undo_labels().count(), history);
     let result = document.edit("one copy", |tx| create(tx, &[source], options(1), &Catalog::default())).unwrap();
     assert!(document.context().unwrap().notes.contains_key(&Scope::Object(result.objects()[0])));
     assert_eq!(document.context().unwrap().notes[&Scope::Object(source)].body.len(), 3800);
+}
+
+#[test]
+fn inherited_fgd_references_and_duplicate_esc_connections_follow_each_copy() {
+    let catalog = Catalog::parse(r#"
+@BaseClass = Linked [
+ target(target_destination) : "Target"
+ input CustomLink(target_destination) : "Link"
+]
+@PointClass base(Linked) = info_target []
+"#).unwrap();
+    let mut document = Document::empty();
+    let parent = entity(&mut document, "parent", DVec3::ZERO);
+    let child = entity(&mut document, "child", DVec3::Y * 16.0);
+    document.edit("links", |tx| {
+        let child = tx.entity_mut(number(child))?;
+        child.properties.0.extend([("target".into(), "parent".into()), ("target".into(), "PARENT".into())]);
+        let connection = Connection { output: "OnUser1".into(), value: "parent\u{1b}CustomLink\u{1b}PARENT\u{1b}0.00\u{1b}01".into() };
+        child.connections = Some(vec![connection.clone(), connection]);
+        Ok(())
+    }).unwrap();
+    let before = document.vmf().clone();
+    let result = document.edit("repeat", |tx| create(tx, &[parent, child], options(2), &catalog)).unwrap();
+    for copy in result.copies {
+        let child = document.entity(number(copy.objects[1])).unwrap();
+        let name = format!("parent_copy{}", copy.index);
+        assert_eq!(child.properties.get_all("target").collect::<Vec<_>>(), [name.as_str(), name.as_str()]);
+        let connections = child.connections.as_ref().unwrap();
+        assert_eq!(connections[0].value, format!("{name}\u{1b}CustomLink\u{1b}{name}\u{1b}0.00\u{1b}01"));
+        assert_eq!(connections[0], connections[1]);
+        assert_eq!(copy.remapped_references, 6);
+    }
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &before);
+}
+
+#[test]
+fn owned_brush_notes_copy_with_observations_and_reserved_orphan_ids() {
+    let mut document = Document::empty();
+    let brush = document.edit("block", |tx| edit::create_block(tx, DVec3::ZERO, DVec3::splat(16.0), "brick/wall")).unwrap();
+    let ObjectId::Solid(brush_id) = brush else { panic!() };
+    let source = document.edit("tie", |tx| edit::tie_to_entity(tx, &[brush_id], "func_detail", &[])).unwrap();
+    let note = Note { summary: "Assembly part".into(), body: "Keep this brush".into(), author: "agent".into(), observed: "0123456789abcdef".into(), region: None, extra: Vec::new() };
+    let orphan = ObjectId::Entity(number(source) + 1);
+    document.edit("notes", |tx| {
+        let mut metadata = tx.document().context()?.clone();
+        for id in [source, brush, orphan] {
+            metadata.notes.insert(Scope::Object(id), note.clone());
+        }
+        tx.set_context(metadata)
+    }).unwrap();
+    let before = document.vmf().clone();
+    let result = document.edit("repeat", |tx| create(tx, &[source], options(2), &Catalog::default())).unwrap();
+    for copy in result.copies {
+        let copied = copy.objects[0];
+        assert_ne!(copied, orphan);
+        let owned = ObjectId::Solid(document.entity(number(copied)).unwrap().solids[0].id);
+        assert_ne!(owned, brush);
+        for id in [copied, owned, orphan] {
+            assert_eq!(document.context().unwrap().notes[&Scope::Object(id)], note);
+        }
+    }
+    document.vmf().validate_ids().unwrap();
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &before);
+}
+
+#[test]
+fn named_script_and_dynamic_io_sources_reject_without_rejecting_generic_text() {
+    for key in ["vscripts", "thinkfunction"] {
+        let mut document = Document::empty();
+        let source = entity(&mut document, "part", DVec3::ZERO);
+        document.edit("script", |tx| {
+            tx.entity_mut(number(source))?.properties.set(key, "script_entry");
+            Ok(())
+        }).unwrap();
+        let before = document.vmf().clone();
+        assert!(document.edit("repeat", |tx| create(tx, &[source], options(1), &Catalog::default())).unwrap_err().to_string().contains("script"));
+        assert_eq!(document.vmf(), &before);
+    }
+    for input in ["AddOutput", "RunScriptCode", "RunScriptFile"] {
+        let mut document = Document::empty();
+        let source = entity(&mut document, "part", DVec3::ZERO);
+        document.edit("dynamic I/O", |tx| {
+            tx.entity_mut(number(source))?.connections = Some(vec![Connection { output: "OnUser1".into(), value: format!("!self\u{1b}{input}\u{1b}opaque\u{1b}0\u{1b}-1") }]);
+            Ok(())
+        }).unwrap();
+        let before = document.vmf().clone();
+        assert!(document.edit("repeat", |tx| create(tx, &[source], options(1), &Catalog::default())).unwrap_err().to_string().contains("dynamic I/O"));
+        assert_eq!(document.vmf(), &before);
+    }
+    let mut document = Document::empty();
+    let source = entity(&mut document, "part", DVec3::ZERO);
+    document.edit("description", |tx| {
+        tx.entity_mut(number(source))?.properties.set("description", "The part remains visible near part_copy1");
+        Ok(())
+    }).unwrap();
+    let result = document.edit("repeat", |tx| create(tx, &[source], options(1), &Catalog::default())).unwrap();
+    assert_eq!(document.entity(number(result.objects()[0])).unwrap().properties.get("description"), Some("The part remains visible near part_copy1"));
+}
+
+#[test]
+fn duplicate_classnames_and_numeric_node_or_side_references_reject_atomically() {
+    let catalog = Catalog::parse(r#"
+@BaseClass = NumericLinks [ link(node_dest) : "Node" faces(sidelist) : "Faces" ]
+@PointClass base(NumericLinks) = info_target []
+"#).unwrap();
+    for key in ["classname", "nodeid", "link", "faces"] {
+        let mut document = Document::empty();
+        let source = entity(&mut document, "", DVec3::ZERO);
+        document.edit("unsafe IDs", |tx| {
+            tx.entity_mut(number(source))?.properties.0.push((key.into(), "17".into()));
+            Ok(())
+        }).unwrap();
+        let before = document.vmf().clone();
+        let history = document.undo_labels().count();
+        assert!(document.edit("repeat", |tx| create(tx, &[source], options(1), &catalog)).is_err());
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.undo_labels().count(), history);
+    }
 }

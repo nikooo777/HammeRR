@@ -8644,6 +8644,7 @@ mod tests {
                 &[
                     ("model".into(), "models/check.mdl".into()),
                     ("solid".into(), "0".into()),
+                    ("disableshadows".into(), "1".into()),
                 ],
                 Vec::new(),
             )
@@ -8750,6 +8751,8 @@ mod tests {
         assert_eq!(stats["static_props"], 1);
         assert_eq!(stats["static_prop_models"], 1);
         assert!(controller.window.get_details().contains("Static props: 1"));
+        assert_eq!(stats["prop_shadow_disabled"], 1);
+        assert!(controller.window.get_details().contains("Prop mesh shadows: 0 props · 0 triangles · 1 disabled"));
         assert_eq!(stats["displacements"], 1);
         assert_eq!(stats["displacement_vertices"], 25);
         assert_eq!(stats["displacement_triangles"], 32);

@@ -15,6 +15,7 @@ pub(super) struct Context<'a> {
     pub plans: &'a [Plan],
     pub faces: &'a mut [Face],
     pub infos: &'a [TexInfo],
+    pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
     pub shadows: &'a ShadowIndex<Occluder>,
     pub model_shadows: &'a [Option<ShadowIndex<Occluder>>],
     pub quality: SkyQuality,
@@ -128,7 +129,7 @@ pub(super) fn bake(
                     let bounce = gather(normal, &directions, &mut |direction| {
                         stats.rays += 1;
                         let hit = surfaces
-                            .trace(origin, direction, cone, ctx.shadows, budget)?
+                            .trace(origin, direction, cone, ctx.shadows, ctx.prop_shadows, budget)?
                             .filter(|hit| !hit.sky && hit.front);
                         match hit {
                             Some(hit)

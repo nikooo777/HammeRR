@@ -11,6 +11,7 @@ mod falloff;
 mod models;
 mod normals;
 mod probes;
+mod props;
 mod radiance;
 mod shadows;
 mod sky;

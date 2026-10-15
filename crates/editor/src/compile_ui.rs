@@ -588,7 +588,10 @@ impl Controller {
                     .as_u64()
                     .unwrap_or_default();
                 format!(
-                    "\nStatic props: {count} · Model assets: {models} · Leaf references: {leaves}"
+                    "\nStatic props: {count} · Model assets: {models} · Leaf references: {leaves}\nProp mesh shadows: {} props · {} triangles · {} disabled",
+                    result["stats"]["prop_shadow_props"].as_u64().unwrap_or_default(),
+                    result["stats"]["prop_shadow_triangles"].as_u64().unwrap_or_default(),
+                    result["stats"]["prop_shadow_disabled"].as_u64().unwrap_or_default()
                 )
             })
             .unwrap_or_default();

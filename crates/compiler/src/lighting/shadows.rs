@@ -70,7 +70,7 @@ impl Triangle {
             || !normal.length_squared().is_finite()
             || normal.length_squared() == 0.0
         {
-            return Err("Terrain shadow triangle must be finite and noncollapsed".into());
+            return Err("Shadow triangle must be finite and noncollapsed".into());
         }
         Ok(Self {
             points,
@@ -95,7 +95,7 @@ impl Triangle {
         let determinant = edges[0].dot(cross);
         let scale = edges[0].length() * edges[1].length() * delta.length();
         if !delta.is_finite() || !determinant.is_finite() || !scale.is_finite() {
-            return Err("Terrain shadow ray arithmetic must be finite".into());
+            return Err("Shadow ray arithmetic must be finite".into());
         }
         if scale == 0.0 || determinant.abs() <= scale * 1e-12 {
             return Ok(None);

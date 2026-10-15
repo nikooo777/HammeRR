@@ -27,6 +27,7 @@ pub(super) struct Context<'a> {
     pub map: &'a Map<'a>,
     pub tree: &'a Tree,
     pub visibility: &'a Visibility,
+    pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
     pub shadows: &'a ShadowIndex<Occluder>,
     pub terrain: &'a ShadowIndex<Triangle>,
     pub directions: &'a [DVec3],
@@ -234,7 +235,7 @@ pub(super) fn bake(
             );
             let colors = gather(ctx.directions, &mut |direction| {
                 Ok(surfaces
-                    .trace(point, direction, cone, ctx.shadows, budget)?
+                    .trace(point, direction, cone, ctx.shadows, ctx.prop_shadows, budget)?
                     .map_or(DVec3::ZERO, |hit| hit.color))
             })?;
             for (slot, color) in sample.cube.iter_mut().zip(colors) {
@@ -256,7 +257,7 @@ pub(super) fn bake(
         &LeafAmbient::Indexed { indices, samples },
     )
     .map_err(|error| error.to_string())?;
-    report.diagnostics.push(Diagnostic::info("Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Adaptive refinement and static-prop shadows remain unfinished", None, None));
+    report.diagnostics.push(Diagnostic::info("Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Opaque static-prop meshes block probe rays; adaptive refinement and reflected prop sources remain unfinished", None, None));
     Ok(stats)
 }
 

@@ -26,6 +26,7 @@ mod recovery;
 mod recovery_ui;
 mod recent_maps;
 mod recent_maps_ui;
+mod repeat_ui;
 mod rename_ui;
 mod saved_views_ui;
 mod session;
@@ -186,6 +187,7 @@ struct Ui {
     model_browser: Option<model_browser_ui::Controller>,
     sounds: Option<sounds_ui::Controller>,
     placement: Option<placement_ui::Controller>,
+    repeat: Option<repeat_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -3215,6 +3217,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         model_browser: None,
         sounds: None,
         placement: None,
+        repeat: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -4012,6 +4015,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
             cancel_surface_pick(&app.unwrap(), &ui);
+        }
+    });
+    app.on_repeat_array({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().repeat.is_none() {
+                match repeat_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().repeat = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.repeat.as_ref().unwrap();
+            match controller.initialize(&lock(&shared)) {
+                Ok(()) => { let _ = controller.window.show(); }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
         }
     });
     app.on_place_on_surface({
@@ -4915,6 +4939,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         controller.refresh(&mut session);
                     }
+                    if let Some(controller) = &ui.repeat
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.placement
                         && (controller.window.window().is_visible() || controller.is_picking())
                     {
@@ -4966,6 +4995,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&mut session);
+                    }
+                    if let Some(controller) = &ui.repeat
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.placement
                         && (controller.window.window().is_visible() || controller.is_picking())

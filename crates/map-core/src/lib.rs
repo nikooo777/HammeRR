@@ -20,6 +20,7 @@ pub mod primitive;
 pub mod query;
 pub mod references;
 pub mod region;
+pub mod repeat;
 pub mod saved_views;
 pub mod subobject;
 pub mod surface;

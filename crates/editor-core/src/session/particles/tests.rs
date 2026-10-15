@@ -129,6 +129,8 @@ fn failed_catalogs_are_not_cached_and_active_corruption_blocks_apply() {
     let manifest = directory.path().join("particles/particles_manifest.txt");
     std::fs::remove_file(&manifest).unwrap();
     assert!(session.browse_particles("", "all", 0, 10).is_err());
+    std::fs::write(&manifest, "particles_manifest { file particles/test.pcf").unwrap();
+    assert!(session.browse_particles("", "all", 0, 10).is_err());
     std::fs::write(&manifest, "particles_manifest { file particles/test.pcf }").unwrap();
     std::fs::write(&path, b"unsupported guessed_system").unwrap();
     assert!(session.browse_particles("", "all", 0, 10).is_err());

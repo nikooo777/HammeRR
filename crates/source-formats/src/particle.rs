@@ -43,7 +43,8 @@ pub fn manifest(data: &[u8]) -> io::Result<Vec<ManifestFile>> {
         return Err(invalid("Particle manifest exceeds 1 MiB"));
     }
     let text = std::str::from_utf8(data).map_err(|_| invalid("Particle manifest is not UTF-8"))?;
-    let nodes = keyvalues::parse_lenient(text).map_err(|error| invalid(&error.to_string()))?;
+    let nodes =
+        keyvalues::parse_bounded(text, 1, 129).map_err(|error| invalid(&error.to_string()))?;
     if nodes.len() != 1 || !nodes[0].key.eq_ignore_ascii_case("particles_manifest") {
         return Err(invalid("Expected one particles_manifest block"));
     }

@@ -164,6 +164,8 @@ fn manifest_checks_paths_precache_directives_and_structure() {
     assert_eq!(files[1].path, "particles/two.pcf");
     assert!(files[1].precache);
     assert!(!files[0].precache);
+    let commented = manifest(b"// Mounted manifest\r\nparticles_manifest {\r\n file particles/one.pcf // Installed line-comment syntax\r\n}\r\n").unwrap();
+    assert_eq!(commented[0].path, "particles/one.pcf");
     for text in [
         "",
         "broken",
@@ -172,6 +174,11 @@ fn manifest_checks_paths_precache_directives_and_structure() {
         "particles_manifest { file particles/a.pcf file particles/a.pcf }",
         "particles_manifest { #include particles/extra.txt }",
         "particles_manifest { file particles/a.pcf",
+        "particles_manifest { file particles/a.pcf }}",
+        "particles_manifest { file \"particles/a.pcf }",
+        "particles_manifest { file }",
+        "particles_manifest { file { path particles/a.pcf } }",
+        "particles_manifest { file particles/a.pcf }\0",
         "particles_manifest { file /particles/a.pcf }",
         "particles_manifest { file particles/a.dmx }",
     ] {

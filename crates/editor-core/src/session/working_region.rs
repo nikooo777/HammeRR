@@ -88,6 +88,31 @@ fn checked_bounds(bounds: Option<(DVec3, DVec3)>) -> Option<[DVec3; 2]> {
         .map(|(mins, maxs)| [mins, maxs])
 }
 
+fn display_solid_bounds(solid: &source_formats::vmf::Solid) -> Option<[DVec3; 2]> {
+    if !solid.sides.iter().any(|side| side.displacement.is_some()) {
+        return checked_bounds(query::solid_bounds(solid));
+    }
+    let geometry = map_core::BrushGeometry::from_solid(solid).ok()?;
+    let mut bounds: Option<(DVec3, DVec3)> = None;
+    for (index, side) in solid.sides.iter().enumerate() {
+        let Some(info) = &side.displacement else {
+            continue;
+        };
+        let face = geometry.faces.iter().find(|face| face.side == index)?;
+        let mesh = map_core::DisplacementMesh::build(face, info).ok()?;
+        for point in mesh.positions {
+            if !point.is_finite() {
+                return None;
+            }
+            bounds = Some(match bounds {
+                Some((mins, maxs)) => (mins.min(point), maxs.max(point)),
+                None => (point, point),
+            });
+        }
+    }
+    checked_bounds(bounds)
+}
+
 fn records(document: &Document, models: &Models, region: Option<[DVec3; 2]>) -> Vec<Record> {
     enum Source<'a> {
         Solid(&'a source_formats::vmf::Solid),
@@ -114,12 +139,7 @@ fn records(document: &Document, models: &Models, region: Option<[DVec3; 2]>) -> 
     for (id, object) in sources {
         let mut children = Vec::new();
         let (hidden, bounds, source, error) = match object {
-            Source::Solid(solid) => (
-                solid.hidden,
-                checked_bounds(query::solid_bounds(solid)),
-                "brush",
-                None,
-            ),
+            Source::Solid(solid) => (solid.hidden, display_solid_bounds(solid), "brush", None),
             Source::Entity(entity) => {
                 if entity.solids.is_empty() {
                     let instance = instances.get(&id).copied();
@@ -143,7 +163,7 @@ fn records(document: &Document, models: &Models, region: Option<[DVec3; 2]>) -> 
                     children = entity
                         .solids
                         .iter()
-                        .map(|solid| (solid, checked_bounds(query::solid_bounds(solid))))
+                        .map(|solid| (solid, display_solid_bounds(solid)))
                         .collect();
                     let visible = children
                         .iter()

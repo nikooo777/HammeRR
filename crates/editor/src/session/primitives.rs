@@ -101,6 +101,7 @@ impl Session {
                 .map_err(|error| error.to_string())?;
             let (mins, maxs) =
                 query::bounds_of(&document, &ids).ok_or("Primitive has no bounds")?;
+            self.clear_repeat_preview();
             self.clear_hollow_preview();
             self.clear_carve_preview();
             self.clear_merge_preview();

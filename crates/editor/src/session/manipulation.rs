@@ -488,6 +488,7 @@ impl Session {
             self.cancel_transform_preview();
         }
         self.select(ids, SelectMode::Replace)?;
+        self.clear_repeat_preview();
         self.cancel_clip_preview();
         self.clear_hollow_preview();
         self.clear_carve_preview();

@@ -1,0 +1,71 @@
+import {Button,CheckBox,LineEdit,ScrollView,SpinBox} from "std-widgets.slint";
+
+component VectorRow inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <string> x:"0";
+    in-out property <string> y:"0";
+    in-out property <string> z:"0";
+    callback edited();
+    spacing:8px;
+    Text {text:root.label;width:108px;vertical-alignment:center;}
+    Text {text:"X";vertical-alignment:center;}
+    LineEdit {horizontal-stretch:1;text<=>root.x;input-type:decimal;edited=>{root.edited();}}
+    Text {text:"Y";vertical-alignment:center;}
+    LineEdit {horizontal-stretch:1;text<=>root.y;input-type:decimal;edited=>{root.edited();}}
+    Text {text:"Z";vertical-alignment:center;}
+    LineEdit {horizontal-stretch:1;text<=>root.z;input-type:decimal;edited=>{root.edited();}}
+}
+
+export component RepeatWindow inherits Window {
+    title:"Repeat array";preferred-width:660px;preferred-height:650px;
+    in property <string> selection;
+    in-out property <int> count:3;
+    in-out property <string> move-x:"64";
+    in-out property <string> move-y:"0";
+    in-out property <string> move-z:"0";
+    in-out property <string> rotate-x:"0";
+    in-out property <string> rotate-y:"0";
+    in-out property <string> rotate-z:"0";
+    in-out property <string> pivot-x:"0";
+    in-out property <string> pivot-y:"0";
+    in-out property <string> pivot-z:"0";
+    in-out property <bool> texture-lock:true;
+    in property <bool> ready;
+    in property <string> summary;
+    in property <string> message;
+    callback preview();callback apply();callback cancel();callback invalidate();
+    forward-focus:dialog-focus;
+    dialog-focus:=FocusScope {
+        key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
+        VerticalLayout {
+            padding:20px;spacing:12px;
+            Text {text:"Repeat selected objects";font-size:20px;}
+            Text {text:root.selection;wrap:word-wrap;color:#aeb8c6;}
+            HorizontalLayout {
+                spacing:10px;
+                Text {text:"Additional copies";vertical-alignment:center;}
+                SpinBox {minimum:1;maximum:64;value<=>root.count;edited=>{root.invalidate();}}
+                Text {text:"Originals stay in place";vertical-alignment:center;color:#aeb8c6;}
+            }
+            VectorRow {label:"Move step · units";x<=>root.move-x;y<=>root.move-y;z<=>root.move-z;edited=>{root.invalidate();}}
+            VectorRow {label:"Rotate step · °";x<=>root.rotate-x;y<=>root.rotate-y;z<=>root.rotate-z;edited=>{root.invalidate();}}
+            VectorRow {label:"Fixed world pivot";x<=>root.pivot-x;y<=>root.pivot-y;z<=>root.pivot-z;edited=>{root.invalidate();}}
+            Text {text:"Copy n rotates the originals by n × the step about this pivot, then moves by n × the world move step.";wrap:word-wrap;color:#aeb8c6;}
+            CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
+            Text {text:"Names become unique name_copyN values. Exact internal entity links follow each copy; external links stay. Shared names and ambiguous internal links must be resolved first.";wrap:word-wrap;color:#aeb8c6;}
+            Text {text:"Custom scripts and opaque reference text stay verbatim. Context notes copy within the map budget; saved face partitions stay on the originals.";wrap:word-wrap;color:#aeb8c6;}
+            Button {text:"Preview array";clicked=>{root.preview();}}
+            ScrollView {
+                vertical-stretch:1;
+                Text {text:root.summary;wrap:word-wrap;color:#d6deea;}
+            }
+            Text {text:root.message;wrap:word-wrap;color:#aeb8c6;min-height:32px;}
+            HorizontalLayout {
+                spacing:10px;
+                Button {text:"Cancel";clicked=>{root.cancel();}}
+                Rectangle {horizontal-stretch:1;}
+                Button {text:"Apply array";enabled:root.ready;clicked=>{root.apply();}}
+            }
+        }
+    }
+}

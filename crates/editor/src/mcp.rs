@@ -2006,6 +2006,31 @@ pub struct TieArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepeatArrayArgs {
+    /// Source objects; defaults to the selection. At most 16 distinct objects.
+    pub ids: Option<Vec<String>>,
+    /// Additional copies, excluding originals: 1–64, within the generated-object/side limits.
+    pub count: u32,
+    /// World XYZ translation step; copy n moves by n times this step.
+    pub translation: Option<[f64; 3]>,
+    /// World XYZ degree step; copy n rotates by n times this step about the fixed pivot.
+    pub rotation: Option<[f64; 3]>,
+    /// Fixed world pivot. Defaults to the source selection center.
+    pub pivot: Option<[f64; 3]>,
+    /// Keep textures attached to copied geometry. Defaults to true.
+    pub texture_lock: Option<bool>,
+    /// Latest get_repeat_array.snapshot. Invalid/stale requests retain the current draft.
+    pub snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepeatArrayTokenArgs {
+    pub token: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EntityArgs {
     /// Entity id; defaults to the single selected entity.
     pub id: Option<String>,
@@ -4494,6 +4519,7 @@ impl EditorServer {
             "rendering": rendering,
             "context": session.context_state(),
             "primitive": session.primitive_state(),
+            "repeat_array": session.repeat_array(),
             "map_checks": {"report":session.map_check_report().map(|report|report.token.to_string()),"stale":session.map_checks_stale()},
             "path": session.path().map(|p| p.display().to_string()),
             "title": session.title(),
@@ -5885,6 +5911,31 @@ impl EditorServer {
             let doc = session.document();
             Ok(json!({ "copies": copies.iter().map(|&id| summary(doc, id)).collect::<Vec<_>>() }))
         })
+    }
+
+    #[tool(description = "Inspect the shared repeat-array preview, snapshot, generated names, copied entity fields, remapped-link counts, bounds and limits. Count excludes originals. render_view shows this draft without changing source geometry/history. New targetnames and certain exact internal FGD/I/O/parent links are remapped per copy; external links remain unchanged. Shared names, ambiguous internal references, wildcard captures of generated names and overlay face-ID references reject. Context notes retain authorship/observations and full budgets; saved partitions stay on originals. Custom scripts/opaque reference semantics are preserved verbatim and are outside the supported remapping policy.")]
+    fn get_repeat_array(&self) -> ToolResult {
+        run(|| Ok(self.session().repeat_array()))
+    }
+
+    #[tool(description = "Preview bounded repeated placement using the latest get_repeat_array.snapshot. Copy n uses the committed originals, n × XYZ world rotation about one fixed pivot, then n × world translation; defaults to source center pivot and attached textures. Count is 1–64 additional copies, at most 16 sources, 256 generated objects including owned brushes and 8192 sides, within ±65536. Names become unique name_copyN values, exact internal links follow each copy, external links remain. Ambiguous source names/links and new-name reference acquisitions reject atomically. Invalid updates retain the last valid preview. UI: Repeat array… → Preview array. Inspect get_repeat_array and render_view, then apply_repeat_array or cancel_repeat_array with the returned token.")]
+    fn preview_repeat_array(&self, Parameters(args): Parameters<RepeatArrayArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let pivot = match args.pivot { Some(pivot) => vec3(pivot), None => session.selection_pivot(&ids)? };
+            session.preview_repeat_array(&ids, map_core::repeat::Options { count:args.count, translation:args.translation.map(vec3).unwrap_or(DVec3::ZERO), rotation:args.rotation.map(vec3).unwrap_or(DVec3::ZERO), pivot, texture_lock:args.texture_lock.unwrap_or(true) }, &args.snapshot)
+        })
+    }
+
+    #[tool(description = "Apply the exact repeat-array token in one atomic Undo step, verifying generated geometry, IDs, names, links and metadata against the preview. Selects all new top-level objects. Stale/replaced tokens, changed maps or reloaded entity definitions reject without modifying the map.")]
+    fn apply_repeat_array(&self, Parameters(args): Parameters<RepeatArrayTokenArgs>) -> ToolResult {
+        run(|| self.session().apply_repeat_array(Actor::Agent, args.token))
+    }
+
+    #[tool(description = "Discard the exact repeat-array token without changing source geometry or Undo history. A token for an old array cannot discard another array, numeric transform or primitive preview. UI: Repeat array… → Cancel, Escape or close.")]
+    fn cancel_repeat_array(&self, Parameters(args): Parameters<RepeatArrayTokenArgs>) -> ToolResult {
+        run(|| { let mut session = self.session(); session.cancel_repeat_array(args.token)?; Ok(session.repeat_array()) })
     }
 
     #[tool(

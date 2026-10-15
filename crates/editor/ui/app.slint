@@ -16,6 +16,7 @@ export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-brows
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 export {PlacementWindow} from "placement.slint";
 export {PolygonWindow,PolygonCorner} from "polygon.slint";
+export {RepeatWindow} from "repeat.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
@@ -1873,6 +1874,7 @@ export component AppWindow inherits Window {
     callback browse-model();
     callback browse-sound(string);
     callback place-on-surface();
+    callback repeat-array();
     callback cancel-surface-pick();
     callback material-changed();
     callback pick-color(key: string);
@@ -2443,6 +2445,7 @@ export component AppWindow inherits Window {
                         toggled => { if self.checked { root.handles-mode-index = root.transform-mode >= 3 ? 0 : root.transform-mode + 1; root.transform-tool-changed(); } }
                     }
                     if root.has-selection:Button {text:"Place on surface…";clicked=>{root.place-on-surface();}}
+                    if root.has-selection:Button {text:"Repeat array…";clicked=>{root.repeat-array();}}
                     if root.surface-picking:VerticalLayout {
                         Text {text:"Click a visible surface. Escape cancels picking.";wrap:word-wrap;color:#91b9e9;}
                         Button {text:"Cancel picking";clicked=>{root.cancel-surface-pick();}}

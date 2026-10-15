@@ -42,6 +42,7 @@ pub mod paint;
 pub mod placement;
 pub mod pointfiles;
 pub mod primitives;
+pub mod repeat;
 mod recovery;
 mod recent;
 pub mod saved_views;
@@ -156,6 +157,7 @@ pub struct Session {
     material_search: material_search::State,
     context: context::State,
     primitives: primitives::State,
+    repeat: repeat::State,
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
@@ -265,6 +267,7 @@ impl Session {
             material_search: material_search::State::default(),
             context: context::State::default(),
             primitives: primitives::State::default(),
+            repeat: repeat::State::default(),
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
@@ -1063,6 +1066,7 @@ impl Session {
     }
 
     fn changed(&mut self) {
+        self.clear_repeat_preview();
         self.cancel_block_preview();
         self.cancel_face_preview();
         self.cancel_clip_preview();
@@ -1757,6 +1761,7 @@ impl Session {
             .preview
             .as_ref()
             .map(|preview| &preview.document)
+            .or_else(|| self.repeat.preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
                 self.transform_preview
                     .as_ref()
@@ -1812,6 +1817,7 @@ impl Session {
             .preview
             .as_ref()
             .map(|preview| &preview.document)
+            .or_else(|| self.repeat.preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
                 self.transform_preview
                     .as_ref()
@@ -1858,6 +1864,7 @@ impl Session {
             .preview
             .as_ref()
             .map_or(selected, |preview| preview.ids.iter().copied().collect());
+        let selected = self.repeat.preview.as_ref().map_or(selected, |preview| preview.result.objects().into_iter().collect());
         let selected = self
             .area_preview
             .as_ref()
@@ -1941,6 +1948,7 @@ impl Session {
             .preview
             .as_ref()
             .map(|preview| &preview.document)
+            .or_else(|| self.repeat.preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
                 self.transform_preview
                     .as_ref()

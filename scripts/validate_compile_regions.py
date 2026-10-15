@@ -47,6 +47,15 @@ def validate(args):
         ]:
             ids.append(client.call("create_entity", {"classname": classname, "origin": origin, "properties": properties})["id"])
         outside = ids[-3:]
+        global_ids = []
+        if args.global_markers:
+            for classname, properties in [
+                ("light_environment", {"_light": "255 255 255 64", "_ambient": "0 0 0 0"}),
+                ("water_lod_control", {"cheapwaterstartdistance": "128", "cheapwaterenddistance": "512"}),
+            ]:
+                marker = client.call("create_entity", {"classname": classname, "origin": [400, 400, 192], "properties": properties})["id"]
+                global_ids.append(marker)
+                ids.append(marker)
         if args.water:
             pool = client.call("create_block", {"mins": [-128, 16, 0], "maxs": [128, 128, 64], "material": "tools/toolsnodraw"})["id"]
             brush = detail(client, [pool])[0]
@@ -98,6 +107,7 @@ def validate(args):
         built = client.call("compile_map", {"path": str(region_path)})
         scope = built["stats"]["compile_region"]
         check(scope["mins"] == LOW and scope["maxs"] == HIGH and scope["shell_thickness"] == 16, "The result reports exact region and boundary dimensions")
+        check(scope["boundary_material"] == "tools/toolsblack", "The boundary has a checked rendered black material")
         check(built["stats"]["brushes"] == 9 + int(args.water) and len(scope["generated_brushes"]) == 6, "Retained source brushes share six generated sealing slabs")
         check(client.call("get_map_info")["compile_region"] == client.call("get_compile_region")["build_scope"], "The map-info summary reports effective region scope without form bounds")
         check(all(item in scope["omitted"] for item in outside) and built["stats"]["static_props"] == 0, "Map, lights and independent static-prop baking share the filtered VMF")
@@ -141,7 +151,11 @@ def validate(args):
         client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"})
         native_path = args.output / "native-region.bsp"
         native = client.call("compile_map", {"path": str(native_path)})
-        check(native["stats"]["world_lights"] == 1, "Direct lighting bakes only the retained white light")
+        check(native["stats"]["world_lights"] == 1 + int(args.global_markers), "Direct lighting retains the inside white light and any global sun")
+        if args.global_markers:
+            data = native_path.read_bytes()
+            check(all(marker in scope["included"] for marker in global_ids) and data.count(b'"origin" "400 400 192"') == 2, "Outside nonspatial markers retain their original positions without leaking")
+            check(data.count(b'"classname" "water_lod_control"') == 1 and b'"cheapwaterstartdistance" "128"' in data and b'"cheapwaterenddistance" "512"' in data, "Authored global water distances survive without generated defaults")
         native_background = args.output / "native-region-background.bsp"
         client.call("start_compile", {"path": str(native_background)})
         check(wait_job(client)["status"] == "completed" and native_path.read_bytes() == native_background.read_bytes(), "Lit engine-physics region builds agree through both paths")
@@ -187,6 +201,7 @@ def main():
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--water", action="store_true", help="Include contained world water and check crossing-volume rejection")
+    parser.add_argument("--global-markers", action="store_true", help="Keep outside sun and authored water controls without leaking or replacing settings")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")

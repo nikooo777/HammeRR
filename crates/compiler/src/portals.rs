@@ -113,11 +113,11 @@ pub fn flood(
         .expect("uncancelled flood")
 }
 
-pub fn flood_controlled(
+pub fn flood_controlled<'a>(
     tree: &mut Tree,
     planes: &PlaneSet,
     portals: &[Portal],
-    entities: &[MapEntity],
+    entities: impl IntoIterator<Item = &'a MapEntity>,
     report: &mut Report,
     control: &Control,
 ) -> Result<Option<Leak>, String> {

@@ -526,7 +526,7 @@ See [Prefab library](prefabs.md).
 
 `compile_map`, `start_compile` and Run Map share one preprocessing path and use
 committed metadata only. The job's `compile_region` captures its start scope;
-`result.stats.compile_region` reports actual bounds, shell thickness, generated
+`result.stats.compile_region` reports actual bounds, shell thickness, `boundary_material`, generated
 brush IDs and included/omitted source object IDs. It is null for full-map output.
 Editing the region makes earlier output stale without changing a running job.
 `get_map_info.compile_region` is the lightweight current effective build scope;
@@ -540,9 +540,10 @@ remain unchanged. Fully contained structural world water retains the normal
 native water/physics path. Crossing water, detail/model water, slime, visible
 terrain, overlays, areaportals/windows, occluders, instances and visclusters
 reject before publication.
-Sun markers and water LOD controls currently need inside origins: an outside
-sun seeds a leak, while an outside water controller is omitted and defaults
-are generated.
+Sun and water LOD controllers retain original origins/settings even outside
+the region. Their editor positions do not seed region-only exterior leaks.
+The generated boundary requires mounted solid rendering `tools/toolsblack`;
+missing or incompatible assets reject without substitution.
 Disable regions for full-map leak checks. Globally disabled imported plural
 metadata retains full-map behavior even with enabled children. Explicit Clear
 is required before replacing imported plural/multiple records. See

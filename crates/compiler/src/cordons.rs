@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::DVec3;
 use map_core::{BrushGeometry, Document, compile_region, edit};
 use source_formats::{
-    bsp::contents,
+    bsp::{contents, surf},
     gamefs::GameFs,
     vmf::{Entity, Solid, Vmf},
 };
@@ -14,7 +14,8 @@ use crate::{Control, Diagnostic, Report, map::origins, materials::Materials};
 const MAX_OBJECTS: usize = 16_384;
 const MAX_SIDES: usize = 65_536;
 const MAX_SIDES_PER_BRUSH: usize = 128;
-const SHELL_MATERIAL: &str = "tools/toolsnodraw";
+const SHELL_MATERIAL: &str = "tools/toolsblack";
+const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
 const UNSUPPORTED: &[&str] = &[
     "info_overlay",
     "info_overlay_transition",
@@ -30,9 +31,16 @@ pub struct RegionSummary {
     pub mins: [f64; 3],
     pub maxs: [f64; 3],
     pub shell_thickness: f64,
+    pub boundary_material: String,
     pub included: Vec<String>,
     pub omitted: Vec<String>,
     pub generated_brushes: Vec<u32>,
+}
+
+pub(super) fn is_global(classname: &str) -> bool {
+    ["light_environment", "water_lod_control"]
+        .iter()
+        .any(|name| classname.eq_ignore_ascii_case(name))
 }
 
 pub(super) struct Prepared<'a> {
@@ -132,8 +140,12 @@ pub(super) fn prepare<'a>(
     let mut materials = Materials::new(fs);
     let shell_index = materials.load(SHELL_MATERIAL)?;
     let shell = materials.get(shell_index);
-    if !shell.found || shell.draws || shell.contents != contents::SOLID {
-        return Err("Compile region sealing requires a mounted tools/toolsnodraw material with solid, non-rendering semantics".into());
+    if !shell.found
+        || !shell.draws
+        || shell.contents != contents::SOLID
+        || shell.surface & (surf::SKY | surf::SKY2D | surf::WARP) != 0
+    {
+        return Err("Compile region sealing requires a mounted tools/toolsblack material with solid, rendering semantics".into());
     }
     let solids = source.world.solids.iter().chain(
         source
@@ -195,9 +207,7 @@ pub(super) fn prepare<'a>(
                 }
                 entities.insert(entity.id, None);
             }
-        } else if classname.eq_ignore_ascii_case("light_environment")
-            || point.is_none_or(|point| bounds.contains(point))
-        {
+        } else if is_global(classname) || point.is_none_or(|point| bounds.contains(point)) {
             entities.insert(entity.id, None);
         }
     }
@@ -205,6 +215,7 @@ pub(super) fn prepare<'a>(
         mins: bounds.mins.to_array(),
         maxs: bounds.maxs.to_array(),
         shell_thickness: compile_region::SHELL_THICKNESS,
+        boundary_material: SHELL_MATERIAL.into(),
         included: Vec::new(),
         omitted: Vec::new(),
         generated_brushes: Vec::new(),
@@ -231,7 +242,13 @@ pub(super) fn prepare<'a>(
             bounds
                 .shell()
                 .into_iter()
-                .map(|(mins, maxs)| edit::block_solid(tx, mins, maxs, SHELL_MATERIAL))
+                .map(|(mins, maxs)| {
+                    let mut solid = edit::block_solid(tx, mins, maxs, SHELL_MATERIAL)?;
+                    for side in &mut solid.sides {
+                        side.lightmap_scale = BOUNDARY_LIGHTMAP_SCALE;
+                    }
+                    Ok(solid)
+                })
                 .collect::<Result<Vec<_>, _>>()
         })
         .map_err(|error| error.to_string())?;
@@ -248,7 +265,7 @@ pub(super) fn prepare<'a>(
     });
     summary.generated_brushes = shell.iter().map(|solid| solid.id).collect();
     vmf.world.solids.extend(shell);
-    report.diagnostics.push(Diagnostic::warning(format!("Sealed compile region includes {} source objects and omits {}. Intersecting world/detail brushes and included brush models stay whole. References are unchanged and outside targets may be absent. Disable the region to check full-map leaks.", summary.included.len(), summary.omitted.len()), None, None));
+    report.diagnostics.push(Diagnostic::warning(format!("Sealed compile region uses a black solid boundary, includes {} source objects and omits {}. Intersecting world/detail brushes and included brush models stay whole. References are unchanged and outside targets may be absent. Disable the region to check full-map leaks.", summary.included.len(), summary.omitted.len()), None, None));
     Ok(Prepared {
         vmf: Cow::Owned(vmf),
         region: Some(summary),

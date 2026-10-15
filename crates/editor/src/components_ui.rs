@@ -1162,8 +1162,12 @@ pub fn place_partition_texture(
     )?;
     refresh(window, session);
     window.set_message(
-        "Top texture placement updated. Review the preview, then Keep, preview geometry or Cancel."
-            .into(),
+        if fit {
+            "Top textures fitted. Review the preview, then Keep, preview geometry or Cancel."
+        } else {
+            "Top textures justified. Review the preview, then Keep, preview geometry or Cancel."
+        }
+        .into(),
     );
     Ok(())
 }

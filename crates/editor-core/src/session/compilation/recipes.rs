@@ -666,7 +666,7 @@ mod tests {
         session
             .update_compile_options(
                 Actor::User,
-                None,
+                Some("direct_ldr_hdr"),
                 Some("none"),
                 Some("balanced"),
                 None,
@@ -691,6 +691,21 @@ mod tests {
             .apply_build_recipe(Actor::Agent, &id, None)
             .unwrap();
         assert_eq!(restarted.compile_options(), session.compile_options());
+        assert_eq!(restarted.compile_settings()["lighting"], "direct_ldr_hdr");
+        assert_eq!(
+            restarted.build_recipes()["recipes"][0]["settings"]["lighting"],
+            "fullbright"
+        );
+        assert_eq!(
+            restarted.build_recipes()["recipes"][1]["settings"]["lighting"],
+            "direct_ldr"
+        );
+        assert!(
+            restarted.build_recipes()["recipes"][2]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Direct LDR + HDR")
+        );
         let before = restarted.build_recipes();
         let permissions = fs::metadata(&path).unwrap().permissions();
         let mut readonly = permissions.clone();

@@ -418,7 +418,7 @@ mod tests {
             .update_build_settings(
                 Actor::Agent,
                 BuildSettingsUpdate {
-                    lighting: Some("direct_ldr"),
+                    lighting: Some("direct_ldr_hdr"),
                     sky_quality: Some("balanced"),
                     visibility: Some("detailed"),
                     bounces: Some(2),

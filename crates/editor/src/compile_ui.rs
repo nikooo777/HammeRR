@@ -29,6 +29,43 @@ enum RecipeAction {
     Delete,
 }
 
+fn hdr_lighting_details(stats: &serde_json::Value) -> String {
+    let hdr = &stats["hdr"];
+    if !hdr.is_object() {
+        return String::new();
+    }
+    format!(
+        "\nHDR baked lighting: {} faces · {} samples · {} light sources · {} bytes\nHDR light styles: {} · {} styled faces · {} lightmaps\nHDR brush entity lightmaps: {} models · {} faces\nHDR normal-map lighting: {} faces · {} directional maps\nHDR indirect light: {} · {} rays · {} samples lit · {} work units\nHDR brush entity bounce: {} faces · {} samples lit\nHDR model ambient: {} probes · {} bytes\nHDR native map data: {}\nLighting work: LDR {} · HDR {} · Shared total {}",
+        hdr["lighting_faces"].as_u64().unwrap_or_default(),
+        hdr["lightmap_samples"].as_u64().unwrap_or_default(),
+        hdr["world_lights"].as_u64().unwrap_or_default(),
+        hdr["lighting_bytes"].as_u64().unwrap_or_default(),
+        hdr["light_styles"].as_u64().unwrap_or_default(),
+        hdr["styled_faces"].as_u64().unwrap_or_default(),
+        hdr["light_style_maps"].as_u64().unwrap_or_default(),
+        hdr["lit_brush_models"].as_u64().unwrap_or_default(),
+        hdr["model_lighting_faces"].as_u64().unwrap_or_default(),
+        hdr["bump_faces"].as_u64().unwrap_or_default(),
+        hdr["bump_lightmaps"].as_u64().unwrap_or_default(),
+        compiler::bounce_label(hdr["bounces"].as_u64().unwrap_or_default() as u8),
+        hdr["bounce_rays"].as_u64().unwrap_or_default(),
+        hdr["bounce_samples"].as_u64().unwrap_or_default(),
+        hdr["bounce_work"].as_u64().unwrap_or_default(),
+        hdr["model_bounce_faces"].as_u64().unwrap_or_default(),
+        hdr["model_bounce_samples"].as_u64().unwrap_or_default(),
+        hdr["ambient_samples"].as_u64().unwrap_or_default(),
+        hdr["ambient_bytes"].as_u64().unwrap_or_default(),
+        if hdr["map_data_present"] == true {
+            "HDR data ready"
+        } else {
+            "HDR unavailable: incomplete map data"
+        },
+        stats["lighting_work"].as_u64().unwrap_or_default(),
+        hdr["lighting_work"].as_u64().unwrap_or_default(),
+        stats["lighting_total_work"].as_u64().unwrap_or_default(),
+    )
+}
+
 fn refresh_recipes(window: &CompileWindow, session: &Session, form: &RefCell<RecipeForm>) {
     let state = session.build_recipes();
     let mut form = form.borrow_mut();
@@ -516,7 +553,9 @@ impl Controller {
                 .into(),
         );
         self.window.set_sky_enabled(
-            settings["editable"].as_bool().unwrap_or(false) && settings["lighting"] == "direct_ldr",
+            settings["editable"].as_bool().unwrap_or(false)
+                && compiler::LightingMode::parse(settings["lighting"].as_str().unwrap_or_default())
+                    .is_ok_and(compiler::LightingMode::performs_lighting),
         );
         self.window
             .set_smoothing_angle(settings["smoothing_angle"].as_u64().unwrap_or_default() as i32);
@@ -573,6 +612,12 @@ impl Controller {
         }
         self.window.set_summary(session.compile_label().into());
         let result = &job["result"];
+        let ldr_prefix = if result["stats"]["hdr"].is_object() {
+            "LDR "
+        } else {
+            ""
+        };
+        let hdr = hdr_lighting_details(&result["stats"]);
         let samples = result["stats"]["cubemap_samples"]
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))
@@ -615,7 +660,7 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 format!(
-                    "\nNormal-map lighting: {count} faces · {} directional maps",
+                    "\n{ldr_prefix}Normal-map lighting: {count} faces · {} directional maps",
                     result["stats"]["bump_lightmaps"]
                         .as_u64()
                         .unwrap_or_default()
@@ -627,7 +672,7 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 format!(
-                    "\nBrush entity lightmaps: {count} models · {} faces",
+                    "\n{ldr_prefix}Brush entity lightmaps: {count} models · {} faces",
                     result["stats"]["model_lighting_faces"]
                         .as_u64()
                         .unwrap_or_default()
@@ -639,7 +684,7 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 format!(
-                    "\nLight styles: {count} · {} styled faces · {} lightmaps · {} switched groups",
+                    "\n{ldr_prefix}Light styles: {count} · {} styled faces · {} lightmaps · {} switched groups",
                     result["stats"]["styled_faces"].as_u64().unwrap_or_default(),
                     result["stats"]["light_style_maps"]
                         .as_u64()
@@ -667,7 +712,7 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 format!(
-                    "\nBrush entity bounce: {count} faces · {} samples lit",
+                    "\n{ldr_prefix}Brush entity bounce: {count} faces · {} samples lit",
                     result["stats"]["model_bounce_samples"]
                         .as_u64()
                         .unwrap_or_default()
@@ -679,7 +724,7 @@ impl Controller {
             .filter(|&count| count > 0)
             .map(|count| {
                 format!(
-                    "\nIndirect light: {} · {} rays · {} samples lit{model_bounce}",
+                    "\n{ldr_prefix}Indirect light: {} · {} rays · {} samples lit{model_bounce}",
                     compiler::bounce_label(count as u8),
                     result["stats"]["bounce_rays"].as_u64().unwrap_or_default(),
                     result["stats"]["bounce_samples"]
@@ -794,7 +839,8 @@ impl Controller {
                     "light sources"
                 };
                 format!(
-                    "\nBaked lighting: {count} faces · {samples} samples · {lights} {light_label}\nLight culling: {} evaluated · {} hidden · {} beyond range\nModel ambient: {} probes · {} bytes",
+                    "\n{ldr_prefix}Baked lighting: {count} faces · {samples} samples · {lights} {light_label} · {} bytes\n{ldr_prefix}Light culling: {} evaluated · {} hidden · {} beyond range\n{ldr_prefix}Model ambient: {} probes · {} bytes",
+                    result["stats"]["lighting_bytes"].as_u64().unwrap_or_default(),
                     result["stats"]["light_evaluations"].as_u64().unwrap_or_default(),
                     result["stats"]["light_pvs_skipped"].as_u64().unwrap_or_default(),
                     result["stats"]["light_range_skipped"].as_u64().unwrap_or_default(),
@@ -840,7 +886,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
@@ -909,6 +955,38 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
+    fn hdr_results_keep_channels_separate_and_explain_empty_native_data() {
+        let mut stats = serde_json::json!({
+            "lighting_faces": 3,
+            "lighting_work": 101,
+            "lighting_total_work": 303,
+            "hdr": {
+                "lighting_faces": 7,
+                "lightmap_samples": 11,
+                "world_lights": 2,
+                "lighting_bytes": 44,
+                "lighting_work": 202,
+                "ambient_samples": 5,
+                "ambient_bytes": 160,
+                "map_data_present": false
+            }
+        });
+        let details = hdr_lighting_details(&stats);
+        assert!(
+            details
+                .contains("HDR baked lighting: 7 faces · 11 samples · 2 light sources · 44 bytes")
+        );
+        assert!(details.contains("HDR model ambient: 5 probes · 160 bytes"));
+        assert!(details.contains("HDR native map data: HDR unavailable: incomplete map data"));
+        assert!(details.contains("Lighting work: LDR 101 · HDR 202 · Shared total 303"));
+        assert!(!details.contains("3 faces"));
+        stats["hdr"]["map_data_present"] = true.into();
+        assert!(hdr_lighting_details(&stats).contains("HDR data ready"));
+        stats["hdr"] = serde_json::Value::Null;
+        assert!(hdr_lighting_details(&stats).is_empty());
+    }
+
+    #[test]
     fn recipe_controls_share_crud_apply_cancel_and_job_guards() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {
@@ -934,6 +1012,15 @@ mod tests {
                 .contains("Current recipe: Fast preview")
         );
         assert!(!controller.window.get_custom_recipe_selected());
+        assert!(!controller.window.get_sky_enabled());
+        controller.window.invoke_change_lighting(2);
+        controller.refresh(&lock(&shared));
+        assert_eq!(
+            controller.window.get_selected_lighting(),
+            "Direct LDR + HDR"
+        );
+        assert!(controller.window.get_sky_enabled());
+        controller.window.invoke_change_lighting(0);
         controller.window.invoke_choose_recipe(1);
         assert_eq!(lock(&shared).compile_settings()["lighting"], "fullbright");
         controller.window.invoke_apply_recipe();
@@ -953,6 +1040,9 @@ mod tests {
                 .get_recipe_status()
                 .contains("Current recipe: Custom settings")
         );
+        controller.window.invoke_change_lighting(2);
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_sky_enabled());
         controller.window.set_recipe_name("Evening lighting".into());
         controller.window.invoke_save_recipe();
         let id = lock(&shared).build_recipes()["active"]["id"]
@@ -979,7 +1069,10 @@ mod tests {
         assert_eq!(lock(&shared).compile_settings()["lighting"], "fullbright");
         controller.window.invoke_choose_recipe(2);
         controller.window.invoke_apply_recipe();
-        assert_eq!(lock(&shared).compile_settings()["lighting"], "direct_ldr");
+        assert_eq!(
+            lock(&shared).compile_settings()["lighting"],
+            "direct_ldr_hdr"
+        );
         assert_eq!(lock(&shared).compile_settings()["physics"], "none");
         controller.window.invoke_change_bounces(1);
         controller.window.invoke_replace_recipe();
@@ -1019,10 +1112,22 @@ mod tests {
             );
         }
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-recipes");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-hdr-controls");
         let request = lock(&shared).begin_compile(Actor::Agent, None).unwrap();
         controller.refresh(&lock(&shared));
         assert!(!controller.window.get_custom_recipes_enabled());
         assert!(!controller.window.get_lighting_enabled());
+        assert!(!controller.window.get_sky_enabled());
+        assert_eq!(
+            lock(&shared).compile_status()["job"]["settings"]["lighting"],
+            "direct_ldr_hdr"
+        );
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Build settings: Direct LDR + HDR")
+        );
         assert!(
             controller
                 .window

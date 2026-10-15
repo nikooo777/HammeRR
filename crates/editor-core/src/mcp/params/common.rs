@@ -601,12 +601,13 @@ pub struct BuildRecipeIdArgs {
 pub struct CompileSettingsArgs {
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.
     pub smoothing_angle: Option<u8>,
-    /// 0 (direct only, default) or 1 (one diffuse world/terrain-source bounce into world/model receivers); Direct LDR only.
+    /// 0 (direct only, default) through 4 diffuse world/terrain-source bounces into world/model receivers; both lit modes.
     pub bounces: Option<u8>,
     /// fast (default conservative flood) or detailed (bounded portal separator clipping).
     pub visibility: Option<String>,
     pub sky_quality: Option<String>,
-    /// fullbright or direct_ldr; shared by synchronous, background and compile-and-play builds.
+    /// fullbright, direct_ldr or direct_ldr_hdr; shared by synchronous, background and compile-and-play builds.
+    #[schemars(extend("enum" = ["fullbright", "direct_ldr", "direct_ldr_hdr", null]))]
     pub lighting: Option<String>,
     /// none (default) or engine; engine uses the verified installed CS:S Linux64 library in an isolated worker.
     pub physics: Option<String>,

@@ -8,12 +8,12 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 
 1. Open a sealed map with a player spawn and click **Build settings…** in the toolbar. Settings are available before your first build.
 2. Choose the build settings:
-   - **Build lighting**: **Fullbright** for a geometry check, or **Direct LDR** to bake lights.
+   - **Build lighting**: **Fullbright** for a geometry check, **Direct LDR** to bake LDR lighting, or **Direct LDR + HDR** to build separate LDR and HDR channels.
    - **Physics bodies**: **CS:S engine physics** if the map needs physics bodies.
    - **Visibility quality**: **Fast (conservative)** for a quick build, or **Detailed (portal clipping)** to remove more hidden areas from visible sets.
    - **Indirect light**: **Direct only** (default), or **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces** to reflect light from world brushes and terrain.
    - **Brush smoothing angle**: **0°** keeps unassigned brush faces flat; higher angles blend eligible neighbors. Assigned face groups keep their rules.
-   - **Sampling quality**, for Direct LDR sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
+   - **Sampling quality**, for either lit mode’s sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
 
@@ -46,6 +46,7 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 
 - **Fullbright** (default): no lighting. Fastest, for checking geometry.
 - **Direct LDR**: bakes direct light from static, switchable and animated point/spot lights and the sun, plus diffuse sky ambient, into world, terrain and brush-entity lightmaps with shadows. See [Lighting](#lighting).
+- **Direct LDR + HDR**: builds independent LDR and HDR channels with the same lighting features and separate authored inputs. See [HDR channels](#hdr-channels) for map-data eligibility and runtime limits.
 
 **Physics bodies**
 
@@ -57,19 +58,19 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 - **Fast (conservative)** (default): uses portal-facing bounds and keeps some occluded areas in visible sets.
 - **Detailed (portal clipping)**: clips sight volumes through portal paths to remove more hidden areas. Larger jobs refine independent source rows on up to eight available CPU workers; small jobs stay serial. Invalid apertures and exceeded work/allocation limits stop the build.
 
-Visibility quality applies to both lighting modes. It is separate from the light sampling quality below.
+Visibility quality applies to every lighting mode. It is separate from the light sampling quality below.
 
-**Indirect light** (Direct LDR only)
+**Indirect light** (Direct LDR and Direct LDR + HDR)
 
 - **Direct only** (default): bake direct emitters and sky ambient.
 - **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces**: reflect light from world/detail brushes and terrain into world, terrain and brush-entity receivers. It also reaches model ambient through the resulting lightmaps.
 
-**Brush smoothing angle** (Direct LDR only)
+**Brush smoothing angle** (Direct LDR and Direct LDR + HDR)
 
 - Whole degrees from **0** (default, flat unassigned faces) to **90**, using the input or slider. **45°** is a starting point for curved brushes.
 - Automatic blending needs two unassigned neighboring world/detail faces. Assigned smoothing/hard groups retain their rules. See [Face lighting](textures.md#smooth-by-angle).
 
-**Sampling quality** (Direct LDR only)
+**Sampling quality** (Direct LDR and Direct LDR + HDR)
 
 - **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky), [model ambient](#model-ambient-lighting) and [bounced light](#bounced-light). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
 
@@ -151,7 +152,7 @@ Limits: the same area-boundary limits as plain areaportals apply. Model referenc
 
 ### Lighting
 
-With **Direct LDR**:
+With **Direct LDR** or **Direct LDR + HDR**:
 
 - `light` and `light_spot` support static, switchable and animated appearances. `light_environment` remains static. All are baked in color.
 - Opaque world brushes, detail brushes, terrain and [static-prop meshes](prop-shadows.md) cast shadows. Models authored with `$casttextureshadows` also support the bounded alpha-test cutouts described under **Static props** below.
@@ -161,6 +162,20 @@ With **Direct LDR**:
 - Point/spot lights outside a sample's conservative visibility or exact falloff range are skipped automatically. **Build details…** shows a **Light culling** row with **evaluated**, **hidden** and **beyond range** counts. Unknown or boundary sample clusters retain every light; approximate near-zero distances keep their soft tails.
 
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
+
+#### HDR channels
+
+**Direct LDR + HDR** keeps face lightmaps, light styles, world lights, reflected light and model-ambient probes separate for the two channels. The editor viewport continues to show its existing preview lighting.
+
+1. Open **Build settings…** and choose **Build lighting → Direct LDR + HDR**.
+2. Set **Indirect light**, **Brush smoothing angle** and **Sampling quality**. These settings apply to both channels. Existing **Fast preview** and **Final lighting** recipes keep their original settings; use **Save current as new** to retain a custom HDR recipe.
+3. Author **Brightness** and **Ambient** as usual. HDR uses **BrightnessHDR** (`_lightHDR`) and **AmbientHDR** (`_ambientHDR`) overrides, or the HDR tuple from an eight-number fallback value. **BrightnessScaleHDR** (`_lightscaleHDR`) and **AmbientScaleHDR** (`_AmbientScaleHDR`) scale their respective HDR inputs; a negative RGB sentinel keeps the fallback, and an explicit zero disables that contribution. LDR retains its original inputs.
+4. Click **Close**, then **Compile**. Open **Build details…** to compare the **LDR Baked lighting**, **HDR baked lighting**, style, brush-model, directional-map, bounce and ambient rows. **Lighting work** shows **LDR**, **HDR** and **Shared total**; authored prop/model geometry is counted once.
+5. Inspect **HDR native map data** and **Diagnostics**. **HDR data ready** reports eligible nonempty map data. **HDR unavailable: incomplete map data** means the map cannot activate native HDR. Changing the lighting mode makes a previous build stale; compile again before **Play built map**.
+
+![Build lighting, sampling and indirect-light controls](images/build-settings.png)
+
+Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh private map load; live changes may trigger save/reload. Exposure authoring, HDR skybox textures, HDR cubemap capture, editor HDR previews and baked prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
 
 #### Brush-entity lightmaps
 
@@ -172,7 +187,7 @@ With **Direct LDR**:
 
 ![Pivot-aware direct lighting on moving brush entities](images/compiled-brush-models.png)
 
-Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Independently rotated initial poses, dynamic relighting, HDR and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
+Limits: direct point/spot styles and sun/sky lighting at the authored pose, with scoped authored/angle brush smoothing and isolated self-shadow hulls. Choose **Indirect light → One diffuse bounce** to receive reflected world/detail/terrain light. Moving models do not add permanent world shadows or supply reflected light. Independently rotated initial poses, dynamic relighting and prop lightmaps remain unfinished. Local geometry, UVs, pivots and collision remain fixed during compilation; source properties and undo history are preserved. Models share the lighting allocation/work budgets.
 
 #### Switchable lights and appearances
 
@@ -204,7 +219,7 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 | --- | --- |
 | ![One reflected styled-light pass on the shadowed model](images/styled-bounce-on.png) | ![Four reflected styled-light passes on the same model](images/four-bounce-on.png) |
 
-Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes use the same opaque or supported alpha-test blockers for reflected rays but do not supply reflected light. More than four bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent world surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes use the same opaque or supported alpha-test blockers for reflected rays but do not supply reflected light. More than four bounces, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work budget and 16 MiB lightmap budget per channel apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Normal-map lighting
 
@@ -217,7 +232,7 @@ Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preservi
 
 Each lit face gets its base map and three directional maps per light style. Texture axes, mirrored mappings and world/model smooth normals orient those directions; terrain uses its shared smooth surface normals. Native style averages keep the base lighting. Brush models keep their own coordinate scope and self shadows.
 
-Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. Materials that only declare `$bumpmap2`, independently rotated initial model poses, transparent world shadows, fractional transmission, HDR and baked prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap and 100-million work limits; larger scales or lower sampling can reduce work.
+Limits: the engine can clamp bright ordinary and bumped LDR lighting differently; compare modest brightness when tuning normal details. This changes compiled game lighting; the editor's material thumbnails and viewport use diffuse previews. Materials that only declare `$bumpmap2`, independently rotated initial model poses, transparent world shadows, fractional transmission and baked prop lightmaps remain unfinished. Auxiliary directions share the 16 MiB lightmap limit per channel and 100-million work limit per build; larger scales or lower sampling can reduce work.
 
 #### Falloff
 
@@ -252,12 +267,12 @@ Sunlight requires sky in the sampled sun directions, while ambient samples all v
 
 #### Limits and errors
 
-- Up to 16 MiB of lighting data and 8,192 baked light records.
+- Up to 16 MiB of lighting data and 8,192 baked light records per channel; dual-channel builds allow 32 MiB total lighting data. One cancellable 100-million-work budget covers shared preparation and both channels.
 - One visible `light_environment` per map.
 - **SunSpreadAngle** must be finite and between 0 and 90 degrees. Zero uses one sun ray, regardless of sky quality; positive spread uses the chosen 32, 128 or 512 directions per sun sample.
 - Invalid styles, conflicting named-group states, invalid falloff values and invalid sun angles fail with actionable diagnostics.
 
-Not yet: other light types, transparent world shadows, fractional transmission, second-normal-map-only materials, HDR and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
+Not yet: other light types, transparent world shadows, fractional transmission, second-normal-map-only materials and baked prop lighting. Fixed sun samples can leave steps at low quality; adaptive sampling remains unfinished.
 
 #### Model ambient lighting
 
@@ -274,7 +289,7 @@ Fast keeps one probe per open world leaf. Balanced and Detailed select up to fou
 
 Probes avoid detail solids and space below terrain. They gather reflected world and terrain lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby rays interpolate local lightmap samples; distant rays blend toward face averages. Terrain follows its displaced surface, including rotated patch origins. Static-prop meshes use the same opaque or supported alpha-test blockers for probe rays to lightmaps and sky. Probe positions still avoid each prop's mesh bounds conservatively. Diagnostics report leaves without a safe probe.
 
-Limits: adaptive refinement, switching ambient cubes, reflected prop sources and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. The bake is capped at 65,536 probes and the shared lighting work limit; exceeding either preserves the previous build. These probes read the baked world lightmaps, including the optional diffuse bounce; they do not produce additional world bounces.
+Limits: adaptive refinement, switching ambient cubes, reflected prop sources and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. Each channel is capped at 65,536 probes and uses the shared lighting work limit; exceeding either preserves the previous build. These probes read the baked world lightmaps, including the optional diffuse bounce; they do not produce additional world bounces.
 
 ### Physics
 
@@ -434,9 +449,9 @@ To follow a leak, open **Pointfile…**:
 | Option | Purpose |
 | --- | --- |
 | `-o <map.bsp>` | Output file. Defaults to the VMF's name with `.bsp`. |
-| `--lighting fullbright\|direct_ldr` | Lighting mode. Defaults to `fullbright`. |
+| `--lighting fullbright\|direct_ldr\|direct_ldr_hdr` | Lighting mode. Defaults to `fullbright`. |
 | `--physics none\|engine` | Physics bodies. Defaults to `none`. Needs `hammerr-physics` next to the compiler. |
-| `--sky-quality fast\|balanced\|detailed` | Sky ambient sampling for `direct_ldr`. Defaults to `fast`. |
+| `--sky-quality fast\|balanced\|detailed` | Sky, model-ambient and bounce sampling for both lit modes. Defaults to `fast`. |
 
 To try it on a generated test room with both teams' spawns:
 

@@ -11,6 +11,8 @@ use crate::{Control, Diagnostic, Report, map::MAX_COMPILE_COORD};
 const MAX_LEAF_WORK: usize = 16_000_000;
 const LEAF_BIAS: f64 = 0.01;
 
+mod leaf_box;
+
 #[derive(Default)]
 pub(crate) struct Stats {
     pub props: usize,
@@ -93,6 +95,7 @@ struct Space {
     leaves: Vec<Leaf>,
     head: i32,
     work: usize,
+    clipped_points: usize,
 }
 
 impl Space {
@@ -104,6 +107,7 @@ impl Space {
             leaves: bsp.records().map_err(|e| e.to_string())?,
             head: models.first().ok_or("world model is missing")?.head_node,
             work: 0,
+            clipped_points: 0,
         })
     }
 
@@ -362,12 +366,10 @@ pub(crate) fn bake(
             }
             let angles = DVec3::from_array(prop.angles.map(f64::from)).map(f64::to_radians);
             let rotation = DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z);
-            let leaves = space.intersect(
-                bounds(
-                    asset.header,
-                    DVec3::from_array(prop.origin.map(f64::from)),
-                    rotation,
-                )?,
+            let leaves = space.prop_leaves(
+                asset.header,
+                DVec3::from_array(prop.origin.map(f64::from)),
+                rotation,
                 control,
             )?;
             if props.leaves.len() + leaves.len() > bsp::MAX_STATIC_PROP_LEAVES {
@@ -393,7 +395,7 @@ pub(crate) fn bake(
         return Ok(Stats::default());
     }
     if !props.props.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Static props use model assets and conservative bound-based leaf membership; Direct LDR adds opaque mesh shadows; baked prop lighting and exact model-hull leaf clipping are unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Static props use model assets and conservative header-box leaf membership, with rotated boxes clipped through world leaves; baked prop lighting and exact model-hull leaf clipping are unfinished", None, None));
     }
     bsp.set_static_props(&props).map_err(|e| e.to_string())?;
     Ok(Stats {

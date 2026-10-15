@@ -111,7 +111,22 @@ Move retained terrain samples by exact world coordinates, including sideways edi
 
 ![Exact world XYZ terrain vertex movement](images/terrain-vertex-move.png)
 
-Limits: offsets must be finite and between −4096 and 4096 per axis, with final positions within ±65536. Only selected offset rows change; other samples, normals/distances, alpha, tags, flags, base/start corners, materials and mapping remain fixed. Zero is an exact no-op. Shared vertices reshape adjoining triangles. Stale/replaced masks or unsupported imported geometry/cache data reject without replacing a valid draft. Viewport drag handles remain planned.
+Limits: offsets must be finite and between −4096 and 4096 per axis, with final positions within ±65536. Only selected offset rows change; other samples, normals/distances, alpha, tags, flags, base/start corners, materials and mapping remain fixed. Zero is an exact no-op. Shared vertices reshape adjoining triangles. Stale/replaced masks or unsupported imported geometry/cache data reject without replacing a valid draft.
+
+## Move vertices with handles
+
+Drag a retained terrain selection along a world axis, world plane or the screen plane.
+
+1. Retain vertices with **Terrain triangles… → Use selection**, then open **Edit terrain… → Operation → Move selected vertices**.
+2. Click **Move with handles…**. Colored arrows move along X/Y/Z; squares move in XY/XZ/YZ. The center handle moves along the screen plane. Handles use the editor's current grid snapping.
+3. Drag a visible handle with the left mouse button. Release to review the total **World offset · units** in the dialog. Click **Apply** for one Undo step, or **Cancel** to discard the draft.
+4. During the gesture, **Escape** or **Cancel terrain move** discards the owned draft. Losing viewport focus during a drag cancels it silently.
+
+![Terrain vertex move handles](images/terrain-move-handles.png)
+
+![Compact terrain move review](images/terrain-handle-review.png)
+
+Limits: the same movement bounds and mask rules apply as numeric offsets. Handles use world axes; the screen plane captures the starting camera. Changing the map, mask, camera, visibility or grid invalidates an active gesture. Invalid updates preserve the last good draft and block finishing; correct the move while holding the mouse button, or cancel and retry. Cancellation preserves another actor's replacement preview. Edge-on axes and planes cannot be dragged in that view.
 
 ## Paint a material blend
 

@@ -692,6 +692,29 @@ struct BeginComponentDragArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct TerrainMoveHandlesArgs {
+    faces: Option<Vec<FaceRef>>,
+    mask_token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BeginTerrainMoveDragArgs {
+    token: String,
+    handle: String,
+    pointer: Option<PointerArgs>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct UpdateTerrainMoveDragArgs {
+    token: String,
+    pointer: Option<PointerArgs>,
+    offset: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct UpdateComponentDragArgs {
     token: String,
     pointer: Option<PointerArgs>,
@@ -5249,6 +5272,129 @@ impl EditorServer {
             Ok(
                 json!({"faces":rows.iter().map(|row|json!({"solid":row.face.solid,"side":row.face.side,"triangles":row.triangles.iter().map(|triangle|json!({"id":triangle.id,"indices":triangle.indices,"positions":triangle.positions.map(|p|p.to_array()),"centroid":triangle.centroid.to_array(),"source_tags":triangle.source_tags,"walkable":triangle.walkable,"buildable":triangle.buildable,"walkable_override":triangle.walkable_override,"buildable_override":triangle.buildable_override,"removed":triangle.removed,"unknown_tags":triangle.unknown_tags})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
             )
+        })
+    }
+
+    #[tool(
+        description = "Enable shared move handles for retained terrain vertices or triangle-union vertices. Requires mask_token; faces default to selected faces. Captures source, mask and shared grid snapping. Rejects active geometry previews. UI: Edit terrain… → Move selected vertices → Move with handles…. Returns token for drag lifecycle."
+    )]
+    fn enable_terrain_move_handles(
+        &self,
+        Parameters(args): Parameters<TerrainMoveHandlesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            session.enable_terrain_move_handles(
+                Actor::Agent,
+                &faces,
+                parse_token(&args.mask_token)?,
+            )?;
+            Ok(session.terrain_move_handles_json())
+        })
+    }
+
+    #[tool(
+        description = "Inspect shared terrain move handle state and world/pixel paths. Optional camera inspects without moving the editor; point hit-tests visible paths. Camera overrides do not change the camera captured by a drag.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_terrain_move_handles(&self, Parameters(args): Parameters<HandlesArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let size = render_size(args.width, args.height);
+            let camera = args
+                .camera
+                .unwrap_or_default()
+                .resolve(&session, size.0 as f32 / size.1 as f32)?;
+            let guide = session.terrain_move_guide();
+            let shapes = guide.map_or_else(Vec::new, |guide| {
+                render::handles::shapes(&camera, size, &guide)
+            });
+            let picked = if let (Some(guide), Some(point)) = (guide, args.point) {
+                let point = glam::Vec2::new(point[0] as f32, point[1] as f32);
+                if !point.is_finite() {
+                    return Err("Handle point must be finite".into());
+                }
+                render::handles::pick(&camera, size, &guide, point)
+                    .map(render::handles::Handle::name)
+            } else {
+                None
+            };
+            Ok(
+                json!({"state":session.terrain_move_handles_json(),"camera":camera_json(&camera),"width":size.0,"height":size.1,"picked":picked,"origin":guide.map(|guide|guide.origin.to_array()),
+                "handles":shapes.iter().map(|shape|json!({"handle":shape.handle.name(),"color":shape.color,"segments":shape.segments.iter().map(|points|points.map(|point|point.to_array())).collect::<Vec<_>>(),"pixel_segments":shape.segments.iter().filter_map(|points|Some([render::handles::project(&camera,points[0],size)?.to_array(),render::handles::project(&camera,points[1],size)?.to_array()])).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Begin the enabled terrain handle token using x/y/z, xy/xz/yz or view. Optional pointer captures starting pixels and viewport size; omit for numeric total offsets. Captures camera. No source changes."
+    )]
+    fn begin_terrain_move_drag(
+        &self,
+        Parameters(args): Parameters<BeginTerrainMoveDragArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.begin_terrain_move_drag(
+                parse_token(&args.token)?,
+                render::handles::Handle::parse(&args.handle)
+                    .ok_or("Unknown terrain move handle")?,
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+            )?;
+            Ok(session.terrain_move_handles_json())
+        })
+    }
+
+    #[tool(
+        description = "Update the enabled terrain handle token with exactly one pointer or total offset pair since begin. Axis uses first amount only; planes use world axes, view uses captured screen right/up. Shared grid snapping applies. Invalid moves preserve valid drafts and block finish until corrected. Source stays unchanged."
+    )]
+    fn update_terrain_move_drag(
+        &self,
+        Parameters(args): Parameters<UpdateTerrainMoveDragArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let changed = session.update_terrain_move_drag(
+                Actor::Agent,
+                parse_token(&args.token)?,
+                args.pointer.map(PointerArgs::resolve).transpose()?,
+                args.offset.map(glam::DVec2::from_array),
+            )?;
+            Ok(
+                json!({"faces_changed":changed,"handles":session.terrain_move_handles_json(),"state":face_state(&session)}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Finish the exact terrain handle token and leave its owned face preview for review. Apply with commit_face_preview or discard with cancel_face_preview using state.preview_token. One Apply creates one Undo step; a zero offset changes nothing."
+    )]
+    fn finish_terrain_move_drag(
+        &self,
+        Parameters(args): Parameters<VolumeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.finish_terrain_move_drag(parse_token(&args.token)?)?;
+            Ok(json!({"handles":session.terrain_move_handles_json(),"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Cancel the exact enabled terrain handle token, including a stale gesture. Clears only its owned preview, preserving replacement work. Source and Undo history stay unchanged."
+    )]
+    fn cancel_terrain_move_handles(
+        &self,
+        Parameters(args): Parameters<VolumeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_terrain_move_handles(parse_token(&args.token)?)?;
+            Ok(json!({"handles":session.terrain_move_handles_json(),"state":face_state(&session)}))
         })
     }
 

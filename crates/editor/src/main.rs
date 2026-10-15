@@ -2903,6 +2903,13 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
     }
     if key == key_text(Key::Escape) {
         if let Some(controller) = &ui.borrow().terrain
+            && controller.is_handling()
+        {
+            controller.cancel_handles(&mut lock(&session_of(ui)), true);
+            app.set_terrain_handling(false);
+            return true;
+        }
+        if let Some(controller) = &ui.borrow().terrain
             && controller.is_stroking()
         {
             controller.cancel_stroke(&mut lock(&session_of(ui)));
@@ -3701,6 +3708,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.unwrap().set_terrain_center_picking(false);
         }
     });
+    app.on_cancel_terrain_handles({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if let Some(controller) = &ui.borrow().terrain {
+                controller.cancel_handles(&mut lock(&session_of(&ui)), true);
+            }
+            app.unwrap().set_terrain_handling(false);
+        }
+    });
     app.on_cancel_terrain_stroke({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -3979,6 +3995,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut ui = ui.borrow_mut();
             if button == 0 && !down && ui.terrain_pick_release {
                 ui.terrain_pick_release = false;
+                return;
+            }
+            if button == 0
+                && let Some(controller) = &ui.terrain
+                && controller.is_handling()
+            {
+                let pointer = Pointer {
+                    position: glam::DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        viewport_size.0.round().max(1.0) as u32,
+                        viewport_size.1.round().max(1.0) as u32,
+                    ),
+                };
+                let mut session = lock(&ui.session);
+                session.publish_camera(ui.viewport.camera);
+                let result = if down {
+                    controller.begin_handle(&mut session, pointer)
+                } else if controller.handle_dragging() {
+                    controller
+                        .update_handle(&mut session, pointer)
+                        .and_then(|_| controller.finish_handle(&mut session))
+                } else {
+                    Ok(())
+                };
+                if !down {
+                    controller.release_handle();
+                }
+                app.set_terrain_handling(controller.is_handling());
+                app.set_message(
+                    result
+                        .err()
+                        .unwrap_or_else(|| {
+                            "Drag a terrain handle, then review with Apply or Cancel.".into()
+                        })
+                        .into(),
+                );
                 return;
             }
             if button == 0
@@ -4290,6 +4342,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut ui = ui.borrow_mut();
             ui.viewport.mouse_moved(x, y, size.1);
             if let Some(controller) = &ui.terrain
+                && controller.is_handling()
+            {
+                if controller.handle_dragging() {
+                    let pointer = Pointer {
+                        position: glam::DVec2::new(f64::from(x), f64::from(y)),
+                        size: (
+                            size.0.round().max(1.0) as u32,
+                            size.1.round().max(1.0) as u32,
+                        ),
+                    };
+                    let mut session = lock(&ui.session);
+                    session.publish_camera(ui.viewport.camera);
+                    if let Err(error) = controller.update_handle(&mut session, pointer) {
+                        app.set_message(error.into());
+                    }
+                }
+                return;
+            }
+            if let Some(controller) = &ui.terrain
                 && controller.is_stroking()
             {
                 if controller.stroke_dragging() {
@@ -4403,6 +4474,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     controller.discard_stroke(&mut lock(&ui.session));
                     app.unwrap().set_terrain_stroking(false);
                 }
+                if let Some(controller) = &ui.terrain
+                    && controller.handle_dragging()
+                {
+                    controller.cancel_handles(&mut lock(&ui.session), false);
+                    app.unwrap().set_terrain_handling(false);
+                }
                 if ui.interaction.active() {
                     let shared = ui.session.clone();
                     ui.interaction.cancel(&mut lock(&shared));
@@ -4499,7 +4576,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.terrain
-                        && (controller.window.window().is_visible() || controller.is_stroking())
+                        && (controller.window.window().is_visible()
+                            || controller.is_stroking()
+                            || controller.is_handling())
                     {
                         controller.refresh(&session);
                     }
@@ -4735,6 +4814,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.terrain
                     .as_ref()
                     .is_some_and(|controller| controller.is_stroking()),
+            );
+            app.set_terrain_handling(
+                ui.terrain
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_handling()),
             );
             let scale = app.window().scale_factor();
             let size = (
@@ -10545,6 +10629,7 @@ mod tests {
         window.set_vertex_x("3.5".into());
         window.set_vertex_y("-2".into());
         window.set_vertex_z("12".into());
+        window.invoke_edited();
         window.show().unwrap();
         save_ui_snapshot(window.window(), "terrain-vertex-move");
         window.invoke_preview_edit();
@@ -10565,6 +10650,65 @@ mod tests {
             );
         }
         window.invoke_cancel();
+        assert_eq!(*lock(&shared).document().vmf(), source);
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(11);
+        window.invoke_edited();
+        window.show().unwrap();
+        assert_eq!(window.window().size().height, 470);
+        lock(&shared).set_camera(render::Camera::planar(
+            Projection::Front,
+            point.as_vec3(),
+            256.0,
+        ));
+        window.invoke_move_handles();
+        assert!(controller.is_handling(), "{}", window.get_message());
+        let camera = lock(&shared).camera();
+        let guide = lock(&shared).terrain_move_guide().unwrap();
+        let shape = render::handles::shapes(&camera, (1000, 800), &guide)
+            .into_iter()
+            .find(|shape| shape.handle == render::handles::Handle::Z)
+            .unwrap();
+        let center = (shape.segments[0][0] + shape.segments[0][1]) * 0.5;
+        let pointer = Pointer {
+            position: render::handles::project(&camera, center, (1000, 800))
+                .unwrap()
+                .as_dvec2(),
+            size: (1000, 800),
+        };
+        controller
+            .begin_handle(&mut lock(&shared), pointer)
+            .unwrap();
+        let end = Pointer {
+            position: render::handles::project(&camera, center + Vec3::Z * 16.0, pointer.size)
+                .unwrap()
+                .as_dvec2(),
+            ..pointer
+        };
+        controller.update_handle(&mut lock(&shared), end).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), source);
+        controller.finish_handle(&mut lock(&shared)).unwrap();
+        assert!(!controller.is_handling());
+        assert!(window.get_ready());
+        assert_eq!(window.get_vertex_z().as_str(), "16");
+        save_ui_snapshot(window.window(), "terrain-handle-review");
+        window.invoke_apply();
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(*lock(&shared).document().vmf(), source);
+        lock(&shared)
+            .highlight_terrain_vertices(Actor::User, &[(face, vec![12])])
+            .unwrap();
+        controller.initialize(&mut lock(&shared)).unwrap();
+        window.set_operation_index(11);
+        window.invoke_move_handles();
+        controller
+            .begin_handle(&mut lock(&shared), pointer)
+            .unwrap();
+        controller.update_handle(&mut lock(&shared), end).unwrap();
+        controller.cancel_handles(&mut lock(&shared), false);
+        assert!(!controller.is_handling());
+        assert!(!window.window().is_visible());
+        assert!(!lock(&shared).has_face_preview());
         assert_eq!(*lock(&shared).document().vmf(), source);
     }
 

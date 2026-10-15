@@ -240,6 +240,43 @@ fn options() -> Options {
     }
 }
 
+fn alpha_game() -> (tempfile::TempDir, GameFs) {
+    let (directory, game) = game();
+    let path = directory.path().join("models/props/test.mdl");
+    let mut mdl = std::fs::read(&path).unwrap();
+    put_int(&mut mdl, 152, 0x0004_0010);
+    std::fs::write(path, mdl).unwrap();
+    let path = directory.path().join("models/props/test.vvd");
+    let mut vvd = std::fs::read(&path).unwrap();
+    for (index, uv) in [[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]].into_iter().enumerate() {
+        for (axis, value) in uv.into_iter().enumerate() {
+            put_float(&mut vvd, 64 + index * 48 + 40 + axis * 4, value);
+        }
+    }
+    std::fs::write(path, vvd).unwrap();
+    std::fs::write(directory.path().join("materials/test.vtf"), alpha_texture()).unwrap();
+    (directory, game)
+}
+
+fn alpha_texture() -> Vec<u8> {
+    let mut bytes = vec![0; 80];
+    bytes[..4].copy_from_slice(b"VTF\0");
+    put_int(&mut bytes, 4, 7);
+    put_int(&mut bytes, 12, 80);
+    bytes[16..18].copy_from_slice(&4_u16.to_le_bytes());
+    bytes[18..20].copy_from_slice(&4_u16.to_le_bytes());
+    put_int(&mut bytes, 20, 0x1000);
+    bytes[24..26].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[56] = 1;
+    put_int(&mut bytes, 57, -1);
+    for _ in 0..4 {
+        for alpha in [255, 255, 0, 0] {
+            bytes.extend_from_slice(&[255, 255, 255, alpha]);
+        }
+    }
+    bytes
+}
+
 fn compile(vmf: &Vmf, game: &GameFs) -> compiler::Output {
     let output = compiler::compile_with_options(vmf, game, options());
     assert!(!output.report.has_errors(), "{:?}", output.report);
@@ -467,5 +504,187 @@ fn ambient_probe_moves_outside_closed_prop_instead_of_baking_black_center() {
                 "Probe remained inside prop bounds: {point}"
             );
         }
+    }
+}
+
+#[test]
+fn requested_alpha_cutouts_bake_real_uv_holes_and_keep_opaque_defaults() {
+    let (directory, game) = alpha_game();
+    let mut vmf = scene();
+    let prop = vmf.entities.len() - 1;
+    let opaque = compile(&vmf, &game);
+    assert_eq!(opaque.stats.prop_shadow_alpha_triangles, 0);
+    assert_eq!(floor_sample(&opaque.bsp.unwrap(), DVec3::ZERO), DVec3::ZERO);
+    vmf.entities[prop].properties.set("skin", "1");
+    let before = vmf.clone();
+    let cutout = compile(&vmf, &game);
+    assert_eq!(cutout.stats.prop_shadow_alpha_triangles, 1);
+    assert_eq!(cutout.stats.prop_shadow_alpha_materials, 1);
+    assert_eq!(cutout.stats.prop_shadow_alpha_textures, 1);
+    assert_eq!(cutout.stats.prop_shadow_alpha_bytes, 16);
+    let cutout = cutout.bsp.unwrap();
+    assert_eq!(floor_sample(&cutout, DVec3::ZERO).x, 200.0);
+    assert_eq!(
+        floor_sample(&cutout, DVec3::new(-16.0, 0.0, 0.0)),
+        DVec3::ZERO
+    );
+    assert_eq!(vmf, before);
+    let mut mdl = std::fs::read(directory.path().join("models/props/test.mdl")).unwrap();
+    put_int(&mut mdl, 152, 16);
+    std::fs::write(directory.path().join("models/props/test.mdl"), mdl).unwrap();
+    let unflagged = compile(&vmf, &game);
+    assert_eq!(unflagged.stats.prop_shadow_alpha_triangles, 0);
+    let opaque_bytes = unflagged.bsp.unwrap().to_bytes();
+    std::fs::write(
+        directory.path().join("materials/models/test/two.vmt"),
+        "VertexLitGeneric { $basetexture test }",
+    )
+    .unwrap();
+    assert_eq!(compile(&vmf, &game).bsp.unwrap().to_bytes(), opaque_bytes);
+}
+
+#[test]
+fn requested_alpha_assets_and_effects_fail_on_the_prop_and_preserve_the_build() {
+    let (directory, game) = alpha_game();
+    let mut vmf = scene();
+    vmf.entities.last_mut().unwrap().properties.set("skin", "1");
+    let before = vmf.clone();
+    let destination = directory.path().join("existing.bsp");
+    compile(&vmf, &game).write(&destination).unwrap();
+    let old = std::fs::read(&destination).unwrap();
+    for (material, expected) in [
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture absent }",
+            "was not found",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform \"rotate 30\" }",
+            "rotated",
+        ),
+        (
+            "VertexLitGeneric { $translucent 1 $basetexture test }",
+            "$translucent",
+        ),
+        (
+            "Refract { $alphatest 1 $basetexture test }",
+            "unsupported texture-shadow shader",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test Proxies { AnimatedTexture { } } }",
+            "animation and conditional",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $alphatestreference nan }",
+            "nonfinite",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $detail detail }",
+            "$detail",
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $basealphaenvmapmask 1 }",
+            "$basealphaenvmapmask",
+        ),
+    ] {
+        std::fs::write(
+            directory.path().join("materials/models/test/two.vmt"),
+            material,
+        )
+        .unwrap();
+        let failed = compiler::compile_with_options(&vmf, &game, options());
+        assert!(failed.bsp.is_none());
+        assert!(
+            failed.report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.object.as_deref() == Some("entity:9002")
+                    && diagnostic.message.contains(expected)
+            }),
+            "{:?}",
+            failed.report
+        );
+        assert!(!failed.write(&destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), old);
+        assert_eq!(vmf, before);
+    }
+    std::fs::write(
+        directory.path().join("materials/models/test/two.vmt"),
+        "VertexLitGeneric { $alphatest 1 $basetexture test }",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("materials/test.vtf"), b"VTF\0").unwrap();
+    let failed = compiler::compile_with_options(&vmf, &game, options());
+    assert!(failed.report.diagnostics.iter().any(|diagnostic| {
+        diagnostic.object.as_deref() == Some("entity:9002")
+            && diagnostic.message.contains("truncated")
+    }));
+    assert!(!failed.write(&destination).unwrap());
+    assert_eq!(std::fs::read(&destination).unwrap(), old);
+}
+
+#[test]
+fn alpha_cutouts_share_spot_and_sun_rays_and_shader_reference_defaults() {
+    let (directory, game) = alpha_game();
+    let mut vmf = scene();
+    let prop = vmf.entities.len() - 1;
+    let light = prop - 1;
+    vmf.entities[prop].properties.set("skin", "1");
+    vmf.entities[light]
+        .properties
+        .set("classname", "light_spot");
+    for (key, value) in [
+        ("pitch", "-90"),
+        ("_inner_cone", "30"),
+        ("_cone", "45"),
+        ("_exponent", "1"),
+    ] {
+        vmf.entities[light].properties.set(key, value);
+    }
+    let spot = compile(&vmf, &game).bsp.unwrap();
+    assert_eq!(floor_sample(&spot, DVec3::ZERO).x, 200.0);
+    assert_eq!(
+        floor_sample(&spot, DVec3::new(-16.0, 0.0, 0.0)),
+        DVec3::ZERO
+    );
+    vmf.entities[light]
+        .properties
+        .set("classname", "light_environment");
+    vmf.entities[light].properties.set("_ambient", "0");
+    for solid in &mut vmf.world.solids {
+        if solid
+            .sides
+            .iter()
+            .all(|side| side.plane.0.iter().all(|point| point.z >= 256.0))
+        {
+            for side in &mut solid.sides {
+                side.material = "sky".into();
+            }
+        }
+    }
+    let sun = compile(&vmf, &game).bsp.unwrap();
+    assert_eq!(floor_sample(&sun, DVec3::ZERO).x, 200.0);
+    assert_eq!(floor_sample(&sun, DVec3::new(-16.0, 0.0, 0.0)), DVec3::ZERO);
+    let mut texture = alpha_texture();
+    for pixel in texture[80..].chunks_exact_mut(4) {
+        pixel[3] = 128;
+    }
+    std::fs::write(directory.path().join("materials/test.vtf"), texture).unwrap();
+    for (material, lit) in [
+        ("VertexLitGeneric { $alphatest 1 $basetexture test }", false),
+        ("UnlitGeneric { $alphatest 1 $basetexture test }", true),
+        (
+            "UnlitGeneric { $alphatest 1 $basetexture test $alphatestreference 0 }",
+            false,
+        ),
+        (
+            "VertexLitGeneric { $alphatest 1 $basetexture test $alphatestreference 0.75 }",
+            true,
+        ),
+    ] {
+        std::fs::write(
+            directory.path().join("materials/models/test/two.vmt"),
+            material,
+        )
+        .unwrap();
+        let color = floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO);
+        assert_eq!(color.x, if lit { 200.0 } else { 0.0 }, "{material}");
     }
 }

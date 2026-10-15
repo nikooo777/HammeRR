@@ -173,12 +173,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.static_props, stats.static_prop_models, stats.static_prop_leaf_refs
     );
     println!(
-        "static-prop mesh shadows: {} props, {} models, {} triangles, {} disabled, {} preparation work units",
+        "static-prop mesh shadows: {} props, {} models, {} triangles, {} disabled, {} preparation work units; {} alpha-test triangles, {} materials, {} textures, {} decoded alpha bytes",
         stats.prop_shadow_props,
         stats.prop_shadow_models,
         stats.prop_shadow_triangles,
         stats.prop_shadow_disabled,
-        stats.prop_shadow_work
+        stats.prop_shadow_work,
+        stats.prop_shadow_alpha_triangles,
+        stats.prop_shadow_alpha_materials,
+        stats.prop_shadow_alpha_textures,
+        stats.prop_shadow_alpha_bytes
     );
     println!(
         "terrain: {} surfaces, {} vertices, {} triangles, {} neighbor pairs",

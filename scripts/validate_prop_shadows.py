@@ -44,6 +44,8 @@ def fixture(game):
     for index, point in enumerate([(-24, -24, 0), (24, -24, 0), (0, 24, 0), (0, 0, 0)]):
         struct.pack_into("<3f", vvd, 64 + index * 48 + 16, *point)
         struct.pack_into("<f", vvd, 64 + index * 48 + 36, 1)
+    for index, uv in enumerate([(0, 0), (1, 0), (0.5, 1)]):
+        struct.pack_into("<2f", vvd, 64 + index * 48 + 40, *uv)
     for offset, value in {
         0: 7, 16: 7, 20: 1, 28: 1, 32: 36, 36: 1, 40: 8,
         44: 1, 48: 8, 52: 1, 56: 12, 64: 1, 68: 9, 73: 4,
@@ -56,6 +58,27 @@ def fixture(game):
     vtx[164] = 1
     for extension, data in zip(["mdl", "vvd", "dx90.vtx"], [mdl, vvd, vtx], strict=True):
         (game / f"models/props/test.{extension}").write_bytes(data)
+    (game / "materials/test.vtf").write_bytes(alpha_texture())
+
+
+def alpha_texture(right_alpha=0):
+    texture = bytearray(80)
+    texture[:4] = b"VTF\0"
+    struct.pack_into("<I", texture, 4, 7)
+    struct.pack_into("<I", texture, 12, 80)
+    struct.pack_into("<HH", texture, 16, 4, 4)
+    struct.pack_into("<I", texture, 20, 0x1000)
+    struct.pack_into("<H", texture, 24, 1)
+    texture[56] = 1
+    struct.pack_into("<i", texture, 57, -1)
+    for _ in range(4):
+        for alpha in [255, 255, right_alpha, right_alpha]:
+            texture.extend([255, 255, 255, alpha])
+    return texture
+
+
+def floor_sample(data, x, y):
+    return next(color for point, color, _, _ in floor_samples(data) if point[:2] == [x, y])
 
 
 def validate(client, output, game):
@@ -94,6 +117,51 @@ def validate(client, output, game):
     client.call("set_entity_properties", {"id": prop, "set": {"skin": "1"}})
     alpha = client.call("compile_map", {"path": str(bsp)})
     check(any(message["object"] == prop and "texture alpha" in message["message"] for message in alpha["diagnostics"]), "Selected alpha skin reports the opaque shadow approximation on its entity")
+    unflagged = bsp.read_bytes()
+    mdl_path = game / "models/props/test.mdl"
+    original_mdl = mdl_path.read_bytes()
+    flagged = bytearray(original_mdl)
+    struct.pack_into("<I", flagged, 152, struct.unpack_from("<I", flagged, 152)[0] | 0x00040000)
+    mdl_path.write_bytes(flagged)
+    alpha_objects = detail(client, [prop])
+    alpha_history = client.call("get_map_info")["undo"]
+    cutout = client.call("compile_map", {"path": str(bsp)})
+    cutout_bytes = bsp.read_bytes()
+    stats = cutout["stats"]
+    check(cutout["success"] and stats["prop_shadow_alpha_triangles"] == stats["prop_shadow_alpha_materials"] == stats["prop_shadow_alpha_textures"] == 1 and stats["prop_shadow_alpha_bytes"] == 16, "Requested native texture shadows report one cutout triangle, material and shared 4×4 alpha mask")
+    check(center_sample(cutout_bytes) == [200, 0, 0] and floor_sample(cutout_bytes, -16, 0) == [0, 0, 0], "Barycentric UV cutouts illuminate the transparent center and retain an opaque texel shadow")
+    client.call("start_compile", {"path": str(background)})
+    check(wait_job(client)["status"] == "completed" and background.read_bytes() == cutout_bytes, "Synchronous and background builds produce identical alpha-test lightmaps")
+    check(detail(client, [prop]) == alpha_objects and client.call("get_map_info")["undo"] == alpha_history and vmf.read_bytes() == source, "Texture-shadow baking preserves authored props, history and VMF bytes")
+    material_path = game / "materials/models/test/two.vmt"
+    original_material = material_path.read_text()
+    material_path.write_text('VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform "center 0 0 scale 1 1 translate 0.5 0 rotate 0" }')
+    client.call("compile_map", {"path": str(bsp)})
+    check(center_sample(bsp.read_bytes()) == [0, 0, 0] and floor_sample(bsp.read_bytes(), -16, 0)[0] > 0, "Material translation and repeat move the sampled cutout across real floor luxels")
+    (game / "materials/test.vtf").write_bytes(alpha_texture(128))
+    material_path.write_text('VertexLitGeneric { $alphatest 1 $basetexture test $alphatestreference 0.75 }')
+    client.call("compile_map", {"path": str(bsp)})
+    check(center_sample(bsp.read_bytes()) == [200, 0, 0], "Alpha below the authored reference transmits the complete direct ray")
+    material_path.write_text('VertexLitGeneric { $alphatest 1 $basetexture test $alphatestreference 0.5 }')
+    client.call("compile_map", {"path": str(bsp)})
+    check(center_sample(bsp.read_bytes()) == [0, 0, 0], "The same texel above a lower reference blocks the direct ray")
+    previous = bsp.read_bytes()
+    for material, expected in [
+        ('VertexLitGeneric { $alphatest 1 $basetexture test $basetexturetransform "rotate 15" }', "rotated"),
+        ('VertexLitGeneric { $translucent 1 $basetexture test }', "$translucent"),
+        ('Refract { $alphatest 1 $basetexture test }', "unsupported texture-shadow shader"),
+    ]:
+        material_path.write_text(material)
+        failed = json.loads(client.call("compile_map", {"path": str(bsp)}, error=True)["content"][0]["text"])
+        check(not failed["success"] and bsp.read_bytes() == previous and any(message["object"] == prop and expected in message["message"] for message in failed["diagnostics"]), f"Requested unsupported texture shadows fail on the prop and preserve BSP: {expected}")
+    material_path.write_text(original_material)
+    (game / "materials/test.vtf").write_bytes(b"VTF\0")
+    failed = json.loads(client.call("compile_map", {"path": str(bsp)}, error=True)["content"][0]["text"])
+    check(not failed["success"] and bsp.read_bytes() == previous and any(message["object"] == prop and "truncated" in message["message"] for message in failed["diagnostics"]), "Requested corrupt alpha texture fails without overwriting the previous BSP")
+    mdl_path.write_bytes(original_mdl)
+    (game / "materials/test.vtf").write_bytes(alpha_texture())
+    client.call("compile_map", {"path": str(bsp)})
+    check(bsp.read_bytes() == unflagged, "Unflagged alpha models retain their original opaque BSP bytes")
     vtx = game / "models/props/test.dx90.vtx"
     broken = bytearray(vtx.read_bytes())
     struct.pack_into("<i", broken, 16, 8)

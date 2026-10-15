@@ -3,7 +3,7 @@ use map_core::context::{self, Scope};
 use serde_json::Value;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::context::{Fields, Query};
 use crate::session::{Actor, Session};
 use crate::{ContextRow, ContextWindow};

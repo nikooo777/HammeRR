@@ -3,9 +3,9 @@ use map_core::primitive::{Axis, Shape, Spec};
 use slint::ComponentHandle;
 use source_formats::vmf::format_number;
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
-use crate::{PrimitiveWindow, preview_image};
+use crate::{PrimitiveWindow, ui::preview_image};
 
 fn number(value: &str) -> Result<f64, String> {
     value

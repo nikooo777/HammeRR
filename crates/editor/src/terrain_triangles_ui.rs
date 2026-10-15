@@ -13,7 +13,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     TerrainTriangleRow, TerrainTrianglesWindow,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
 

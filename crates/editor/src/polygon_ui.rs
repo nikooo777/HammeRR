@@ -9,9 +9,9 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     PolygonCorner, PolygonWindow,
-    mcp::{SharedSession, lock},
-    preview_image,
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
+    ui::preview_image,
 };
 
 pub struct Controller {
@@ -528,7 +528,7 @@ mod tests {
         );
         assert_eq!(lock(&shared).primitive_preview().unwrap().ids.len(), 4);
         assert_eq!(lock(&shared).document().vmf(), &source);
-        crate::tests::save_ui_snapshot(controller.window.window(), "polygon-drawing");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "polygon-drawing");
         controller.window.set_depth("96".into());
         controller.window.invoke_edited();
         controller.window.invoke_apply();

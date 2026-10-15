@@ -5,9 +5,9 @@ use glam::DVec2;
 use map_core::surface::{self, FaceId};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, GroupProjection, Session};
-use crate::{SurfaceGroupWindow, preview_image};
+use crate::{SurfaceGroupWindow, ui::preview_image};
 
 struct Target {
     faces: Vec<FaceId>,

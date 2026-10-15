@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{MergeRow, MergeWindow};
 

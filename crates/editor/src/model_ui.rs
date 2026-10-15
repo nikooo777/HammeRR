@@ -5,7 +5,7 @@ use slint::ComponentHandle;
 
 use crate::{
     ModelWindow,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -363,8 +363,8 @@ mod tests {
         controller.window.invoke_frame_attachment();
         assert_ne!(lock(&shared).camera(), camera);
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "model-details");
-        crate::tests::save_ui_snapshot(controller.window.window(), "model-attachments");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-details");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-attachments");
         controller.window.invoke_reload();
         controller.refresh(&lock(&shared));
         assert!(!controller.window.get_show_axes());

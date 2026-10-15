@@ -5,7 +5,7 @@ use map_core::surface::FaceId;
 use slint::ComponentHandle;
 
 use crate::TerrainWindow;
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 
 struct Target {

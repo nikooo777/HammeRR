@@ -1,6 +1,6 @@
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{RenameRow, RenameWindow};
 

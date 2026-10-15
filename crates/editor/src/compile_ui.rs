@@ -4,7 +4,7 @@ use std::rc::Rc;
 use slint::ComponentHandle;
 
 use crate::CompileWindow;
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 
 pub struct Controller {
@@ -424,7 +424,7 @@ impl Controller {
         window.on_play_build({
             let (shared, window) = (shared.clone(), window.as_weak());
             move || {
-                let result = crate::mcp::start_launch(&shared, Actor::User);
+                let result = crate::runtime::start_launch(&shared, Actor::User);
                 window.unwrap().set_message(match result {
                     Ok(()) => "Launching the last successful build with -insecure. Open Game Log for engine output.".into(),
                     Err(error) => error.into(),
@@ -1008,7 +1008,7 @@ mod tests {
                 "Missing {label}"
             );
         }
-        crate::tests::save_ui_snapshot(controller.window.window(), "build-recipes");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-recipes");
         let request = lock(&shared).begin_compile(Actor::Agent, None).unwrap();
         controller.refresh(&lock(&shared));
         assert!(!controller.window.get_custom_recipes_enabled());

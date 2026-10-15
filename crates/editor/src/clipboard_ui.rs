@@ -10,7 +10,7 @@ use slint::ComponentHandle;
 
 use crate::{
     PasteWindow,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -372,7 +372,7 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "clipboard-paste");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "clipboard-paste");
         controller.window.set_offset_x("96".into());
         controller.window.invoke_invalidate();
         controller.window.invoke_apply();

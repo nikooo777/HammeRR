@@ -4,7 +4,7 @@ use std::rc::Rc;
 use map_core::surface::FaceId;
 use slint::{ComponentHandle, Model, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{HollowWindow, OpeningRow};
 

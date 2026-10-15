@@ -4,7 +4,7 @@ use std::rc::Rc;
 use map_core::surface::{self, FaceId, SurfaceEdit};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{LightingGroup, LightingWindow};
 
@@ -245,11 +245,12 @@ impl Controller {
         session.cancel_face_preview();
         self.window
             .set_selection_label(format!("Settings for {} selected faces", faces.len()).into());
-        self.window.set_lightmap_scale(crate::common_face_number(
-            session.document(),
-            &faces,
-            |side| f64::from(side.lightmap_scale),
-        ));
+        self.window
+            .set_lightmap_scale(crate::ui::common_face_number(
+                session.document(),
+                &faces,
+                |side| f64::from(side.lightmap_scale),
+            ));
         self.window.set_groups(groups(session, &faces));
         *self.target.borrow_mut() = Some(Target {
             faces,

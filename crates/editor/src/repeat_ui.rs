@@ -9,7 +9,7 @@ use slint::ComponentHandle;
 
 use crate::{
     RepeatWindow,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -229,7 +229,7 @@ impl Controller {
         let expected = ids
             .iter()
             .copied()
-            .map(crate::mcp::id_string)
+            .map(crate::identity::id_string)
             .collect::<std::collections::BTreeSet<_>>();
         let preview = &report["preview"];
         let current = preview["sources"].as_array().map(|sources| {
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "repeat-array");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "repeat-array");
         controller.window.set_move_y("16".into());
         controller.window.invoke_invalidate();
         controller.window.invoke_apply();

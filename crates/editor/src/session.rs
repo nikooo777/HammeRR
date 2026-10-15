@@ -1014,7 +1014,7 @@ impl Session {
                 ObjectId::Solid(id) => Ok(*id),
                 ObjectId::Entity(_) => Err(format!(
                     "{} is not a world brush",
-                    crate::mcp::id_string(*id)
+                    crate::identity::id_string(*id)
                 )),
             })
             .collect::<Result<Vec<_>, _>>()?;

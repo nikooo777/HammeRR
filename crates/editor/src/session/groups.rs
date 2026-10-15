@@ -55,7 +55,7 @@ impl SelectionIndex {
 
 pub fn member_id(member: Member) -> String {
     match member {
-        Member::Object(id) => crate::mcp::id_string(id),
+        Member::Object(id) => crate::identity::id_string(id),
         Member::Group(id) => format!("group:{id}"),
     }
 }
@@ -67,7 +67,7 @@ pub fn parse_member(value: &str) -> Result<Member, String> {
             .map(Member::Group)
             .map_err(|_| "Expected group:<number>".into());
     }
-    crate::mcp::parse_id(value).map(Member::Object)
+    crate::identity::parse_id(value).map(Member::Object)
 }
 
 impl Session {

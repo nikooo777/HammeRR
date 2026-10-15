@@ -259,6 +259,65 @@ fn reference_fixture() -> [Vec<u8>; 3] {
 }
 
 #[test]
+fn attachments_use_reference_bone_poses_without_inverse_bind_transforms() {
+    let [mut mdl, vvd, vtx] = reference_fixture();
+    mdl.resize(1664, 0);
+    put_int(&mut mdl, 76, 1664);
+    put_int(&mut mdl, 240, 2);
+    put_int(&mut mdl, 244, 1456);
+    for (index, name) in ["muzzle", "world"].into_iter().enumerate() {
+        let base = 1456 + index * 92;
+        let name_offset = 1640 + index * 8;
+        put_int(&mut mdl, base, (name_offset - base) as i32);
+        put_string(&mut mdl, name_offset, name);
+        put_int(&mut mdl, base + 8, 1);
+        for offset in [12, 32, 52] {
+            put_float(&mut mdl, base + offset, 1.0);
+        }
+        put_float(&mut mdl, base + 24, 4.0);
+    }
+    put_int(&mut mdl, 1552, 0x10000);
+    let model = Model::parse(&mdl, &vvd, &vtx).unwrap();
+    assert_eq!(model.attachments.len(), 2);
+    let first = &model.attachments[0];
+    assert_eq!(first.name, "muzzle");
+    assert_eq!(first.bone, 1);
+    assert!(
+        first
+            .transform
+            .translation
+            .abs_diff_eq(glam::DVec3::new(-1.0, 4.0, 0.0), 1e-5)
+    );
+    assert!(
+        first
+            .transform
+            .matrix3
+            .x_axis
+            .abs_diff_eq(glam::DVec3::Y, 1e-5)
+    );
+    assert!(!first.world_aligned());
+    assert!(model.attachments[1].world_aligned());
+    put_float(&mut mdl, 1136, 32.0);
+    assert_eq!(
+        Model::parse(&mdl, &vvd, &vtx).unwrap().attachments[0].transform,
+        first.transform
+    );
+    for (offset, value) in [
+        (240, 1025),
+        (1464, 2),
+        (1456, i32::MAX),
+        (1480, f32::NAN.to_bits() as i32),
+    ] {
+        let mut broken = mdl.clone();
+        put_int(&mut broken, offset, value);
+        assert!(
+            Model::parse(&broken, &vvd, &vtx).is_err(),
+            "offset {offset}"
+        );
+    }
+}
+
+#[test]
 fn reference_models_compose_parent_poses_inverse_binds_and_weighted_vertices() {
     let [mut mdl, vvd, vtx] = reference_fixture();
     let model = Model::parse(&mdl, &vvd, &vtx).unwrap();

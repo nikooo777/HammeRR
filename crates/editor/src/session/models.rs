@@ -118,8 +118,17 @@ impl Session {
             .ok_or("Skin is outside the model's skin families")?;
         let parts = asset.model.parts_for_body(body).collect::<Vec<_>>();
         let bounds = asset.model.bounds_for_body(body);
+        let attachments = asset
+            .model
+            .attachments
+            .iter()
+            .enumerate()
+            .map(|(index, attachment)| {
+                super::model_attachments::report(attachment, index + 1, attachment.transform)
+            })
+            .collect::<Vec<_>>();
         Ok(
-            json!({"path":asset.path,"static_prop":asset.model.header.is_static_prop(),"pose":if asset.model.header.is_static_prop(){"static"}else{"reference"},"reference_bones":asset.model.reference_bones,"vertices":asset.model.vertices.len(),"triangles":parts.iter().map(|part|part.indices.len()/3).sum::<usize>(),"meshes":parts.len(),"body_parts":asset.model.body_parts,"body":body,"bodygroups":bodygroups(&asset.model,body),"blank":bounds.is_none(),"lod":0,"skins":asset.model.skins.len(),"skin":skin,"materials":parts.iter().map(|part|&asset.materials[family[part.material]]).collect::<BTreeSet<_>>(),"local_bounds":bounds,"hull_bounds":[asset.model.header.hull_mins,asset.model.header.hull_maxs],"asset_bytes":asset.memory_bytes(),"limits":{"scene_vertices":MAX_SCENE_VERTICES,"scene_indices":MAX_SCENE_INDICES}}),
+            json!({"path":asset.path,"static_prop":asset.model.header.is_static_prop(),"pose":if asset.model.header.is_static_prop(){"static"}else{"reference"},"reference_bones":asset.model.reference_bones,"vertices":asset.model.vertices.len(),"triangles":parts.iter().map(|part|part.indices.len()/3).sum::<usize>(),"meshes":parts.len(),"body_parts":asset.model.body_parts,"body":body,"bodygroups":bodygroups(&asset.model,body),"attachments":attachments,"blank":bounds.is_none(),"lod":0,"skins":asset.model.skins.len(),"skin":skin,"materials":parts.iter().map(|part|&asset.materials[family[part.material]]).collect::<BTreeSet<_>>(),"local_bounds":bounds,"hull_bounds":[asset.model.header.hull_mins,asset.model.header.hull_maxs],"asset_bytes":asset.memory_bytes(),"limits":{"scene_vertices":MAX_SCENE_VERTICES,"scene_indices":MAX_SCENE_INDICES}}),
         )
     }
 
@@ -149,7 +158,7 @@ impl Session {
             .iter()
             .find(|instance| instance.id == ObjectId::Entity(id));
         Ok(
-            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":instance.is_some_and(|instance|!instance.has_geometry()),"error":models.issues.get(&id),"hidden":entity.hidden,"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
+            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":instance.is_some_and(|instance|!instance.has_geometry()),"error":models.issues.get(&id),"hidden":entity.hidden,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
         )
     }
 

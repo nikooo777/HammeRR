@@ -107,6 +107,23 @@ impl<'a> Reader<'a> {
         ])
     }
 
+    pub fn affine(&self, offset: usize) -> io::Result<glam::DAffine3> {
+        let mut rows = [[0.0; 4]; 3];
+        for (row, values) in rows.iter_mut().enumerate() {
+            for (column, value) in values.iter_mut().enumerate() {
+                *value = f64::from(self.float(offset + row * 16 + column * 4)?);
+            }
+        }
+        Ok(glam::DAffine3::from_mat3_translation(
+            glam::DMat3::from_cols(
+                glam::DVec3::new(rows[0][0], rows[1][0], rows[2][0]),
+                glam::DVec3::new(rows[0][1], rows[1][1], rows[2][1]),
+                glam::DVec3::new(rows[0][2], rows[1][2], rows[2][2]),
+            ),
+            glam::DVec3::new(rows[0][3], rows[1][3], rows[2][3]),
+        ))
+    }
+
     pub fn string(&self, start: usize) -> io::Result<String> {
         let available = self.data.len().saturating_sub(start).min(1025);
         let bytes = self.bytes(start, available)?;

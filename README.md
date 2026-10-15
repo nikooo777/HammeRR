@@ -183,6 +183,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) |
 | Browse models, skins and named bodygroups with static or reference pose previews. |
 
+| Model attachment points |
+| --- |
+| ![Named attachment inspection](docs/images/model-attachments.png) |
+| Inspect named reference-pose attachment points, show their axes and frame them. |
+
 | Terrain triangles |
 | --- |
 | ![Terrain triangle selection and classifications](docs/images/terrain-triangle-picking.png) |

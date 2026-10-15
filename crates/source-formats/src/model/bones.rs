@@ -1,6 +1,6 @@
 use std::io;
 
-use glam::{DAffine3, DMat3, DQuat, DVec3};
+use glam::{DAffine3, DQuat, DVec3};
 
 use super::{invalid, reader::Reader};
 
@@ -28,7 +28,12 @@ fn resolve(
     Ok(global[index])
 }
 
-pub fn reference(reader: &Reader<'_>) -> io::Result<Vec<DAffine3>> {
+pub struct Reference {
+    pub skinning: Vec<DAffine3>,
+    pub poses: Vec<DAffine3>,
+}
+
+pub fn reference(reader: &Reader<'_>) -> io::Result<Reference> {
     let bones = reader.table(0, 156, 160, 216, MAX_BONES)?;
     if bones.len == 0 {
         return Err(invalid(
@@ -59,31 +64,22 @@ pub fn reference(reader: &Reader<'_>) -> io::Result<Vec<DAffine3>> {
             rotation.normalize(),
             position,
         ));
-        let mut rows = [[0.0; 4]; 3];
-        for (row, values) in rows.iter_mut().enumerate() {
-            for (column, value) in values.iter_mut().enumerate() {
-                *value = f64::from(reader.float(base + 96 + row * 16 + column * 4)?);
-            }
-        }
-        inverse_bind.push(DAffine3::from_mat3_translation(
-            DMat3::from_cols(
-                DVec3::new(rows[0][0], rows[1][0], rows[2][0]),
-                DVec3::new(rows[0][1], rows[1][1], rows[2][1]),
-                DVec3::new(rows[0][2], rows[1][2], rows[2][2]),
-            ),
-            DVec3::new(rows[0][3], rows[1][3], rows[2][3]),
-        ));
+        inverse_bind.push(reader.affine(base + 96)?);
     }
     let mut global = vec![DAffine3::IDENTITY; bones.len];
     let mut state = vec![0; bones.len];
     for index in 0..bones.len {
         resolve(index, &parents, &local, &mut global, &mut state)?;
     }
-    Ok(global
-        .into_iter()
+    let skinning = global
+        .iter()
         .zip(inverse_bind)
-        .map(|(pose, bind)| pose * bind)
-        .collect())
+        .map(|(pose, bind)| *pose * bind)
+        .collect();
+    Ok(Reference {
+        skinning,
+        poses: global,
+    })
 }
 
 pub fn vertex(

@@ -275,3 +275,9 @@ Checks catalog search/groups/pages, isolated model/skin image changes, unchanged
 The model browser check also covers three real skeletal/weapon reference poses, compatible entity choices, static-prop rejection without replacing prior BSP output, native dynamic-model paths, owned Apply/Undo and save/reopen. Decoder checks cover parent chains, inverse binds, weighted positions/normals and measured float-weight tolerance.
 
 The browser check includes Kleiner’s blank/visible clipboard bodygroup, integer mapping, isolated-image differences, active/resumed/stale choice queries, one-step model/skin/body Undo and native body-zero rejection preserving prior output. Core fixtures cover an entirely blank body, signed relative tables and malformed groups; renderer checks retain helpers for blank choices. Software UI checks mirror agent updates and reject an Apply that has not yet displayed the current choice.
+
+```sh
+python3 -B scripts/validate_model_attachments.py --output /tmp/hammerr-model-attachments-check
+```
+
+Checks real named attachment positions under Source entity rotation, shared guide renders and clearing, source/history preservation, camera framing, invalid/stale/foreign tokens, hidden entities, geometry-preview guards and save/reopen. Format and renderer fixtures independently check parent composition without inverse binds and native world-aligned orientation. The software model-details test exercises attachment choice, guides, framing, reload and ownership-preserving Cancel.

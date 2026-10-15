@@ -12,6 +12,76 @@ use crate::{
 pub struct Controller {
     pub window: ModelWindow,
     target: Rc<Cell<Option<(u32, u64)>>>,
+    guide: Rc<Cell<Option<u64>>>,
+}
+
+fn attachment_target(session: &Session, target: Option<(u32, u64)>) -> Result<u32, String> {
+    let (id, generation) = target.ok_or("Select a model entity")?;
+    if generation != session.document_generation() {
+        return Err("Map changed; reopen model details".into());
+    }
+    Ok(id)
+}
+
+fn refresh_attachment(window: &ModelWindow, report: &serde_json::Value) {
+    let attachments = report["attachments"].as_array().unwrap();
+    window.set_attachments(slint::ModelRc::new(slint::VecModel::from(
+        attachments
+            .iter()
+            .map(|attachment| attachment["name"].as_str().unwrap().into())
+            .collect::<Vec<slint::SharedString>>(),
+    )));
+    let index =
+        (window.get_attachment_index().max(0) as usize).min(attachments.len().saturating_sub(1));
+    window.set_attachment_index(index as i32);
+    window.set_attachment_info(
+        attachments
+            .get(index)
+            .map(|attachment| {
+                let point = &attachment["position"];
+                format!(
+                    "Position · X {:.2} · Y {:.2} · Z {:.2}\nBone {}{}",
+                    point[0].as_f64().unwrap(),
+                    point[1].as_f64().unwrap(),
+                    point[2].as_f64().unwrap(),
+                    attachment["bone"],
+                    if attachment["world_aligned"] == true {
+                        " · world-aligned axes"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
+fn show_attachment(
+    window: &ModelWindow,
+    session: &mut Session,
+    target: Option<(u32, u64)>,
+    guide: &Cell<Option<u64>>,
+) {
+    if !window.get_show_axes() {
+        if let Some(token) = guide.take() {
+            let _ = session.clear_model_attachment(token);
+        }
+        return;
+    }
+    let result = attachment_target(session, target).and_then(|id| {
+        session.show_model_attachment(id, window.get_attachment_index().max(0) as usize + 1)
+    });
+    match result {
+        Ok(report) => guide.set(report["token"].as_u64()),
+        Err(error) => {
+            if let Some(token) = guide.take() {
+                let _ = session.clear_model_attachment(token);
+            }
+            window.set_show_axes(false);
+            window.set_message(error.into());
+        }
+    }
 }
 
 fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) {
@@ -25,6 +95,7 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
         });
     match result {
         Ok(report) => {
+            refresh_attachment(window, &report);
             let asset = &report["asset"];
             window.set_pose_info(if asset["pose"] == "reference" {
                 format!("Reference pose · {} bones · body {} · LOD 0. Animation and scaling remain planned.",asset["reference_bones"],asset["body"]).into()
@@ -107,6 +178,8 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
             });
         }
         Err(error) => {
+            window.set_attachments(Default::default());
+            window.set_attachment_info("".into());
             window.set_geometry("Model preview unavailable".into());
             window.set_skin_info("".into());
             window.set_bounds("".into());
@@ -122,6 +195,48 @@ impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = ModelWindow::new()?;
         let target = Rc::new(Cell::new(None));
+        let guide = Rc::new(Cell::new(None::<u64>));
+        window.on_attachment_changed({
+            let (window, shared, target, guide) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                guide.clone(),
+            );
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                refresh(&window, &session, target.get());
+                show_attachment(&window, &mut session, target.get(), &guide);
+            }
+        });
+        window.on_show_attachment({
+            let (window, shared, target, guide) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                guide.clone(),
+            );
+            move || show_attachment(&window.unwrap(), &mut lock(&shared), target.get(), &guide)
+        });
+        window.on_frame_attachment({
+            let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let result = attachment_target(&session, target.get()).and_then(|id| {
+                    session.frame_model_attachment(
+                        Actor::User,
+                        id,
+                        window.get_attachment_index().max(0) as usize + 1,
+                        window.get_aspect(),
+                    )
+                });
+                if let Err(error) = result {
+                    window.set_message(error.into());
+                }
+            }
+        });
         window.on_reload({
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
             move || {
@@ -131,15 +246,35 @@ impl Controller {
             }
         });
         window.on_cancel({
-            let window = window.as_weak();
+            let (window, shared, guide) = (window.as_weak(), shared.clone(), guide.clone());
             move || {
+                if let Some(token) = guide.take() {
+                    let _ = lock(&shared).clear_model_attachment(token);
+                }
+                window.unwrap().set_show_axes(false);
                 let _ = window.unwrap().hide();
             }
         });
-        Ok(Self { window, target })
+        window.window().on_close_requested({
+            let window = window.as_weak();
+            move || {
+                window.unwrap().invoke_cancel();
+                slint::CloseRequestResponse::HideWindow
+            }
+        });
+        Ok(Self {
+            window,
+            target,
+            guide,
+        })
     }
 
-    pub fn initialize(&self, session: &Session, id: u32) {
+    pub fn initialize(&self, session: &mut Session, id: u32) {
+        if let Some(token) = self.guide.take() {
+            let _ = session.clear_model_attachment(token);
+        }
+        self.window.set_show_axes(false);
+        self.window.set_attachment_index(0);
         self.target.set(Some((id, session.document_generation())));
         self.window.set_model_path(
             session
@@ -154,6 +289,15 @@ impl Controller {
 
     pub fn refresh(&self, session: &Session) {
         refresh(&self.window, session, self.target.get());
+        if let Some(token) = self.guide.get() {
+            let report = session.model_attachment_guide();
+            if report["token"] != token {
+                self.guide.set(None);
+                self.window.set_show_axes(false);
+            } else if report["valid"] != true {
+                self.window.set_show_axes(false);
+            }
+        }
     }
 }
 
@@ -186,7 +330,7 @@ mod tests {
                 Actor::User,
                 "prop_dynamic",
                 Some(DVec3::ZERO),
-                BTreeMap::from([("model".into(), "models/player/ct_urban.mdl".into())]),
+                BTreeMap::from([("model".into(), "models/kleiner.mdl".into())]),
             )
             .unwrap()
         else {
@@ -196,7 +340,7 @@ mod tests {
         let history = session.document().undo_labels().count();
         let shared = Arc::new(Mutex::new(session));
         let controller = Controller::new(&shared).unwrap();
-        controller.initialize(&lock(&shared), id);
+        controller.initialize(&mut lock(&shared), id);
         assert!(controller.window.get_geometry().contains("vertices"));
         assert!(
             !controller.window.get_geometry().contains("unavailable"),
@@ -205,12 +349,38 @@ mod tests {
         );
         assert!(controller.window.get_materials().row_count() > 0);
         assert!(controller.window.get_pose_info().contains("Reference pose"));
+        assert_eq!(controller.window.get_attachments().row_count(), 15);
+        controller.window.set_attachment_index(4);
+        controller.window.invoke_attachment_changed();
+        assert!(controller.window.get_attachment_info().contains("Position"));
+        controller.window.set_show_axes(true);
+        controller.window.invoke_show_attachment();
+        assert_eq!(
+            lock(&shared).model_attachment_guide()["attachment"]["name"],
+            "mouth"
+        );
+        let camera = lock(&shared).camera();
+        controller.window.invoke_frame_attachment();
+        assert_ne!(lock(&shared).camera(), camera);
         controller.window.show().unwrap();
         crate::tests::save_ui_snapshot(controller.window.window(), "model-details");
+        crate::tests::save_ui_snapshot(controller.window.window(), "model-attachments");
         controller.window.invoke_reload();
+        controller.refresh(&lock(&shared));
+        assert!(!controller.window.get_show_axes());
         assert!(!controller.window.get_geometry().contains("unavailable"));
         controller.window.invoke_cancel();
         assert!(!controller.window.window().is_visible());
+        assert!(lock(&shared).model_attachment_guide()["token"].is_null());
+        controller.initialize(&mut lock(&shared), id);
+        controller.window.set_show_axes(true);
+        controller.window.invoke_show_attachment();
+        let replacement = lock(&shared).show_model_attachment(id, 2).unwrap()["token"]
+            .as_u64()
+            .unwrap();
+        controller.window.invoke_cancel();
+        assert_eq!(lock(&shared).model_attachment_guide()["token"], replacement);
+        lock(&shared).clear_model_attachment(replacement).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
     }

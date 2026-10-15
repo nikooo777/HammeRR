@@ -1,9 +1,9 @@
-import {Button, ListView} from "std-widgets.slint";
+import {Button, CheckBox, ComboBox, ListView} from "std-widgets.slint";
 
 export component ModelWindow inherits Window {
     title:"Model details";
     preferred-width:620px;
-    preferred-height:min(660px, 340px + root.materials.length * 20px + root.bodygroups.length * 40px);
+    preferred-height:min(850px, 340px + root.materials.length * 20px + root.bodygroups.length * 40px + (root.attachments.length>0 ? 170px : 0px));
     in property <string> model-path;
     in property <string> geometry;
     in property <string> skin-info;
@@ -11,9 +11,17 @@ export component ModelWindow inherits Window {
     in property <string> pose-info;
     in property <[string]> materials;
     in property <[string]> bodygroups;
+    in property <[string]> attachments;
+    in-out property <int> attachment-index:0;
+    in property <string> attachment-info;
+    in-out property <bool> show-axes:false;
+    in property <float> aspect:1;
     in property <string> message;
     callback reload();
     callback cancel();
+    callback attachment-changed();
+    callback show-attachment();
+    callback frame-attachment();
     forward-focus:dialog-focus;
     dialog-focus:=FocusScope {
         key-pressed(event)=>{if event.text==Key.Escape {root.cancel();accept} else {reject}}
@@ -28,6 +36,18 @@ export component ModelWindow inherits Window {
             if root.bodygroups.length > 0:VerticalLayout {
                 spacing:6px;
                 for group in root.bodygroups:Text {text:group;wrap:word-wrap;color:#b6bac3;}
+            }
+            if root.attachments.length > 0:VerticalLayout {
+                spacing:8px;
+                Text {text:"Attachment";}
+                ComboBox {model:root.attachments;current-index<=>root.attachment-index;selected=>{root.attachment-changed();}}
+                Text {text:root.attachment-info;wrap:word-wrap;color:#b6bac3;}
+                HorizontalLayout {
+                    spacing:8px;
+                    CheckBox {text:"Show attachment axes";checked<=>root.show-axes;toggled=>{root.show-attachment();}}
+                    Button {text:"Frame attachment";clicked=>{root.frame-attachment();}}
+                }
+                Text {text:"Reference pose · X red · Y green · Z blue";font-size:12px;color:#a7adb8;}
             }
             Text {text:root.pose-info;wrap:word-wrap;font-size:12px;color:#b6bac3;}
             Text {text:root.message;wrap:word-wrap;color:#a7adb8;}

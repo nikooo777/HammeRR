@@ -2042,6 +2042,22 @@ pub struct ModelBodygroupArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ModelAttachmentArgs {
+    pub id: Option<String>,
+    /// Native attachment index from inspect_entity_model.attachments, starting at 1.
+    pub attachment: usize,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FrameModelAttachmentArgs {
+    pub id: Option<String>,
+    pub attachment: usize,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ModelChoiceTokenArgs {
     pub token: u64,
 }
@@ -4686,7 +4702,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect an MDL44/48 mesh with VVD4/VTX7 LOD0 geometry, selected skin, materials, counts and bounds. Static meshes and checked reference poses are supported; pose/reference_bones distinguish them. CPU-only and read-only; does not initialize graphics or edit source. Unsupported/missing/malformed assets return a recoverable error. UI: model entity → Model details….",
+        description = "Inspect an MDL44/48 mesh with VVD4/VTX7 LOD0 geometry, selected skin/body, materials, counts, bounds and named reference-pose attachments. Static meshes and checked reference poses are supported; pose/reference_bones distinguish them. CPU-only and read-only; does not initialize graphics or edit source. Unsupported/missing/malformed assets return a recoverable error. UI: model entity → Model details….",
         annotations(read_only_hint = true)
     )]
     fn inspect_model(&self, Parameters(args): Parameters<InspectModelArgs>) -> ToolResult {
@@ -4702,7 +4718,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the selected/explicit model entity's shared viewport asset, skin and transformed bounds, displayed state and fallback reason. Reads the rendered draft, preserving source/history. Static meshes and checked reference poses, body0, scale1 and LOD0 are currently supported. UI: Model details….",
+        description = "Inspect the selected/explicit model entity's shared viewport asset, skin/body, transformed bounds and named world attachment positions/axes, displayed state and fallback reason. Reads the rendered draft, preserving source/history. Static meshes, checked reference poses and selected bodygroups at scale1/LOD0 are supported. UI: Model details….",
         annotations(read_only_hint = true)
     )]
     fn inspect_entity_model(&self, Parameters(args): Parameters<EntityArgs>) -> ToolResult {
@@ -4775,6 +4791,60 @@ impl EditorServer {
         run(|| {
             self.session()
                 .choose_model_bodygroup(args.token, args.group, args.variant)
+        })
+    }
+
+    #[tool(
+        description = "Show reference-pose axes at a named model attachment using its one-based index from inspect_entity_model.attachments. Returns an owned guide token. Requires a visible supported model and finished geometry previews; source, camera and history stay unchanged. UI: Model details… → Attachment → Show attachment axes."
+    )]
+    fn show_model_attachment(
+        &self,
+        Parameters(args): Parameters<ModelAttachmentArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let id = single_entity(&session, args.id.as_deref())?;
+            session.show_model_attachment(id, args.attachment)
+        })
+    }
+
+    #[tool(
+        description = "Inspect the active model attachment guide, including its owned token, world position/axes and validity. Stale guides retain their token for cancellation and are not rendered.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_model_attachment_guide(&self) -> ToolResult {
+        run(|| Ok(self.session().model_attachment_guide()))
+    }
+
+    #[tool(
+        description = "Clear only the captured model attachment guide token, including stale guides; a replacement guide is preserved. UI: turn off Show attachment axes or close Model details…."
+    )]
+    fn clear_model_attachment(
+        &self,
+        Parameters(args): Parameters<ModelChoiceTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().clear_model_attachment(args.token)?;
+            Ok(json!({"cleared":true}))
+        })
+    }
+
+    #[tool(
+        description = "Frame a visible model's reference-pose attachment by one-based native index. Optional positive viewport aspect defaults to 1. Returns world attachment data; changes camera only. UI: Model details… → Frame attachment."
+    )]
+    fn frame_model_attachment(
+        &self,
+        Parameters(args): Parameters<FrameModelAttachmentArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let id = single_entity(&session, args.id.as_deref())?;
+            session.frame_model_attachment(
+                Actor::Agent,
+                id,
+                args.attachment,
+                args.aspect.unwrap_or(1.0),
+            )
         })
     }
 

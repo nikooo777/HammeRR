@@ -11,7 +11,11 @@ View Source model meshes and checked reference poses with their materials and sk
 5. The mesh appears automatically when its MDL, VVD and DX90 VTX files are supported. You can still type a path directly into **World Model**.
 6. Set **Position**, **Rotation** and **Skin** in the inspector. Skin numbers start at **0**. Source origins and angles drive the same mesh in the editor and agent renders.
 7. Click the visible mesh to select it. Area/volume rules test its model bounds. Click **Frame · F** to inspect its full bounds. Hidden model entities stay hidden.
-8. Click **Model details…** for geometry counts, the active skin’s materials, bodygroup choices and transformed bounds. **Reload models** rereads model files after external changes. **Cancel** closes the read-only window.
+8. Click **Model details…** for geometry counts, the active skin’s materials, bodygroup choices and transformed bounds.
+9. If the model has attachment points, choose a name under **Attachment**. Its **Position** is shown in world coordinates for the displayed reference pose.
+10. Turn on **Show attachment axes** to mark that point in the viewport: X is red, Y green and Z blue.
+11. Click **Frame attachment** to focus the viewport on it. Inspection and guides leave the map and Undo history unchanged; framing moves the camera.
+12. **Reload models** rereads model files after external changes. **Cancel**, **Escape** or closing the window clears its own attachment guide and closes the window. An agent’s replacement guide is preserved.
 
 ![Searchable model selection with an isolated skin preview](images/model-browser.png)
 
@@ -23,7 +27,11 @@ View Source model meshes and checked reference poses with their materials and sk
 
 ![Named bodygroup selection](images/bodygroup-model-browser.png)
 
-Limits: MDL versions 44/48 with VVD4 and DX90 VTX7 companions, LOD 0 and scale 1. Unsupported, missing or malformed assets retain a helper; inspection reports the reason. Animation playback, procedural/IK poses, flexes, scaling, entity tint/transparency overrides and baked prop lighting remain planned. `prop_static` requires a model built as a static prop and body 0; use a compatible dynamic entity for reference poses or other bodygroup selections. Entirely blank choices show an editor helper, which remains selectable. Bodygroup choices change displayed geometry; collision still comes from the model’s physics data. Marquee and volume selection use loaded models’ transformed asset bounds; point picking intersects triangles. Hidden models are excluded from region matching. Unsupported assets retain their existing helper bounds. Reload refreshes model geometry and material search paths; changed VMT/VTF contents retain the existing texture cache.
+![Named attachment inspection and viewport controls](images/model-attachments.png)
+
+![Framed reference-pose attachment axes](images/model-attachment-guide.png)
+
+Limits: MDL versions 44/48 with VVD4 and DX90 VTX7 companions, LOD 0 and scale 1. Unsupported, missing or malformed assets retain a helper; inspection reports the reason. Attachment positions follow default local bone poses; animated, procedural/IK and included-model virtual attachment results are not evaluated. Attachment parenting and placement tools remain planned. Animation playback, procedural/IK poses, flexes, scaling, entity tint/transparency overrides and baked prop lighting remain planned. `prop_static` requires a model built as a static prop and body 0; use a compatible dynamic entity for reference poses or other bodygroup selections. Entirely blank choices show an editor helper, which remains selectable. Bodygroup choices change displayed geometry; collision still comes from the model’s physics data. Marquee and volume selection use loaded models’ transformed asset bounds; point picking intersects triangles. Hidden models are excluded from region matching. Unsupported assets retain their existing helper bounds. Reload refreshes model geometry and material search paths; changed VMT/VTF contents retain the existing texture cache.
 
 HammeRR limits each companion file to 64 MiB, the model cache to 128 entries and 256 MiB, and a scene to one million model vertices and six million model indices. Reference pose decoding supports up to 256 bones and three weights per vertex. Entities beyond those budgets retain helpers. These are editor resource limits. Inspection and rendering preserve map properties and Undo history.
 

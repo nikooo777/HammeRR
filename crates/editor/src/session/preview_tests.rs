@@ -12,6 +12,27 @@ fn check_draft(session: &Session, source: &source_formats::vmf::Vmf, history: us
 }
 
 #[test]
+fn arrays_and_merges_replace_each_other_without_foreign_cancel() {
+    let mut session = Session::new(Err("No assets needed".into()));
+    let a = session.create_block(Actor::User,DVec3::ZERO,DVec3::splat(32.0),"test",false).unwrap();
+    let b = session.create_block(Actor::User,DVec3::new(32.0,0.0,0.0),DVec3::new(64.0,32.0,32.0),"test",false).unwrap();
+    let ids=[a,b].map(|id| {let ObjectId::Solid(id)=id else {panic!()};id});
+    let report=session.preview_repeat_array(&[a],super::repeat::tests::options(),&session.repeat_stamp()).unwrap();
+    let array_token=report["preview"]["token"].as_u64().unwrap();
+    session.preview_merge(&ids,&session.merge_stamp()).unwrap();
+    let merged=session.render_document().vmf().clone();
+    assert!(session.repeat.preview.is_none());
+    assert!(session.cancel_repeat_array(array_token).is_err());
+    assert_eq!(session.render_document().vmf(),&merged);
+    let merge_token=session.merge_report()["preview"]["token"].as_str().unwrap().parse::<u64>().unwrap();
+    session.preview_repeat_array(&[a],super::repeat::tests::options(),&session.repeat_stamp()).unwrap();
+    let repeated=session.render_document().vmf().clone();
+    assert!(session.merging.preview.is_none());
+    assert!(session.cancel_merge(merge_token).is_err());
+    assert_eq!(session.render_document().vmf(),&repeated);
+}
+
+#[test]
 fn history_free_drafts_share_transitions_stale_guards_and_undo_for_both_actors() {
     for actor in [Actor::User, Actor::Agent] {
         let mut session = Session::new(Err("no assets required".into()));

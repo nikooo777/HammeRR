@@ -427,6 +427,94 @@ fn unknown_visible_child_keeps_whole_owner_included_while_hidden_unknown_child_d
 }
 
 #[test]
+fn mixed_valid_and_malformed_terrain_stays_unresolved_for_world_and_owned_brushes() {
+    for owned in [false, true] {
+        for invalid_power in [false, true] {
+            let mut session = Session::new(Err("Terrain bounds need no assets".into()));
+            let ObjectId::Solid(solid) =
+                block(&mut session, DVec3::splat(100.0), DVec3::splat(110.0))
+            else {
+                unreachable!()
+            };
+            let face = FaceId {
+                solid,
+                side: session.document().solid(solid).unwrap().sides[0].id,
+            };
+            session
+                .edit(Actor::User, "terrain bounds fixture", |tx| {
+                    map_core::displacement::edit::create(tx, &[face], 2, 0)?;
+                    let brush = tx.solid_mut(solid)?;
+                    let mut malformed = brush.sides[0].displacement.clone().unwrap();
+                    if invalid_power {
+                        malformed.power = 5;
+                    } else {
+                        malformed.elevation = f64::INFINITY;
+                    }
+                    brush.sides[1].displacement = Some(malformed);
+                    Ok(())
+                })
+                .unwrap();
+            let owner = if owned {
+                session
+                    .edit(Actor::User, "owned terrain bounds", |tx| {
+                        edit::tie_to_entity(tx, &[solid], "func_detail", &[])
+                    })
+                    .unwrap()
+            } else {
+                ObjectId::Solid(solid)
+            };
+            let (_, brush) = map_core::subobject::solid(session.document(), solid).unwrap();
+            assert!(
+                query::solid_bounds(brush).is_some(),
+                "generic geometry query retains a partial rendered sheet"
+            );
+            let source = session.document().vmf().clone();
+            let revision = session.document().revision();
+            let history = session.document().undo_labels().count();
+            let report = set(
+                &mut session,
+                Actor::Agent,
+                [DVec3::splat(-8.0), DVec3::splat(8.0)],
+            );
+            let rows = report["objects"].as_array().unwrap();
+            for id in [crate::identity::id_string(owner), format!("solid:{solid}")] {
+                let row = rows.iter().find(|row| row["id"] == id).unwrap();
+                assert_eq!(row["included"], true);
+                assert_eq!(row["bounds"], Value::Null);
+                assert!(
+                    row["reasons"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!("unresolved_bounds"))
+                );
+                assert!(
+                    !row["reasons"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!("outside_working_region"))
+                );
+            }
+            assert!(session.working_object_visible(session.document(), owner));
+            assert!(session.working_solid_visible(session.document(), solid));
+            assert_eq!(session.document().vmf(), &source);
+            assert_eq!(session.document().revision(), revision);
+            assert_eq!(session.document().undo_labels().count(), history);
+            session
+                .edit(Actor::User, "remove malformed imported sheet", |tx| {
+                    let brush = match owner {
+                        ObjectId::Solid(id) => tx.solid_mut(id)?,
+                        ObjectId::Entity(id) => &mut tx.entity_mut(id)?.solids[0],
+                    };
+                    brush.sides[1].displacement = None;
+                    Ok(())
+                })
+                .unwrap();
+            assert!(!session.working_object_visible(session.document(), owner));
+        }
+    }
+}
+
+#[test]
 fn indexed_paint_uses_committed_membership_after_it_discards_a_geometry_preview() {
     use crate::session::{Pointer, paint::Spec};
     use render::{Camera, Projection};

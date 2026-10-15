@@ -21,7 +21,7 @@ struct SkyTransforms {
 
 fn sky_uv(uv: vec2<f32>, face: u32) -> vec2<f32> {
     let transform = transforms.faces[face];
-    return uv * transform.xy  transform.zw;
+    return uv * transform.xy + transform.zw;
 }
 
 struct VertexOut {

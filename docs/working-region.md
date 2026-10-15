@@ -13,11 +13,14 @@ scope. Desktop and MCP renders and spatial selection use the same filter.
 3. Check **Enabled** and click **Apply**. The dialog reports excluded entries and
    selected objects/faces excluded by the region or authored hiding. Existing
    selections are retained. MCP inspection also identifies tool-texture filters.
-4. Click **Close** to continue working. The **Working region active · editor view
-   only** bar remains visible above the viewport.
+4. Click **Cancel** to close the dialog and discard unapplied field changes.
+   Applied settings stay active; the **Working region active · editor view only**
+   bar remains visible above the viewport.
 5. Click **Clear working region** in that bar or dialog to restore all otherwise
    visible objects. Clear stays reachable even when the region excludes the
    entire map. Unchecking **Enabled** and applying retains the bounds for reuse.
+
+![Working-region bounds and shared visibility controls](images/working-region.png)
 
 Objects touching the box boundary remain whole. A brush entity stays together
 when its visible-child bounds intersect the box; a hidden child does not pull an

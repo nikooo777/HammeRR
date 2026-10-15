@@ -180,6 +180,7 @@ fn failed_material_resolution_discards_old_bindings_and_repairs_with_the_same_ge
     entity.properties.set("origin", "0 0 0");
     let instance = Instance::new(&entity, current).unwrap();
     let mut vmf = Document::empty().vmf().clone();
+    vmf.world.properties.set("skyname", "");
     vmf.entities.push(entity.clone());
     let mut display = crate::MaterialLibrary::default();
     let scene = crate::SceneMesh::build_with_models(

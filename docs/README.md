@@ -19,22 +19,25 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, mirror, shear, brush shapes |
 | [Polygon brushes](polygon-brushes.md) | Drawing convex or concave outlines and extruding editable brushes |
 | [Surface placement](placement.md) | Dropping groups to floors or ceilings, picking targets, normal alignment and offsets |
-| [Repeated placement](repeated-placement.md) | Previewing translation and rotation arrays with copied names and internal links |
+| [Repeated placement](repeated-placement.md) | Previewing translation, rotation and brush-scale arrays with copied names and internal links |
 | [Hollow, carve and clip](brush-tools.md) | Turning solids into rooms, subtracting shapes, cutting brushes with a plane |
 | [Merge brushes](merge.md) | Joining brushes whose combined volume is convex, with retained outer face settings |
 | [Vertices, edges and faces](components.md) | Moving, scaling, rotating, welding, splitting and roof ridges |
 | [Flat partitions](partitions.md) | Dividing a face into pieces to raise, extrude or restyle them |
 | [Materials and textures](textures.md) | Material browser, texture editing, sampling, wrapping, painting, replacement, face lighting |
+| [Working region](working-region.md) | Temporary whole-object display bounds and visibility reasons |
+| [Fog preview](fog.md) | Choosing an authored static fog controller for perspective Textured views |
 | [2D sky preview](sky.md) | Previewing the selected mounted sky through authored sky surfaces |
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
 | [Overlays](overlays.md) | Compiling imported surface projections, material, render order and distance fading |
 | [Models](models.md) | Static mesh previews, skin materials, bounds, picking and model inspection |
+| [Particle effects](particles.md) | Active manifest definitions, metadata and guarded effect-name choices |
 | [Sounds](sounds.md) | Sound files and script names, audition, volume and entity assignment |
 | [Entities and logic](entities.md) | Placing entities, lights, brush entities, inputs/outputs, safe renaming, editing many entities |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, lighting, physics, leaks, launching Counter-Strike: Source |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
-| [Static-prop shadows](prop-shadows.md) | Opaque model-mesh blockers, shadow flags and material limits |
+| [Static-prop shadows](prop-shadows.md) | Opaque and requested alpha-test model blockers, shadow flags and material limits |
 | [Occluders](occluders.md) | Compiling static visibility blockers and their native activation records |
 | [Build recipes](build-recipes.md) | Recalling Fast preview, Final lighting and named custom compiler settings |
 

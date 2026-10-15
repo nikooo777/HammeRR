@@ -15,6 +15,10 @@ Point lights, spotlights, sun, sky ambient, diffuse bounce rays and model ambien
 
 Alpha-test shadows require the model's native `CAST_TEXTURE_SHADOWS` flag, set when the model is compiled with `$casttextureshadows`; there is no separate editor toggle. For flagged models, selected-skin **VertexLitGeneric** and **UnlitGeneric** materials with `$alphatest` enabled use `$basetexture` alpha. Supported ordinary opaque materials keep opaque shadows. Requested unsupported texture-shadow behavior fails the build with an entity-specific diagnostic and preserves the previous BSP.
 
+| Opaque mesh shadows | Alpha-test cutouts |
+| --- | --- |
+| ![Opaque fence-mesh shadow on the floor](images/prop-shadow-opaque.png) | ![Light passing through the same model's alpha-test cutouts](images/prop-shadow-cutouts.png) |
+
 Agents use `set_compile_settings` with `lighting: "direct_ldr"`, then `compile_map` or `start_compile`. Build results expose `prop_shadow_props`, `prop_shadow_models`, `prop_shadow_triangles`, `prop_shadow_disabled` and `prop_shadow_work`; the last is preparation work, included in total `lighting_work`. Cutout results add `prop_shadow_alpha_triangles`, `prop_shadow_alpha_materials`, `prop_shadow_alpha_textures` and `prop_shadow_alpha_bytes`. These count transformed cutout triangles, selected material slots per model, unique VTF masks and their decoded alpha bytes. The CLI uses the same compiler behavior.
 
 ## Limits

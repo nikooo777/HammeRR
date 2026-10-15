@@ -6,7 +6,7 @@
 
 | Path | Contents |
 | --- | --- |
-| `crates/source-formats` | Valve file formats (VMF, BSP, VPK, VMT, VTF, FGD, MDL, KeyValues) and the game filesystem. |
+| `crates/source-formats` | Valve file formats (VMF, BSP, VPK, VMT, VTF, FGD, MDL, DMX/PCF, KeyValues) and the game filesystem. |
 | `crates/map-core` | Geometry, terrain, the undoable map document, edits and picking. |
 | `crates/render` | The wgpu renderer, materials, camera and offscreen snapshots. |
 | `crates/editor-core` | The shared editing session, application runtime, optional MCP server and `hammerr-headless`. No Slint dependency. |
@@ -118,16 +118,17 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Area | Scripts |
 | --- | --- |
 | Application startup and shutdown | `headless` (edit/history, save/reopen, compile, lazy graphics and exit recovery; `--desktop-binary` compares both executable tool inventories, and `--baseline` compares a saved `tools/list` array sorted by name) |
-| Viewing and selection | `view_modes`, `saved_views`, `sky_preview`, `volume_selection`, `paint_selection`, `object_picking`, `map_statistics`, `pointfiles` |
+| Viewing and selection | `view_modes`, `saved_views`, `sky_preview`, `volume_selection`, `paint_selection`, `object_picking`, `working_region`, `fog_preview`, `map_statistics`, `pointfiles` |
 | Brushes and transforms | `geometry_tools`, `texture_lock_modes`, `brush_reflection`, `brush_shear`, `transform_display`, `precision_cycles`, `polygon_brushes`, `surface_placement`, `repeat_array` |
 | Hollow, carve, merge and clip | `hollow`, `carving`, `carve_many`, `merge`, `clip_handles` |
 | Vertices, edges and faces | `components`, `component_sources`, `component_picking`, `component_topology`, `component_transforms`, `component_creases`, `weld_texture_attachment`, `split_texture_attachment`, `roof_texture_attachment` |
 | Flat partitions | `component_partitions`, `partition_picking`, `saved_partitions`, `partition_material_metadata`, `partition_materials`, `partition_textures`, `adjusted_partition_ridges`, `boundary_partitions`, `polygon_partitions`, `partition_extrusion`, `partition_visibility` |
 | Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `material_reload`, `surface_group`, `texture_strokes`, `texture_chain` |
 | Map checks | `spawn_clearance`, `audit_fixes` |
+| Particle definitions | `particles` (active manifest discovery, bounded binary DMX parsing, metadata, owned choices and retryable errors) |
 | Local preferences | `recent_maps`, `build_recipes` |
 | Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `direct_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals` |
-| In game | `native_runtime`, `brush_runtime`, `vphysics_backend` |
+| In game | `prop_shadows_native` (optional `--runtime`), `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
 `transform_display` also checks `preview_snap_to_grid`: fractional negative world bounds-minimum anchors, mixed selections, shared texture-lock policy, source/history preservation, Apply/Cancel, aligned no-ops, model-reload cancellation and exact typed transforms with snapping enabled.
 
@@ -595,7 +596,7 @@ python3 -B scripts/validate_overlay_authoring.py --binary target/debug/hammerr-h
 ```
 
 These checks cover real tilted world/detail corners, shared imported projection
-validation, same-binding refit with raw metadata and entity identity retained,
+validation, same-binding refit and explicit destination rebinding with raw metadata and entity identity retained,
 ownership/review, stale source/selection guards, material browsing and read
 errors, Apply/Cancel/Undo and exact shared native output. `--render` captures the
 shared outline; `--runtime` compares a fully MCP-created floor projection with absent
@@ -659,3 +660,55 @@ omit it for GPU-independent checks. No desktop input or game launch is used.
 The shared script `Client.render_result` returns PNG bytes and metadata from one
 render response. `Client.render` continues to save the PNG and return its
 checksum for existing checks.
+
+### Working regions, fog and particle definitions
+
+```sh
+cargo test -p editor-core --features mcp --lib working_region
+cargo test -p editor-core --features mcp --lib fog_
+cargo test -p source-formats --lib particle
+cargo test -p editor-core --features mcp --lib particles
+python3 -B scripts/validate_working_region.py --binary target/debug/hammerr-headless --output /tmp/hammerr-working-region-check --render
+python3 -B scripts/validate_fog_preview.py --binary target/debug/hammerr-headless --gameinfo "/path/to/cstrike/gameinfo.txt" --output /tmp/hammerr-fog-check
+python3 -B scripts/validate_particles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-particles-check
+```
+
+Working-region checks cover whole-owner bounds, authored hiding, model/terrain
+bounds, shared query exclusion, stale guards and unchanged saved source/history
+and synchronous/background BSPs. `--render` compares persistent-renderer output
+before filtering and after Clear. Fog checks compare known-depth pixels with the
+linear-space ramp, disabled and unsupported states, temporary overrides and
+shared settings. Particle checks cover active manifests, definition metadata,
+owned choices, changed-file rejection, reload and failed-load retry.
+
+Software UI checks run on the private testing backend and save captures when
+`HAMMERR_UI_SNAPSHOTS` names an existing directory:
+
+```sh
+cargo test -p editor --bin editor working_region_controls_apply_inspected_bounds_reject_invalid_input_and_clear_empty_view
+cargo test -p editor --bin editor fog_preview_controls_choose_apply_cancel_and_reject_stale_or_unsupported_settings
+cargo test -p editor --bin editor particle_browser_shares_search_review_apply_cancel_and_software_screenshot
+cargo test -p editor --bin editor partition_texture_controls_share_preview_inheritance_keep_cancel_and_undo
+```
+
+The existing `repeat_array`, `partition_textures`, `overlay_authoring` and
+`material_reload` scripts also cover per-copy brush scaling, Fit/Justify,
+explicit overlay rebinding and cached model material-path changes. Model checks
+retain geometry and bounds through path failure/repair and account for held
+asset references within the cache budget.
+
+### Requested static-prop cutout shadows
+
+```sh
+cargo test -p compiler --test prop_shadows
+cargo test -p compiler --lib lighting::props
+cargo build -p compiler --example prop_shadow_fixture
+python3 -B scripts/validate_prop_shadows.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prop-shadow-check
+python3 -B scripts/validate_prop_shadows_native.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prop-cutout-check --runtime
+```
+
+The native fixture copies one mounted fence model and its companions into private
+content, changes the copy's texture-shadow flag and material, and compares opaque
+and alpha-tested builds from unchanged source. Assertions require both newly lit
+and still blocked floor luxels; optional runtime captures use the existing private
+display with `-insecure` and `sv_lan 1`. No installed game asset is modified.

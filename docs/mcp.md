@@ -503,3 +503,13 @@ normal recovery/state folder's `prefabs` child. External writers are uncoordinat
 changed file metadata or Session state invalidates stale requests. Direct library
 replacement/renaming, private formats and referenced instances are unavailable.
 See [Prefab library](prefabs.md).
+
+### Imported compile regions
+
+`compile_map` and `start_compile` reject active or ambiguous imported legacy
+`cordon` and plural `cordons` metadata before geometry conversion. Diagnostics
+appear in the normal build response/status shared with **Build details…**.
+Existing BSPs, source geometry, selection and history remain intact. Globally
+disabled metadata permits an unchanged full-map build, including active child
+records under a disabled plural block. Region authoring and sealed partial builds
+are unavailable; disable the cordon in its source editor and save the VMF first.

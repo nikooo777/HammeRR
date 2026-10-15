@@ -2,6 +2,7 @@
 
 mod areas;
 pub mod control;
+mod cordons;
 mod emit;
 pub mod faces;
 mod hints;
@@ -461,6 +462,7 @@ fn build(
 ) -> Result<(), String> {
     options.validate()?;
     control.advance(Stage::Loading)?;
+    cordons::validate(vmf)?;
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
     output.stats.cubemap_samples = map.cubemaps.len();

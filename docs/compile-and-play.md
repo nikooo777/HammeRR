@@ -369,6 +369,15 @@ Not yet: generating subdivision, removed triangles, runtime brush-model terrain,
 
 Imported `info_overlay` projections compile on world, detail and terrain surfaces. Set their material, render order and fades in the entity inspector, then inspect **Overlays** and **Surface references** in Build details. See [Overlays](overlays.md) for the workflow and limits.
 
+## Imported compile regions
+
+Active imported Hammer cordons cannot be built yet. **Compile** and **Run Map**
+report an error before producing a BSP; existing output stays intact. Disable
+the cordon in the source editor and save the VMF to build the full map.
+
+Disabled cordon metadata is retained on save and does not change full-map output.
+Editing regions and generating a sealed partial map are unavailable.
+
 ## Coordinate limits
 
 Brush geometry and entity origins must stay within **±16,384 units**. Objects outside that range are reported before building, and the existing output is kept. The editor itself allows larger coordinates for editing, but the playable Source world doesn't extend further.

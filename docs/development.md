@@ -466,3 +466,17 @@ for cross-map IDs/links/groups/layers/notes, exact centered placement, Undo/Redo
 native save/reopen, restart, malformed files and deletion after loading a detached
 draft. Use a fresh output directory. These checks use no desktop input, native
 clipboard or game launch.
+
+### Imported compile regions
+
+```sh
+cargo test -p compiler --test cordons
+python3 -B scripts/validate_compile_cordons.py --binary target/debug/editor --output /tmp/hammerr-cordon-check
+```
+
+Compiler regressions cover legacy/plural records, active/disabled flags,
+ambiguous flags, source preservation and output publication. The private
+headless MCP check compares synchronous/background diagnostics and retained
+BSPs, selection and history. Globally disabled metadata must compile identically
+to the full-map baseline. Use a fresh output directory; no game or desktop
+input is needed.

@@ -39,7 +39,10 @@ fn update_choice(window: &FogWindow, form: &Form) {
             let color = &settings["color"];
             format!("{} · {}\nColor: RGB {} {} {}\nStart: {} units · End: {} units\nMaximum density: {} · Authored fog: {}",
                 choice["id"].as_str().unwrap(),choice["targetname"].as_str().filter(|name|!name.is_empty()).unwrap_or("unnamed"),
-                color[0],color[1],color[2],settings["start"],settings["end"],settings["max_density"],
+                color[0],color[1],color[2],
+                settings["start"].as_f64().unwrap() as f32,
+                settings["end"].as_f64().unwrap() as f32,
+                settings["max_density"].as_f64().unwrap() as f32,
                 if settings["enabled"] == true { "enabled" } else { "disabled (fogenable=0); preview draws no fog" })
         },
     };

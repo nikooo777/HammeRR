@@ -48,7 +48,7 @@ impl Map<'_> {
     ) -> Result<bool, String> {
         for side in &solid.sides {
             control.checkpoint()?;
-            let material = self.materials.load(&side.material);
+            let material = self.materials.load(&side.material)?;
             if self.materials.get(material).contents & contents::ORIGIN != 0 {
                 return Ok(true);
             }

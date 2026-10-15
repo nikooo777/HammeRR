@@ -139,7 +139,7 @@ impl Map<'_> {
             {
                 return Err("Displacement vertices/alphas must be finite and positions must fit Source compile bounds".into());
             }
-            let material = self.materials.load(&side.material);
+            let material = self.materials.load(&side.material)?;
             let material_info = self.materials.get(material);
             if !material_info.draws
                 || material_info.contents & !contents::DETAIL != contents::SOLID

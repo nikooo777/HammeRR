@@ -144,7 +144,7 @@ impl Map<'_> {
             for face in &geometry.faces {
                 control.checkpoint()?;
                 let side = &solid.sides[face.side];
-                let material = self.materials.load(&side.material);
+                let material = self.materials.load(&side.material)?;
                 let info = self.materials.get(material);
                 if !info.found {
                     report.diagnostics.push(Diagnostic::error(

@@ -20,13 +20,11 @@ pub(super) struct Graph<'a> {
 struct Row {
     cluster: usize,
     bytes: Vec<u8>,
-    fallbacks: usize,
 }
 
 impl Graph<'_> {
-    pub fn refine(&self, cluster: usize, row: &mut [u8], work: &mut Work) -> Result<usize, String> {
+    pub fn refine(&self, cluster: usize, row: &mut [u8], work: &mut Work) -> Result<(), String> {
         self.control.checkpoint()?;
-        let mut fallbacks = 0;
         for &index in &self.edges[cluster] {
             flow::refine(
                 &self.portals[index],
@@ -36,14 +34,13 @@ impl Graph<'_> {
                 row,
                 flow::Context {
                     work,
-                    fallbacks: &mut fallbacks,
                     control: self.control,
                     possible: &self.bounds[index],
                     bounds: self.bounds,
                 },
             )?;
         }
-        Ok(fallbacks)
+        Ok(())
     }
 
     pub fn parallel(
@@ -51,7 +48,7 @@ impl Graph<'_> {
         output: &mut [Vec<u8>],
         workers: usize,
         remaining: Arc<Budget>,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         let cursor = AtomicUsize::new(0);
         let width = output[0].len();
         let groups = std::thread::scope(|scope| {
@@ -77,14 +74,12 @@ impl Graph<'_> {
             }
             error.map_or(Ok(groups), Err)
         })?;
-        let mut fallbacks = 0;
         for group in groups {
             for row in group {
                 output[row.cluster] = row.bytes;
-                fallbacks += row.fallbacks;
             }
         }
-        Ok(fallbacks)
+        Ok(())
     }
 
     fn worker(
@@ -103,12 +98,8 @@ impl Graph<'_> {
             }
             let mut bytes = vec![0; width];
             set(&mut bytes, cluster);
-            let fallbacks = self.refine(cluster, &mut bytes, &mut work)?;
-            rows.push(Row {
-                cluster,
-                bytes,
-                fallbacks,
-            });
+            self.refine(cluster, &mut bytes, &mut work)?;
+            rows.push(Row { cluster, bytes });
         }
         Ok(rows)
     }

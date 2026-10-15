@@ -14,6 +14,12 @@ The browser shows thumbnails in pages with a larger preview, search, and groups 
 
 Click a thumbnail to preview it, then **Use material**. **Cancel** keeps the previous choice.
 
+The selected preview reports material syntax, patch-include and texture-read
+errors. A broken preferred editor texture is reported rather than replaced with
+another image. **Check map… → Run checks** identifies affected faces. Repair
+the asset and rerun checks; cached viewport assets may require restarting the
+editor because general material reloading is not implemented.
+
 - Favorites are saved across sessions and shared with agents, up to 512.
 - Recently applied materials last for the current session.
 

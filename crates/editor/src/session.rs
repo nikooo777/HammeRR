@@ -83,6 +83,7 @@ struct FacePreview {
     terrain_mask_token: Option<u64>,
 }
 
+#[derive(Debug)]
 pub struct MaterialPreview {
     pub name: String,
     pub width: u32,
@@ -783,6 +784,9 @@ impl Session {
             loaded = render::materials::MaterialInfo::load(&self.game, name);
             &loaded
         };
+        if let Some(error) = &material.error {
+            return Err(error.clone());
+        }
         let image = material
             .base
             .as_ref()
@@ -2657,6 +2661,60 @@ mod tests {
         assert!(preview.missing);
         assert!(preview.image.is_none());
         assert_eq!(session.document().revision(), revision);
+    }
+
+    #[test]
+    fn malformed_materials_report_the_same_errors_from_cached_and_uncached_previews() {
+        let (directory, game) = crate::test_assets::game();
+        let mut session = Session::new(Ok(game));
+        let folder = directory.path().join("materials/test");
+        std::fs::write(folder.join("broken.vtf"), b"broken VTF").unwrap();
+        for text in [
+            "LightmappedGeneric { $basetexture }",
+            "Patch { include materials/test/absent.vmt }",
+            "LightmappedGeneric { %tooltexture test/broken $basetexture test/checker }",
+            "WorldVertexTransition { $basetexture test/checker $basetexture2 test/absent }",
+        ] {
+            std::fs::write(folder.join("broken.vmt"), text).unwrap();
+            session.materials = MaterialLibrary::default();
+            let error = session.material_preview("test/broken").unwrap_err();
+            let id = session.materials.load(&session.game, "test/broken");
+            assert_eq!(
+                session.materials.get(id).error.as_deref(),
+                Some(error.as_str())
+            );
+            assert_eq!(session.material_preview("test/broken").unwrap_err(), error);
+            let brush = session
+                .create_block(
+                    Actor::Agent,
+                    DVec3::ZERO,
+                    DVec3::splat(32.0),
+                    "test/broken",
+                    false,
+                )
+                .unwrap();
+            let before = session.document.vmf().clone();
+            session.run_map_checks(Actor::User);
+            assert!(
+                session
+                    .map_check_report()
+                    .unwrap()
+                    .result
+                    .issues
+                    .iter()
+                    .any(|issue| issue.code == "invalid_material"
+                        && issue.location.object == Some(brush))
+            );
+            assert_eq!(session.document.vmf(), &before);
+            session.undo(Actor::Agent).unwrap();
+        }
+        std::fs::write(
+            folder.join("broken.vmt"),
+            "LightmappedGeneric { $basetexture test/checker }",
+        )
+        .unwrap();
+        session.materials = MaterialLibrary::default();
+        assert!(!session.material_preview("test/broken").unwrap().missing);
     }
 
     #[test]

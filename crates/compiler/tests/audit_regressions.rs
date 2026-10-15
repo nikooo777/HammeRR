@@ -103,7 +103,7 @@ fn compile_booleans_agree_between_editor_and_compiler() {
         let mut room = common::room();
         room.world.solids[0].sides[0].material = "audit".into();
         let mut report = compiler::Report::default();
-        let map = Map::load(&room, &fs, &mut report);
+        let map = Map::load(&room, &fs, &mut report).unwrap();
         let info = map
             .materials
             .iter()
@@ -129,7 +129,7 @@ fn mixed_detail_faces_keep_solid_contents_and_mixed_fog_faces_report_the_limit()
         let mut room = common::room();
         room.world.solids[0].sides[0].material = "audit".into();
         let mut report = compiler::Report::default();
-        let map = Map::load(&room, &fs, &mut report);
+        let map = Map::load(&room, &fs, &mut report).unwrap();
         assert_eq!(map.brushes[0].contents, expected);
         assert_eq!(
             report
@@ -157,7 +157,7 @@ fn unsupported_flags_and_misplaced_areaportals_are_reported() {
             side.material = "audit".into();
         }
         let mut report = compiler::Report::default();
-        Map::load(&room, &fs, &mut report);
+        Map::load(&room, &fs, &mut report).unwrap();
         assert!(
             report
                 .diagnostics
@@ -233,7 +233,7 @@ fn compiler_rejects_out_of_range_geometry_and_origins_before_tree_building() {
             })
             .unwrap();
         let mut report = compiler::Report::default();
-        let map = Map::load(document.vmf(), &fs, &mut report);
+        let map = Map::load(document.vmf(), &fs, &mut report).unwrap();
         assert!(!report.has_errors(), "{report:?}");
         assert_eq!(map.brushes.len(), 1);
     }

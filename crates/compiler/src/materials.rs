@@ -26,6 +26,7 @@ pub struct MaterialInfo {
     pub reflectivity: [f32; 3],
     pub found: bool,
     pub unsupported_flags: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 impl MaterialInfo {
@@ -47,6 +48,7 @@ impl MaterialInfo {
             reflectivity: [0.5; 3],
             found: material.is_some(),
             unsupported_flags: Vec::new(),
+            warnings: Vec::new(),
         };
         let Some(m) = material else {
             return info;
@@ -88,36 +90,43 @@ impl<'a> Materials<'a> {
         self.infos.iter()
     }
 
-    pub fn load(&mut self, name: &str) -> usize {
+    pub fn load(&mut self, name: &str) -> Result<usize, String> {
         let key = name.trim().replace('\\', "/").to_ascii_lowercase();
         if let Some(&index) = self.by_name.get(&key) {
-            return index;
+            return Ok(index);
         }
-        let material = Material::load(self.fs, &key).ok().flatten();
+        let material = Material::load(self.fs, &key)
+            .map_err(|error| format!("Material {}: {error}", vmt::material_path(&key)))?;
         let mut info = MaterialInfo::from_material(name.trim(), material.as_ref());
         if let Some(material) = &material {
-            self.measure(material, &mut info);
+            self.measure(material, &mut info)?;
         }
         let index = self.infos.len();
         self.infos.push(info);
         self.by_name.insert(key, index);
-        index
+        Ok(index)
     }
 
-    fn measure(&self, material: &Material, info: &mut MaterialInfo) {
+    fn measure(&self, material: &Material, info: &mut MaterialInfo) -> Result<(), String> {
         let Some(texture) = material.get("$basetexture") else {
-            return;
+            return Ok(());
         };
-        let Ok(Some(bytes)) = self.fs.read(&vmt::texture_path(texture)) else {
-            return;
+        let path = vmt::texture_path(texture);
+        let Some(bytes) = self
+            .fs
+            .read(&path)
+            .map_err(|error| format!("{path}: {error}"))?
+        else {
+            info.warnings.push(format!("Base texture {path} was not found; dimensions and reflectivity could not be measured"));
+            return Ok(());
         };
-        let Ok(vtf) = Vtf::parse(bytes) else {
-            return;
-        };
+        let vtf = Vtf::parse(bytes).map_err(|error| format!("{path}: {error}"))?;
+        if vtf.reflectivity.iter().any(|value| !value.is_finite()) {
+            return Err(format!("{path}: texture reflectivity must be finite"));
+        }
         info.width = vtf.width as i32;
         info.height = vtf.height as i32;
-        if vtf.reflectivity.iter().all(|r| r.is_finite()) {
-            info.reflectivity = vtf.reflectivity;
-        }
+        info.reflectivity = vtf.reflectivity;
+        Ok(())
     }
 }

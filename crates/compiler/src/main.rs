@@ -107,11 +107,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.occluders, stats.occluder_polygons, stats.occluder_vertex_refs
     );
     println!(
-        "Visibility {}: workers {} · {} cluster pairs removed · {} conservative fallbacks · {} work units",
+        "Visibility {}: workers {} · {} cluster pairs removed · {} work units",
         stats.visibility_mode.label(),
         stats.visibility_workers,
         stats.visibility_removed_pairs,
-        stats.visibility_fallbacks,
         stats.visibility_work
     );
     println!(

@@ -1,6 +1,5 @@
 import argparse
 import json
-import shlex
 from pathlib import Path
 
 from validate_face_lighting import ROOT, Client, detail
@@ -23,13 +22,7 @@ def prepare_client(binary, output):
     gameinfo.write_text(
         'GameInfo { FileSystem { SearchPaths { Game "|gameinfo_path|." } } }\n'
     )
-    launcher = output / "editor-with-content.sh"
-    launcher.write_text(
-        f"#!/bin/sh\nexec {shlex.quote(str(binary.resolve()))} "
-        f'--game {shlex.quote(str(gameinfo))} "$@"\n'
-    )
-    launcher.chmod(0o700)
-    return Client(None, launcher, output)
+    return Client(None, binary, output, gameinfo=gameinfo)
 
 
 def spawn(client, classname="info_player_terrorist", origin=None):

@@ -313,7 +313,7 @@ fn parse(
     if material.is_empty() || material.contains(['"', '\n', '\r']) {
         return Err("Overlay material must name a relative game material".into());
     }
-    let material = map.materials.load(material);
+    let material = map.materials.load(material)?;
     let texdata = map.texture_data(material);
     let texinfo = map.texinfos.add(bsp::TexInfo {
         texture_vecs: [[0.0, 0.0, 0.0, -99999.0]; 2],

@@ -289,9 +289,9 @@ def check_positions(results, fluid):
 
 
 
-def private_display(script, args, bsp, extra_flags=()):
-    output = args.output / "runtime"
-    output.mkdir()
+def private_compositor(command, output, timeout=65, extra_environment=None):
+    output = output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
     private_runtime = output / "wayland"
     private_runtime.mkdir(mode=0o700)
     environment = {
@@ -301,18 +301,14 @@ def private_display(script, args, bsp, extra_flags=()):
         "WLR_RENDERER": "pixman",
         "XDG_RUNTIME_DIR": str(private_runtime),
         "SDL_AUDIODRIVER": "dummy",
+        **(extra_environment or {}),
     }
     environment.pop("DISPLAY", None)
     environment.pop("WAYLAND_DISPLAY", None)
-    command = [
-        "cage", "--", sys.executable, "-B", str(script.resolve()), "--worker",
-        "--binary", str(args.binary), "--bsp", str(bsp), "--output", str(output),
-        "--game-dir", str(args.game_dir), *extra_flags,
-    ]
     with (output / "compositor.log").open("w") as stream:
-        process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+        process = subprocess.Popen(["cage", "--", *command], cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            result = process.wait(timeout=65)
+            result = process.wait(timeout=timeout)
         finally:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -324,6 +320,46 @@ def private_display(script, args, bsp, extra_flags=()):
     if result:
         raise RuntimeError((output / "compositor.log").read_text())
     return output
+
+
+def private_display(script, args, bsp, extra_flags=(), output=None):
+    output = (args.output / "runtime" if output is None else output).resolve()
+    command = [
+        sys.executable, "-B", str(script.resolve()), "--worker",
+        "--binary", str(args.binary.resolve()), "--bsp", str(bsp.resolve()),
+        "--output", str(output), "--game-dir", str(args.game_dir.resolve()),
+        *extra_flags,
+    ]
+    return private_compositor(command, output)
+
+
+def capture_worker(args, view_command, ground_z=0.0):
+    global OBSERVER
+    original = OBSERVER
+    default_view = "setpos -64 -64 32; setang 25 45 0; mat_fullbright"
+    if original.count(default_view) != 1:
+        raise RuntimeError("Native observer must contain exactly one capture view")
+    args.capture_ppm = True
+    args.ground_z = ground_z
+    OBSERVER = original.replace(default_view, view_command)
+    try:
+        worker(args)
+    finally:
+        OBSERVER = original
+
+
+def compare_frames(output, names=("flat", "smooth")):
+    frames = []
+    for name in names:
+        magic, dimensions, maximum, pixels = (output / name / "game.ppm").read_bytes().split(b"\n", 3)
+        assert magic == b"P6" and maximum == b"255"
+        width, height = map(int, dimensions.split())
+        assert width > 0 and height > 0 and len(pixels) == width * height * 3
+        frames.append(((width, height), pixels))
+    assert len(frames) == 2 and frames[0][0] == frames[1][0]
+    differences = [abs(a - b) for a, b in zip(frames[0][1], frames[1][1], strict=True)]
+    changed = sum(max(pixel) > 3 for pixel in zip(*[iter(differences)] * 3))
+    return {"changed_pixels": changed, "mean_component_difference": sum(differences) / len(differences)}
 
 
 def main():
@@ -353,38 +389,7 @@ def main():
     assert shutil.which("cage") and shutil.which("grim"), "Cage and grim are required"
     results = []
     for mode, bsp, stats in compile_cases(args):
-        output = args.output / mode
-        output.mkdir(exist_ok=True)
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
-        command = [
-            "cage",
-            "--",
-            sys.executable,
-            "-B",
-            str(Path(__file__).resolve()),
-            "--worker",
-            "--game-dir",
-            str(args.game_dir),
-            "--output",
-            str(output),
-            "--bsp",
-            str(bsp),
-        ]
-        with (output / "compositor.log").open("w") as log:
-            subprocess.run(
-                command,
-                cwd=ROOT,
-                env=env,
-                stdout=log,
-                stderr=log,
-                check=True,
-                timeout=50,
-            )
+        output = private_display(Path(__file__), args, bsp, output=args.output / mode)
         result = json.loads((output / "runtime.json").read_text())
         result.update({"mode": mode, "stats": stats})
         results.append(result)

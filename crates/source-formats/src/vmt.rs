@@ -41,13 +41,17 @@ impl Material {
     pub fn parse(text: &str) -> Result<Self, Error> {
         let nodes = keyvalues::parse_lenient(strip_bom(text))?;
         let (shader, children) = shader_block(&nodes)?;
+        Ok(Self::from_shader(shader, children))
+    }
+
+    fn from_shader(shader: String, children: &[Node]) -> Self {
         let mut material = Self {
             shader,
             params: Vec::new(),
             blocks: Vec::new(),
         };
         material.apply(children, true);
-        Ok(material)
+        material
     }
 
     /// Loads `materials/<name>.vmt`, following `patch` includes.
@@ -75,7 +79,7 @@ impl Material {
         let nodes = keyvalues::parse_lenient(strip_bom(&text))?;
         let (shader, children) = shader_block(&nodes)?;
         if shader != "patch" {
-            return Self::parse(&text).map(Some);
+            return Ok(Some(Self::from_shader(shader, children)));
         }
 
         let include = children

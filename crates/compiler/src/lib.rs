@@ -181,7 +181,7 @@ impl VisibilityMode {
                 "Quickly builds conservative visible and audible sets. Some hidden areas remain visible."
             }
             Self::Detailed => {
-                "Clips sight volumes through portal paths to remove hidden areas. Uses up to eight CPU workers on larger maps, with conservative fallbacks. Broader map coverage and overlapping occluder geometry remain under development."
+                "Clips sight volumes through portal paths to remove hidden areas. Uses up to eight CPU workers on larger maps. Invalid apertures and exceeded work/allocation budgets stop the build. Broader map coverage and overlapping occluder geometry remain under development."
             }
         }
     }
@@ -352,7 +352,6 @@ pub struct Stats {
     pub visibility_bytes: usize,
     pub visibility_work: usize,
     pub visibility_removed_pairs: usize,
-    pub visibility_fallbacks: usize,
     pub visibility_workers: usize,
     pub hint_surfaces: usize,
     pub hint_splits: usize,
@@ -483,12 +482,19 @@ fn build(
         .iter()
         .filter(|terrain| terrain.smoothing_angle.is_some())
         .count();
-    for info in map.materials.iter().filter(|m| !m.found) {
-        output.report.diagnostics.push(Diagnostic::warning(
-            format!("material {} was not found", info.name),
-            None,
-            None,
-        ));
+    for info in map.materials.iter() {
+        if !info.found {
+            output.report.diagnostics.push(Diagnostic::warning(
+                format!("material {} was not found", info.name),
+                None,
+                None,
+            ));
+        }
+        output.report.diagnostics.extend(
+            info.warnings
+                .iter()
+                .map(|message| Diagnostic::warning(message, None, None)),
+        );
     }
     if output.report.has_errors() {
         return Ok(());
@@ -594,7 +600,6 @@ fn build(
     output.stats.visibility_mode = options.visibility;
     output.stats.visibility_work = visibility.work;
     output.stats.visibility_removed_pairs = visibility.removed_pairs;
-    output.stats.visibility_fallbacks = visibility.fallbacks;
     output.stats.visibility_workers = visibility.workers;
     output.report.diagnostics.push(Diagnostic::info(
         match options.visibility {

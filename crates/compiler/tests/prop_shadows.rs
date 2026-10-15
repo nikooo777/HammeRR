@@ -1,7 +1,7 @@
 mod common;
 
-use compiler::{LightingMode, Options};
 use compiler::lighting::LuxelFrame;
+use compiler::{LightingMode, Options};
 use glam::DVec3;
 use map_core::Plane;
 use source_formats::{
@@ -9,8 +9,6 @@ use source_formats::{
     gamefs::{GameFs, Mount, MountedPath},
     vmf::{Entity, Vmf},
 };
-
-
 
 fn put_int(data: &mut [u8], offset: usize, value: i32) {
     data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
@@ -129,7 +127,15 @@ fn fixture() -> [Vec<u8>; 3] {
     for offset in [116, 120, 140, 144] {
         put_float(&mut mdl, offset, 80.0);
     }
-    for (index, point) in [[-24.0, -24.0, 0.0], [24.0, -24.0, 0.0], [0.0, 24.0, 0.0], [0.0, 0.0, 0.0]].into_iter().enumerate() {
+    for (index, point) in [
+        [-24.0, -24.0, 0.0],
+        [24.0, -24.0, 0.0],
+        [0.0, 24.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ]
+    .into_iter()
+    .enumerate()
+    {
         for (axis, value) in point.into_iter().enumerate() {
             put_float(&mut vvd, 64 + index * 48 + 16 + axis * 4, value);
         }
@@ -137,7 +143,6 @@ fn fixture() -> [Vec<u8>; 3] {
     put_int(&mut vtx, 146, 3);
     [mdl, vvd, vtx]
 }
-
 
 fn floor_sample(bsp: &Bsp, point: DVec3) -> DVec3 {
     let faces = bsp.records::<Face>().unwrap();
@@ -181,29 +186,47 @@ fn game() -> (tempfile::TempDir, GameFs) {
         std::fs::create_dir_all(directory.path().join(folder)).unwrap();
     }
     for (suffix, bytes) in ["mdl", "vvd", "dx90.vtx"].into_iter().zip(fixture()) {
-        std::fs::write(directory.path().join(format!("models/props/test.{suffix}")), bytes).unwrap();
+        std::fs::write(
+            directory.path().join(format!("models/props/test.{suffix}")),
+            bytes,
+        )
+        .unwrap();
     }
     for (name, text) in [
         ("models/test/one", "VertexLitGeneric { $basetexture test }"),
-        ("models/test/two", "VertexLitGeneric { $alphatest 1 $basetexture test }"),
+        (
+            "models/test/two",
+            "VertexLitGeneric { $alphatest 1 $basetexture test }",
+        ),
         ("sky", "UnlitGeneric { %compilesky 1 }"),
     ] {
         std::fs::write(directory.path().join(format!("materials/{name}.vmt")), text).unwrap();
     }
     let mut game = common::empty_game();
-    game.mounts.push(MountedPath { ids: vec!["game".into()], mount: Mount::Directory(directory.path().to_owned()) });
+    game.mounts.push(MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().to_owned()),
+    });
     (directory, game)
 }
 
 fn scene() -> Vmf {
     let mut vmf = common::room();
     let mut light = Entity::new(9001, "light");
-    for (key, value) in [("origin", "0 0 100"), ("_light", "255 0 0 200"), ("_quadratic_attn", "1")] {
+    for (key, value) in [
+        ("origin", "0 0 100"),
+        ("_light", "255 0 0 200"),
+        ("_quadratic_attn", "1"),
+    ] {
         light.properties.set(key, value);
     }
     vmf.entities.push(light);
     let mut prop = Entity::new(9002, "prop_static");
-    for (key, value) in [("origin", "0 0 50"), ("model", "models/props/test.mdl"), ("solid", "0")] {
+    for (key, value) in [
+        ("origin", "0 0 50"),
+        ("model", "models/props/test.mdl"),
+        ("solid", "0"),
+    ] {
         prop.properties.set(key, value);
     }
     vmf.entities.push(prop);
@@ -211,7 +234,10 @@ fn scene() -> Vmf {
 }
 
 fn options() -> Options {
-    Options { lighting: LightingMode::DirectLdr, ..Options::default() }
+    Options {
+        lighting: LightingMode::DirectLdr,
+        ..Options::default()
+    }
 }
 
 fn compile(vmf: &Vmf, game: &GameFs) -> compiler::Output {
@@ -235,14 +261,21 @@ fn opaque_prop_uses_mesh_holes_not_bounds_and_preserves_source() {
     let hole = floor_sample(&shadowed, DVec3::new(48.0, 48.0, 0.0));
     assert!(hole.x > 0.0);
     assert_eq!(vmf, before);
-    vmf.entities.last_mut().unwrap().properties.set("disableshadows", "1");
+    vmf.entities
+        .last_mut()
+        .unwrap()
+        .properties
+        .set("disableshadows", "1");
     let clear = compile(&vmf, &game);
     assert_eq!(clear.stats.prop_shadow_triangles, 0);
     assert_eq!(clear.stats.prop_shadow_disabled, 1);
     let clear = clear.bsp.unwrap();
     assert_eq!(floor_sample(&clear, DVec3::ZERO).x, 200.0);
     assert_eq!(floor_sample(&clear, DVec3::new(48.0, 48.0, 0.0)), hole);
-    assert_eq!(clear.static_props().unwrap().unwrap().props[0].flags & 16, 16);
+    assert_eq!(
+        clear.static_props().unwrap().unwrap().props[0].flags & 16,
+        16
+    );
 }
 
 #[test]
@@ -252,32 +285,77 @@ fn transformed_prop_spot_sun_and_skin_materials_use_shared_shadows() {
     let prop_index = vmf.entities.len() - 1;
     let light_index = prop_index - 1;
     vmf.entities[prop_index].properties.set("angles", "90 0 0");
-    assert_eq!(floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO).x, 200.0);
+    assert_eq!(
+        floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO).x,
+        200.0
+    );
     vmf.entities[prop_index].properties.set("angles", "0 90 0");
     vmf.entities[prop_index].properties.set("origin", "32 0 50");
-    vmf.entities[light_index].properties.set("origin", "32 0 100");
-    assert_eq!(floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::X * 32.0), DVec3::ZERO);
+    vmf.entities[light_index]
+        .properties
+        .set("origin", "32 0 100");
+    assert_eq!(
+        floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::X * 32.0),
+        DVec3::ZERO
+    );
     vmf.entities[prop_index].properties.set("origin", "0 0 50");
-    vmf.entities[light_index].properties.set("origin", "0 0 100");
-    vmf.entities[light_index].properties.set("classname", "light_spot");
-    for (key, value) in [("pitch", "-90"), ("_inner_cone", "30"), ("_cone", "45"), ("_exponent", "1")] {
+    vmf.entities[light_index]
+        .properties
+        .set("origin", "0 0 100");
+    vmf.entities[light_index]
+        .properties
+        .set("classname", "light_spot");
+    for (key, value) in [
+        ("pitch", "-90"),
+        ("_inner_cone", "30"),
+        ("_cone", "45"),
+        ("_exponent", "1"),
+    ] {
         vmf.entities[light_index].properties.set(key, value);
     }
-    assert_eq!(floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO), DVec3::ZERO);
+    assert_eq!(
+        floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO),
+        DVec3::ZERO
+    );
     vmf.entities[prop_index].properties.set("skin", "1");
     let alpha = compile(&vmf, &game);
-    assert!(alpha.report.diagnostics.iter().any(|diagnostic| diagnostic.object.as_deref() == Some("entity:9002") && diagnostic.message.contains("texture alpha")));
+    assert!(
+        alpha
+            .report
+            .diagnostics
+            .iter()
+            .any(
+                |diagnostic| diagnostic.object.as_deref() == Some("entity:9002")
+                    && diagnostic.message.contains("texture alpha")
+            )
+    );
     assert_eq!(floor_sample(&alpha.bsp.unwrap(), DVec3::ZERO), DVec3::ZERO);
-    vmf.entities[light_index].properties.set("classname", "light_environment");
+    vmf.entities[light_index]
+        .properties
+        .set("classname", "light_environment");
     vmf.entities[light_index].properties.set("_ambient", "0");
     for solid in &mut vmf.world.solids {
-        if solid.sides.iter().all(|side| side.plane.0.iter().all(|point| point.z >= 256.0)) {
-            for side in &mut solid.sides { side.material = "sky".into(); }
+        if solid
+            .sides
+            .iter()
+            .all(|side| side.plane.0.iter().all(|point| point.z >= 256.0))
+        {
+            for side in &mut solid.sides {
+                side.material = "sky".into();
+            }
         }
     }
-    assert_eq!(floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO), DVec3::ZERO);
-    vmf.entities[prop_index].properties.set("disableshadows", "1");
-    assert_eq!(floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO).x, 200.0);
+    assert_eq!(
+        floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO),
+        DVec3::ZERO
+    );
+    vmf.entities[prop_index]
+        .properties
+        .set("disableshadows", "1");
+    assert_eq!(
+        floor_sample(&compile(&vmf, &game).bsp.unwrap(), DVec3::ZERO).x,
+        200.0
+    );
 }
 
 #[test]
@@ -295,12 +373,25 @@ fn failed_shadow_assets_preserve_bsp_while_fullbright_and_disabled_props_need_on
     let before = vmf.clone();
     let failed = compiler::compile_with_options(&vmf, &game, options());
     assert!(failed.bsp.is_none());
-    assert!(failed.report.diagnostics.iter().any(|diagnostic| diagnostic.object.as_deref() == Some("entity:9002") && diagnostic.message.contains("checksum")));
+    assert!(
+        failed
+            .report
+            .diagnostics
+            .iter()
+            .any(
+                |diagnostic| diagnostic.object.as_deref() == Some("entity:9002")
+                    && diagnostic.message.contains("checksum")
+            )
+    );
     assert!(!failed.write(&destination).unwrap());
     assert_eq!(std::fs::read(&destination).unwrap(), old);
     assert_eq!(vmf, before);
     assert!(compiler::compile(&vmf, &game).bsp.is_some());
-    vmf.entities.last_mut().unwrap().properties.set("disableshadows", "1");
+    vmf.entities
+        .last_mut()
+        .unwrap()
+        .properties
+        .set("disableshadows", "1");
     assert!(compile(&vmf, &game).bsp.is_some());
     vmf.entities.last_mut().unwrap().hidden = true;
     let hidden = compile(&vmf, &game);

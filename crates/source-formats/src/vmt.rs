@@ -59,7 +59,12 @@ impl Material {
         Self::load_depth(fs, &material_path(name), 0, maximum)
     }
 
-    fn load_depth(fs: &GameFs, path: &str, depth: usize, maximum: usize) -> Result<Option<Self>, Error> {
+    fn load_depth(
+        fs: &GameFs,
+        path: &str,
+        depth: usize,
+        maximum: usize,
+    ) -> Result<Option<Self>, Error> {
         if depth > MAX_PATCH_DEPTH {
             return Err(Error::PatchTooDeep);
         }
@@ -205,16 +210,36 @@ mod tests {
         use crate::gamefs::{Mount, MountedPath};
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir(directory.path().join("materials")).unwrap();
-        std::fs::write(directory.path().join("materials/base.vmt"), "VertexLitGeneric { $alphatest 1 }".to_owned() + &" ".repeat(256)).unwrap();
-        std::fs::write(directory.path().join("materials/patch.vmt"), "Patch { include materials/base.vmt replace { $alphatest 0 } }").unwrap();
+        std::fs::write(
+            directory.path().join("materials/base.vmt"),
+            "VertexLitGeneric { $alphatest 1 }".to_owned() + &" ".repeat(256),
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("materials/patch.vmt"),
+            "Patch { include materials/base.vmt replace { $alphatest 0 } }",
+        )
+        .unwrap();
         let game = GameFs {
             game_dir: directory.path().to_owned(),
             base_dir: directory.path().to_owned(),
-            mounts: vec![MountedPath { ids: vec!["game".into()], mount: Mount::Directory(directory.path().to_owned()) }],
+            mounts: vec![MountedPath {
+                ids: vec!["game".into()],
+                mount: Mount::Directory(directory.path().to_owned()),
+            }],
         };
         assert!(Material::load_limited(&game, "patch", 128).is_err());
-        assert!(!Material::load_limited(&game, "patch", 512).unwrap().unwrap().alpha_test());
-        assert!(Material::load_limited(&game, "missing", 128).unwrap().is_none());
+        assert!(
+            !Material::load_limited(&game, "patch", 512)
+                .unwrap()
+                .unwrap()
+                .alpha_test()
+        );
+        assert!(
+            Material::load_limited(&game, "missing", 128)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -235,7 +235,14 @@ pub(super) fn bake(
             );
             let colors = gather(ctx.directions, &mut |direction| {
                 Ok(surfaces
-                    .trace(point, direction, cone, ctx.shadows, ctx.prop_shadows, budget)?
+                    .trace(
+                        point,
+                        direction,
+                        cone,
+                        ctx.shadows,
+                        ctx.prop_shadows,
+                        budget,
+                    )?
                     .map_or(DVec3::ZERO, |hit| hit.color))
             })?;
             for (slot, color) in sample.cube.iter_mut().zip(colors) {

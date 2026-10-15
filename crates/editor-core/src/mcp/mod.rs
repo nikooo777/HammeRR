@@ -554,6 +554,7 @@ impl EditorServer {
             + Self::materials_tools()
             + Self::overlay_tools()
             + Self::partitions_tools()
+            + Self::particles_tools()
             + Self::placement_tools()
             + Self::recovery_tools()
             + Self::selection_tools()

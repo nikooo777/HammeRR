@@ -18,6 +18,7 @@ export { TerrainTrianglesWindow, TerrainTriangleRow } from "terrain-triangles.sl
 export {ModelWindow} from "models.slint";
 export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-browser.slint";
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
+export {ParticleBrowserWindow, ParticleChoiceRow} from "particles.slint";
 export {PlacementWindow} from "placement.slint";
 export {PolygonWindow,PolygonCorner} from "polygon.slint";
 export {RepeatWindow} from "repeat.slint";
@@ -1003,6 +1004,7 @@ component PropertyField inherits VerticalLayout {
     callback pick-material();
     callback pick-model();
     callback pick-sound();
+    callback pick-particle();
     spacing: 5px;
     padding-bottom: 12px;
     HorizontalLayout {
@@ -1064,7 +1066,7 @@ component PropertyField inherits VerticalLayout {
         enabled: !root.field.read-only;
         released(value) => { root.edited(root.field.type-name == "integer" ? "\{round(value)}" : "\{value}"); }
     }
-    if root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "material" || root.field.control == "model" || root.field.control == "sound": HorizontalLayout {
+    if root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "material" || root.field.control == "model" || root.field.control == "sound" || root.field.control == "particle": HorizontalLayout {
         spacing: 6px;
         LineEdit {
             horizontal-stretch: 1;
@@ -1076,6 +1078,7 @@ component PropertyField inherits VerticalLayout {
         if root.field.control == "material": Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-material(); } }
         if root.field.control == "model" && root.model-browsing: Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-model(); } }
         if root.field.control == "sound" && root.model-browsing: Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-sound(); } }
+        if root.field.control == "particle" && root.model-browsing: Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-particle(); } }
     }
     if root.show-help: Text { text: root.field.description; wrap: word-wrap; color: #8a909c; font-size: 12px; }
     if root.advanced && (root.field.control == "color" || root.field.control == "vector" || root.field.control == "flags"): LineEdit {
@@ -1895,6 +1898,7 @@ export component AppWindow inherits Window {
     callback browse-material(key: string);
     callback browse-model();
     callback browse-sound(string);
+    callback browse-particle();
     callback place-on-surface();
     callback repeat-array();
     callback copy-objects();
@@ -2678,6 +2682,7 @@ export component AppWindow inherits Window {
                                 pick-material => { root.browse-material(row.key); }
                                 pick-model => { root.browse-model(); }
                                 pick-sound => { root.browse-sound(row.key); }
+                                pick-particle => { root.browse-particle(); }
                             }
                         }
                     }

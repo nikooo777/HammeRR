@@ -17,6 +17,7 @@ mod merge_ui;
 mod model_browser_ui;
 mod model_ui;
 mod overlay_ui;
+mod particles_ui;
 mod placement_ui;
 mod pointfile_ui;
 mod polygon_ui;

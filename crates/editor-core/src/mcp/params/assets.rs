@@ -191,3 +191,33 @@ pub struct MaterialPreviewArgs {
     /// Material path without materials/ or .vmt, e.g. concrete/concretefloor001a.
     pub material: String,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowseParticlesArgs {
+    pub query: Option<String>,
+    pub group: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ParticleNameArgs {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BeginParticleChoiceArgs {
+    pub id: Option<String>,
+    #[serde(default)]
+    pub resume: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChooseParticleArgs {
+    pub token: u64,
+    pub name: String,
+}

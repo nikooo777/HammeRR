@@ -47,6 +47,7 @@ pub mod models;
 pub mod object_picking;
 pub mod overlay;
 pub mod paint;
+pub mod particles;
 pub mod placement;
 pub mod pointfiles;
 pub mod prefabs;
@@ -153,6 +154,7 @@ pub struct Session {
     prefabs: prefabs::State,
     model_browser: model_browser::State,
     sounds: sounds::State,
+    particles: particles::State,
     placement: placement::State,
     model_attachments: model_attachments::State,
     models: std::cell::RefCell<render::models::Library>,
@@ -273,6 +275,7 @@ impl Session {
             models: std::cell::RefCell::default(),
             model_browser: model_browser::State::default(),
             sounds: sounds::State::default(),
+            particles: particles::State::default(),
             placement: placement::State::default(),
             model_attachments: model_attachments::State::default(),
             terrain_handles: terrain_handles::State::default(),

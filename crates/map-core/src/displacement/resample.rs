@@ -36,29 +36,18 @@ pub fn change(face: &Face, info: &DispInfo, power: u32) -> Result<DispInfo, Edit
     if power == info.power {
         return Ok(info.clone());
     }
-    if !info.start_position.is_finite() {
-        return Err(invalid("Terrain start position must be finite"));
-    }
     if !info.extra.is_empty() {
         return Err(invalid(
             "Extra terrain blocks need topology remapping before changing resolution",
         ));
     }
-    if info.normals.is_some() != info.distances.is_some() {
-        return Err(invalid(
-            "Terrain normals and distances must be provided together",
-        ));
-    }
     let old = DisplacementMesh::build(face, info).map_err(|error| invalid(&error.to_string()))?;
-    if old.positions.iter().any(|p| !p.is_finite())
-        || old
-            .alphas
-            .iter()
-            .any(|a| !a.is_finite() || !(0.0..=255.0).contains(a))
+    if old
+        .alphas
+        .iter()
+        .any(|alpha| !(0.0..=255.0).contains(alpha))
     {
-        return Err(invalid(
-            "Terrain positions must be finite and blend values must be 0–255",
-        ));
+        return Err(invalid("Terrain blend values must be 0–255"));
     }
     let tag = if let Some(rows) = &info.triangle_tags {
         let cells = old.size - 1;
@@ -84,12 +73,7 @@ pub fn change(face: &Face, info: &DispInfo, power: u32) -> Result<DispInfo, Edit
             "Restricted vertex masks need topology remapping before changing resolution",
         ));
     }
-    if info.offset_normals.as_ref().is_some_and(|rows| {
-        rows.len() != old.size
-            || rows
-                .iter()
-                .any(|row| row.len() != old.size || row.iter().any(|value| *value != DVec3::ZERO))
-    }) {
+    if old.offset_normals_need_remapping(info) {
         return Err(invalid(
             "Nonzero or malformed offset normals need topology remapping before changing resolution",
         ));

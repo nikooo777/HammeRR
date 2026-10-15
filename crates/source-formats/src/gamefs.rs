@@ -180,6 +180,8 @@ impl GameFs {
             let path = path.to_path_buf();
             move |source| Error::Io { path, source }
         };
+        let gameinfo = std::path::absolute(gameinfo).map_err(io_err(gameinfo))?;
+        let gameinfo = gameinfo.as_path();
         let text = fs::read_to_string(gameinfo).map_err(io_err(gameinfo))?;
         let nodes = keyvalues::parse_lenient(&text).map_err(|source| Error::Syntax {
             path: gameinfo.to_path_buf(),
@@ -188,8 +190,11 @@ impl GameFs {
         let search_paths = find_block(&nodes, &["GameInfo", "FileSystem", "SearchPaths"])
             .ok_or_else(|| Error::NoSearchPaths(gameinfo.to_path_buf()))?;
 
-        let game_dir = gameinfo.parent().map(Path::to_path_buf).unwrap_or_default();
-        let base_dir = game_dir.parent().map(Path::to_path_buf).unwrap_or_default();
+        let game_dir = gameinfo
+            .parent()
+            .expect("gameinfo names a file")
+            .to_path_buf();
+        let base_dir = game_dir.parent().unwrap_or(&game_dir).to_path_buf();
         let mut gamefs = Self {
             game_dir,
             base_dir,
@@ -472,6 +477,50 @@ fn find_block<'a>(nodes: &'a [Node], path: &[&str]) -> Option<&'a [Node]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filename_gameinfo_resolves_content_from_its_directory() {
+        use std::io::Write;
+
+        let mut file = tempfile::NamedTempFile::new_in(".").unwrap();
+        let text = "GameInfo { FileSystem { SearchPaths { game |gameinfo_path|. } } }";
+        file.write_all(text.as_bytes()).unwrap();
+        let filename = Path::new(file.path().file_name().unwrap());
+        for path in [filename.to_path_buf(), Path::new(".").join(filename)] {
+            let game = GameFs::from_gameinfo(path).unwrap();
+            assert_eq!(game.game_dir, std::env::current_dir().unwrap());
+            assert_eq!(game.mounts.len(), 1);
+            assert_eq!(
+                game.read(filename.to_str().unwrap()).unwrap().as_deref(),
+                Some(text.as_bytes())
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_gameinfo_uses_the_provided_content_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        let game = root.path().join("game");
+        fs::create_dir(&config).unwrap();
+        fs::create_dir(&game).unwrap();
+        fs::write(
+            config.join("shared.txt"),
+            "GameInfo { FileSystem { SearchPaths { game |gameinfo_path|. } } }",
+        )
+        .unwrap();
+        fs::write(config.join("asset.txt"), b"wrong directory").unwrap();
+        fs::write(game.join("asset.txt"), b"mounted content").unwrap();
+        let gameinfo = game.join("gameinfo.txt");
+        std::os::unix::fs::symlink(config.join("shared.txt"), &gameinfo).unwrap();
+        let mounted = GameFs::from_gameinfo(gameinfo).unwrap();
+        assert_eq!(mounted.game_dir, game);
+        assert_eq!(
+            mounted.read("asset.txt").unwrap().unwrap(),
+            b"mounted content"
+        );
+    }
 
     #[cfg(unix)]
     #[test]

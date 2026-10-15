@@ -38,28 +38,11 @@ fn invalid(message: &str) -> EditError {
 }
 
 fn mesh(face: &Face, info: &DispInfo) -> Result<DisplacementMesh, EditError> {
-    if !info.extra.is_empty()
-        || info.normals.is_some() != info.distances.is_some()
-        || !info.start_position.is_finite()
-    {
-        return Err(invalid(
-            "Opaque terrain blocks or malformed geometry need repair before editing",
-        ));
+    if !info.extra.is_empty() {
+        return Err(invalid("Opaque terrain blocks need repair before editing"));
     }
     let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(&error.to_string()))?;
-    if mesh
-        .positions
-        .iter()
-        .any(|p| !p.is_finite() || p.abs().max_element() > MAX_COORDINATE)
-        || mesh
-            .alphas
-            .iter()
-            .any(|a| !a.is_finite() || !(0.0..=255.0).contains(a))
-    {
-        return Err(invalid(
-            "Terrain positions must fit ±65536 and blend values must be 0–255",
-        ));
-    }
+    mesh.validate_edit_bounds()?;
     Ok(mesh)
 }
 
@@ -147,12 +130,7 @@ fn sculpt_masked(
     }
     let mesh = mesh(face, info)?;
     validate_mask(&mesh, mask)?;
-    if info.offset_normals.as_ref().is_some_and(|rows| {
-        rows.len() != mesh.size
-            || rows
-                .iter()
-                .any(|row| row.len() != mesh.size || row.iter().any(|v| *v != DVec3::ZERO))
-    }) {
+    if mesh.offset_normals_need_remapping(info) {
         return Err(invalid(
             "Nonzero or malformed offset normals need remapping before sculpting",
         ));
@@ -320,12 +298,7 @@ pub fn move_vertices(
     let mesh = mesh(face, info)?;
     let vertices = vertices.iter().copied().collect::<BTreeSet<_>>();
     validate_mask(&mesh, Some(&vertices))?;
-    if info.offset_normals.as_ref().is_some_and(|rows| {
-        rows.len() != mesh.size
-            || rows
-                .iter()
-                .any(|row| row.len() != mesh.size || row.iter().any(|v| *v != DVec3::ZERO))
-    }) {
+    if mesh.offset_normals_need_remapping(info) {
         return Err(invalid(
             "Nonzero or malformed offset normals need remapping before moving vertices",
         ));

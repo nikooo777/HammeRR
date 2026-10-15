@@ -105,6 +105,32 @@ fn grid<'a, T>(
 }
 
 impl DisplacementMesh {
+    fn validate_edit_bounds(&self) -> Result<(), crate::EditError> {
+        if self
+            .positions
+            .iter()
+            .any(|point| point.abs().max_element() > crate::primitive::MAX_COORDINATE)
+            || self
+                .alphas
+                .iter()
+                .any(|alpha| !(0.0..=255.0).contains(alpha))
+        {
+            return Err(crate::EditError::Invalid(
+                "Terrain positions must fit ±65536 and blend values must be 0–255".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn offset_normals_need_remapping(&self, info: &DispInfo) -> bool {
+        info.offset_normals.as_ref().is_some_and(|rows| {
+            rows.len() != self.size
+                || rows.iter().any(|row| {
+                    row.len() != self.size || row.iter().any(|point| *point != DVec3::ZERO)
+                })
+        })
+    }
+
     /// Rows run from the corner nearest `startposition` along the face's
     /// next edge in winding order; columns run along the previous edge.
     pub fn build(face: &Face, disp: &DispInfo) -> Result<Self, DisplacementError> {

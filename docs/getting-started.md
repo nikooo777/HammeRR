@@ -34,6 +34,8 @@ Leave out the filename to start with an empty map. HammeRR finds Counter-Strike:
 
 Saving increments the VMF's map version and uses standard VMF formatting while retaining imported properties and extra blocks. Round trips through other editors haven't been verified yet.
 
+Saving through a file symlink updates its target and preserves the link and target permissions. Broken or looping links are refused. Failed saves preserve unsaved changes; repair the path or choose another destination and save again.
+
 | Option | Purpose |
 | --- | --- |
 | `--game <gameinfo.txt>` | Load content from a specific game installation instead of the one found through Steam. |
@@ -45,6 +47,8 @@ Saving increments the VMF's map version and uses standard VMF formatting while r
 ## Game content
 
 HammeRR reads materials from the search paths listed in `gameinfo.txt`, including VPK archives.
+
+`--game` accepts absolute paths, relative paths and a filename in the current directory. Search-path tokens resolve from the supplied gameinfo location, including when that file is a symlink.
 
 - To use extra content, add its folder to the `gameinfo.txt` search paths. The folder itself may be a symlink.
 - Links inside a content folder must point somewhere inside that same folder. Directory loops are not followed repeatedly.

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -331,24 +331,12 @@ impl Session {
                         "Build recipes changed on disk; restart to reload before editing".into(),
                     );
                 }
-                if fs::metadata(path).is_ok_and(|metadata| metadata.permissions().readonly()) {
-                    return Err("Build recipe storage is read-only".into());
-                }
                 let directory = path
                     .parent()
                     .filter(|path| !path.as_os_str().is_empty())
                     .unwrap_or(Path::new("."));
                 fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-                let mut temporary = tempfile::NamedTempFile::new_in(directory)
-                    .map_err(|error| error.to_string())?;
-                temporary
-                    .write_all(&bytes)
-                    .map_err(|error| error.to_string())?;
-                temporary
-                    .as_file()
-                    .sync_all()
-                    .map_err(|error| error.to_string())?;
-                temporary.persist(path).map_err(|error| error.to_string())?;
+                crate::recovery::atomic_write(path, &bytes)?;
                 state.disk = Some(bytes);
             }
             Ok(())
@@ -690,6 +678,11 @@ mod tests {
             .save_build_recipe(Actor::User, "Geometry", None, None)
             .unwrap();
         let id = active_id(&saved).to_owned();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        }
         let original = fs::read(&path).unwrap();
         let mut restarted = Session::new(Err("no game needed".into()));
         restarted.configure_build_recipes_at(Ok(path.clone()));
@@ -719,6 +712,14 @@ mod tests {
         restarted
             .rename_build_recipe(Actor::Agent, &id, "Renamed", None)
             .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
         assert!(restarted.build_recipes()["error"].is_null());
         assert!(
             session

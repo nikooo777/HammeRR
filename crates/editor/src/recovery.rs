@@ -94,16 +94,34 @@ fn valid_id(id: &str) -> bool {
 }
 
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
-    let parent = path
+    let (destination, metadata) = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_symlink() => {
+            let destination = path
+                .canonicalize()
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            let metadata = fs::metadata(&destination)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            (destination, Some(metadata))
+        }
+        Ok(metadata) => (path.to_path_buf(), Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (path.to_path_buf(), None),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    if let Some(metadata) = &metadata {
+        if !metadata.is_file() {
+            return Err(format!("{} must be a regular file", path.display()));
+        }
+        if metadata.permissions().readonly() {
+            return Err(format!("{} is read-only", path.display()));
+        }
+    }
+    let parent = destination
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|e| format!("{}: {e}", parent.display()))?;
-    if let Ok(metadata) = fs::metadata(path) {
-        if metadata.permissions().readonly() {
-            return Err(format!("{} is read-only", path.display()));
-        }
+    if let Some(metadata) = metadata {
         temporary
             .as_file()
             .set_permissions(metadata.permissions())
@@ -114,7 +132,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|e| format!("{}: {e}", path.display()))?;
     temporary
-        .persist(path)
+        .persist(&destination)
         .map_err(|e| format!("{}: {}", path.display(), e.error))?;
     Ok(())
 }

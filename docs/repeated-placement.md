@@ -27,10 +27,12 @@ authored. Original and external entities are never renamed or rewritten.
 
 Shared source names, duplicate name fields, uncertain internal text matches,
 internal wildcards and generated names that would acquire existing references
-reject the whole preview. Rename or resolve those fields first. Opaque custom
-metadata, scripts and embedded expressions remain verbatim; their reference
-semantics are outside the supported remapping policy. Overlay entities are
-excluded because their numeric face references require a different mapping.
+reject the whole preview. Rename or resolve those fields first. Named source
+sets with scripts or dynamic I/O (`AddOutput`, `RunScriptCode`, `RunScriptFile`)
+are excluded because their links cannot be safely remapped. Overlay entities,
+node IDs and FGD-declared numeric node/side references are also excluded.
+Other custom metadata and embedded text remain verbatim; their reference
+semantics are outside the supported remapping policy.
 
 Limits are 64 additional copies, 256 new objects including owned entity brushes,
 8192 new sides, names up to 128 UTF-8 bytes, and geometry within ±65536 units.

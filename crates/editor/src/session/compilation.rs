@@ -211,6 +211,7 @@ impl Session {
         if options != self.compilation.options {
             self.compilation.options = options;
             self.compilation.recipes.active = None;
+            self.remember_current_map_context();
             self.log(
                 actor,
                 format!(

@@ -43,6 +43,7 @@ pub mod placement;
 pub mod pointfiles;
 pub mod primitives;
 mod recovery;
+mod recent;
 pub mod saved_views;
 pub mod sounds;
 pub mod statistics;
@@ -150,6 +151,7 @@ pub struct Session {
     terrain_handles: terrain_handles::State,
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
+    recent_maps: recent::State,
     checks: checks::State,
     material_search: material_search::State,
     context: context::State,
@@ -258,6 +260,7 @@ impl Session {
             terrain_handles: terrain_handles::State::default(),
             surface_sample: None,
             recovery: recovery::State::default(),
+            recent_maps: recent::State::default(),
             checks: checks::State::default(),
             material_search: material_search::State::default(),
             context: context::State::default(),
@@ -1146,6 +1149,8 @@ impl Session {
             start.elapsed()
         );
         self.replace_document(document, Some(path.to_owned()));
+        self.restore_recent_map_context(path);
+        self.remember_recent_map(path);
         self.log(actor, &message);
         Ok(message)
     }
@@ -1183,6 +1188,7 @@ impl Session {
         self.document.mark_saved();
         self.path = Some(path.clone());
         self.update_recovery_path();
+        self.remember_saved_map(&path);
         self.changed();
         self.log(
             actor,

@@ -24,6 +24,8 @@ mod polygon_ui;
 mod primitive_ui;
 mod recovery;
 mod recovery_ui;
+mod recent_maps;
+mod recent_maps_ui;
 mod rename_ui;
 mod saved_views_ui;
 mod session;
@@ -166,6 +168,7 @@ struct Ui {
     carve_window: Option<CarveWindow>,
     merge_window: Option<MergeWindow>,
     recovery_window: Option<RecoveryWindow>,
+    recent_maps_window: Option<RecentMapsWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
     primitive_window: Option<PrimitiveWindow>,
@@ -174,6 +177,7 @@ struct Ui {
     seen_context: (u64, u64),
     seen_checks: (u64, u64, u64),
     seen_recovery: (u64, u64),
+    seen_recent_maps: (u64, u64),
     seen_management: (u64, u64, u64),
     rename_window: Option<RenameWindow>,
     seen_rename: (u64, u64, u64),
@@ -3193,6 +3197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         carve_window: None,
         merge_window: None,
         recovery_window: None,
+        recent_maps_window: None,
         checks_window: None,
         context_window: None,
         primitive_window: None,
@@ -3201,6 +3206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_context: (0, 0),
         seen_checks: (0, 0, 0),
         seen_recovery: (0, 0),
+        seen_recent_maps: (0, 0),
         seen_management: (0, 0, 0),
         rename_window: None,
         seen_rename: (0, 0, 0),
@@ -3252,6 +3258,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_open_map({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || open_dialog(&app.unwrap(), &ui)
+    });
+    app.on_recent_maps({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            if ui.borrow().recent_maps_window.is_none() {
+                match RecentMapsWindow::new() {
+                    Ok(window) => {
+                        recent_maps_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().recent_maps_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui.borrow().recent_maps_window.as_ref().unwrap().clone_strong();
+            window.set_discard_changes(false);
+            window.set_confirm_clear(false);
+            window.set_message("".into());
+            recent_maps_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.set_message(error.to_string().into());
+            }
+        }
     });
     app.on_new_map({
         let ui = ui.clone();
@@ -5046,6 +5078,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 let recovery = (session.recovery_serial(), session.scene_serial());
+                let recent_maps = (session.recent_maps_serial(), session.scene_serial());
+                if recent_maps != ui.seen_recent_maps {
+                    ui.seen_recent_maps = recent_maps;
+                    if let Some(window) = &ui.recent_maps_window
+                        && window.window().is_visible()
+                    {
+                        recent_maps_ui::refresh(window, &session);
+                    }
+                }
                 if recovery != ui.seen_recovery {
                     ui.seen_recovery = recovery;
                     if let Some(window) = &ui.recovery_window
@@ -9517,6 +9558,77 @@ mod tests {
         window.invoke_cancel();
         assert!(lock(&shared).map_fix_draft().is_none());
         assert_eq!(lock(&shared).document().vmf(), &before);
+    }
+
+    #[test]
+    fn recent_map_controls_share_reopen_and_guard_discard_remove_clear_and_cancel() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("courtyard.vmf");
+        let second = directory.path().join("station.vmf");
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.configure_recent_maps(Ok(directory.path().join("preferences")));
+        session.save(Actor::User, Some(&first)).unwrap();
+        session.set_compile_settings(Actor::Agent, "direct_ldr").unwrap();
+        session.new_map(Actor::User, false).unwrap();
+        session.save(Actor::User, Some(&second)).unwrap();
+        session.set_compile_settings(Actor::Agent, "fullbright").unwrap();
+        let shared = Arc::new(Mutex::new(session));
+        let window = RecentMapsWindow::new().unwrap();
+        recent_maps_ui::bind(&window, &shared);
+        recent_maps_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        assert_eq!(window.get_rows().row_count(), 2);
+        window.invoke_select_map(first.to_string_lossy().to_string().into());
+        assert!(window.get_selected_detail().contains("direct_ldr"));
+        save_ui_snapshot(window.window(), "recent-maps");
+        for label in ["Refresh list", "Open selected map", "Remove from list", "Clear list", "Cancel / close"] {
+            assert_dialog_button_visible(&window, label);
+        }
+        let before = lock(&shared).document().vmf().clone();
+        window.invoke_cancel();
+        assert!(!window.window().is_visible());
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        window.show().unwrap();
+        window.invoke_open_selected();
+        assert_eq!(lock(&shared).path(), Some(first.as_path()));
+        assert_eq!(lock(&shared).compile_options().lighting, compiler::LightingMode::DirectLdr);
+        lock(&shared).create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false).unwrap();
+        recent_maps_ui::refresh(&window, &lock(&shared));
+        window.show().unwrap();
+        window.invoke_select_map(second.to_string_lossy().to_string().into());
+        window.invoke_open_selected();
+        assert!(window.get_message().contains("unsaved"));
+        window.set_discard_changes(true);
+        lock(&shared).create_block(Actor::Agent, DVec3::splat(128.0), DVec3::splat(192.0), "brick/test", false).unwrap();
+        let dirty = lock(&shared).document().vmf().clone();
+        window.invoke_open_selected();
+        assert!(window.get_message().contains("changed"));
+        assert!(!window.get_discard_changes());
+        assert_eq!(lock(&shared).document().vmf(), &dirty);
+        window.set_discard_changes(true);
+        window.invoke_open_selected();
+        assert_eq!(lock(&shared).path(), Some(second.as_path()));
+        assert_eq!(lock(&shared).compile_options().lighting, compiler::LightingMode::Fullbright);
+        window.invoke_select_map(first.to_string_lossy().to_string().into());
+        window.invoke_remove_selected();
+        assert_eq!(window.get_rows().row_count(), 1);
+        assert!(first.is_file());
+        let clean = lock(&shared).document().vmf().clone();
+        window.invoke_clear_list();
+        assert_eq!(window.get_rows().row_count(), 1);
+        window.set_confirm_clear(true);
+        window.invoke_clear_list();
+        assert_eq!(window.get_rows().row_count(), 0);
+        assert_eq!(lock(&shared).document().vmf(), &clean);
+        assert!(second.is_file());
     }
 
     #[test]

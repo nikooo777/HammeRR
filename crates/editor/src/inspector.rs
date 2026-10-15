@@ -253,6 +253,19 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         _ if lower == "material" => result.control = Control::Material,
         _ => {}
     }
+    if lower == "rendercolor" && kind == "color255" {
+        result.intensity = None;
+        if entity.solids.is_empty()
+            && entity.properties.get("model").is_some()
+            && !entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
+        {
+            result.label = "Tint".into();
+            result.description="Multiply model textures by this color. White keeps the original colors. Opacity preview is not supported.".into();
+            result.advanced = false;
+        }
+    }
     result
 }
 

@@ -367,12 +367,21 @@ impl Session {
         if field.kind == "color1" && intensity.is_some() {
             return Err("normalized colors have no brightness component".into());
         }
+        let render_color = key.eq_ignore_ascii_case("rendercolor") && field.kind == "color255";
+        if render_color && intensity.is_some() {
+            return Err("Model tint has no light brightness component".into());
+        }
         let scale = if field.kind == "color1" { 255.0 } else { 1.0 };
         let mut values: Vec<String> = color
             .iter()
             .map(|value| (f64::from(*value) / scale).to_string())
             .collect();
-        if let Some(intensity) = intensity.or(field.intensity) {
+        if render_color {
+            let components = field.value.split_whitespace().collect::<Vec<_>>();
+            if components.len() == 4 {
+                values.push(components[3].to_owned());
+            }
+        } else if let Some(intensity) = intensity.or(field.intensity) {
             values.push(intensity.to_string());
         }
         self.set_entity_properties(actor, id, &[(key.into(), Some(values.join(" ")))])

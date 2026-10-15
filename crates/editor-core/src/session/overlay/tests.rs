@@ -520,3 +520,199 @@ fn rejected_multiside_hidden_and_nonquad_refits_preserve_the_last_valid_draft() 
         }
     }
 }
+
+#[test]
+fn rebind_keeps_destination_selection_until_owned_apply_updates_the_same_entity_atomically() {
+    for actor in [Actor::User, Actor::Agent] {
+        for detail in [false, true] {
+            let (_directory, mut session, original) = fixture(actor, !detail);
+            let token = preview(&mut session, actor, original);
+            let created = session.apply_overlay(actor, token).unwrap();
+            let ObjectId::Entity(id) =
+                crate::identity::parse_id(created["created"].as_str().unwrap()).unwrap()
+            else {
+                unreachable!()
+            };
+            let destination = session
+                .edit(actor, "rebind destination", |tx| {
+                    let ObjectId::Solid(solid) = edit::create_block(
+                        tx,
+                        DVec3::new(-140.125, 16.375, 128.625),
+                        DVec3::new(-76.125, 112.375, 144.625),
+                        "test/checker",
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    let side = tx
+                        .solid_mut(solid)?
+                        .sides
+                        .iter()
+                        .find(|side| {
+                            map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                        })
+                        .unwrap()
+                        .id;
+                    if detail {
+                        edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                    }
+                    tx.entity_mut(id)?.properties.set("StartU", "-00.2500");
+                    Ok(FaceId { solid, side })
+                })
+                .unwrap();
+            session
+                .select_faces(&[destination], SelectMode::Replace)
+                .unwrap();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let camera = session.camera();
+            let snapshot = session.overlay_stamp();
+            let state = session
+                .preview_overlay_rebind(actor, id, destination, &snapshot)
+                .unwrap();
+            let token = state["draft"]["token"].as_u64().unwrap();
+            assert_eq!(state["draft"]["operation"], "rebind");
+            assert_eq!(
+                state["draft"]["previous_source"],
+                json!({"solid":original.solid,"side":original.side})
+            );
+            assert_eq!(
+                state["draft"]["source"],
+                json!({"solid":destination.solid,"side":destination.side})
+            );
+            assert_eq!(session.selected_faces(), [destination]);
+            assert!(session.face_mode());
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert_eq!(session.camera(), camera);
+            for (entity, face, stamp) in [
+                (id, original, state["snapshot"].as_str().unwrap()),
+                (u32::MAX, destination, state["snapshot"].as_str().unwrap()),
+                (
+                    id,
+                    FaceId {
+                        solid: u32::MAX,
+                        side: u32::MAX,
+                    },
+                    state["snapshot"].as_str().unwrap(),
+                ),
+                (id, destination, snapshot.as_str()),
+            ] {
+                assert!(
+                    session
+                        .preview_overlay_rebind(actor, entity, face, stamp)
+                        .is_err()
+                );
+                assert_eq!(session.get_overlay_state(), state);
+            }
+            session.cancel_overlay(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            let state = session
+                .preview_overlay_rebind(actor, id, destination, &session.overlay_stamp())
+                .unwrap();
+            let old = state["draft"]["token"].as_u64().unwrap();
+            let other = if actor == Actor::User {
+                Actor::Agent
+            } else {
+                Actor::User
+            };
+            assert!(session.apply_overlay(other, old).is_err());
+            assert!(session.cancel_overlay(other, old).is_err());
+            let reviewed = session.review_overlay(other, old).unwrap();
+            assert!(session.apply_overlay(actor, old).is_err());
+            let result = session
+                .apply_overlay(other, reviewed["draft"]["token"].as_u64().unwrap())
+                .unwrap();
+            assert_eq!(result["operation"], "rebind");
+            assert_eq!(result["updated"], format!("entity:{id}"));
+            assert!(result.get("created").is_none());
+            assert_eq!(
+                session.document.entity(id).unwrap().properties.get("sides"),
+                Some(destination.side.to_string().as_str())
+            );
+            assert_eq!(
+                session
+                    .document
+                    .entity(id)
+                    .unwrap()
+                    .properties
+                    .get("StartU"),
+                Some("-00.2500")
+            );
+            assert_eq!(session.selected_ids(), [ObjectId::Entity(id)]);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            let after = session.document.vmf().clone();
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &after);
+        }
+    }
+}
+
+#[test]
+fn overlay_target_choices_search_and_page_without_changing_face_selection_or_hiding_rejections() {
+    let (_directory, mut session, source) = fixture(Actor::User, false);
+    let ids = session
+        .edit(Actor::User, "overlay choices", |tx| {
+            let mut ids = Vec::new();
+            for index in 0..3 {
+                let ObjectId::Entity(id) = overlay::create(
+                    tx,
+                    source,
+                    Options {
+                        targetname: Some(if index == 2 {
+                            "Hidden mark".into()
+                        } else {
+                            format!("Mark {index}")
+                        }),
+                        material: "test/checker".into(),
+                        ..Default::default()
+                    },
+                )?
+                else {
+                    unreachable!()
+                };
+                if index == 2 {
+                    tx.entity_mut(id)?.hidden = true;
+                }
+                ids.push(id);
+            }
+            Ok(ids)
+        })
+        .unwrap();
+    let before = session.document.vmf().clone();
+    let selected = session.selected_faces();
+    let first = session
+        .browse_overlay_targets("MARK checker", 0, 1)
+        .unwrap();
+    let second = session.browse_overlay_targets("mark", 1, 1).unwrap();
+    let unsupported = session.browse_overlay_targets("hidden", 0, 50).unwrap();
+    assert_eq!(first["total"], 3);
+    assert_eq!(first["entries"][0]["id"], ids[0]);
+    assert_eq!(second["entries"][0]["id"], ids[1]);
+    assert_eq!(
+        session
+            .browse_overlay_targets(&format!("entity:{}", ids[1]), 0, 20)
+            .unwrap()["entries"][0]["id"],
+        ids[1]
+    );
+    assert_eq!(unsupported["total"], 1);
+    assert_eq!(unsupported["entries"][0]["eligible"], false);
+    assert!(
+        unsupported["entries"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("visible")
+    );
+    assert!(session.browse_overlay_targets("", 0, 0).is_err());
+    assert!(
+        session
+            .browse_overlay_targets(&"x".repeat(257), 0, 20)
+            .is_err()
+    );
+    assert_eq!(session.document.vmf(), &before);
+    assert_eq!(session.selected_faces(), selected);
+    assert!(session.face_mode());
+    assert!(session.get_overlay_state()["draft"].is_null());
+}

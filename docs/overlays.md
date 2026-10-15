@@ -2,7 +2,7 @@
 
 # Overlays
 
-Overlays project a material onto world surfaces for markings, graffiti and signs without adding brush geometry. Fit a new overlay to one quad face, refit an existing overlay to its bound face, or compile an `info_overlay` imported from a VMF.
+Overlays project a material onto world surfaces for markings, graffiti and signs without adding brush geometry. Fit a new overlay to one quad face, refit an existing overlay to its bound face, explicitly rebind it to a different face, or compile an `info_overlay` imported from a VMF.
 
 ## Create a fitted overlay
 
@@ -28,6 +28,18 @@ Overlays project a material onto world surfaces for markings, graffiti and signs
 
 **Review current draft** can load an MCP refit preview and transfers ownership before **Apply refit**. Refit keeps the existing face binding; it does not choose a different face. Multiside, hidden, missing, terrain, brush-model and nonquad bindings are rejected. After another source edit, preview refit again.
 
+## Rebind an existing overlay to a different face
+
+1. Set **Selection** to **Faces · materials & textures** and select one visible destination quad on a world or `func_detail` brush.
+2. Open **Overlay…**. Under **Existing overlay · rebind to the selected destination face**, search for the overlay's name or material. Use **Previous overlays** and **Next overlays** to browse more matches. Each choice shows its name, entity identity, material and current bound face; unsupported bindings show an **Unavailable** reason.
+3. Click the existing overlay's named choice. The destination face stays selected. Material, name, texture ranges, render order and fades become read-only and will be preserved.
+4. Click **Preview rebind**. Check the destination outline and the previous/destination binding readout. The dialog says **Rebind existing overlay**; the map and Undo history remain unchanged.
+5. Click **Apply rebind** to update that same overlay in one Undo step. Its ID, raw setting strings, connections and other metadata remain intact. **Cancel**, Escape and closing the dialog discard only the preview this dialog owns.
+
+![Choose an existing overlay and preview a different destination face](images/overlay-rebind.png)
+
+**Review current draft** can load an MCP rebind preview and transfers ownership before **Apply rebind**. The destination must differ from the current binding. The existing overlay must already have one visible eligible world/detail quad binding; this bounded operation cannot repair missing, hidden, terrain or multiside bindings. Rebind never follows geometry changes automatically.
+
 ## Build an imported overlay
 
 1. Open a VMF that already contains an overlay, sealed world geometry and a player spawn.
@@ -49,7 +61,7 @@ without replacing the previous BSP.
 ## Limits
 
 - New overlay fitting supports one visible planar world or `func_detail` quad. Terrain, brush models and faces with other corner counts cannot be used for new fitting. Imported overlays retain their broader compile support.
-- Refit supports only one existing bound world or `func_detail` quad. Corner handles, viewport material projection, new-face rebinding and automatic refitting after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside the explicit refit operation.
+- Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Corner handles, viewport material projection and automatic refitting after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside explicit fitting, refit and rebind operations.
 - Targets must be visible, exposed world, detail or terrain faces. Hidden, absent, non-rendering and brush-model targets fail compilation. Hidden overlays are omitted.
 - Budgets: 1,024 overlays, 64 source sides and 64 compiled surface references per overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
 - Basis axes must be finite perpendicular unit vectors. Projection corners must form a convex quadrilateral within the compile coordinate bounds. Invalid material paths, projections or fade distances keep the previous BSP.

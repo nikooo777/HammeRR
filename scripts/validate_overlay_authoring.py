@@ -34,8 +34,9 @@ def validate(client, output, render=False):
         assert condition, label
         checks.append(label)
 
+    room_brushes = []
     for mins, maxs in ROOM:
-        client.call("create_block", {"mins": mins, "maxs": maxs, "material": "dev/dev_measuregeneric01"})
+        room_brushes.append(client.call("create_block", {"mins": mins, "maxs": maxs, "material": "dev/dev_measuregeneric01"})["id"])
     client.call("create_entity", {"classname": "info_player_terrorist", "origin": [-96, -96, 8]})
     client.call("create_entity", {"classname": "info_player_counterterrorist", "origin": [96, -96, 8]})
     plate = client.call("create_block", {
@@ -154,6 +155,48 @@ def validate(client, output, render=False):
     check(detail(client, [overlay])[0] == original_overlay and detail(client, [plate]) == changed, "Undo refit restores the exact prior overlay and keeps the moved source")
     client.call("redo")
     check(detail(client, [overlay])[0] == refitted, "Redo restores the refitted projection on the same entity")
+    floor = detail(client, [room_brushes[0]])[0]
+    destination = face_ref(floor, max(floor["faces"], key=lambda face: face["normal"][2]))
+    client.call("select_faces", {"faces": [destination]})
+    rebind_info = client.call("get_map_info")
+    choices = client.call("browse_overlay_targets", {"query": "authored OVERLAY", "limit": 1})
+    check(choices["total"] == 1 and choices["entries"][0]["entity"] == overlay and choices["entries"][0]["eligible"], "Searchable overlay choices identify an eligible existing binding without selecting its entity")
+    check(client.call("browse_overlay_targets", {"offset": 1, "limit": 1})["entries"] == [] and client.call("get_map_info")["selection"] == rebind_info["selection"], "Overlay target paging leaves the destination face selection intact")
+    before_rebind = output / "before-rebind.bsp"
+    client.call("compile_map", {"path": str(before_rebind)})
+    rebound = client.call("preview_overlay_rebind", {"snapshot": choices["snapshot"], "id": overlay, "source": destination})
+    check(rebound["draft"]["operation"] == "rebind" and rebound["draft"]["previous_source"] == source and rebound["draft"]["source"] == destination, "Explicit rebind distinguishes the previous and destination bindings")
+    check(detail(client, [overlay])[0] == refitted and client.call("get_map_info")["undo"] == rebind_info["undo"], "Rebind preview preserves the existing overlay and Undo history")
+    for invalid in [{"source": source}, {"id": plate}, {"material": "decals/replacement"}, {"sides": str(destination["side"])}]:
+        client.call("preview_overlay_rebind", {"snapshot": rebound["snapshot"], "id": overlay, "source": destination, **invalid}, error=True)
+        check(client.call("get_overlay_state")["draft"] == rebound["draft"], f"Rejected rebind preserves the owned draft: {invalid}")
+    pending_rebind = output / "uncommitted-rebind.bsp"
+    client.call("compile_map", {"path": str(pending_rebind)})
+    check(pending_rebind.read_bytes() == before_rebind.read_bytes(), "An unapplied new-face rebind does not change compiled output")
+    client.call("cancel_overlay", {"token": rebound["draft"]["token"]})
+    check(detail(client, [overlay])[0] == refitted and client.call("get_map_info")["undo"] == rebind_info["undo"], "Cancel rebind keeps the previous binding and history")
+    rebound = client.call("preview_overlay_rebind", {"snapshot": client.call("get_overlay_state")["snapshot"], "id": overlay, "source": destination})
+    old_token = rebound["draft"]["token"]
+    reviewed = client.call("review_overlay", {"token": old_token})
+    client.call("apply_overlay", {"token": old_token}, error=True)
+    applied_rebind = client.call("apply_overlay", {"token": reviewed["draft"]["token"]})
+    after_rebind = detail(client, [overlay])[0]
+    rebind_after_info = client.call("get_map_info")
+    check(applied_rebind["operation"] == "rebind" and applied_rebind["updated"] == overlay and "created" not in applied_rebind, "Reviewed rebind applies to the same overlay entity")
+    check(retained(after_rebind) == retained(refitted) and dict(after_rebind["properties"])["sides"] == str(destination["side"]), "Rebinding updates the destination side while preserving raw authored settings")
+    check(rebind_after_info["point_entities"] == rebind_info["point_entities"] and len(rebind_after_info["undo"]) == len(rebind_info["undo"]) + 1 and rebind_after_info["undo"][0] == "Rebind overlay", "Rebinding adds exactly one Undo step and creates no entity")
+    rebound_bsp = output / "rebound.bsp"
+    client.call("compile_map", {"path": str(rebound_bsp)})
+    check(len(records(rebound_bsp.read_bytes(), 45, "<ihH64i22f")) == 1 and records(rebound_bsp.read_bytes(), 60, "<2f") == fades, "The new binding compiles as one native overlay with unchanged fades")
+    rebound_async = output / "rebound-async.bsp"
+    client.call("start_compile", {"path": str(rebound_async)})
+    job = wait_job(client)
+    check(job["status"] == "completed" and rebound_async.read_bytes() == rebound_bsp.read_bytes(), "Synchronous and controlled builds agree for the rebound overlay")
+    check(detail(client, [plate]) == changed and source_path.read_bytes() == saved, "Rebinding preserves authored brush geometry and the saved source")
+    client.call("undo")
+    check(detail(client, [overlay])[0] == refitted, "Undo rebind restores the exact former binding and projection")
+    client.call("redo")
+    check(detail(client, [overlay])[0] == after_rebind, "Redo rebind restores the same entity on its destination")
     return checks
 
 

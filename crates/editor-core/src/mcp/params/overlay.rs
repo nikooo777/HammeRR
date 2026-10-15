@@ -27,6 +27,22 @@ pub struct OverlayRefitArgs {
     pub id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayTargetsArgs {
+    pub query: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayRebindArgs {
+    pub snapshot: String,
+    pub id: String,
+    pub source: FaceRef,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,6 +55,18 @@ mod tests {
         let mut missing = valid.clone();
         missing.as_object_mut().unwrap().remove("source");
         assert!(serde_json::from_value::<OverlayPreviewArgs>(missing).is_err());
+        let rebind = json!({"snapshot":"current", "id":"entity:12", "source":{"solid":1,"side":2}});
+        assert!(serde_json::from_value::<OverlayRebindArgs>(rebind.clone()).is_ok());
+        for field in ["id", "source", "snapshot"] {
+            let mut missing = rebind.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<OverlayRebindArgs>(missing).is_err());
+        }
+        for field in ["material", "u", "BasisU", "sides", "origin"] {
+            let mut invalid = rebind.clone();
+            invalid[field] = json!("replacement");
+            assert!(serde_json::from_value::<OverlayRebindArgs>(invalid).is_err());
+        }
         let refit = json!({"snapshot":"current", "id":"entity:12"});
         assert!(serde_json::from_value::<OverlayRefitArgs>(refit.clone()).is_ok());
         for field in ["source", "material", "u", "BasisU", "sides"] {

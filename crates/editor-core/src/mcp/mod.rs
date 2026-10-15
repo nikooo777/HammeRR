@@ -103,6 +103,7 @@ For a roof ridge, select one quad face per brush, inspect crease_choices, then p
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
 Use get_overlay_state and preview_overlay to fit a new overlay to one explicit visible world/detail quad, then apply_overlay or cancel_overlay with its owned token. review_overlay explicitly transfers a shared draft to a new ownership token. \
+preview_overlay_refit keeps an existing single-face binding; browse_overlay_targets and preview_overlay_rebind explicitly move that same overlay to a different eligible face while preserving settings. Both use the same owned Review/Apply/Cancel operations. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
 provides grouped catalog metadata; set_material_favorite shares browser favorites. \
 find_material_faces creates an exact map/selection material report with explicit hidden handling. \

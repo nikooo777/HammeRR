@@ -1,4 +1,11 @@
-import { Button, LineEdit, ScrollView, SpinBox } from "std-widgets.slint";
+import { Button, LineEdit, ListView, ScrollView, SpinBox } from "std-widgets.slint";
+
+export struct OverlayTargetRow {
+    entity: string,
+    label: string,
+    detail: string,
+    eligible: bool,
+}
 
 export component OverlayWindow inherits Window {
     title: "Overlay - HammeRR";
@@ -24,6 +31,18 @@ export component OverlayWindow inherits Window {
     in property <bool> can-review;
     in property <bool> can-refit;
     in property <bool> refit-mode;
+    in property <bool> rebind-mode;
+    in property <bool> can-rebind;
+    in property <[OverlayTargetRow]> overlay-targets;
+    in-out property <string> overlay-search;
+    in property <string> overlay-page;
+    in property <string> rebind-target;
+    in property <bool> overlay-previous;
+    in property <bool> overlay-next;
+    callback search-overlays();
+    callback overlay-page-change(int);
+    callback choose-overlay(string);
+    callback rebind();
     callback edited();
     callback browse-material();
     callback fit();
@@ -40,12 +59,29 @@ export component OverlayWindow inherits Window {
         VerticalLayout {
             padding: 20px;
             spacing: 10px;
-            Text { text: root.refit-mode ? "Refit existing overlay" : "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
+            Text { text: root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 10px;
+                    Text { text: "Existing overlay · rebind to the selected destination face"; font-weight: 600; wrap: word-wrap; }
+                    LineEdit { text <=> root.overlay-search; placeholder-text: "Search overlay names or materials"; accessible-label: "Search existing overlays"; edited => { root.search-overlays(); } }
+                    ListView {
+                        height: root.overlay-targets.length > 0 ? 140px : 0px;
+                        for entry in root.overlay-targets: VerticalLayout {
+                            spacing: 3px; padding-bottom: 6px;
+                            Button { text: entry.label; enabled: entry.eligible; clicked => { root.choose-overlay(entry.entity); } }
+                            Text { text: entry.detail; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous overlays"; enabled: root.overlay-previous; clicked => { root.overlay-page-change(-1); } }
+                        Text { text: root.overlay-page; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { text: "Next overlays"; enabled: root.overlay-next; clicked => { root.overlay-page-change(1); } }
+                    }
+                    Text { text: root.rebind-target; wrap: word-wrap; color: #bac2ce; }
                     HorizontalLayout {
                         spacing: 16px;
                         VerticalLayout {
@@ -103,7 +139,7 @@ export component OverlayWindow inherits Window {
                         Text { text: "V end"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.v-end; width: 80px; input-type: decimal; accessible-label: "Overlay V end"; edited => { root.edited(); } }
                     }
-                    Text { text: root.refit-mode ? "Refit preserves the existing material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                    Text { text: root.refit-mode ? "Refit and rebind preserve the existing material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Fade"; width: 72px; vertical-alignment: center; }
@@ -128,9 +164,10 @@ export component OverlayWindow inherits Window {
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Refit selected overlay"; enabled: root.can-refit; clicked => { root.refit(); } }
+                Button { text: "Preview rebind"; enabled: root.can-rebind; clicked => { root.rebind(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: root.refit-mode ? "Apply refit" : "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.rebind-mode ? "Apply rebind" : root.refit-mode ? "Apply refit" : "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

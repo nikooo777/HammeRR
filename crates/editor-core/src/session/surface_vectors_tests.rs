@@ -2,15 +2,19 @@ use super::*;
 
 #[test]
 fn direct_vector_session_previews_retain_invalid_drafts_cancel_and_share_one_undo() {
+    let mut source = Document::empty();
+    let ObjectId::Solid(id) = source
+        .edit("source block", |tx| {
+            map_core::edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "brick/test")
+        })
+        .unwrap()
+    else {
+        unreachable!()
+    };
     let mut results = Vec::new();
     for actor in [Actor::User, Actor::Agent] {
         let mut session = Session::new(Err("no assets".into()));
-        let ObjectId::Solid(id) = session
-            .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
-            .unwrap()
-        else {
-            unreachable!()
-        };
+        session.replace_document(source.clone(), None);
         let face = FaceId {
             solid: id,
             side: session

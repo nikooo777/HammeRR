@@ -480,3 +480,20 @@ headless MCP check compares synchronous/background diagnostics and retained
 BSPs, selection and history. Globally disabled metadata must compile identically
 to the full-map baseline. Use a fresh output directory; no game or desktop
 input is needed.
+
+### Compile-region shell experiment
+
+```sh
+python3 -B scripts/probe_compile_region_shell.py --binary target/debug/editor --output /tmp/hammerr-region-shell
+python3 -B scripts/probe_compile_region_shell.py --binary target/debug/editor --output /tmp/hammerr-region-shell-client --runtime
+```
+
+This disposable MCP prototype copies intersecting whole world brushes and
+in-bounds point entities into a separate map, then constructs six boundary
+brushes. It checks exact shared builds, preserved source, retained crossing
+geometry, excluded targets and a leaking control with one boundary removed.
+Optional native validation uses a private display, `-insecure` and `sv_lan 1`
+for player grounding, stable prop contact and native traces of all four lateral
+boundaries. This does not implement region metadata, authoring controls or
+general entity/terrain/helper inclusion; it is
+an experiment for the planned compiler path. Use a fresh output directory.

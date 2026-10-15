@@ -626,6 +626,7 @@ fn alpha_cutouts_share_spot_and_sun_rays_and_shader_reference_defaults() {
     let mut vmf = scene();
     let prop = vmf.entities.len() - 1;
     let light = prop - 1;
+    let opaque_sample = DVec3::new(-16.0, -16.0, 0.0);
     vmf.entities[prop].properties.set("skin", "1");
     vmf.entities[light]
         .properties
@@ -640,10 +641,7 @@ fn alpha_cutouts_share_spot_and_sun_rays_and_shader_reference_defaults() {
     }
     let spot = compile(&vmf, &game).bsp.unwrap();
     assert_eq!(floor_sample(&spot, DVec3::ZERO).x, 200.0);
-    assert_eq!(
-        floor_sample(&spot, DVec3::new(-16.0, 0.0, 0.0)),
-        DVec3::ZERO
-    );
+    assert_eq!(floor_sample(&spot, opaque_sample), DVec3::ZERO);
     vmf.entities[light]
         .properties
         .set("classname", "light_environment");
@@ -661,7 +659,8 @@ fn alpha_cutouts_share_spot_and_sun_rays_and_shader_reference_defaults() {
     }
     let sun = compile(&vmf, &game).bsp.unwrap();
     assert_eq!(floor_sample(&sun, DVec3::ZERO).x, 200.0);
-    assert_eq!(floor_sample(&sun, DVec3::new(-16.0, 0.0, 0.0)), DVec3::ZERO);
+    assert_eq!(floor_sample(&sun, opaque_sample), DVec3::ZERO);
+    assert_eq!(floor_sample(&sun, DVec3::new(-16.0, 0.0, 0.0)).x, 200.0);
     let mut texture = alpha_texture();
     for pixel in texture[80..].as_chunks_mut::<4>().0 {
         pixel[3] = 128;

@@ -105,6 +105,23 @@ def validate(client, output):
     check((output / "source.vmf").read_bytes() == source, "Preview controls leave the source file unchanged")
     apply(False)
     check(render("disabled-again")[0] == baseline, "Disabling restores the default pixels")
+    apply(True, midpoint)
+    for invalidation in ["invalid", "deleted", "hidden"]:
+        if invalidation == "invalid":
+            client.call("set_entity_properties", {"id": midpoint, "set": {"fogend": "100"}})
+        elif invalidation == "deleted":
+            client.call("delete_objects", {"ids": [midpoint]})
+        else:
+            client.call("set_object_visibility", {"action": "hide", "ids": [midpoint]})
+        fallback, metadata = render(f"shared-{invalidation}")
+        report = client.call("get_fog_preview")
+        check(fallback == baseline and metadata["fog_preview"]["issue"] and not metadata["fog_preview"]["applied"], f"A shared {invalidation} controller renders without fog and reports its issue")
+        if invalidation != "deleted":
+            check(any(row["id"] == midpoint and not row["ready"] and row["issue"] for row in report["controllers"]), f"The {invalidation} controller is unavailable in the chooser")
+        client.call("render_view", {"fog_preview": True, "fog_controller": midpoint}, error=True)
+        client.call("undo")
+        check(render(f"restored-{invalidation}")[0] == half, f"Undo restores fog after controller {invalidation}")
+    apply(False)
     set_sky(client, "sky_dust")
     sky_ready = client.call("get_map_info")["skybox"]["ready"]
     for material in ["tools/toolsskybox", "tools/toolsskybox2d"]:
@@ -121,10 +138,6 @@ def validate(client, output):
     helper, _ = render("helper", fog_preview=False)
     helper_fog, _ = render("helper-fog", fog_preview=True, fog_controller=full)
     check(helper != empty and helper == helper_fog, "Visible entity helpers retain their pixels")
-    client.call("set_entity_properties", {"id": midpoint, "set": {"fogend": "100"}})
-    invalid = client.call("get_fog_preview")
-    check(any(row["id"] == midpoint and not row["ready"] and row["issue"] for row in invalid["controllers"]), "An invalid range has a visible controller diagnostic")
-    apply(True, midpoint, error=True)
     result = {"checks": len(checks), "sampled_sky_ready": sky_ready, "passed": checks}
     (output / "validation.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"checks": len(checks), "output": str(output)}))

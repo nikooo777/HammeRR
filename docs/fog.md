@@ -17,7 +17,7 @@ MCP uses the same Session operations. `get_fog_preview` returns the current sett
 
 ## Limits
 
-The preview starts off and requires an explicit controller selection. It does not invent a controller or select one from Master flags. Controllers are resolved from the authored map, independently of the working region. Changing or undoing authored settings updates the preview; a deleted or invalid selected controller draws no fog and reports the issue. Opening another map clears the selection and disables preview.
+The preview starts off and requires an explicit controller selection. It does not invent a controller or select one from Master flags. Controllers are resolved from the authored map, independently of the working region. Authored-hidden controllers are unavailable in the chooser. Changing or undoing authored settings updates the preview; a deleted, hidden or invalid selected controller draws no fog and reports the issue in both the desktop and ordinary MCP renders. Explicit temporary overrides reject unavailable controllers. Opening another map clears the selection and disables preview.
 
 The supported approximation uses forward view depth in Hammer units. Its factor is `clamp((depth − start) / (end − start), 0, maxdensity)`. The squared factor blends the existing surface color toward the sRGB-decoded fog color in linear space. This follows the public SDK's range-factor and pixel-blend shape; it does not establish native CS:S parity. Transparent surfaces retain their existing alpha and draw order.
 

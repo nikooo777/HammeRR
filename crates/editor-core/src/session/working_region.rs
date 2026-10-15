@@ -89,28 +89,40 @@ fn checked_bounds(bounds: Option<(DVec3, DVec3)>) -> Option<[DVec3; 2]> {
 }
 
 fn records(document: &Document, models: &Models, region: Option<[DVec3; 2]>) -> Vec<Record> {
+    enum Source<'a> {
+        Solid(&'a source_formats::vmf::Solid),
+        Entity(&'a source_formats::vmf::Entity),
+    }
+
     let instances = models
         .instances
         .iter()
         .map(|instance| (instance.id, instance))
         .collect::<HashMap<_, _>>();
+    let vmf = document.vmf();
+    let sources = vmf
+        .world
+        .solids
+        .iter()
+        .map(|solid| (ObjectId::Solid(solid.id), Source::Solid(solid)))
+        .chain(
+            vmf.entities
+                .iter()
+                .map(|entity| (ObjectId::Entity(entity.id), Source::Entity(entity))),
+        );
     let mut records = Vec::new();
-    for id in document.objects() {
+    for (id, object) in sources {
         let mut children = Vec::new();
-        let (hidden, bounds, source, error) = match id {
-            ObjectId::Solid(id) => {
-                let solid = document.solid(id).unwrap();
-                (
-                    solid.hidden,
-                    checked_bounds(query::solid_bounds(solid)),
-                    "brush",
-                    None,
-                )
-            }
-            ObjectId::Entity(id) => {
-                let entity = document.entity(id).unwrap();
+        let (hidden, bounds, source, error) = match object {
+            Source::Solid(solid) => (
+                solid.hidden,
+                checked_bounds(query::solid_bounds(solid)),
+                "brush",
+                None,
+            ),
+            Source::Entity(entity) => {
                 if entity.solids.is_empty() {
-                    let instance = instances.get(&ObjectId::Entity(id)).copied();
+                    let instance = instances.get(&id).copied();
                     let source = if instance.is_some_and(render::models::Instance::has_geometry) {
                         "model"
                     } else if entity.properties.get("model").is_some() {
@@ -125,7 +137,7 @@ fn records(document: &Document, models: &Models, region: Option<[DVec3; 2]>) -> 
                         entity.hidden,
                         checked_bounds(bounds),
                         source,
-                        models.issues.get(&id).cloned(),
+                        models.issues.get(&entity.id).cloned(),
                     )
                 } else {
                     children = entity
@@ -235,6 +247,7 @@ impl Session {
         {
             return evaluation.clone();
         }
+        self.working_region.cache.borrow_mut().take();
         let models = self.model_instances(document);
         let mut objects = HashSet::new();
         let mut solids = HashSet::new();

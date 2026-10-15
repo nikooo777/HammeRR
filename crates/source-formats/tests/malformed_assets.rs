@@ -156,14 +156,17 @@ fn asset_paths_are_relative_and_empty_listing_stays_in_the_mount() {
         "C:\\sentinel.txt",
     ] {
         assert!(game.read(path).is_err(), "{path}");
-        assert!(game.list(path, ".txt").is_empty(), "{path}");
+        assert!(game.list(path, ".txt").is_err(), "{path}");
     }
     assert_eq!(
         game.read("Materials\\inside.txt").unwrap().unwrap(),
         b"inside"
     );
-    assert_eq!(game.list("", ".txt"), ["materials/inside.txt"]);
-    assert_eq!(game.list("materials", ".txt"), ["materials/inside.txt"]);
+    assert_eq!(game.list("", ".txt").unwrap(), ["materials/inside.txt"]);
+    assert_eq!(
+        game.list("materials", ".txt").unwrap(),
+        ["materials/inside.txt"]
+    );
 }
 
 #[cfg(unix)]
@@ -183,5 +186,5 @@ fn symlinked_mounts_work_but_nested_links_cannot_escape_or_cycle() {
     assert_eq!(game.read("materials/test.vmt").unwrap().unwrap(), b"test");
     assert!(game.read("external/sentinel.vmt").unwrap().is_none());
     assert!(game.read("escape.vmt").unwrap().is_none());
-    assert_eq!(game.list("", ".vmt"), ["materials/test.vmt"]);
+    assert_eq!(game.list("", ".vmt").unwrap(), ["materials/test.vmt"]);
 }

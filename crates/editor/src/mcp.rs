@@ -2919,6 +2919,7 @@ struct Offscreen {
     ctx: GpuContext,
     renderer: Renderer,
     scene: Option<(u64, GpuScene)>,
+    issues: Vec<render::scene::SceneIssue>,
 }
 
 impl Offscreen {
@@ -2927,6 +2928,7 @@ impl Offscreen {
             renderer: Renderer::new(&ctx),
             ctx,
             scene: None,
+            issues: Vec::new(),
         }
     }
 }
@@ -2935,6 +2937,11 @@ impl Offscreen {
 struct OffscreenState {
     renderer: Option<Offscreen>,
     error: Option<String>,
+}
+
+struct RenderedView {
+    png: Vec<u8>,
+    issues: Vec<render::scene::SceneIssue>,
 }
 
 #[derive(Clone)]
@@ -2967,7 +2974,7 @@ impl EditorServer {
         camera: &Camera,
         size: (u32, u32),
         view: ViewOptions,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<RenderedView, String> {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.try_render_png(camera, size, view)
         })) {
@@ -3003,7 +3010,7 @@ impl EditorServer {
         camera: &Camera,
         size: (u32, u32),
         view: ViewOptions,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<RenderedView, String> {
         let mut offscreen = self
             .offscreen
             .lock()
@@ -3026,6 +3033,7 @@ impl EditorServer {
             ctx,
             renderer,
             scene,
+            issues,
         } = offscreen
             .renderer
             .as_mut()
@@ -3035,6 +3043,7 @@ impl EditorServer {
             let serial = session.scene_serial();
             if scene.as_ref().is_none_or(|(s, _)| *s != serial) {
                 let mesh = session.build_scene();
+                *issues = mesh.issues.clone();
                 *scene = Some((serial, renderer.upload(ctx, &mesh, session.materials())));
             }
         }
@@ -3048,7 +3057,10 @@ impl EditorServer {
             .write_header()
             .and_then(|mut w| w.write_image_data(&pixels))
             .map_err(|error| format!("Could not encode render: {error}"))?;
-        Ok(png)
+        Ok(RenderedView {
+            png,
+            issues: issues.clone(),
+        })
     }
 }
 
@@ -8762,13 +8774,14 @@ impl EditorServer {
         if let Some(sky) = args.sky_preview {
             view.sky_preview = sky;
         }
-        let png = match self.render_png(&camera, size, view) {
-            Ok(png) => png,
+        let rendered = match self.render_png(&camera, size, view) {
+            Ok(rendered) => rendered,
             Err(error) => return fail(error),
         };
-        let data = base64::engine::general_purpose::STANDARD.encode(png);
+        let data = base64::engine::general_purpose::STANDARD.encode(rendered.png);
         let skybox = skybox_state(&mut self.session());
-        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox,
+        let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
+        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "preview_issues":preview_issues,
             "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
@@ -8834,10 +8847,12 @@ impl EditorServer {
         annotations(read_only_hint = true)
     )]
     fn search_materials(&self, Parameters(args): Parameters<SearchMaterialsArgs>) -> ToolResult {
-        let names = self
-            .session()
-            .search_materials(&args.query, args.limit.unwrap_or(50));
-        ok(json!({ "materials": names }))
+        run(|| {
+            let names = self
+                .session()
+                .search_materials(&args.query, args.limit.unwrap_or(50))?;
+            Ok(json!({ "materials": names }))
+        })
     }
 
     #[tool(

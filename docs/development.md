@@ -521,3 +521,21 @@ fixtures and assertions remain independent. The frame comparator checks complete
 RGB captures before comparing pixels. Whole-frame change counts are diagnostics,
 not lighting pass/fail criteria: HUD changes and unrelated noise can change those
 pixels too. Retain the exact BSP checks and inspect the native captures.
+
+### Content discovery and terrain preview errors
+
+```sh
+python3 -B scripts/validate_content_errors.py --binary target/debug/editor --output /tmp/hammerr-content-errors --render
+```
+
+The private headless fixture uses isolated content mounts and deliberate
+symlink loops. It checks discovery/read errors, mount precedence, retryable
+material/model/sound catalogs, affected-face reports, retained BSPs and source/
+history. Imported invalid smoothing, unpaired deformation and nonfinite terrain
+exercise shared preview/check/compiler handling. `--render` adds offscreen PNGs,
+cached `preview_issues` and error clearing after restoring healthy source;
+omit it for GPU-independent checks. No desktop input or game launch is used.
+
+The shared script `Client.render_result` returns PNG bytes and metadata from one
+render response. `Client.render` continues to save the PNG and return its
+checksum for existing checks.

@@ -63,8 +63,8 @@ impl Mount {
     fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
         match self {
             Self::Pak(vpk) => vpk.read_limited(path, maximum),
-            Self::Directory(root) => match find_case_insensitive(root, path) {
-                Some(file) if file.is_file() => {
+            Self::Directory(root) => match find_case_insensitive(root, path)? {
+                Some(file) if fs::metadata(&file)?.is_file() => {
                     let file = fs::File::open(file)?;
                     let size = file.metadata()?.len();
                     if size > maximum as u64 {
@@ -100,39 +100,61 @@ impl Mount {
     }
 }
 
+fn existing<T>(path: &Path, result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io::Error::new(
+            error.kind(),
+            format!("{}: {error}", path.display()),
+        )),
+    }
+}
+
 /// Resolves `relative` under `root`, matching each component without regard
 /// to case when the exact path doesn't exist.
-fn find_case_insensitive(root: &Path, relative: &str) -> Option<PathBuf> {
-    let boundary = root.canonicalize().ok()?;
+fn find_case_insensitive(root: &Path, relative: &str) -> io::Result<Option<PathBuf>> {
+    let Some(boundary) = existing(root, root.canonicalize())? else {
+        return Ok(None);
+    };
     let exact = root.join(relative);
-    if exact
-        .canonicalize()
-        .is_ok_and(|path| path.starts_with(&boundary))
-    {
-        return Some(exact);
+    if let Some(canonical) = existing(&exact, exact.canonicalize())? {
+        return Ok(canonical.starts_with(&boundary).then_some(exact));
     }
     let mut current = root.to_path_buf();
     for part in relative.split('/').filter(|part| !part.is_empty()) {
         let exact = current.join(part);
-        current = if exact.exists() {
+        current = if existing(&exact, fs::metadata(&exact))?.is_some() {
             exact
         } else {
-            fs::read_dir(&current)
-                .ok()?
-                .flatten()
-                .find(|entry| {
-                    entry
-                        .file_name()
-                        .to_str()
-                        .is_some_and(|name| name.eq_ignore_ascii_case(part))
-                })?
-                .path()
+            let Some(entries) = existing(&current, fs::read_dir(&current))? else {
+                return Ok(None);
+            };
+            let mut matched = None;
+            for entry in entries {
+                let entry = entry?;
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(part))
+                {
+                    matched = Some(entry.path());
+                    break;
+                }
+            }
+            let Some(matched) = matched else {
+                return Ok(None);
+            };
+            matched
         };
-        if !current.canonicalize().ok()?.starts_with(&boundary) {
-            return None;
+        let Some(canonical) = existing(&current, current.canonicalize())? else {
+            return Ok(None);
+        };
+        if !canonical.starts_with(&boundary) {
+            return Ok(None);
         }
     }
-    Some(current)
+    Ok(Some(current))
 }
 
 #[derive(Debug)]
@@ -214,17 +236,32 @@ impl GameFs {
             .or_else(|| value.strip_suffix("\\*"))
         {
             let dir = self.resolve(dir);
-            let Ok(entries) = fs::read_dir(&dir) else {
+            let io_err = |source| Error::Io {
+                path: dir.clone(),
+                source,
+            };
+            let Some(entries) = existing(&dir, fs::read_dir(&dir)).map_err(io_err)? else {
                 return Ok(());
             };
-            let mut children: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+            let mut children = entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<io::Result<Vec<_>>>()
+                .map_err(io_err)?;
             children.sort();
             for child in children {
                 let name = child
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or_default();
-                if child.is_dir() {
+                let Some(metadata) =
+                    existing(&child, fs::metadata(&child)).map_err(|source| Error::Io {
+                        path: child.clone(),
+                        source,
+                    })?
+                else {
+                    continue;
+                };
+                if metadata.is_dir() {
                     self.add(ids.clone(), Mount::Directory(child));
                 } else if name.ends_with("_dir.vpk") {
                     let vpk = Vpk::open(&child).map_err(|e| Error::Io {
@@ -242,11 +279,24 @@ impl GameFs {
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("vpk"))
         {
-            if Vpk::dir_file_for(&path).is_file() {
+            let index = Vpk::dir_file_for(&path);
+            if existing(&index, fs::metadata(&index))
+                .map_err(|source| Error::Io {
+                    path: index,
+                    source,
+                })?
+                .is_some_and(|metadata| metadata.is_file())
+            {
                 let vpk = Vpk::open(&path).map_err(|e| Error::Io { path, source: e })?;
                 self.add(ids, Mount::Pak(vpk));
             }
-        } else if path.is_dir() {
+        } else if existing(&path, fs::metadata(&path))
+            .map_err(|source| Error::Io {
+                path: path.clone(),
+                source,
+            })?
+            .is_some_and(|metadata| metadata.is_dir())
+        {
             self.add(ids, Mount::Directory(path));
         }
         Ok(())
@@ -287,16 +337,23 @@ impl GameFs {
         if path.is_empty() {
             return Ok(false);
         }
-        Ok(self
+        for mounted in self
             .mounts
             .iter()
             .filter(|mount| mount.ids.iter().any(|id| id == "game"))
-            .any(|mounted| match &mounted.mount {
+        {
+            let found = match &mounted.mount {
                 Mount::Pak(pak) => pak.contains(&path),
-                Mount::Directory(root) => {
-                    find_case_insensitive(root, &path).is_some_and(|file| file.is_file())
-                }
-            }))
+                Mount::Directory(root) => match find_case_insensitive(root, &path)? {
+                    Some(file) => fs::metadata(file)?.is_file(),
+                    None => false,
+                },
+            };
+            if found {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
@@ -327,10 +384,8 @@ impl GameFs {
     /// Every file on the `game` search path under `dir` (e.g. `materials`)
     /// ending in `extension` (e.g. `.vmt`), normalized, sorted, without
     /// duplicates.
-    pub fn list(&self, dir: &str, extension: &str) -> Vec<String> {
-        let Ok(dir) = asset_relative(dir) else {
-            return Vec::new();
-        };
+    pub fn list(&self, dir: &str, extension: &str) -> io::Result<Vec<String>> {
+        let dir = asset_relative(dir)?;
         let prefix = if dir.is_empty() {
             String::new()
         } else {
@@ -350,30 +405,37 @@ impl GameFs {
                         .map(str::to_owned),
                 ),
                 Mount::Directory(root) => {
-                    let Some(start) = find_case_insensitive(root, &dir) else {
+                    let Some(start) = find_case_insensitive(root, &dir)? else {
                         continue;
                     };
-                    let Ok(boundary) = root.canonicalize() else {
-                        continue;
-                    };
+                    let boundary = root.canonicalize()?;
                     let mut seen = HashSet::new();
                     let mut stack = vec![start];
                     while let Some(dir) = stack.pop() {
-                        let Ok(canonical) = dir.canonicalize() else {
+                        let Some(canonical) = existing(&dir, dir.canonicalize())? else {
                             continue;
                         };
                         if !canonical.starts_with(&boundary) || !seen.insert(canonical) {
                             continue;
                         }
-                        let Ok(entries) = fs::read_dir(&dir) else {
+                        let Some(entries) = existing(&dir, fs::read_dir(&dir))? else {
                             continue;
                         };
-                        for entry in entries.flatten() {
+                        for entry in entries {
+                            let entry = entry?;
                             let path = entry.path();
-                            if path.is_dir() {
+                            let Some(canonical) = existing(&path, path.canonicalize())? else {
+                                continue;
+                            };
+                            if !canonical.starts_with(&boundary) {
+                                continue;
+                            }
+                            let Some(metadata) = existing(&path, fs::metadata(&path))? else {
+                                continue;
+                            };
+                            if metadata.is_dir() {
                                 stack.push(path);
-                            } else if path.is_file()
-                                && path.canonicalize().is_ok_and(|p| p.starts_with(&boundary))
+                            } else if metadata.is_file()
                                 && let Some(relative) = path
                                     .strip_prefix(root)
                                     .ok()
@@ -390,7 +452,7 @@ impl GameFs {
         }
         files.sort_unstable();
         files.dedup();
-        files
+        Ok(files)
     }
 }
 
@@ -410,6 +472,67 @@ fn find_block<'a>(nodes: &'a [Node], path: &[&str]) -> Option<&'a [Node]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn housekeeping_directory_errors_do_not_select_lower_priority_assets() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir_all(second.join("materials")).unwrap();
+        fs::write(second.join("materials/test.vmt"), b"wrong mount").unwrap();
+        symlink("materials", first.join("materials")).unwrap();
+        let game = GameFs {
+            game_dir: first.clone(),
+            base_dir: root.path().into(),
+            mounts: [first.clone(), second]
+                .map(|path| MountedPath {
+                    ids: vec!["game".into()],
+                    mount: Mount::Directory(path),
+                })
+                .into(),
+        };
+        assert!(game.read("materials/test.vmt").is_err());
+        assert!(game.contains("materials/test.vmt").is_err());
+        assert!(game.list("materials", ".vmt").is_err());
+        fs::remove_file(first.join("materials")).unwrap();
+        assert_eq!(
+            game.read("materials/test.vmt").unwrap().unwrap(),
+            b"wrong mount"
+        );
+        fs::create_dir(first.join("Materials")).unwrap();
+        fs::write(first.join("Materials/TEST.vmt"), b"first mount").unwrap();
+        assert_eq!(
+            game.read("materials/test.vmt").unwrap().unwrap(),
+            b"first mount"
+        );
+        assert!(game.contains("materials/test.vmt").unwrap());
+        assert_eq!(
+            game.list("materials", ".vmt").unwrap(),
+            ["materials/test.vmt"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wildcard_mount_failures_are_reported_but_absent_optional_paths_are_allowed() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let gameinfo = root.path().join("gameinfo.txt");
+        fs::write(
+            &gameinfo,
+            "GameInfo { FileSystem { SearchPaths { game |gameinfo_path|absent/* game |gameinfo_path|. } } }",
+        )
+        .unwrap();
+        assert_eq!(GameFs::from_gameinfo(&gameinfo).unwrap().mounts.len(), 1);
+        symlink("absent", root.path().join("absent")).unwrap();
+        let error = GameFs::from_gameinfo(&gameinfo).unwrap_err().to_string();
+        assert!(error.contains("absent"), "{error}");
+    }
 
     #[test]
     fn bounded_reads_preserve_mount_lookup_and_reject_oversized_files() {

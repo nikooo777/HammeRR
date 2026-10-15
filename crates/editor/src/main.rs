@@ -2140,6 +2140,12 @@ fn refresh_material_catalog(window: &MaterialWindow, session: &mut Session) {
     ) {
         Ok(catalog) => catalog,
         Err(error) => {
+            window.set_rows(ModelRc::new(VecModel::from(Vec::<MaterialTileRow>::new())));
+            window.set_groups(ModelRc::new(VecModel::from(Vec::<MaterialGroup>::new())));
+            window.set_total(0);
+            window.set_catalog_label("Material catalog unavailable".into());
+            window.set_available(false);
+            window.set_preview(slint::Image::default());
             window.set_detail(error.into());
             return;
         }
@@ -5041,6 +5047,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.brush_drag = None;
                     ui.seen_scene = session.scene_serial();
                     let mesh = session.build_scene();
+                    app.set_preview_error(mesh.issue_summary().into());
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
                     if let Some(controller) = &ui.volume
                         && controller.window.window().is_visible()
@@ -10066,6 +10073,50 @@ mod tests {
         assert!(
             position.y + size.height <= window.height as f32 + 1.0,
             "{label} outside window"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn failed_material_discovery_clears_stale_choices_and_can_be_retried() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (directory, game) = crate::test_assets::game();
+        let mut session = Session::new(Ok(game));
+        let window = MaterialWindow::new().unwrap();
+        window.set_rows(ModelRc::new(VecModel::from(vec![MaterialTileRow {
+            tiles: ModelRc::new(VecModel::from(vec![MaterialTile {
+                name: "stale/material".into(),
+                ..Default::default()
+            }])),
+        }])));
+        window.set_available(true);
+        let bad = directory.path().join("materials/loop.vmt");
+        std::os::unix::fs::symlink("loop.vmt", &bad).unwrap();
+        refresh_material_catalog(&window, &mut session);
+        assert_eq!(window.get_rows().row_count(), 0);
+        assert!(!window.get_available());
+        assert_eq!(window.get_catalog_label(), "Material catalog unavailable");
+        assert!(window.get_detail().contains("loop.vmt"));
+        std::fs::remove_file(bad).unwrap();
+        refresh_material_catalog(&window, &mut session);
+        assert_eq!(window.get_total(), 1);
+        assert_eq!(
+            window
+                .get_rows()
+                .row_data(0)
+                .unwrap()
+                .tiles
+                .row_data(0)
+                .unwrap()
+                .name,
+            "test/checker"
         );
     }
 

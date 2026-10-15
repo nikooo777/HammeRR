@@ -65,6 +65,8 @@ pub enum DisplacementError {
     NotAQuad { vertices: usize },
     UnsupportedPower(u32),
     BadRows { field: &'static str },
+    InvalidValues { field: &'static str },
+    UnpairedDeformation,
 }
 
 impl std::fmt::Display for DisplacementError {
@@ -75,6 +77,13 @@ impl std::fmt::Display for DisplacementError {
             }
             Self::UnsupportedPower(p) => write!(f, "unsupported displacement power {p}"),
             Self::BadRows { field } => write!(f, "{field} rows don't match the grid size"),
+            Self::InvalidValues { field } => write!(
+                f,
+                "Terrain {field} contains nonfinite or unrepresentable values"
+            ),
+            Self::UnpairedDeformation => {
+                write!(f, "Terrain normals and distances must be provided together")
+            }
         }
     }
 }
@@ -107,6 +116,17 @@ impl DisplacementMesh {
         if !(2..=4).contains(&disp.power) {
             return Err(DisplacementError::UnsupportedPower(disp.power));
         }
+        if !disp.start_position.is_finite() {
+            return Err(DisplacementError::InvalidValues {
+                field: "startposition",
+            });
+        }
+        if !disp.elevation.is_finite() {
+            return Err(DisplacementError::InvalidValues { field: "elevation" });
+        }
+        if disp.normals.is_some() != disp.distances.is_some() {
+            return Err(DisplacementError::UnpairedDeformation);
+        }
         let size = (1 << disp.power) + 1;
 
         let ring = [a, b, c, d];
@@ -136,6 +156,11 @@ impl DisplacementMesh {
         let distances = grid(disp.distances.as_deref(), size, "distances")?;
         if let (Some(normals), Some(distances)) = (normals, distances) {
             for ((p, n), dist) in positions.iter_mut().zip(normals).zip(distances) {
+                if !n.is_finite() || !dist.is_finite() {
+                    return Err(DisplacementError::InvalidValues {
+                        field: "normals/distances",
+                    });
+                }
                 *p += *n * *dist;
             }
         }
@@ -148,10 +173,22 @@ impl DisplacementMesh {
             *p += elevation;
         }
 
-        let alphas = match grid(disp.alphas.as_deref(), size, "alphas")? {
+        let alphas: Vec<f64> = match grid(disp.alphas.as_deref(), size, "alphas")? {
             Some(alphas) => alphas.copied().collect(),
             None => vec![0.0; size * size],
         };
+        if positions
+            .iter()
+            .chain(&base_positions)
+            .any(|point| !point.as_vec3().is_finite())
+        {
+            return Err(DisplacementError::InvalidValues { field: "positions" });
+        }
+        if alphas.iter().any(|alpha| !(*alpha as f32).is_finite()) {
+            return Err(DisplacementError::InvalidValues {
+                field: "blend weights",
+            });
+        }
 
         Ok(Self {
             size,
@@ -239,6 +276,51 @@ mod tests {
             .into_iter()
             .find(|f| f.plane.normal == DVec3::Z)
             .unwrap()
+    }
+
+    #[test]
+    fn housekeeping_invalid_terrain_never_becomes_a_usable_mesh() {
+        let face = cube_top();
+        let mut accepted = Vec::new();
+        for field in [
+            "startposition",
+            "elevation",
+            "normals",
+            "distances",
+            "offsets",
+            "alphas",
+            "unpaired",
+            "overflow",
+        ] {
+            let mut disp = flat_disp(2, face.vertices[0], 0.0);
+            match field {
+                "startposition" => disp.start_position.x = f64::NAN,
+                "elevation" => disp.elevation = f64::INFINITY,
+                "normals" => {
+                    disp.normals = Some(vec![vec![DVec3::NAN; 5]; 5]);
+                    disp.distances = Some(vec![vec![0.0; 5]; 5]);
+                }
+                "distances" => {
+                    disp.normals = Some(vec![vec![DVec3::Z; 5]; 5]);
+                    disp.distances = Some(vec![vec![f64::NAN; 5]; 5]);
+                }
+                "offsets" => disp.offsets = Some(vec![vec![DVec3::NAN; 5]; 5]),
+                "alphas" => disp.alphas = Some(vec![vec![f64::NAN; 5]; 5]),
+                "unpaired" => disp.distances = Some(vec![vec![32.0; 5]; 5]),
+                "overflow" => {
+                    disp.normals = Some(vec![vec![DVec3::splat(1e300); 5]; 5]);
+                    disp.distances = Some(vec![vec![1e300; 5]; 5]);
+                }
+                _ => unreachable!(),
+            }
+            if DisplacementMesh::build(&face, &disp).is_ok() {
+                accepted.push(field);
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "Invalid terrain accepted: {accepted:?}"
+        );
     }
 
     #[test]

@@ -42,10 +42,14 @@ impl Session {
         if query.len() > 256 || group.len() > 1024 || !(1..=100).contains(&limit) {
             return Err("Use a query up to 256 bytes and a page of 1 to 100 models".into());
         }
-        let names = self
-            .model_browser
-            .catalog
-            .get_or_insert_with(|| self.game.list("models", ".mdl"));
+        if self.model_browser.catalog.is_none() {
+            self.model_browser.catalog = Some(
+                self.game
+                    .list("models", ".mdl")
+                    .map_err(|error| format!("Model catalog: {error}"))?,
+            );
+        }
+        let names = self.model_browser.catalog.as_ref().unwrap();
         let used = self
             .document
             .vmf()

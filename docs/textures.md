@@ -20,6 +20,10 @@ another image. **Check map… → Run checks** identifies affected faces. Repair
 the asset and rerun checks; cached viewport assets may require restarting the
 editor because general material reloading is not implemented.
 
+A content-directory read failure shows **Material catalog unavailable** and
+clears the old choices. Repair the directory or link, then edit the search field
+to retry. A failed scan is not saved as an empty catalog.
+
 - Favorites are saved across sessions and shared with agents, up to 512.
 - Recently applied materials last for the current session.
 

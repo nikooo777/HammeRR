@@ -101,7 +101,7 @@ class Client:
         content = [c["text"] for c in result["content"] if c["type"] == "text"]
         return json.loads(content[0]) if content else None
 
-    def render(self, path, **arguments):
+    def render_result(self, **arguments):
         result = self.rpc(
             "tools/call",
             {
@@ -113,6 +113,11 @@ class Client:
         image = next(c for c in result["content"] if c["type"] == "image")
         data = base64.b64decode(image["data"])
         assert data.startswith(b"\x89PNG\r\n\x1a\n")
+        metadata = json.loads(next(c["text"] for c in result["content"] if c["type"] == "text"))
+        return data, metadata
+
+    def render(self, path, **arguments):
+        data, _ = self.render_result(**arguments)
         path.write_bytes(data)
         return hashlib.sha256(data).hexdigest()
 

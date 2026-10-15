@@ -35,6 +35,13 @@ fn refresh_catalog(window: &ModelBrowserWindow, session: &mut Session, state: &m
     let report = match result {
         Ok(report) => report,
         Err(error) => {
+            window.set_rows(slint::ModelRc::new(slint::VecModel::from(Vec::<
+                ModelChoiceRow,
+            >::new(
+            ))));
+            window.set_can_previous(false);
+            window.set_can_next(false);
+            window.set_page_info("Model catalog unavailable".into());
             window.set_message(error.into());
             return;
         }

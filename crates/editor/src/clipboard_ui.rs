@@ -58,9 +58,10 @@ fn present(window: &PasteWindow, session: &Session, report: &Value) {
     }
     window.set_payload(
         format!(
-            "{} objects · {} groups · {} faces · {} KiB",
+            "Objects: {} · Groups: {} · Layers: {} · Faces: {} · {} KiB",
             payload["objects"].as_array().map_or(0, Vec::len),
             payload["groups"],
+            payload["layers"],
             payload["sides"],
             payload["bytes"].as_u64().unwrap_or(0).div_ceil(1024)
         )
@@ -87,7 +88,7 @@ fn present(window: &PasteWindow, session: &Session, report: &Value) {
     }
     if let Some(result) = report["preview"]["result"].as_object() {
         lines.push(format!(
-            "Preview: {} new objects · {} internal reference updates",
+            "Preview objects: {} · Internal reference updates: {}",
             result["objects"].as_array().map_or(0, Vec::len),
             result["remapped_references"]
         ));
@@ -99,7 +100,7 @@ fn present(window: &PasteWindow, session: &Session, report: &Value) {
             ));
         }
     } else {
-        lines.push("Preview allocates fresh object, face and group IDs. Object notes and native group ancestry transfer with the objects.".into());
+        lines.push("Preview allocates fresh object, face, group and layer IDs. Object notes and native group/layer ancestry transfer with the objects.".into());
     }
     window.set_details(lines.join("\n").into());
 }

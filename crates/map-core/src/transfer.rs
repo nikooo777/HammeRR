@@ -10,12 +10,14 @@ use source_formats::{
 use crate::{
     Document, EditError, ObjectId, Transaction,
     context::{Metadata, Scope},
-    edit, groups, references, repeat,
+    edit, groups,
+    metadata::InputBudget,
+    references, repeat,
 };
 
-pub const MAX_BYTES: usize = 8 * 1024 * 1024;
-pub const MAX_DEPTH: usize = 64;
-pub const MAX_NODES: usize = 131_072;
+pub const MAX_BYTES: usize = crate::metadata::MAX_BYTES;
+pub const MAX_DEPTH: usize = crate::metadata::MAX_DEPTH;
+pub const MAX_NODES: usize = crate::metadata::MAX_NODES;
 pub const MAX_GROUPS: usize = 256;
 const KEY: &str = "hammerr_transfer";
 
@@ -55,6 +57,7 @@ pub struct External {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Result {
+    pub visgroups: Vec<(u32, u32)>,
     pub objects: Vec<ObjectId>,
     pub mapping: Vec<(ObjectId, ObjectId)>,
     pub sides: Vec<(u32, u32)>,
@@ -68,70 +71,7 @@ fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
 }
 
-fn check_editor(editor: Option<&Properties>) -> std::result::Result<(), EditError> {
-    if editor.is_some_and(|editor| editor.get_all("visgroupid").next().is_some()) {
-        return Err(invalid(
-            "Manual visgroup membership cannot yet transfer; remove that membership before copying",
-        ));
-    }
-    Ok(())
-}
-
-#[derive(Default)]
-struct InputBudget {
-    nodes: usize,
-    bytes: usize,
-}
-
 impl InputBudget {
-    fn text(&mut self, key: &str, value: &str) -> std::result::Result<(), EditError> {
-        self.nodes = self.nodes.saturating_add(1);
-        self.bytes = self
-            .bytes
-            .saturating_add(key.len())
-            .saturating_add(value.len());
-        if self.nodes > MAX_NODES || self.bytes > MAX_BYTES {
-            return Err(invalid("Copied input exceeds 131072 nodes or 8 MiB"));
-        }
-        if key.contains(['\0', '"']) || value.contains(['\0', '"']) {
-            return Err(invalid(
-                "VMF transfer fields cannot contain NUL bytes or literal quotes",
-            ));
-        }
-        Ok(())
-    }
-    fn properties(&mut self, properties: &Properties) -> std::result::Result<(), EditError> {
-        for (key, value) in &properties.0 {
-            self.text(key, value)?;
-        }
-        Ok(())
-    }
-    fn editor(&mut self, editor: Option<&Properties>) -> std::result::Result<(), EditError> {
-        check_editor(editor)?;
-        if let Some(editor) = editor {
-            self.properties(editor)?;
-        }
-        Ok(())
-    }
-    fn nodes(&mut self, roots: &[Node]) -> std::result::Result<(), EditError> {
-        if roots.len() > MAX_NODES.saturating_sub(self.nodes) {
-            return Err(invalid("Copied metadata exceeds 131072 nodes"));
-        }
-        let mut stack = roots.iter().map(|node| (node, 1)).collect::<Vec<_>>();
-        while let Some((node, depth)) = stack.pop() {
-            if depth > MAX_DEPTH {
-                return Err(invalid("Copied metadata exceeds 64 levels"));
-            }
-            self.text(&node.key, node.as_str().unwrap_or_default())?;
-            if let Some(children) = node.children() {
-                if children.len() + stack.len() > MAX_NODES.saturating_sub(self.nodes) {
-                    return Err(invalid("Copied metadata exceeds 131072 nodes"));
-                }
-                stack.extend(children.iter().map(|child| (child, depth + 1)));
-            }
-        }
-        Ok(())
-    }
     fn solid(&mut self, solid: &Solid) -> std::result::Result<(), EditError> {
         self.editor(solid.editor.as_ref())?;
         if solid.sides.len() > 256 {
@@ -197,6 +137,7 @@ impl Payload {
             catalog,
         )?;
         let graph = groups::Graph::read(source)?;
+        let layer_graph = crate::layers::Graph::read(source)?;
         let mut budget = InputBudget::default();
         let mut included = BTreeSet::new();
         let mut objects = BTreeSet::new();
@@ -273,7 +214,28 @@ impl Payload {
                 )));
             }
         }
+        let layer_ids = objects
+            .iter()
+            .flat_map(|id| layer_graph.memberships[id].layers.iter().copied())
+            .collect::<BTreeSet<_>>();
+        let layer_ids = layer_graph.ancestors(&layer_ids);
+        if layer_ids.len() > MAX_GROUPS {
+            return Err(invalid("Transfer supports at most 256 native layers"));
+        }
+        let mut native = source.vmf().visgroups.iter().flatten().collect::<Vec<_>>();
+        while let Some(layer) = native.pop() {
+            if layer_ids.contains(&layer.id) {
+                budget.text("layer name", &layer.name)?;
+                budget.properties(&layer.extra_properties)?;
+                budget.nodes(&layer.extra)?;
+            }
+            native.extend(&layer.children);
+        }
         let mut vmf = Document::empty().vmf().clone();
+        vmf.visgroups = Some(crate::layers::subset(
+            source.vmf().visgroups.as_deref().unwrap_or_default(),
+            &layer_ids,
+        ));
         vmf.world.id = source.vmf().world.id;
         vmf.world.solids = source
             .vmf()
@@ -477,12 +439,25 @@ fn fresh_side(
 fn remap_group(
     editor: &mut Option<Properties>,
     mapping: &BTreeMap<u32, u32>,
+    visgroups: &BTreeMap<u32, u32>,
 ) -> std::result::Result<(), EditError> {
     if let Some(id) = groups::parent(editor.as_ref())? {
         editor
             .as_mut()
             .unwrap()
             .set("groupid", mapping[&id].to_string());
+    }
+    let ids = crate::layers::memberships(editor.as_ref())?;
+    if !ids.is_empty() {
+        let editor = editor.as_mut().unwrap();
+        editor
+            .0
+            .retain(|(key, _)| !key.eq_ignore_ascii_case("visgroupid"));
+        for id in ids {
+            editor
+                .0
+                .push(("visgroupid".into(), visgroups[&id].to_string()));
+        }
     }
     Ok(())
 }
@@ -523,6 +498,7 @@ pub fn paste(
         .validate_ids()
         .map_err(|error| invalid(error.to_string()))?;
     groups::Graph::read(tx.document())?;
+    crate::layers::Graph::read(tx.document())?;
     let (internal, external) = payload.references(catalog, Some(tx.document()))?;
     for reference in &internal {
         if tx.document().vmf().entities.iter().any(|entity| {
@@ -580,6 +556,7 @@ pub fn paste(
     let excluded_objects = source.vmf().object_ids().collect::<BTreeSet<_>>();
     let excluded_sides = source.vmf().side_ids().collect::<BTreeSet<_>>();
     let mut result = Result {
+        visgroups: Vec::new(),
         objects: Vec::new(),
         mapping: Vec::new(),
         sides: Vec::new(),
@@ -588,6 +565,23 @@ pub fn paste(
         remapped_references: internal.len(),
         external,
     };
+    let source_layers = crate::layers::Graph::read(source)?;
+    let mut layer_mapping = BTreeMap::new();
+    for id in source_layers.records.keys() {
+        let mut fresh = tx.new_visgroup_id()?;
+        while source_layers.records.contains_key(&fresh) {
+            fresh = tx.new_visgroup_id()?;
+        }
+        layer_mapping.insert(*id, fresh);
+        result.visgroups.push((*id, fresh));
+    }
+    if !layer_mapping.is_empty() {
+        let mut imported = source.vmf().visgroups.clone().unwrap_or_default();
+        crate::layers::remap(&mut imported, &layer_mapping);
+        let mut native = tx.document().vmf().visgroups.clone().unwrap_or_default();
+        native.extend(imported);
+        tx.set_visgroups(Some(native));
+    }
     let mut group_mapping = BTreeMap::new();
     for group in &source.vmf().world.groups {
         group_mapping.insert(group.id, fresh_object(tx, &excluded_objects)?);
@@ -595,7 +589,7 @@ pub fn paste(
     for group in &source.vmf().world.groups {
         let mut copy = group.clone();
         copy.id = group_mapping[&group.id];
-        remap_group(&mut copy.editor, &group_mapping)?;
+        remap_group(&mut copy.editor, &group_mapping, &layer_mapping)?;
         result.groups.push((group.id, copy.id));
         tx.groups_mut().push(copy);
     }
@@ -613,7 +607,7 @@ pub fn paste(
                     &excluded_objects,
                     &excluded_sides,
                 )?;
-                remap_group(&mut solid.editor, &group_mapping)?;
+                remap_group(&mut solid.editor, &group_mapping, &layer_mapping)?;
                 edit::translate_solid(&mut solid, options.offset, options.texture_lock);
                 tx.add_solid(solid)?
             }
@@ -626,10 +620,10 @@ pub fn paste(
                 result
                     .mapping
                     .push((ObjectId::Entity(id), ObjectId::Entity(entity.id)));
-                remap_group(&mut entity.editor, &group_mapping)?;
+                remap_group(&mut entity.editor, &group_mapping, &layer_mapping)?;
                 for solid in &mut entity.solids {
                     clone_solid(tx, solid, &mut result, &excluded_objects, &excluded_sides)?;
-                    remap_group(&mut solid.editor, &group_mapping)?;
+                    remap_group(&mut solid.editor, &group_mapping, &layer_mapping)?;
                 }
                 if let Some(before) = entity
                     .properties
@@ -687,6 +681,7 @@ pub fn paste(
     }
     tx.set_context(metadata)?;
     groups::Graph::read(tx.document())?;
+    crate::layers::Graph::read(tx.document())?;
     tx.document()
         .vmf()
         .validate_ids()

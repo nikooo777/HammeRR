@@ -34,6 +34,7 @@ pub mod context;
 mod favorites;
 pub mod groups;
 pub mod hollowing;
+pub mod layers;
 mod management;
 pub mod material_search;
 pub mod merging;
@@ -135,6 +136,7 @@ pub enum SelectMode {
 
 pub struct Session {
     groups: groups::State,
+    layers: layers::State,
     model_browser: model_browser::State,
     sounds: sounds::State,
     placement: placement::State,
@@ -247,6 +249,7 @@ impl Session {
         };
         Self {
             groups: groups::State::default(),
+            layers: layers::State::default(),
             game: Arc::new(game),
             game_error,
             document: Document::empty(),
@@ -1110,6 +1113,7 @@ impl Session {
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
         self.groups.draft = None;
+        self.layers.clear_document_draft();
         self.surface_sample = None;
         self.material_search.report = None;
         self.context.draft = None;

@@ -89,6 +89,7 @@ fn result_json(result: &transfer::Result) -> Value {
         "objects":ids(&result.objects),
         "object_ids":result.mapping.iter().map(|(old,new)|json!({"source":crate::mcp::id_string(*old),"copy":crate::mcp::id_string(*new)})).collect::<Vec<_>>(),
         "side_ids":result.sides,
+        "visgroup_ids":result.visgroups,
         "group_ids":result.groups,
         "names":result.names.iter().map(|name|json!({"source":name.source,"copy":name.copy,"before":name.before,"after":name.after})).collect::<Vec<_>>(),
         "remapped_references":result.remapped_references,
@@ -126,6 +127,7 @@ impl Session {
             "bytes":payload.text().len(),
             "objects":ids(payload.ids()),
             "groups":payload.document().vmf().world.groups.len(),
+            "layers":map_core::layers::Graph::read(payload.document()).map(|graph|graph.records.len()).ok(),
             "sides":payload.document().vmf().side_ids().count(),
             "bounds":map_core::query::bounds_of(payload.document(),payload.ids()).map(|(mins,maxs)|[mins.to_array(),maxs.to_array()]),
             "external_links":links.as_ref().ok().map(|links|links.iter().map(|link|json!({"source":link.source,"target":link.target,"location":link.location,"destination_matches":link.matches})).collect::<Vec<_>>()),
@@ -145,7 +147,7 @@ impl Session {
         json!({"snapshot":self.clipboard_stamp(),"payload":payload,"preview":preview,"can_restore_cut_names":self.can_restore_cut_names(),
             "native_format":"UTF-8 VMF text; system access is explicit and may be unavailable on headless displays. Private Hammer clipboard formats are unsupported.",
             "limits":{"bytes":transfer::MAX_BYTES,"objects":map_core::repeat::MAX_SOURCES,"objects_including_owned_brushes":map_core::repeat::MAX_OBJECTS,"sides":map_core::repeat::MAX_SIDES,"groups":transfer::MAX_GROUPS,"depth":transfer::MAX_DEPTH,"nodes":transfer::MAX_NODES},
-            "reference_policy":"Unique names and exact internal FGD/I/O/parent links remap. External links require explicit keep-by-name. Uncertain/script-driven links, numeric references, manual visgroups and saved partitions reject. Opaque metadata remains verbatim.",
+            "reference_policy":"Unique names and exact internal FGD/I/O/parent links remap. External links require explicit keep-by-name. Uncertain/script-driven links, numeric references, saved partitions reject. Opaque metadata remains verbatim.",
         })
     }
 

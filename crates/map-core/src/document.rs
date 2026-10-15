@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 use crate::context::{self, Metadata, Scope};
 use source_formats::keyvalues::Node;
 
-use source_formats::vmf::{Entity, Group, Properties, Solid, Vmf, World};
+use source_formats::vmf::{Entity, Group, Properties, Solid, VisGroup, Vmf, World};
 
 /// A selectable top-level object. Brushes inside a brush entity belong to
 /// their entity and are addressed through it.
@@ -58,6 +58,7 @@ impl std::error::Error for EditError {}
 /// An object's state and its index in its list (`world.solids` or
 /// `entities`); `None` when it doesn't exist.
 type State = Option<(usize, Object)>;
+type VisGroups = Option<Vec<VisGroup>>;
 
 #[derive(Debug, Clone)]
 struct Change {
@@ -73,6 +74,7 @@ pub struct Step {
     world: Option<(Properties, Properties)>,
     extra: Option<(Vec<Node>, Vec<Node>)>,
     groups: Option<(Vec<Group>, Vec<Group>)>,
+    visgroups: Option<(VisGroups, VisGroups)>,
 }
 
 impl Step {
@@ -90,6 +92,7 @@ pub struct Document {
     saved_revision: u64,
     next_object_id: u64,
     next_side_id: u64,
+    next_visgroup_id: u64,
     context_cache: OnceLock<Result<Metadata, String>>,
     context_fingerprint: OnceLock<String>,
 }
@@ -110,6 +113,7 @@ impl Document {
             context_fingerprint: OnceLock::new(),
             next_object_id: u64::from(object_max) + 1,
             next_side_id: u64::from(side_max) + 1,
+            next_visgroup_id: u64::from(crate::layers::max_id(&vmf)) + 1,
             vmf,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -176,6 +180,7 @@ impl Document {
             saved_revision: self.saved_revision,
             next_object_id: self.next_object_id,
             next_side_id: self.next_side_id,
+            next_visgroup_id: self.next_visgroup_id,
             context_cache: self.context_cache.clone(),
             context_fingerprint: self.context_fingerprint.clone(),
         }
@@ -281,12 +286,17 @@ impl Document {
         f: impl FnOnce(&mut Transaction) -> Result<R, EditError>,
     ) -> Result<R, EditError> {
         let mut tx = Transaction {
-            start_ids: (self.next_object_id, self.next_side_id),
+            start_ids: (
+                self.next_object_id,
+                self.next_side_id,
+                self.next_visgroup_id,
+            ),
             doc: self,
             touched: Vec::new(),
             world: None,
             extra: None,
             groups: None,
+            visgroups: None,
         };
         let result = f(&mut tx).and_then(|value| tx.remove_deleted_context().map(|()| value));
         match result {
@@ -304,6 +314,9 @@ impl Document {
     /// Returns the undone step.
     pub fn undo(&mut self) -> Option<&Step> {
         let step = self.undo.pop()?;
+        if let Some((before, _)) = &step.visgroups {
+            self.vmf.visgroups = before.clone();
+        }
         if let Some((before, _)) = &step.groups {
             self.vmf.world.groups = before.clone();
         }
@@ -326,6 +339,9 @@ impl Document {
     /// Returns the redone step.
     pub fn redo(&mut self) -> Option<&Step> {
         let step = self.redo.pop()?;
+        if let Some((_, after)) = &step.visgroups {
+            self.vmf.visgroups = after.clone();
+        }
         if let Some((_, after)) = &step.groups {
             self.vmf.world.groups = after.clone();
         }
@@ -397,15 +413,34 @@ impl Document {
 
 /// Mutable access to a document during [`Document::edit`].
 pub struct Transaction<'a> {
-    start_ids: (u64, u64),
+    start_ids: (u64, u64, u64),
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
     world: Option<Properties>,
     extra: Option<Vec<Node>>,
     groups: Option<Vec<Group>>,
+    visgroups: Option<VisGroups>,
 }
 
 impl Transaction<'_> {
+    pub(crate) fn set_visgroups(&mut self, groups: VisGroups) {
+        self.doc.context_fingerprint.take();
+        self.visgroups
+            .get_or_insert_with(|| self.doc.vmf.visgroups.clone());
+        self.doc.vmf.visgroups = groups;
+        self.doc.next_visgroup_id = self
+            .doc
+            .next_visgroup_id
+            .max(u64::from(crate::layers::max_id(&self.doc.vmf)) + 1);
+    }
+
+    pub(crate) fn new_visgroup_id(&mut self) -> Result<u32, EditError> {
+        let id = u32::try_from(self.doc.next_visgroup_id)
+            .map_err(|_| EditError::Invalid("Native layer IDs are exhausted".into()))?;
+        self.doc.next_visgroup_id += 1;
+        Ok(id)
+    }
+
     pub(crate) fn groups_mut(&mut self) -> &mut Vec<Group> {
         self.doc.context_fingerprint.take();
         self.groups
@@ -612,7 +647,16 @@ impl Transaction<'_> {
             .groups
             .filter(|before| before != &doc.vmf.world.groups)
             .map(|before| (before, doc.vmf.world.groups.clone()));
-        if changes.is_empty() && world.is_none() && extra.is_none() && groups.is_none() {
+        let visgroups = self
+            .visgroups
+            .filter(|before| before != &doc.vmf.visgroups)
+            .map(|before| (before, doc.vmf.visgroups.clone()));
+        if changes.is_empty()
+            && world.is_none()
+            && extra.is_none()
+            && groups.is_none()
+            && visgroups.is_none()
+        {
             return;
         }
         doc.undo.push(Step {
@@ -621,13 +665,21 @@ impl Transaction<'_> {
             world,
             extra,
             groups,
+            visgroups,
         });
         doc.redo.clear();
         doc.revision += 1;
     }
 
     fn rollback(self) {
-        (self.doc.next_object_id, self.doc.next_side_id) = self.start_ids;
+        (
+            self.doc.next_object_id,
+            self.doc.next_side_id,
+            self.doc.next_visgroup_id,
+        ) = self.start_ids;
+        if let Some(before) = self.visgroups {
+            self.doc.vmf.visgroups = before;
+        }
         self.doc.context_fingerprint.take();
         if let Some(groups) = self.groups {
             self.doc.vmf.world.groups = groups;

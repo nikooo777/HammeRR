@@ -82,7 +82,7 @@ A previous build counts as out of date once its settings differ from the current
 - The world is split into visibility clusters, with visible and audible sets computed from portals. `func_detail` and brush entities don't split visibility.
 - **Detailed** visibility refines the conservative sets with portal separator clipping. **Build details…** reports **Workers**, **cluster pairs removed** and **conservative fallbacks**. A removed pair counts one directed cluster-to-cluster entry; reciprocal entries are counted separately.
 - Larger Fast and Detailed builds compute independent portal-facing rows on up to eight available CPUs; Detailed also parallelizes separator flow. Small jobs stay serial.
-- Visibility work is bounded. Exceeded work or stack limits keep the previous BSP; choose **Fast (conservative)** or use `func_detail` for non-sealing decoration to simplify structural geometry. [Occluder records](occluders.md) compile separately; their CS:S renderer behavior still needs runtime validation.
+- Visibility work is bounded. Exceeded work or stack limits keep the previous BSP; choose **Fast (conservative)** or use `func_detail` for non-sealing decoration to simplify structural geometry. [Occluders](occluders.md) compile separately and provide runtime prop culling with activation inputs.
 
 ### Hint planes
 
@@ -286,6 +286,27 @@ Limits: at most 127 world surface properties including default. Names must use 1
 Brush entities keep their **origin** property. To set the pivot with geometry instead, put one visible `tools/toolsorigin` brush inside the entity: the center of that brush becomes the pivot. The compiler removes the origin brush and writes the rest of the entity relative to it, keeping texture and lightmap placement. The VMF itself is not changed.
 
 These fail with a diagnostic: more than one origin brush in an entity, origin brushes in the world or `func_detail`, entities made only of an origin brush, and models larger than ±16,384 units around their pivot. Hidden origin brushes are ignored.
+
+### Moving platforms
+
+1. Create a platform brush, select it and click **Tie to entity…**. Choose
+   `func_movelinear`, then **Tie selected brushes to entity**.
+2. Set **Name** to `lift`, **Move Direction (Pitch Yaw Roll)** to `-90 0 0`
+   for upward movement, **Move Distance** to `64`, **Speed** to `32` and
+   **Start Position** to `0`.
+3. Use **Connections…** on a button or trigger to target `lift` with **Open**
+   and **Close** inputs. **SetPosition** accepts 0–1, and **SetSpeed** changes
+   speed. The platform's **OnFullyOpen** and **OnFullyClosed** outputs can
+   drive other entities.
+4. Choose **Engine physics** in **Build settings…**, compile, then run the map.
+   A `prop_physics` placed above the platform can ride it up and down. Choose
+   its **World Model** with **Browse…**.
+
+![Physics settings and build diagnostics](images/build-status.png)
+
+Limits: vertical kinematic platform support is available. Rotating contacts,
+crushing/blocking, horizontal friction carry and broader dynamic bodies remain
+unfinished. Ordinary brush-entity pivot and compiler physics limits apply.
 
 ### Water
 

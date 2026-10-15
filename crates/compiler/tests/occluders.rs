@@ -275,6 +275,34 @@ fn separate_areas_receive_distinct_indices_and_straddling_occluders_are_rejected
     let data = output.bsp.unwrap().occlusion().unwrap().unwrap();
     assert_eq!(data.occluders.len(), 2);
     assert_ne!(data.occluders[0].area, data.occluders[1].area);
+    let mut joined = document.vmf().clone();
+    let second = joined
+        .entities
+        .iter()
+        .rposition(|entity| entity.classname() == Some("func_occluder"))
+        .unwrap();
+    let second = joined.entities.remove(second);
+    let first = joined
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("func_occluder"))
+        .unwrap();
+    let combined_id = first.id;
+    first.solids.extend(second.solids);
+    let combined = compiler::compile(&joined, &fs);
+    assert!(combined.bsp.is_none());
+    assert!(
+        combined
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.object.as_deref()
+                == Some(&format!("entity:{combined_id}"))
+                && diagnostic.message.contains("spans 2 visibility areas")),
+        "{:?}",
+        combined.report
+    );
+
     let spanning = add_occluder(
         &mut document,
         DVec3::new(-32.0, -16.0, 16.0),
@@ -333,4 +361,139 @@ fn helpers_inside_solid_cover_use_pruned_leaf_neighbors_and_outside_helpers_fail
         "{:?}",
         output.report
     );
+}
+
+fn multibrush_fixture(count: usize) -> (Vmf, u32) {
+    let mut document = Document::new(common::room());
+    let id = document
+        .edit("multiple helper brushes", |tx| {
+            let mut solids = Vec::new();
+            for index in 0..count {
+                let x = -180.0 + index as f64 * 20.0;
+                let ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::new(x, -48.0, 16.0),
+                    DVec3::new(x + 8.0, 48.0, 192.0),
+                    "tools/toolsoccluder",
+                )?
+                else {
+                    unreachable!()
+                };
+                solids.push(id);
+            }
+            edit::tie_to_entity(
+                tx,
+                &solids,
+                "func_occluder",
+                &[
+                    ("targetname".into(), "islands".into()),
+                    ("StartActive".into(), "1".into()),
+                ],
+            )
+        })
+        .unwrap();
+    let ObjectId::Entity(id) = id else {
+        unreachable!()
+    };
+    (document.vmf().clone(), id)
+}
+
+#[test]
+fn separated_helper_islands_share_one_index_and_hidden_children_do_not_emit() {
+    let (_directory, fs) = game();
+    let baseline = compiler::compile(&common::room(), &fs);
+    let (mut vmf, id) = multibrush_fixture(2);
+    let original = vmf.clone();
+    let output = compiler::compile(&vmf, &fs);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(vmf, original);
+    assert_eq!(output.stats.occluders, 1);
+    assert_eq!(output.stats.occluder_polygons, 12);
+    assert_eq!(output.stats.occluder_vertex_refs, 48);
+    assert_eq!(output.stats.brushes, baseline.stats.brushes);
+    assert_eq!(output.stats.faces, baseline.stats.faces);
+    assert_eq!(output.stats.clusters, baseline.stats.clusters);
+    let bsp = output.bsp.unwrap();
+    let native = bsp.occlusion().unwrap().unwrap();
+    assert_eq!(native.occluders.len(), 1);
+    assert_eq!(native.occluders[0].polygon_count, 12);
+    assert_eq!(native.occluders[0].mins, [-180.0, -48.0, 16.0]);
+    assert_eq!(native.occluders[0].maxs, [-152.0, 48.0, 192.0]);
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .solids[1]
+        .hidden = true;
+    let output = compiler::compile(&vmf, &fs);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.occluder_polygons, 6);
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .solids[0]
+        .hidden = true;
+    let output = compiler::compile(&vmf, &fs);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.occluders, 0);
+}
+
+#[test]
+fn touching_later_invalid_and_over_budget_helpers_reject_without_output() {
+    let (_directory, fs) = game();
+    for case in 0..5 {
+        let (mut vmf, id) = multibrush_fixture(if case == 2 { 17 } else { 2 });
+        let entity = vmf
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        match case {
+            0 => {
+                let original = entity.solids[0].clone();
+                let id = entity.solids[1].id;
+                let sides = entity.solids[1]
+                    .sides
+                    .iter()
+                    .map(|side| side.id)
+                    .collect::<Vec<_>>();
+                entity.solids[1] = original;
+                entity.solids[1].id = id;
+                for (side, id) in entity.solids[1].sides.iter_mut().zip(sides) {
+                    side.id = id;
+                }
+            }
+            1 => entity.solids[1].sides[0].material = "missing/second_brush".into(),
+            2 => {}
+            3 => {
+                for side in &mut entity.solids[1].sides {
+                    for point in &mut side.plane.0 {
+                        point.x -= 12.0;
+                    }
+                }
+            }
+            4 => {
+                for index in 0..250 {
+                    let mut side = entity.solids[1].sides[0].clone();
+                    side.id = 100_000 + index;
+                    entity.solids[1].sides.push(side);
+                }
+            }
+            _ => unreachable!(),
+        }
+        let output = compiler::compile(&vmf, &fs);
+        assert!(output.report.has_errors(), "case {case}");
+        assert!(output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.level == compiler::Level::Error
+                    && diagnostic.object.as_deref() == Some(&format!("entity:{id}"))),
+            "{:?}",
+            output.report
+        );
+    }
 }

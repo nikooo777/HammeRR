@@ -180,7 +180,7 @@ impl VisibilityMode {
                 "Quickly builds conservative visible and audible sets. Some hidden areas remain visible."
             }
             Self::Detailed => {
-                "Clips sight volumes through portal paths to remove hidden areas. Uses up to eight CPU workers on larger maps, with conservative fallbacks. Broader map coverage and native occluder runtime behavior remain under validation."
+                "Clips sight volumes through portal paths to remove hidden areas. Uses up to eight CPU workers on larger maps, with conservative fallbacks. Broader map coverage and overlapping occluder geometry remain under development."
             }
         }
     }

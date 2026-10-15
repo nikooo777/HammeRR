@@ -387,6 +387,44 @@ The default validator uses two private stdio Sessions and exported text, with so
 ```sh
 python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-fixture
 python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-client --runtime
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-inactive --runtime --start-inactive
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-islands --runtime --multi-brush
 ```
 
-The default checks a sealed lit fixture, native occluder records and identical foreground/background builds. `--runtime` launches CS:S with `-insecure` and `sv_lan 1` on a private headless Cage display, and confirms the post-map LAN value. This installed client still requires Steam running to spawn a local player. It observes initial/Deactivate/Activate/Toggle netprops and compares stable prop-culling frames. Server loading alone does not establish client culling. Use a fresh output directory for each run.
+The default checks a sealed lit fixture, native occluder records and identical foreground/background builds. `--runtime` launches CS:S with `-insecure` and `sv_lan 1` on a private headless Cage display, and confirms the post-map LAN value. This installed client still requires Steam running to spawn a local player. `--start-inactive` checks the native inactive flag and inverse sequence. `--multi-brush` checks separated strips sharing one index, with side-prop culling and an unchanged center-gap prop. It observes initial/Deactivate/Activate/Toggle netprops and compares stable prop-culling frames. Server loading alone does not establish client culling. Use a fresh output directory for each run.
+
+
+### Native layers and clipboard memberships
+
+```sh
+cargo test -p map-core layers::tests
+cargo test -p editor session::layers::tests
+cargo test -p editor layers_ui::tests
+python3 -B scripts/validate_layers.py --binary target/debug/editor --output /tmp/hammerr-layers-check
+```
+
+Core checks cover nested record/member transactions, reparenting/deletion,
+unknown metadata, independent ID allocation, rollback/Undo, owned-brush links
+and clipboard remapping. Session and software UI checks cover stale versions,
+parameter review, cancel ownership, visibility and transfer. Set
+`HAMMERR_UI_SNAPSHOTS` to write `layers.png` without desktop input. The MCP script
+uses private stdio sessions for hierarchy, multiple memberships, owned-brush
+selection, hidden/compiler scope, stale requests, cross-map clipboard transfer
+and native save/reopen. Use a new output directory; it does not launch the game
+or touch the desktop clipboard.
+
+
+### Moving brush contact
+
+```sh
+python3 -B scripts/validate_moving_contact.py --binary target/debug/editor --output /tmp/hammerr-moving-contact-check
+python3 -B scripts/validate_moving_contact.py --binary target/debug/editor --output /tmp/hammerr-moving-contact-client --runtime
+```
+
+The default authors a linear platform, physics crate and endpoint connections
+through MCP, checks native model counts and exact foreground/background builds,
+and preserves VMF/source/history. `--runtime` uses the shared private Cage helper
+with -insecure and sv_lan 1. It checks three stationary samples in five phases,
+vertical contact through Open/Close and changed-speed SetPosition cycles, endpoint
+outputs and the grounded player. Use a fresh output directory; the probe uses no
+desktop input or focus changes.

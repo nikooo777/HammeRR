@@ -22,11 +22,11 @@ Agents use the same operations: `get_clipboard`, `copy_objects`, `cut_objects`, 
 
 ## Limits
 
-- Capture 1–16 top-level objects, with at most 256 objects including owned brushes, 8,192 sides and 256 native groups. A brush has at most 256 sides. Payload text is bounded to 8 MiB, 64 nesting levels and 131,072 KeyValues nodes. Authoring coordinates and the complete pasted geometry stay within ±65,536 units.
-- Native group ancestors, partial group membership, owned-brush links, ordinary/displacement geometry, object notes, authorship and observations transfer. Unknown object metadata remains verbatim; opaque embedded IDs or scripts are not interpreted. Captures use native file order.
-- Manual visgroup membership, saved partition intents on copied brushes, overlays, numeric node/face references, ambiguous names or internal links, and named sets with script/dynamic-I/O dependencies reject. Resolve these before copying; failure preserves the last valid payload and preview.
+- Capture 1–16 top-level objects, with at most 256 objects including owned brushes, 8,192 sides and 256 native groups plus 256 required layers. A brush has at most 256 sides. Payload text is bounded to 8 MiB, 64 nesting levels and 131,072 KeyValues nodes. Authoring coordinates and the complete pasted geometry stay within ±65,536 units.
+- Native group and layer ancestors, partial/multiple memberships, owned-brush links, ordinary/displacement geometry, object notes, authorship and observations transfer. Unknown object metadata remains verbatim; opaque embedded IDs or scripts are not interpreted. Captures use native file order.
+- Direct layer links on physical group records, saved partition intents on copied brushes, overlays, numeric node/face references, ambiguous names or internal links, and named sets with script/dynamic-I/O dependencies reject. Resolve these before copying; failure preserves the last valid payload and preview.
 - External links default to rejection. Keeping them by name may connect to matching destination objects. Generated names that would acquire existing destination or payload references reject. No external reference is silently deleted.
 - Original-name restoration requires the exact unchanged same-map post-Cut revision and entity definitions. Imported text cannot create a Cut receipt. Cross-map pastes use unique names.
 - Transfer uses whole objects and an exact world offset. Rotation, scaling and component-only clipboard edits are unavailable. Use ordinary transforms after applying.
-- Whole VMF text imports its brushes, entities, required native groups and attached object notes. Source world settings, cameras, map notes, regions and unrelated map metadata are excluded.
+- Whole VMF text imports its brushes, entities, required native groups/layers and attached object notes. Source world settings, cameras, map notes, regions and unrelated map metadata are excluded.
 - Native clipboard access supports UTF-8 VMF text through available X11 or Wayland data-control support. Private Hammer/Hammer++ clipboard formats are unsupported. The editor retains clipboard ownership while it runs; a clipboard manager may retain it afterward.

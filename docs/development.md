@@ -123,12 +123,12 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Hollow, carve, merge and clip | `hollow`, `carving`, `carve_many`, `merge`, `clip_handles` |
 | Vertices, edges and faces | `components`, `component_sources`, `component_picking`, `component_topology`, `component_transforms`, `component_creases`, `weld_texture_attachment`, `split_texture_attachment`, `roof_texture_attachment` |
 | Flat partitions | `component_partitions`, `partition_picking`, `saved_partitions`, `partition_material_metadata`, `partition_materials`, `partition_textures`, `adjusted_partition_ridges`, `boundary_partitions`, `polygon_partitions`, `partition_extrusion`, `partition_visibility` |
-| Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `material_reload`, `surface_group`, `texture_strokes`, `texture_chain` |
+| Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `material_reload`, `surface_group`, `texture_strokes`, `texture_chain`, `uv_vectors` |
 | Map checks | `spawn_clearance`, `audit_fixes` |
 | Particle definitions | `particles` (active manifest discovery, bounded binary DMX parsing, metadata, owned choices and retryable errors) |
 | Local preferences | `recent_maps`, `build_recipes` |
-| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `direct_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals` |
-| In game | `prop_shadows_native` (optional `--runtime`), `native_runtime`, `brush_runtime`, `vphysics_backend` |
+| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `water_bottom`, `direct_lighting`, `hdr_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals`, `terrain_subdivision` |
+| In game | `prop_shadows_native` and `hdr_lighting` (optional `--runtime`), `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
 `transform_display` also checks `preview_snap_to_grid`: fractional negative world bounds-minimum anchors, mixed selections, shared texture-lock policy, source/history preservation, Apply/Cancel, aligned no-ops, model-reload cancellation and exact typed transforms with snapping enabled.
 
@@ -149,7 +149,7 @@ python3 -B scripts/validate_object_picking.py --binary target/debug/hammerr-head
 
 ### Extra options
 
-- **`--url http://127.0.0.1:7377/mcp`** runs the check against an open editor instead of a private one. The editor must be idle, with a clean map and empty undo history. The script opens its fixture, then restores the original file, camera, selection and view. Supported by `clip_handles`, `compile_jobs`, `component_picking`, `components`, `face_lighting`, `geometry_tools`, `hollow`, `map_statistics`, `material_replacement`, `paint_selection`, `pointfiles`, `saved_views`, `sky_preview`, `surface_group`, `texture_chain`, `texture_strokes`, `view_modes` and `volume_selection`.
+- **`--url http://127.0.0.1:7377/mcp`** runs the check against an open editor instead of a private one. The editor must be idle, with a clean map and empty undo history. The script opens its fixture, then restores the original file, camera, selection and view. Supported by `clip_handles`, `compile_jobs`, `component_picking`, `components`, `face_lighting`, `geometry_tools`, `hollow`, `map_statistics`, `material_replacement`, `paint_selection`, `pointfiles`, `saved_views`, `sky_preview`, `surface_group`, `texture_chain`, `texture_strokes`, `uv_vectors`, `view_modes` and `volume_selection`.
 - **`--render`** adds offscreen GPU pixel checks without opening a window. Supported by `adjusted_partition_ridges`, `boundary_partitions`, `brush_reflection`, `brush_shear`, `carve_many`, `carving`, `component_creases`, `component_partitions`, `component_topology`, `component_transforms`, `merge`, `partition_extrusion`, `partition_materials`, `partition_picking`, `partition_textures`, `polygon_partitions`, `roof_texture_attachment`, `saved_partitions`, `split_texture_attachment`, `texture_lock_modes` and `weld_texture_attachment`.
 - **`precision_cycles --operation scale|rotate|reflection|shear`** checks repeated edit/save/reopen cycles for an operation other than translation. Drift must stay below `1e-5` units and `1e-4` texels, and undo/redo must be exact.
 - **`partition_extrusion --adjusted`** extrudes pieces from a moved dividing line.
@@ -198,6 +198,87 @@ python3 -B scripts/validate_terrain_creation.py --output /tmp/hammerr-terrain-cr
 `direct_lighting` covers legacy and percentage-distance point and spotlight falloff, including hard fades. `direct_sky` covers sun and ambient visibility, opaque occlusion, shared sampling settings and compiled ambient-cube records and counters. `terrain` covers power-2/3/4 lightmaps and matching full-edge neighbors. `terrain_seams` checks rotated curved seams, hidden-neighbor exclusion, exact foreground/background output and unchanged native geometry/physics. `terrain_normals` checks that baking and viewport shading use the same smooth patch normals while preserving collision geometry.
 
 `light_culling` checks shared counts and exact foreground/background builds in connected/disconnected rooms with finite-range named lights and fractional brush-model pivots. Compiler reference regressions compare complete BSP bytes with culling disabled, including terrain, styles and both visibility modes.
+
+### Direct UV vectors
+
+```sh
+cargo test -p map-core --lib surface::vectors_tests
+cargo test -p editor-core --features mcp --lib direct_vector
+cargo test -p editor --bin editor direct_vector_dialog
+cargo test -p compiler --test direct_uv_vectors
+python3 -B scripts/validate_uv_vectors.py --binary target/debug/hammerr-headless --output /tmp/hammerr-uv-vectors-check
+```
+
+Checks skewed texel coordinates, partial vector updates across world and owned
+faces, preserved metadata, atomic invalid batches, shared preview ownership,
+Cancel/Undo/Redo and VMF round trips. The compiler target checks native world
+and brush-model texture vectors and origin adjustment. The MCP script always
+renders its draft and cancelled state offscreen; it has no `--render` switch.
+Use `--gameinfo /path/to/cstrike/gameinfo.txt` for an explicit content mount or
+`--url http://127.0.0.1:7377/mcp` for a clean idle editor. The software UI test
+writes `uv-vectors.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory.
+
+### Independent LDR and HDR lighting
+
+```sh
+cargo test -p source-formats --test lighting
+cargo test -p compiler --lib lighting::input_tests
+cargo test -p compiler --lib lighting::sky::tests
+cargo test -p compiler --test hdr_lighting --test lighting_reference
+cargo test -p editor-core --features mcp --lib build_lighting_settings_are_shared
+cargo test -p editor --bin editor hdr_results_keep_channels
+python3 -B scripts/validate_hdr_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-hdr-lighting-check
+```
+
+Checks selected HDR tuples, overrides, sentinels and scales; independent face
+styles, sample offsets, bumped maps, world lights, bounces and ambient cubes;
+LDR byte preservation; aggregate work/allocation guards; and atomic failed or
+cancelled publication. The MCP fixture uses different channel colors and HDR
+radiance above 255, decodes both channels independently, compares synchronous
+and background output, and checks source/history preservation. The compiler
+integration target also covers terrain, brush models and incomplete native HDR
+data without synthetic emitters or probes. Eligibility metadata alone does not
+establish the runtime's selected channel.
+
+Build the private read-only native observer before adding `--runtime`:
+
+```sh
+systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
+  cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared scripts/hdr_runtime_probe.c \
+  -o target/debug/hammerr_hdr_probe.so -ldl -pthread
+python3 -B scripts/validate_hdr_lighting.py --binary target/debug/hammerr-headless --runtime --output /tmp/hammerr-hdr-lighting-client
+```
+
+Use `--probe-library /path/to/hammerr_hdr_probe.so` for another observer build
+and `--game-dir "/path/to/Counter-Strike Source"` for another installation.
+Native validation requires Cage, grim, a compatible fingerprinted playable
+engine and Steam running. It selects HDR level 0 or 2 before each fresh private
+map load, retains `-insecure` and post-map `sv_lan 1`, and verifies fixed
+exposure/bloom cvars. The observer acquires `MaterialSystemHardwareConfig012`
+and requires consistent `GetHDREnabled` and `GetHDRType` readings before
+capturing the red/blue comparison. `LD_PRELOAD` applies only to the private game
+command. Reports include acquisition routes, hardware values, module hashes
+and frames; this check uses no desktop input or focus changes. Use a fresh
+output directory per run. `--runtime-bsp /path/to/hdr.bsp` with
+`--fixture-game /path/to/source-game/cstrike --runtime` repeats native checks
+against an existing fixture without recompiling it.
+
+### Water underside materials
+
+```sh
+cargo test -p compiler --test water_bottom --test water
+python3 -B scripts/validate_water_bottom.py --binary target/debug/hammerr-headless --output /tmp/hammerr-water-bottom-check
+python3 -B scripts/validate_water_metadata.py --binary target/debug/hammerr-headless --physics engine --output /tmp/hammerr-water-metadata-check
+```
+
+Checks patched `$bottommaterial` resolution, separate top/underside bindings,
+copied texture vectors and flags, winding, wet-leaf fog references, clipped
+surface area, unchanged depth/collision data and top-only overlay bindings.
+Missing or malformed explicit bottom assets must preserve the old output;
+repair must restore deterministic synchronous/background builds without source
+or history edits. `water_bottom` uses private mounted assets and has no runtime
+switch. `water_metadata --physics engine` additionally checks native fluid-body
+output; neither command establishes native water-rendering parity.
 
 ## In-game checks
 
@@ -326,11 +407,15 @@ python3 -B scripts/validate_terrain_handles.py --output /tmp/hammerr-terrain-han
 Checks all seven numeric handle constraints on rotated powers 2–4, shared snapping, unchanged neighbors/source/history, invalid updates, pointer hit-testing and resized viewport guards, owned review, one-step Undo, foreign preview preservation and save/reopen. Session tests cover axis/plane/screen pointer movement in all four projections; software UI tests exercise compact resizing, handle review and silent cancellation. The numeric vertex-move check covers native XYZ output from the shared preview operation.
 
 ```sh
+cargo test -p map-core --lib displacement::subdivide
+cargo test -p editor-core --features mcp --lib half_edge_subdivision
+cargo test -p compiler --test terrain_subdivision --test terrain
 python3 -B scripts/validate_terrain_subdivision.py --output /tmp/hammerr-terrain-subdivision-check
+python3 -B scripts/validate_terrain_subdivision.py --split-edge --output /tmp/hammerr-terrain-subdivision-half-check
 python3 -B scripts/validate_subdivided_terrain.py --output /tmp/hammerr-subdivided-compatibility-check
 ```
 
-Checks connected folded power-2/3/4 cages, shared samples and pinned base boundaries, preserved metadata, repeated-generation no-ops, invalid previews, generated-grid editing, Cancel/Undo/Redo/reopen and active native positions with LOD snapping through both build paths. The saved-grid check compares marked/unmarked native output and exercises supported sewing/resizing on imported marked rows. Core checks cover subdivision stencils, manifold/half-edge rejection and actual cache guards; software UI drives the operation and Cancel.
+Checks connected folded power-2/3/4 cages, shared samples and pinned base boundaries, preserved metadata, repeated-generation no-ops, invalid previews, generated-grid editing, Cancel/Undo/Redo/reopen and active native positions with LOD snapping through both build paths. `--split-edge` uses a large edge joined to two smaller neighbors, checks both half-edge slots and repeats native builds after save/reopen; it does not launch the game. The saved-grid check compares marked/unmarked native output and exercises supported sewing/resizing on imported marked rows. Core checks cover subdivision stencils, full/half span combinations, two-density seed grids, unsupported density chains, malformed contacts, manifold guards and actual cache guards; software UI drives the operation and Cancel.
 
 ```sh
 python3 -B scripts/validate_model_previews.py --output /tmp/hammerr-model-previews-check

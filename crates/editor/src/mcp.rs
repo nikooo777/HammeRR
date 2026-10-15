@@ -4577,7 +4577,7 @@ impl EditorServer {
             .take(10)
             .map(|e| format!("{}: {}", e.actor.label(), e.text))
             .collect();
-        ok(json!({
+        let mut result = json!({
             "rendering": rendering,
             "context": session.context_state(),
             "primitive": session.primitive_state(),
@@ -4609,19 +4609,22 @@ impl EditorServer {
             "rename_draft": rename_draft_json(&session),
             "property_draft": session.property_draft(),
             "visibility": session.visibility_state(),
-            "recovery": session.recovery_status(),
-            "face_selection": face_state(&session),
-            "world_brushes": vmf.world.solids.len(),
-            "point_entities": point_entities,
-            "brush_entities": vmf.entities.len() - point_entities,
-            "worldspawn": vmf.world.properties.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
-            "bounds": bounds_json(bounds),
-            "selection": session.selection().iter().map(|&id| id_string(id)).collect::<Vec<_>>(),
-            "undo": doc.undo_labels().take(10).collect::<Vec<_>>(),
-            "redo": doc.redo_labels().take(10).collect::<Vec<_>>(),
-            "camera": camera_json(&session.camera()),
-            "recent_activity": activity,
-        }))
+        });
+        result.as_object_mut().unwrap().extend([
+            ("recovery".into(), session.recovery_status()),
+            ("face_selection".into(), face_state(&session)),
+            ("world_brushes".into(), json!(vmf.world.solids.len())),
+            ("point_entities".into(), json!(point_entities)),
+            ("brush_entities".into(), json!(vmf.entities.len() - point_entities)),
+            ("worldspawn".into(), json!(vmf.world.properties.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>())),
+            ("bounds".into(), bounds_json(bounds)),
+            ("selection".into(), json!(session.selection().iter().map(|&id| id_string(id)).collect::<Vec<_>>())),
+            ("undo".into(), json!(doc.undo_labels().take(10).collect::<Vec<_>>())),
+            ("redo".into(), json!(doc.redo_labels().take(10).collect::<Vec<_>>())),
+            ("camera".into(), camera_json(&session.camera())),
+            ("recent_activity".into(), json!(activity)),
+        ]);
+        ok(result)
     }
 
     #[tool(description = "Open a .vmf map file in the editor.")]

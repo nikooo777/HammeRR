@@ -132,18 +132,32 @@ pub(super) struct Channels {
     count: usize,
     completed: usize,
     maps: usize,
+    _allocation: super::bake::Allocation,
 }
 
 impl Channels {
-    pub(super) fn new(count: usize, completed: usize, maps: usize) -> Result<Self, String> {
+    pub(super) fn new(
+        count: usize,
+        completed: usize,
+        maps: usize,
+        budget: &Budget<'_>,
+    ) -> Result<Self, String> {
         if ![1, super::bump::MAPS].contains(&maps) {
             return Err("Lightmap direction count must be one or four".into());
         }
+        let bytes = count
+            .checked_mul(maps)
+            .and_then(|count| count.checked_add(1))
+            .and_then(|count| count.checked_mul(MAX_FACE_STYLES * size_of::<RgbExp32>()))
+            .ok_or("Lightmap sample allocation overflow")?
+            .min(MAX_LIGHTING_BYTES);
+        let allocation = budget.reserve_bytes(bytes)?;
         let mut result = Self {
             channels: Vec::new(),
             count,
             completed,
             maps,
+            _allocation: allocation,
         };
         result.allocate(0)?;
         Ok(result)
@@ -205,7 +219,7 @@ impl Channels {
         budget: &mut Budget<'_>,
     ) -> Result<Self, String> {
         let [width, height] = light.dimensions();
-        let mut result = Self::new(width * height, completed, light.maps())?;
+        let mut result = Self::new(width * height, completed, light.maps(), budget)?;
         for (style_index, &style) in light.styles().iter().enumerate() {
             let index = if style == 0 {
                 0
@@ -294,12 +308,12 @@ mod tests {
 
     #[test]
     fn auxiliary_maps_count_toward_the_shared_limit_before_allocation() {
-        let limit = MAX_LIGHTING_BYTES / size_of::<RgbExp32>();
-        assert!(Channels::new(usize::MAX, 0, super::super::bump::MAPS).is_err());
-        assert!(Channels::new(1, limit - 2, super::super::bump::MAPS).is_err());
-        let mut channels = Channels::new(1, limit - 8, super::super::bump::MAPS).unwrap();
         let control = Control::default();
         let mut budget = Budget::new(&control);
+        let limit = MAX_LIGHTING_BYTES / size_of::<RgbExp32>();
+        assert!(Channels::new(usize::MAX, 0, super::super::bump::MAPS, &budget).is_err());
+        assert!(Channels::new(1, limit - 2, super::super::bump::MAPS, &budget).is_err());
+        let mut channels = Channels::new(1, limit - 8, super::super::bump::MAPS, &budget).unwrap();
         let mut colors = [[DVec3::ZERO; super::super::bump::MAPS]; MAX_FACE_STYLES];
         assert!(
             channels

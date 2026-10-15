@@ -17,6 +17,15 @@ pub(crate) struct Stats {
     pub work: usize,
 }
 
+pub(super) fn allocation_bytes(clusters: usize, lights: usize) -> Result<usize, String> {
+    clusters
+        .checked_mul(256)
+        .and_then(|bytes| bytes.checked_add(MAX_ROW_BYTES))
+        .and_then(|bytes| bytes.checked_add(2 * MAX_CANDIDATES * size_of::<usize>()))
+        .and_then(|bytes| bytes.checked_add(lights * 4 * size_of::<usize>()))
+        .ok_or_else(|| "Lighting candidate allocation size overflow".into())
+}
+
 pub(super) struct Candidates {
     all: Vec<usize>,
     rows: HashMap<usize, Vec<u8>>,

@@ -83,6 +83,7 @@ impl Radiance {
 pub(super) struct SurfaceIndex {
     geometry: ShadowIndex<Surface>,
     radiance: Vec<Radiance>,
+    _allocation: super::bake::Allocation,
 }
 
 impl ShadowObject for Surface {
@@ -130,27 +131,45 @@ fn add_surface(
 pub(super) fn build(
     map: &Map<'_>,
     bsp: &Bsp,
+    kind: LightingKind,
     sky_radiance: DVec3,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, sky_radiance, false, budget)
+    build_with_styles(map, bsp, kind, sky_radiance, false, budget)
 }
 
 pub(super) fn build_styled(
     map: &Map<'_>,
     bsp: &Bsp,
+    kind: LightingKind,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
-    build_with_styles(map, bsp, DVec3::ZERO, true, budget)
+    build_with_styles(map, bsp, kind, DVec3::ZERO, true, budget)
 }
 
 fn build_with_styles(
     map: &Map<'_>,
     bsp: &Bsp,
+    kind: LightingKind,
     sky_radiance: DVec3,
     styled: bool,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
+    let decoded_bytes = [
+        source_formats::bsp::lump::FACES,
+        source_formats::bsp::lump::FACES_HDR,
+        source_formats::bsp::lump::TEXINFO,
+        source_formats::bsp::lump::VERTEXES,
+        source_formats::bsp::lump::EDGES,
+        source_formats::bsp::lump::SURFEDGES,
+        source_formats::bsp::lump::MODELS,
+    ]
+    .into_iter()
+    .try_fold(0usize, |total, index| {
+        total.checked_add(bsp.lumps[index].data.len())
+    })
+    .ok_or("Radiance geometry allocation size overflow")?;
+    let _decoded_allocation = budget.reserve_bytes(decoded_bytes)?;
     let world = bsp
         .records::<Model>()
         .map_err(|error| error.to_string())?
@@ -158,7 +177,7 @@ fn build_with_styles(
         .copied()
         .ok_or("Surface radiance needs a world model")?;
     let faces = bsp
-        .lighting_faces(LightingKind::Ldr)
+        .lighting_faces(kind)
         .map_err(|error| error.to_string())?;
     let infos = bsp
         .records::<TexInfo>()
@@ -166,12 +185,30 @@ fn build_with_styles(
     let vertices = bsp.vertices().map_err(|error| error.to_string())?;
     let edges = bsp.records::<Edge>().map_err(|error| error.to_string())?;
     let surfedges = bsp.surfedges().map_err(|error| error.to_string())?;
-    let lighting = bsp
-        .lighting(LightingKind::Ldr)
-        .map_err(|error| error.to_string())?;
-    let mut surfaces = Vec::new();
-    let mut radiance = Vec::new();
-    for face in &faces[world.first_face as usize..(world.first_face + world.face_count) as usize] {
+    let lighting = bsp.lighting(kind).map_err(|error| error.to_string())?;
+    let world_faces =
+        &faces[world.first_face as usize..(world.first_face + world.face_count) as usize];
+    let triangles = world_faces
+        .iter()
+        .try_fold(0usize, |total, face| {
+            let count = if face.dispinfo >= 0 {
+                map.terrains[face.dispinfo as usize].indices.len()
+            } else {
+                (face.edge_count as usize).saturating_sub(2)
+            };
+            total
+                .checked_add(count)
+                .filter(|&total| total <= Surface::MAX_OBJECTS)
+        })
+        .ok_or("Surface radiance exceeds its bounded triangle allocation")?;
+    let bytes = ShadowIndex::<Surface>::allocation_bytes(triangles)?
+        .checked_add(world_faces.len() * (size_of::<Radiance>() + 3 * size_of::<Layer>()))
+        .and_then(|bytes| bytes.checked_add(source_formats::bsp::MAX_LIGHTING_BYTES))
+        .ok_or("Surface radiance allocation size overflow")?;
+    let allocation = budget.reserve_bytes(bytes)?;
+    let mut surfaces = Vec::with_capacity(triangles);
+    let mut radiance = Vec::with_capacity(world_faces.len());
+    for face in world_faces {
         budget.consume(1)?;
         let info = infos[face.texinfo as usize];
         let sky = info.flags & (surf::SKY | surf::SKY2D) != 0;
@@ -215,7 +252,7 @@ fn build_with_styles(
             &[]
         };
         budget.consume(samples.len())?;
-        let mut extras = Vec::new();
+        let mut extras = Vec::with_capacity(3);
         if styled
             && !sky
             && let Some(light) = &light
@@ -289,6 +326,7 @@ fn build_with_styles(
     Ok(SurfaceIndex {
         geometry: ShadowIndex::new(surfaces, &mut |work| budget.consume(work))?,
         radiance,
+        _allocation: allocation,
     })
 }
 

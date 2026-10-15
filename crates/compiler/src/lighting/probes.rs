@@ -24,6 +24,7 @@ const CUBE_AXES: [DVec3; 6] = [
 ];
 
 pub(super) struct Context<'a> {
+    pub kind: LightingKind,
     pub map: &'a Map<'a>,
     pub tree: &'a Tree,
     pub visibility: &'a Visibility,
@@ -196,9 +197,14 @@ pub(super) fn bake(
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
-    let surfaces = super::radiance::build(ctx.map, bsp, ctx.sky_radiance, budget)?;
+    let surfaces = super::radiance::build(ctx.map, bsp, ctx.kind, ctx.sky_radiance, budget)?;
     let cone = (1.0 - 2.0 / ctx.directions.len() as f64).acos().tan();
     let leaves = bsp.records::<Leaf>().map_err(|error| error.to_string())?;
+    let _ambient_allocation = budget.reserve_bytes(
+        leaves.len() * (size_of::<LeafAmbientIndex>() + size_of::<Leaf>())
+            + ctx.visibility.count * size_of::<Option<usize>>()
+            + MAX_AMBIENT_SAMPLES * size_of::<LeafAmbientSample>(),
+    )?;
     let mut nodes = vec![None; ctx.visibility.count];
     for (node, cluster) in ctx.visibility.clusters.iter().enumerate() {
         budget.consume(1)?;
@@ -207,7 +213,7 @@ pub(super) fn bake(
         }
     }
     let mut indices = vec![LeafAmbientIndex::default(); leaves.len()];
-    let mut samples = Vec::new();
+    let mut samples = Vec::with_capacity(MAX_AMBIENT_SAMPLES);
     let mut missing = 0;
     for (index, leaf) in leaves.iter().enumerate() {
         budget.consume(1)?;
@@ -264,11 +270,8 @@ pub(super) fn bake(
         bytes: indices.len() * size_of::<LeafAmbientIndex>()
             + samples.len() * size_of::<LeafAmbientSample>(),
     };
-    bsp.set_leaf_ambient(
-        LightingKind::Ldr,
-        &LeafAmbient::Indexed { indices, samples },
-    )
-    .map_err(|error| error.to_string())?;
+    bsp.set_leaf_ambient(ctx.kind, &LeafAmbient::Indexed { indices, samples })
+        .map_err(|error| error.to_string())?;
     report.diagnostics.push(Diagnostic::info("Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Opaque static-prop meshes block probe rays; adaptive refinement and reflected prop sources remain unfinished", None, None));
     Ok(stats)
 }

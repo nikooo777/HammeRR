@@ -53,6 +53,12 @@ pub(crate) fn fog_preview_controls_choose_apply_cancel_and_reject_stale_or_unsup
     window.invoke_choice_changed();
     assert!(window.get_can_apply());
     assert!(window.get_detail().contains("courtyard_haze"));
+    assert!(
+        window
+            .get_detail()
+            .lines()
+            .any(|line| line == "Maximum density: 0.8 · Authored fog: enabled")
+    );
     save_ui_snapshot(window.window(), "fog-preview");
     assert_dialog_button_visible(window, "Apply preview");
     assert_dialog_button_visible(window, "Cancel");

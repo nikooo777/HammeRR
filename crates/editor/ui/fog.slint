@@ -40,7 +40,7 @@ export component FogWindow inherits Window {
                     spacing: 14px;
                     Text { text: root.detail; wrap: word-wrap; }
                     Text {
-                        text: "Perspective · Textured view\nStatic authored initial values. Linear view-depth ramp, capped at maximum density; squared factor blends linear-space color. Sky, background and editor helpers stay unchanged.\n\nRadial fog, directional color blending, positive far-Z clipping and HDR/zoom scaling are unsupported. Fog volumes, transitions and runtime I/O are not evaluated. Controller choice is explicit; Master flags do not choose it automatically.";
+                        text: "Preview static fog in Perspective · Textured view. Sky, background and editor helpers stay unchanged.\n\nRadial fog, directional blending, far-Z clipping and HDR/zoom scaling are unsupported. Fog volumes, transitions and runtime I/O are not evaluated. Choose the controller explicitly.";
                         wrap: word-wrap; color: #aeb9c8; font-size: 12px;
                     }
                 }

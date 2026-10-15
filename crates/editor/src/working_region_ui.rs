@@ -55,9 +55,17 @@ fn refresh(
 ) {
     let state = session.working_region_summary();
     *snapshot.borrow_mut() = state["snapshot"].as_str().unwrap().into();
-    window.set_summary(if state["enabled"]==true {
-        format!("Working region active · {} entries excluded by region / authored hiding · {} selected objects/faces excluded",state["excluded"],state["selected_excluded"])
-    } else { "Working region off · saved visibility and compilation are unchanged".into() }.into());
+    window.set_summary(
+        if state["enabled"] == true {
+            format!(
+                "Working region active · Excluded entries: {} · Excluded selection items: {}",
+                state["excluded"], state["selected_excluded"]
+            )
+        } else {
+            "Working region off · saved visibility and compilation are unchanged".into()
+        }
+        .into(),
+    );
     if reset {
         window.set_region_enabled(state["enabled"] == true);
         if !state["mins"].is_null() {
@@ -135,7 +143,7 @@ impl Controller {
                 }
             }
         });
-        window.on_close({
+        window.on_cancel({
             let window = window.as_weak();
             move || {
                 let _ = window.unwrap().hide();
@@ -264,6 +272,6 @@ mod tests {
         assert!(!lock(&shared).working_region_enabled());
         assert!(!app.get_working_region_active());
         app.hide().unwrap();
-        controller.window.invoke_close();
+        controller.window.invoke_cancel();
     }
 }

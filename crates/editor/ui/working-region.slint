@@ -16,11 +16,11 @@ export component WorkingRegionWindow inherits Window {
     callback use-bounds();
     callback apply();
     callback clear();
-    callback close();
+    callback cancel();
     forward-focus: keys;
     keys := FocusScope {
         width: parent.width; height: parent.height;
-        key-pressed(event) => { if event.text == Key.Escape { root.close(); accept } else { reject } }
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
             padding: 20px; spacing: 12px;
             Text { text: "Working region visibility"; font-size: 24px; font-weight: 600; }
@@ -55,7 +55,7 @@ export component WorkingRegionWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Clear working region"; clicked => { root.clear(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Cancel"; clicked => { root.close(); } }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Apply"; clicked => { root.apply(); } }
             }
         }

@@ -58,11 +58,47 @@ keep the complete imported projection independently of its marker position.
 Include every target surface; an omitted or buried target stops the build
 without replacing the previous BSP.
 
+## Build imported water transitions
+
+Imported `info_overlay_transition` helpers describe explicit material projections
+in nested `overlaytransition` / `overlaydata` blocks. Compilation preserves
+their authored world, `func_detail` and terrain surface references as those
+surfaces split into native faces.
+
+1. Open the VMF with **Open…**. It must already contain the transition projection
+   blocks, sealed geometry and a player spawn.
+2. Open **Object report…** and search for `info_overlay_transition` to find its
+   marker. Keep every referenced surface visible and included in the build.
+3. Click **Compile**, then **Build details…**. **Overlays** and **Surface references**
+   include regular overlays and imported water transitions. **Diagnostics**
+   identify malformed blocks or unavailable target surfaces.
+4. Click **Run Map** to inspect the compiled projection in CS:S.
+
+![Shared build statistics and diagnostics](images/build-status.png)
+
+Transition helpers are consumed by compilation and receive no runtime accessor.
+The original VMF blocks remain unchanged. Generated water underside faces do
+not inherit the authored top surface's transition references. Compile regions
+keep the complete imported projection independently of its marker position;
+omitting any referenced surface stops publication of the new BSP.
+
 ## Limits
 
 - New overlay fitting supports one visible planar world or `func_detail` quad. Terrain, brush models and faces with other corner counts cannot be used for new fitting. Imported overlays retain their broader compile support.
 - Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Corner handles, viewport material projection and automatic refitting after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside explicit fitting, refit and rebind operations.
 - Targets must be visible, exposed world, detail or terrain faces. Hidden, absent, non-rendering and brush-model targets fail compilation. Hidden overlays are omitted.
-- Budgets: 1,024 overlays, 64 source sides and 64 compiled surface references per overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
+- Budgets: 1,024 regular overlays, 64 source sides and 64 compiled surface references per regular overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
+- Imported water transitions have a separate 1,024-record budget, at most 64
+  authored source sides and 256 compiled surface references per record. Both
+  overlay families share the 65,536 source, binding and emitted-reference
+  budgets. Each imported record accepts at most 32 string fields of 4,096 bytes
+  each. Hidden helpers are omitted; missing, hidden, buried or brush-model
+  targets fail the build.
 - Basis axes must be finite perpendicular unit vectors. Projection corners must form a convex quadrilateral within the compile coordinate bounds. Invalid material paths, projections or fade distances keep the previous BSP.
-- Water overlay transitions, brush-model overlays and `infodecal` compilation remain unfinished.
+- Water transitions support imported explicit projections only. **Overlay…**
+  creates and edits regular overlays; it does not author transition blocks.
+  Transition render-order, fade and accessor fields are unsupported and reject
+  instead of being silently discarded. Regular overlay fade entries remain
+  separate. Native transition rendering and water-material appearance require
+  separate runtime inspection.
+- Brush-model overlays and `infodecal` compilation remain unfinished.

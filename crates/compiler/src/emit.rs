@@ -443,6 +443,8 @@ pub fn build(
     bsp.set_records(&faces);
     bsp.set_overlay_data(&map.overlays.data(&overlay_bindings, control)?)
         .map_err(|error| error.to_string())?;
+    bsp.set_water_overlay_data(&map.overlays.water_data(&overlay_bindings, control)?)
+        .map_err(|error| error.to_string())?;
     bsp.set_values(lump::ORIGINALFACES, &faces);
     bsp.set_records(&brushes);
     bsp.set_records(&sides);

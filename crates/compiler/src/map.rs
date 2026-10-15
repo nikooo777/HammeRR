@@ -53,11 +53,7 @@ fn bounds_error(object: String) -> Diagnostic {
 /// Entities that the compiler consumes instead of passing to the game.
 const CONSUMED: &[&str] = &["func_detail"];
 /// Entities whose compile support doesn't exist yet; dropped with a warning.
-const UNSUPPORTED: &[&str] = &[
-    "info_overlay_transition",
-    "func_viscluster",
-    "func_instance",
-];
+const UNSUPPORTED: &[&str] = &["func_viscluster", "func_instance"];
 
 pub fn unsupported_entity_class(classname: &str) -> bool {
     UNSUPPORTED
@@ -255,7 +251,9 @@ impl<'a> Map<'a> {
                 map.add_occluder(entity, report, control)?;
                 continue;
             }
-            if classname.eq_ignore_ascii_case("info_overlay") {
+            if classname.eq_ignore_ascii_case("info_overlay")
+                || classname.eq_ignore_ascii_case("info_overlay_transition")
+            {
                 continue;
             }
             if classname.eq_ignore_ascii_case("prop_static")

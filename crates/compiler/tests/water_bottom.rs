@@ -409,3 +409,102 @@ fn authored_top_overlay_does_not_bind_the_generated_bottom_face() {
     );
     assert!(!material_faces(&bsp, BOTTOM).is_empty());
 }
+
+#[test]
+fn touching_solid_and_water_covers_clip_only_the_covered_underside_area() {
+    let (_directory, game) = game();
+    for liquid_cover in [false, true] {
+        for low in [-32.0, 48.0] {
+            let high = low + 64.0;
+            let mut vmf = add_pool(
+                common::room(),
+                [-128.0, -128.0, 0.0],
+                [128.0, 128.0, 64.0],
+                TOP,
+            );
+            if liquid_cover {
+                vmf = add_pool(vmf, [low, low, 64.0], [high, high, 96.0], TOP);
+            } else {
+                let mut document = Document::new(vmf);
+                document
+                    .edit("touching water cover", |tx| {
+                        edit::create_block(
+                            tx,
+                            DVec3::new(low, low, 64.0),
+                            DVec3::new(high, high, 96.0),
+                            "dev/dev_measuregeneric01",
+                        )
+                    })
+                    .unwrap();
+                vmf = document.vmf().clone();
+            }
+            let bsp = compiled(&vmf, &game, compiler::PhysicsMode::None);
+            let below = material_faces(&bsp, BOTTOM);
+            let mut lower_area = 0.0;
+            let mut upper_area = 0.0;
+            for face in below {
+                let points = face_points(&bsp, &face);
+                if points.iter().all(|point| point.z == 64.0) {
+                    lower_area += face.area;
+                    assert!(
+                        points.iter().all(|point| point.x <= low)
+                            || points.iter().all(|point| point.x >= high)
+                            || points.iter().all(|point| point.y <= low)
+                            || points.iter().all(|point| point.y >= high)
+                    );
+                } else {
+                    assert!(liquid_cover);
+                    assert!(points.iter().all(|point| point.z == 96.0));
+                    upper_area += face.area;
+                }
+            }
+            assert_eq!(
+                lower_area,
+                256.0 * 256.0 - 64.0 * 64.0,
+                "liquid={liquid_cover}, low={low}"
+            );
+            assert_eq!(upper_area, if liquid_cover { 64.0 * 64.0 } else { 0.0 });
+        }
+    }
+}
+
+#[test]
+fn shared_top_and_bottom_texinfo_does_not_generate_a_backside_for_the_authored_bottom() {
+    let (_directory, game) = game();
+    let mut document = Document::new(common::room());
+    let ObjectId::Solid(id) = document
+        .edit("all-water slab", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-128.0, -128.0, 32.0),
+                DVec3::new(128.0, 128.0, 64.0),
+                TOP,
+            )
+        })
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let map =
+        compiler::map::Map::load(document.vmf(), &game, &mut compiler::Report::default()).unwrap();
+    let brush = map.brushes.iter().find(|brush| brush.id == id).unwrap();
+    let top = brush
+        .sides
+        .iter()
+        .find(|side| map.planes.get(side.plane).normal == DVec3::Z)
+        .unwrap();
+    let bottom = brush
+        .sides
+        .iter()
+        .find(|side| map.planes.get(side.plane).normal == DVec3::NEG_Z)
+        .unwrap();
+    assert_eq!(top.texinfo, bottom.texinfo);
+    let bsp = compiled(document.vmf(), &game, compiler::PhysicsMode::None);
+    let below = material_faces(&bsp, BOTTOM);
+    assert!(!below.is_empty());
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    for face in below {
+        assert_eq!(planes[face.plane as usize].normal, [0.0, 0.0, -1.0]);
+        assert!(face_points(&bsp, &face).iter().all(|point| point.z == 64.0));
+    }
+}

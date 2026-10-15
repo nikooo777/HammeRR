@@ -85,6 +85,13 @@ def validate(client, output, materials):
         "create_block",
         {"mins": [-16, -16, 0], "maxs": [16, 16, 96], "material": "audit/solid"},
     )
+    for mins, maxs in [
+        ([-32, -32, 64], [32, 32, 96]),
+        ([64, 64, 64], [96, 96, 96]),
+    ]:
+        client.call(
+            "create_block", {"mins": mins, "maxs": maxs, "material": "audit/solid"}
+        )
     client.call(
         "set_compile_settings",
         {"lighting": "fullbright", "physics": "none", "visibility": "fast"},
@@ -129,8 +136,8 @@ def validate(client, output, materials):
     check(
         sum(faces[index][13] for index in tops)
         == sum(faces[index][13] for index in bottoms)
-        == 256 * 256 - 32 * 32,
-        "The solid column clips both water surfaces equally",
+        == 256 * 256 - 64 * 64 - 32 * 32,
+        "The column and touching centered/off-center covers clip both water surfaces equally",
     )
     check(
         (water[0][0], water[0][1]) == (64, 0)

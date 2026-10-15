@@ -25,6 +25,17 @@ cargo test --workspace
 
 Builds use a lot of memory. On smaller machines, limit parallel jobs with `-j`.
 
+### Content paths and safe saves
+
+```sh
+cargo test -p source-formats --lib gamefs::tests
+cargo test -p editor recovery::tests
+cargo test -p editor recipe_persistence_roundtrips_and_retries_failed_writes_atomically
+cargo test -p map-core --lib displacement::
+```
+
+Checks relative and linked gameinfo paths, mount precedence, save links, destination errors, retained unsaved state, recovery backups and file permissions. Terrain checks cover the shared mesh and authoring guards through sculpting, vertex moves, sewing, subdivision and resolution changes. These run without desktop input or a game launch.
+
 ### Build settings UI
 
 ```sh

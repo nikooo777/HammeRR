@@ -311,37 +311,12 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
         let side = surface::side(document, grid.face).unwrap();
         let info = side.displacement.as_ref().unwrap();
         let size = grid.mesh.size;
-        if !info.start_position.is_finite() {
-            return Err(invalid("Terrain start position must be finite"));
-        }
-        if !info.extra.is_empty()
-            || info.normals.is_some() != info.distances.is_some()
-            || info.offset_normals.as_ref().is_some_and(|rows| {
-                rows.len() != size
-                    || rows.iter().any(|row| {
-                        row.len() != size || row.iter().any(|point| *point != DVec3::ZERO)
-                    })
-            })
-        {
+        if !info.extra.is_empty() || grid.mesh.offset_normals_need_remapping(info) {
             return Err(invalid(
                 "Opaque terrain blocks or offset-normal caches need remapping before subdivision",
             ));
         }
-        if grid
-            .mesh
-            .positions
-            .iter()
-            .any(|point| point.abs().max_element() > MAX_COORDINATE)
-            || grid
-                .mesh
-                .alphas
-                .iter()
-                .any(|alpha| !(0.0..=255.0).contains(alpha))
-        {
-            return Err(invalid(
-                "Terrain positions must fit ±65536 and blend values must be 0–255",
-            ));
-        }
+        grid.mesh.validate_edit_bounds()?;
         let geometry = Face {
             side: 0,
             plane: crate::Plane::from_points(side.plane.0)
@@ -373,10 +348,7 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
             let column = vertex % size;
             let expected =
                 mesh.points[samples[index][row * stride * SIZE + column * stride].unwrap()];
-            if !point.is_finite()
-                || point.abs().max_element() > MAX_COORDINATE
-                || point.distance(expected) > 1e-8
-            {
+            if point.abs().max_element() > MAX_COORDINATE || point.distance(expected) > 1e-8 {
                 return Err(invalid(
                     "Stored terrain rows cannot represent the subdivided samples precisely",
                 ));

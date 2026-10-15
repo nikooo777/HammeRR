@@ -223,30 +223,12 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
             .displacement
             .clone()
             .unwrap();
-        if !info.extra.is_empty()
-            || info.normals.is_some() != info.distances.is_some()
-            || info.offset_normals.as_ref().is_some_and(|rows| {
-                rows.len() != grid.mesh.size
-                    || rows.iter().any(|row| {
-                        row.len() != grid.mesh.size || row.iter().any(|p| *p != DVec3::ZERO)
-                    })
-            })
-        {
+        if !info.extra.is_empty() || grid.mesh.offset_normals_need_remapping(&info) {
             return Err(invalid(
                 "Opaque terrain blocks or offset-normal caches need remapping before sewing",
             ));
         }
-        if grid
-            .mesh
-            .positions
-            .iter()
-            .any(|p| p.abs().max_element() > crate::primitive::MAX_COORDINATE)
-            || grid.mesh.alphas.iter().any(|a| !(0.0..=255.0).contains(a))
-        {
-            return Err(invalid(
-                "Terrain positions must fit ±65536 and blend values must be 0–255",
-            ));
-        }
+        grid.mesh.validate_edit_bounds()?;
         let mut offsets = info
             .offsets
             .clone()

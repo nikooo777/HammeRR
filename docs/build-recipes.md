@@ -28,7 +28,7 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 4. To change only its name, choose the recipe, edit **Recipe name**, then click **Rename recipe**. To remove it, click **Delete recipe**; current compiler settings remain available.
 5. Click **Cancel recipe edit** to discard the pending name and selection edits. Settings already applied or changed with the individual controls remain in effect.
 
-Custom recipes save on this computer separately from VMF files and map undo. The status text reports session-only storage or storage failures. Restart to reload recipes after another editor changes their storage file. A failed write keeps the previous registry and file intact; correct a write error and retry. A load error blocks custom changes until storage is corrected and the editor restarts. Built-in recipes remain available.
+Custom recipes save on this computer separately from VMF files and map undo. The status text reports session-only storage or storage failures. Restart to reload recipes after another editor changes their storage file. A failed write keeps the previous registry and file intact; correct a write error and retry. Writes preserve existing file permissions and follow valid file symlinks. A load error blocks custom changes until storage is corrected and the editor restarts. Built-in recipes remain available.
 
 ## Builds and cancellation
 

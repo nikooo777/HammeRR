@@ -422,6 +422,71 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn save_follows_file_links_and_rejects_unresolvable_destinations() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        for actor in [Actor::User, Actor::Agent] {
+            let (directory, mut session, _) = fixture();
+            let link = directory.path().join("linked.vmf");
+            for destination in ["linked.vmf", "absent.vmf"] {
+                symlink(destination, &link).unwrap();
+                let before = session.document.vmf().clone();
+                let revision = session.document.revision();
+                let undo = session.document.undo_labels().count();
+                let error = session.save(actor, Some(&link)).unwrap_err();
+                assert!(error.contains("linked.vmf"), "{error}");
+                assert_eq!(std::fs::read_link(&link).unwrap(), Path::new(destination));
+                assert_eq!(session.document.vmf(), &before);
+                assert_eq!(session.document.revision(), revision);
+                assert_eq!(session.document.undo_labels().count(), undo);
+                assert!(session.document.is_dirty());
+                assert!(session.path().is_none());
+                assert!(!directory.path().join("absent.vmf").exists());
+                std::fs::remove_file(&link).unwrap();
+            }
+            let target = directory.path().join("target.vmf");
+            let original = Document::empty().vmf().write(&Default::default());
+            std::fs::write(&target, original.as_bytes()).unwrap();
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+            symlink("target.vmf", &link).unwrap();
+            session.save(actor, Some(&link)).unwrap();
+            assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("target.vmf"));
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                std::fs::read(&link).unwrap()
+            );
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+            assert!(!session.document.is_dirty());
+            assert_eq!(session.path(), Some(link.as_path()));
+            assert_eq!(
+                Vmf::parse(&std::fs::read_to_string(&target).unwrap())
+                    .unwrap()
+                    .world
+                    .solids
+                    .len(),
+                1
+            );
+            let backups = session.recovery_entries().unwrap().entries;
+            assert_eq!(backups.len(), 1);
+            assert_eq!(
+                session
+                    .recovery
+                    .store
+                    .as_ref()
+                    .unwrap()
+                    .read(&backups[0].id)
+                    .unwrap()
+                    .1,
+                original
+            );
+        }
+    }
+
     #[test]
     fn duplicate_ids_in_open_and_recovery_preserve_the_active_document() {
         for actor in [Actor::User, Actor::Agent] {

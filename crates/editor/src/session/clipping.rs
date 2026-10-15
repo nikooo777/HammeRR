@@ -44,6 +44,7 @@ impl Session {
         self.cancel_clip_preview();
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -148,6 +149,7 @@ impl Session {
             self.cancel_transform_preview();
             self.clear_hollow_preview();
             self.clear_carve_preview();
+            self.clear_merge_preview();
             self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();

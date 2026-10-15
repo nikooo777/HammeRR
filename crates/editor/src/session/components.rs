@@ -386,6 +386,7 @@ impl Session {
         self.cancel_clip_preview();
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clear_primitive_preview();
         self.clear_volume_selection();
         self.cancel_transform_preview();

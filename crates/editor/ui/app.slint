@@ -1,3 +1,4 @@
+export { MergeWindow, MergeRow } from "merge.slint";
 export { CarveWindow, CarveRow } from "carve.slint";
 export { HollowWindow } from "hollow.slint";
 export { ComponentsWindow, ComponentRow, ComponentCreaseRow } from "components.slint";
@@ -1829,6 +1830,7 @@ export component AppWindow inherits Window {
     callback brush-components();
     callback hollow-brushes();
     callback carve-brushes();
+    callback merge-brushes();
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
@@ -2372,6 +2374,11 @@ export component AppWindow inherits Window {
                         text: "Carve brushes…";
                         enabled: root.can-clip;
                         clicked => { root.carve-brushes(); }
+                    }
+                    Button {
+                        text: "Merge brushes…";
+                        enabled: root.can-clip;
+                        clicked => { root.merge-brushes(); }
                     }
                     Button {
                         text: "Reshape brushes…";

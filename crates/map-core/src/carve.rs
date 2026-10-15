@@ -80,7 +80,7 @@ fn half(solid: &Solid, plane: Plane, source: &Side) -> std::result::Result<Solid
     Ok(part)
 }
 
-fn intersects(source: &Solid, cutter: &Solid) -> std::result::Result<bool, EditError> {
+pub(crate) fn intersects(source: &Solid, cutter: &Solid) -> std::result::Result<bool, EditError> {
     let mut inside = source.clone();
     for side in &cutter.sides {
         let plane = Plane::from_points(side.plane.0).unwrap();
@@ -93,7 +93,7 @@ fn intersects(source: &Solid, cutter: &Solid) -> std::result::Result<bool, EditE
     Ok(true)
 }
 
-fn subtract(source: &Solid, cutter: &Solid) -> std::result::Result<Vec<Solid>, EditError> {
+pub(crate) fn subtract(source: &Solid, cutter: &Solid) -> std::result::Result<Vec<Solid>, EditError> {
     let mut inside = source.clone();
     let mut parts = Vec::new();
     for side in &cutter.sides {

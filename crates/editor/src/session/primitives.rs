@@ -103,6 +103,7 @@ impl Session {
                 query::bounds_of(&document, &ids).ok_or("Primitive has no bounds")?;
             self.clear_hollow_preview();
             self.clear_carve_preview();
+            self.clear_merge_preview();
             self.clear_component_edit();
             self.cancel_block_preview();
             self.cancel_clip_preview();

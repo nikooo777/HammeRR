@@ -21,6 +21,7 @@ use crate::inspector;
 use crate::spatial;
 
 pub mod carving;
+pub mod merging;
 pub mod checks;
 pub mod clip_drag;
 pub mod clip_points;
@@ -168,6 +169,7 @@ pub struct Session {
     components: components::State,
     hollowing: hollowing::State,
     carving: carving::State,
+    merging: merging::State,
     volume: volume::State,
     connection_draft: Option<ConnectionDraft>,
     connection_serial: u64,
@@ -275,6 +277,7 @@ impl Session {
             components: components::State::default(),
             hollowing: hollowing::State::default(),
             carving: carving::State::default(),
+            merging: merging::State::default(),
             volume: volume::State::default(),
             connection_draft: None,
             connection_serial: 0,
@@ -623,6 +626,7 @@ impl Session {
             self.cancel_clip_preview();
             self.clear_hollow_preview();
             self.clear_carve_preview();
+            self.clear_merge_preview();
             self.clear_component_edit();
             self.clear_primitive_preview();
             self.clear_volume_selection();
@@ -1061,6 +1065,7 @@ impl Session {
         self.cancel_clip_preview();
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -1432,6 +1437,7 @@ impl Session {
         self.cancel_clip_preview();
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -1458,6 +1464,7 @@ impl Session {
         spatial::validate_bounds(mins, maxs)?;
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -1747,6 +1754,7 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
+            .or_else(|| self.merging.preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
                 self.carving
                     .preview
@@ -1801,6 +1809,7 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
+            .or_else(|| self.merging.preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
                 self.carving
                     .preview
@@ -1898,6 +1907,9 @@ impl Session {
         } else {
             (selected, selected_faces)
         };
+        let selected = self.merging.preview.as_ref().map_or(selected, |preview| {
+            [preview.result.object].into_iter().collect()
+        });
         let selected = self.carving.preview.as_ref().map_or(selected, |preview| {
             preview.result.objects.iter().copied().collect()
         });
@@ -1926,6 +1938,7 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
+            .or_else(|| self.merging.preview.as_ref().map(|preview| &preview.document))
             .or_else(|| {
                 self.carving
                     .preview

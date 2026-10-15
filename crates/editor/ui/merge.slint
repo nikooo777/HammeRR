@@ -1,0 +1,53 @@
+import { Button, CheckBox, ListView } from "std-widgets.slint";
+
+export struct MergeRow { solid: string, label: string, selected: bool }
+
+export component MergeWindow inherits Window {
+    title: "Merge brushes - HammeRR";
+    preferred-width: 780px; preferred-height: 580px;
+    in property <[MergeRow]> sources;
+    in property <string> source;
+    in property <string> stamp;
+    in property <string> token;
+    in property <string> summary;
+    in property <string> message;
+    in property <bool> ready;
+    in property <bool> can-preview;
+    callback choose-source(string);
+    callback preview-edit();
+    callback discard();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px; spacing: 14px;
+            Text { text: "Merge into one convex brush"; font-size: 24px; font-weight: 600; }
+            Text { text: "Choose brushes whose combined shape is convex and has no gaps. Preview checks the complete volume before replacing the source brushes."; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "Source brushes"; font-size: 18px; font-weight: 600; }
+            ListView {
+                vertical-stretch: 1; min-height: 150px;
+                for source in root.sources: CheckBox {
+                    text: source.label;
+                    checked: source.selected;
+                    min-height: 38px;
+                    toggled => { root.choose-source(source.solid); }
+                }
+            }
+            Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
+            Text { text: "The lowest brush ID keeps its ID and brush metadata. Outer faces keep their original material, world texture projection and lighting. On shared planes, the lowest brush ID wins."; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "2–16 convex brushes · world brushes or one brush entity · no displacements. Nonconvex shapes and gaps are rejected."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Discard preview"; enabled: root.token != ""; clicked => { root.discard(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Preview merge"; enabled: root.can-preview; clicked => { root.preview-edit(); } }
+                Button { text: "Apply merge"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

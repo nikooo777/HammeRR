@@ -20,6 +20,8 @@ pub struct SurfaceEdit {
     pub scale_u: Option<f64>,
     pub scale_v: Option<f64>,
     pub rotation: Option<f64>,
+    pub u_axis: Option<[Option<f64>; 3]>,
+    pub v_axis: Option<[Option<f64>; 3]>,
     pub fit: Option<[u32; 2]>,
     pub projection: Option<Projection>,
     pub alignment: Option<Alignment>,
@@ -247,6 +249,18 @@ pub(crate) fn update(
         side.v_axis = projection.v;
         side.rotation = projection.rotation;
     }
+    for (axis, components) in [
+        (&mut side.u_axis.axis, edit.u_axis),
+        (&mut side.v_axis.axis, edit.v_axis),
+    ] {
+        if let Some(components) = components {
+            for (index, value) in components.into_iter().enumerate() {
+                if let Some(value) = value {
+                    axis[index] = value;
+                }
+            }
+        }
+    }
     if let Some(alignment) = edit.alignment {
         let (mut u, mut v) = crate::edit::world_texture_axes(normal);
         if alignment == Alignment::Face {
@@ -307,10 +321,28 @@ pub(crate) fn update(
             "texture projection must have finite axes and nonzero scales",
         ));
     }
-    let area = side.u_axis.axis.cross(side.v_axis.axis).dot(normal).abs();
-    if area < 1e-8 * side.u_axis.axis.length() * side.v_axis.axis.length() || area < 1e-12 {
+    let direct = edit.u_axis.is_some() || edit.v_axis.is_some();
+    let [u, v] = [side.u_axis, side.v_axis].map(|axis| {
+        if direct {
+            let vector = axis.axis / axis.scale;
+            vector / vector.abs().max_element()
+        } else {
+            axis.axis
+        }
+    });
+    let area = u.cross(v).dot(normal).abs();
+    if !area.is_finite() || area < 1e-8 * u.length() * v.length() || (!direct && area < 1e-12) {
         return Err(invalid(
             "texture projection collapses on this face; use face alignment or edge wrapping",
+        ));
+    }
+    if direct
+        && points
+            .iter()
+            .any(|point| !crate::texel_uv(side, *point).is_finite())
+    {
+        return Err(invalid(
+            "texture vectors produce non-finite texel coordinates on this face",
         ));
     }
     Ok(())
@@ -395,6 +427,22 @@ pub fn edit_faces(
     .any(|value| !value.is_finite())
     {
         return Err(invalid("texture values must be finite"));
+    }
+    if edit.u_axis.is_some() || edit.v_axis.is_some() {
+        if edit.alignment.is_some() || edit.projection.is_some() || edit.rotation.is_some() {
+            return Err(invalid(
+                "Direct texture vectors cannot be combined with alignment, copied projection or rotation",
+            ));
+        }
+        if [edit.u_axis, edit.v_axis]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flatten()
+            .any(|value| !value.is_finite())
+        {
+            return Err(invalid("texture vector components must be finite"));
+        }
     }
     if edit.fit.is_some_and(|size| size.contains(&0)) {
         return Err(invalid("texture dimensions must be positive"));
@@ -1083,3 +1131,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "surface_vectors_tests.rs"]
+mod vectors_tests;

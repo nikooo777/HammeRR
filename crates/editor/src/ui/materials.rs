@@ -112,10 +112,34 @@ pub(super) fn surface_patch(
         shift_v: optional_number(window.get_shift_v())?,
         scale_u: optional_number(window.get_scale_u())?,
         scale_v: optional_number(window.get_scale_v())?,
-        rotation: optional_number(window.get_rotation())?,
-        alignment: match window.get_alignment_index() {
-            1 => Some(Alignment::World),
-            2 => Some(Alignment::Face),
+        u_axis: window
+            .get_direct_vectors()
+            .then(|| -> Result<_, String> {
+                Ok([
+                    optional_number(window.get_u_x())?,
+                    optional_number(window.get_u_y())?,
+                    optional_number(window.get_u_z())?,
+                ])
+            })
+            .transpose()?,
+        v_axis: window
+            .get_direct_vectors()
+            .then(|| -> Result<_, String> {
+                Ok([
+                    optional_number(window.get_v_x())?,
+                    optional_number(window.get_v_y())?,
+                    optional_number(window.get_v_z())?,
+                ])
+            })
+            .transpose()?,
+        rotation: if window.get_direct_vectors() {
+            None
+        } else {
+            optional_number(window.get_rotation())?
+        },
+        alignment: match (window.get_direct_vectors(), window.get_alignment_index()) {
+            (false, 1) => Some(Alignment::World),
+            (false, 2) => Some(Alignment::Face),
             _ => None,
         },
         justify_u: justify(window.get_justify_u_index()),
@@ -137,13 +161,15 @@ pub(super) fn apply_surface_dialog(
         return Err("Map or face selection changed. Cancel and reopen texture editing.".into());
     }
     if window.get_operation_index() == 4 {
-        return session
-            .propagate_face_texture(Actor::User, &target.0, preview)
-            .map(|result| result.changed);
+        let changed = session
+            .propagate_face_texture(Actor::User, &target.0, preview)?
+            .changed;
+        retain_surface_preview(window, session, preview);
+        return Ok(changed);
     }
     if window.get_operation_index() != 0 {
         use map_core::surface::PaintMode;
-        return session.paint_face_texture(
+        let changed = session.paint_face_texture(
             Actor::User,
             &target.0,
             match window.get_operation_index() {
@@ -152,15 +178,99 @@ pub(super) fn apply_surface_dialog(
                 _ => PaintMode::Wrap,
             },
             preview,
-        );
+        )?;
+        retain_surface_preview(window, session, preview);
+        return Ok(changed);
     }
-    session.edit_faces(
-        Actor::User,
-        &target.0,
-        surface_patch(window)?,
+    let patch = surface_patch(window)?;
+    if window.get_direct_vectors() && !preview {
+        if window.get_reviewed_fields().as_str() != surface_fields(window)
+            || window.get_reviewed_token().is_empty()
+        {
+            window.set_ready(false);
+            return Err("Vector fields changed. Preview textures again before applying.".into());
+        }
+        let token = window
+            .get_reviewed_token()
+            .parse::<u64>()
+            .map_err(|_| "Preview textures again")?;
+        session.check_face_preview_token(Some(token))?;
+        return session.commit_face_preview(Actor::User);
+    }
+    let changed = session.edit_faces(Actor::User, &target.0, patch, window.get_fit(), preview)?;
+    retain_surface_preview(window, session, preview);
+    if window.get_direct_vectors() && preview {
+        window.set_reviewed_fields(surface_fields(window).into());
+        window.set_reviewed_token(window.get_owned_token());
+        window.set_ready(true);
+    }
+    Ok(changed)
+}
+
+fn retain_surface_preview(window: &SurfaceWindow, session: &Session, preview: bool) {
+    if preview {
+        window.set_owned_token(session.face_preview_token().unwrap().to_string().into());
+    }
+}
+
+fn cancel_surface_dialog(window: &SurfaceWindow, session: &mut Session) {
+    if window.get_direct_vectors() && window.get_operation_index() == 0 {
+        let owned = window.get_owned_token().parse::<u64>().ok();
+        if owned.is_some() && owned == session.face_preview_token() {
+            session.cancel_face_preview();
+        }
+    } else {
+        session.cancel_face_preview();
+    }
+}
+
+fn surface_fields(window: &SurfaceWindow) -> String {
+    serde_json::json!([
+        window.get_material().as_str(),
+        window.get_shift_u().as_str(),
+        window.get_shift_v().as_str(),
+        window.get_scale_u().as_str(),
+        window.get_scale_v().as_str(),
+        window.get_rotation().as_str(),
+        window.get_u_x().as_str(),
+        window.get_u_y().as_str(),
+        window.get_u_z().as_str(),
+        window.get_v_x().as_str(),
+        window.get_v_y().as_str(),
+        window.get_v_z().as_str(),
         window.get_fit(),
-        preview,
-    )
+        window.get_alignment_index(),
+        window.get_justify_u_index(),
+        window.get_justify_v_index(),
+        window.get_direct_vectors(),
+        window.get_operation_index(),
+    ])
+    .to_string()
+}
+
+fn load_surface_vectors(
+    window: &SurfaceWindow,
+    document: &map_core::Document,
+    faces: &[map_core::surface::FaceId],
+) {
+    window.set_u_x(common_face_number(document, faces, |side| {
+        side.u_axis.axis.x
+    }));
+    window.set_u_y(common_face_number(document, faces, |side| {
+        side.u_axis.axis.y
+    }));
+    window.set_u_z(common_face_number(document, faces, |side| {
+        side.u_axis.axis.z
+    }));
+    window.set_v_x(common_face_number(document, faces, |side| {
+        side.v_axis.axis.x
+    }));
+    window.set_v_y(common_face_number(document, faces, |side| {
+        side.v_axis.axis.y
+    }));
+    window.set_v_z(common_face_number(document, faces, |side| {
+        side.v_axis.axis.z
+    }));
 }
 
 pub(crate) fn common_face_number(
@@ -192,9 +302,23 @@ pub(super) fn refresh_surface_dialog(
         || session.selected_faces() != target.0;
     window.set_stale(stale);
     if stale {
+        window.set_ready(false);
         window.set_message(
             "Map or face selection changed. Cancel and reopen texture editing.".into(),
         );
+        return;
+    }
+    if window.get_direct_vectors() && window.get_operation_index() == 0 {
+        let reviewed = session.face_preview_token().map(|token| token.to_string());
+        let ready = reviewed.as_deref() == Some(window.get_reviewed_token().as_str())
+            && window.get_reviewed_fields().as_str() == surface_fields(window);
+        window.set_ready(ready);
+        window.set_message(if ready {
+            "Shared vector preview shown in the viewport. Apply textures keeps one Undo step."
+                .into()
+        } else {
+            "Preview textures to review the current vector fields before applying.".into()
+        });
         return;
     }
     let Some(document) = session.face_preview_document() else {
@@ -234,6 +358,7 @@ pub(super) fn refresh_surface_dialog(
     window.set_rotation(common_face_number(document, &target.0, |side| {
         side.rotation
     }));
+    load_surface_vectors(window, document, &target.0);
     window.set_preview(
         session
             .material_preview(&material)
@@ -283,14 +408,15 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
         window.on_cancel({
             let (window, ui) = (window.as_weak(), ui.clone());
             move || {
-                lock(&session_of(&ui)).cancel_face_preview();
-                let _ = window.unwrap().hide();
+                let window = window.unwrap();
+                cancel_surface_dialog(&window, &mut lock(&session_of(&ui)));
+                let _ = window.hide();
             }
         });
         window.window().on_close_requested({
-            let ui = ui.clone();
+            let (window, ui) = (window.as_weak(), ui.clone());
             move || {
-                lock(&session_of(&ui)).cancel_face_preview();
+                cancel_surface_dialog(&window.unwrap(), &mut lock(&session_of(&ui)));
                 slint::CloseRequestResponse::HideWindow
             }
         });
@@ -381,6 +507,12 @@ pub(super) fn show_surface_window(app: &AppWindow, ui: &SharedUi) {
     window.set_rotation(common_face_number(session.document(), &faces, |side| {
         side.rotation
     }));
+    load_surface_vectors(&window, session.document(), &faces);
+    window.set_direct_vectors(false);
+    window.set_ready(false);
+    window.set_reviewed_fields("".into());
+    window.set_reviewed_token("".into());
+    window.set_owned_token("".into());
     window.set_fit(false);
     window.set_operation_index(0);
     window.set_alignment_index(0);
@@ -818,3 +950,7 @@ pub(crate) fn review_material_choice(window: &MaterialWindow, session: &mut Sess
     );
     false
 }
+
+#[cfg(test)]
+#[path = "materials_vectors_tests.rs"]
+mod vectors_tests;

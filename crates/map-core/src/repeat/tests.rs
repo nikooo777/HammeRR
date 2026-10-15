@@ -7,6 +7,7 @@ fn options(count: u32) -> Options {
         count,
         translation: DVec3::X * 64.0,
         rotation: DVec3::ZERO,
+        scale: DVec3::ONE,
         pivot: DVec3::ZERO,
         basis: DMat3::IDENTITY,
         texture_lock: true,
@@ -209,6 +210,399 @@ fn fixed_local_frame_rotates_each_original_and_keeps_attached_texels() {
             }
         }
     }
+}
+
+#[test]
+fn nth_scales_precede_rotation_in_one_fixed_frame_and_keep_texture_policy() {
+    let scales = [
+        DVec3::new(2.0, 0.5, 1.25),
+        DVec3::new(4.0, 0.25, 1.5625),
+        DVec3::new(8.0, 0.125, 1.953125),
+    ];
+    for basis in [
+        DMat3::IDENTITY,
+        DMat3::from_rotation_z(0.61) * DMat3::from_rotation_y(-0.37),
+    ] {
+        for texture_lock in [false, true] {
+            let mut document = Document::empty();
+            let source = document
+                .edit("source", |tx| {
+                    edit::create_block(
+                        tx,
+                        DVec3::new(3.125, -7.25, 2.5),
+                        DVec3::new(19.5, 3.75, 13.625),
+                        "brick/wall",
+                    )
+                })
+                .unwrap();
+            let ObjectId::Solid(id) = source else {
+                panic!()
+            };
+            let original = document.solid(id).unwrap().clone();
+            let pivot = DVec3::new(-5.25, 8.125, 1.5);
+            let step = DVec3::new(4.5, -1.25, 2.0);
+            let result = document
+                .edit("scaled array", |tx| {
+                    create(
+                        tx,
+                        &[source],
+                        Options {
+                            basis,
+                            pivot,
+                            texture_lock,
+                            scale: scales[0],
+                            translation: step,
+                            rotation: DVec3::X * 90.0,
+                            ..options(3)
+                        },
+                        &Catalog::default(),
+                    )
+                })
+                .unwrap();
+            assert_eq!(document.solid(id), Some(&original));
+            for (copy, scale) in result.copies.iter().zip(scales) {
+                let ObjectId::Solid(id) = copy.objects[0] else {
+                    panic!()
+                };
+                for (before, after) in original
+                    .sides
+                    .iter()
+                    .zip(&document.solid(id).unwrap().sides)
+                {
+                    for (point, actual) in before.plane.0.into_iter().zip(after.plane.0) {
+                        let local = (basis.transpose() * (point - pivot)) * scale;
+                        let rotated = match copy.index {
+                            1 => DVec3::new(local.x, -local.z, local.y),
+                            2 => DVec3::new(local.x, -local.y, -local.z),
+                            3 => DVec3::new(local.x, local.z, -local.y),
+                            _ => unreachable!(),
+                        };
+                        let expected = pivot + basis * (rotated + step * f64::from(copy.index));
+                        assert!(actual.abs_diff_eq(expected, 1e-8));
+                        if texture_lock {
+                            assert!(
+                                crate::texel_uv(before, point)
+                                    .abs_diff_eq(crate::texel_uv(after, actual), 1e-8)
+                            );
+                        } else {
+                            assert_eq!(
+                                (before.u_axis, before.v_axis),
+                                (after.u_axis, after.v_axis)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn identity_scale_is_exactly_the_existing_duplicate_transform_sequence() {
+    for basis in [DMat3::IDENTITY, DMat3::from_rotation_z(0.61)] {
+        let mut document = Document::empty();
+        let source = document
+            .edit("source", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(-3.125, 2.25, 1.5),
+                    DVec3::new(13.5, 9.75, 24.125),
+                    "brick/wall",
+                )
+            })
+            .unwrap();
+        let mut control = document.clone();
+        let request = Options {
+            basis,
+            translation: DVec3::new(4.125, -8.5, 2.25),
+            rotation: DVec3::new(17.0, 29.0, -11.0),
+            ..options(3)
+        };
+        document
+            .edit("array", |tx| {
+                create(tx, &[source], request, &Catalog::default())
+            })
+            .unwrap();
+        control
+            .edit("previous transform sequence", |tx| {
+                for index in 1..=request.count {
+                    let objects = edit::duplicate(tx, &[source], DVec3::ZERO)?;
+                    let factor = f64::from(index);
+                    edit::transform(
+                        tx,
+                        &objects,
+                        edit::Transform {
+                            translation: if basis == DMat3::IDENTITY {
+                                request.translation * factor
+                            } else {
+                                basis * (request.translation * factor)
+                            },
+                            rotation: request.rotation * factor,
+                            pivot: request.pivot,
+                            basis,
+                            texture_lock: request.texture_lock,
+                            ..edit::Transform::default()
+                        },
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(document.vmf(), control.vmf());
+    }
+}
+
+#[test]
+fn scaled_terrain_copies_transform_saved_rows_and_keep_blend_metadata() {
+    let mut document = Document::empty();
+    let source = document
+        .edit("terrain source", |tx| {
+            let source =
+                edit::create_block(tx, DVec3::ZERO, DVec3::new(16.0, 16.0, 4.0), "brick/wall")?;
+            let ObjectId::Solid(id) = source else {
+                unreachable!()
+            };
+            let geometry = BrushGeometry::from_solid(tx.document().solid(id).unwrap()).unwrap();
+            let top = geometry
+                .faces
+                .iter()
+                .find(|face| face.plane.normal.z > 0.9)
+                .unwrap();
+            let side = tx.document().solid(id).unwrap().sides[top.side].id;
+            crate::displacement::edit::create(
+                tx,
+                &[crate::surface::FaceId { solid: id, side }],
+                2,
+                0,
+            )?;
+            let info = tx
+                .solid_mut(id)?
+                .sides
+                .iter_mut()
+                .find_map(|side| side.displacement.as_mut())
+                .unwrap();
+            info.distances.as_mut().unwrap()[2][2] = 3.25;
+            info.alphas = Some(vec![vec![93.0; 5]; 5]);
+            info.triangle_tags = Some(vec![vec![9; 8]; 4]);
+            Ok(source)
+        })
+        .unwrap();
+    let ObjectId::Solid(id) = source else {
+        unreachable!()
+    };
+    let original = document.solid(id).unwrap().clone();
+    let geometry = BrushGeometry::from_solid(&original).unwrap();
+    let side_index = original
+        .sides
+        .iter()
+        .position(|side| side.displacement.is_some())
+        .unwrap();
+    let face = geometry
+        .faces
+        .iter()
+        .find(|face| face.side == side_index)
+        .unwrap();
+    let info = original.sides[side_index].displacement.as_ref().unwrap();
+    let mesh = crate::DisplacementMesh::build(face, info).unwrap();
+    let result = document
+        .edit("scaled terrain", |tx| {
+            create(
+                tx,
+                &[source],
+                Options {
+                    translation: DVec3::ZERO,
+                    scale: DVec3::new(2.0, 0.5, 1.25),
+                    ..options(2)
+                },
+                &Catalog::default(),
+            )
+        })
+        .unwrap();
+    for (copy, scale) in result
+        .copies
+        .iter()
+        .zip([DVec3::new(2.0, 0.5, 1.25), DVec3::new(4.0, 0.25, 1.5625)])
+    {
+        let ObjectId::Solid(id) = copy.objects[0] else {
+            unreachable!()
+        };
+        let solid = document.solid(id).unwrap();
+        let geometry = BrushGeometry::from_solid(solid).unwrap();
+        let face = geometry
+            .faces
+            .iter()
+            .find(|face| face.side == side_index)
+            .unwrap();
+        let copied = solid.sides[side_index].displacement.as_ref().unwrap();
+        let copied_mesh = crate::DisplacementMesh::build(face, copied).unwrap();
+        for (before, after) in mesh.positions.iter().zip(&copied_mesh.positions) {
+            assert!(after.abs_diff_eq(*before * scale, 1e-8));
+        }
+        assert_eq!(copied.alphas, info.alphas);
+        assert_eq!(copied.triangle_tags, info.triangle_tags);
+    }
+    assert_eq!(document.solid(id), Some(&original));
+}
+
+#[test]
+fn scale_only_brush_entity_arrays_keep_names_links_and_owned_geometry() {
+    let mut document = Document::empty();
+    let sources = document
+        .edit("parts", |tx| {
+            let mut parts = Vec::new();
+            for (index, name) in ["parent", "child"].into_iter().enumerate() {
+                let brush = edit::create_block(
+                    tx,
+                    DVec3::X * index as f64 * 32.0,
+                    DVec3::new(16.0, 12.0, 8.0) + DVec3::X * index as f64 * 32.0,
+                    "brick/wall",
+                )?;
+                let ObjectId::Solid(id) = brush else {
+                    unreachable!()
+                };
+                parts.push(edit::tie_to_entity(
+                    tx,
+                    &[id],
+                    "func_brush",
+                    &[
+                        ("targetname".into(), name.into()),
+                        ("origin".into(), "1 2 3".into()),
+                    ],
+                )?);
+            }
+            tx.entity_mut(number(parts[1]))?
+                .properties
+                .set("parentname", "parent,attachment");
+            Ok(parts)
+        })
+        .unwrap();
+    let before = document.vmf().clone();
+    let history = document.undo_labels().count();
+    let result = document
+        .edit("scaled array", |tx| {
+            create(
+                tx,
+                &sources,
+                Options {
+                    translation: DVec3::ZERO,
+                    scale: DVec3::splat(2.0),
+                    ..options(2)
+                },
+                &Catalog::default(),
+            )
+        })
+        .unwrap();
+    for copy in &result.copies {
+        let parent = document.entity(number(copy.objects[0])).unwrap();
+        let child = document.entity(number(copy.objects[1])).unwrap();
+        assert_eq!(
+            parent.properties.get("targetname"),
+            Some(format!("parent_copy{}", copy.index).as_str())
+        );
+        assert_eq!(
+            child.properties.get("parentname"),
+            Some(format!("parent_copy{},attachment", copy.index).as_str())
+        );
+        assert_eq!(copy.remapped_references, 1);
+        let factor = if copy.index == 1 { 2.0 } else { 4.0 };
+        assert!(
+            parent
+                .origin()
+                .unwrap()
+                .abs_diff_eq(DVec3::new(1.0, 2.0, 3.0) * factor, 1e-8)
+        );
+        let bounds = BrushGeometry::from_solid(&parent.solids[0]).unwrap();
+        assert!(
+            (bounds.maxs - bounds.mins).abs_diff_eq(DVec3::new(16.0, 12.0, 8.0) * factor, 1e-8)
+        );
+    }
+    assert_eq!(document.undo_labels().count(), history + 1);
+    let after = document.vmf().clone();
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &before);
+    document.redo().unwrap();
+    assert_eq!(document.vmf(), &after);
+}
+
+#[test]
+fn invalid_scales_and_unrepresentable_entities_leave_history_and_ids_intact() {
+    let mut document = Document::empty();
+    let brush = document
+        .edit("source", |tx| {
+            edit::create_block(tx, DVec3::ZERO, DVec3::splat(16.0), "brick/wall")
+        })
+        .unwrap();
+    let point = entity(&mut document, "point", DVec3::ZERO);
+    let model = document
+        .edit("model", |tx| {
+            edit::create_entity(
+                tx,
+                "prop_static",
+                Some(DVec3::ZERO),
+                &[("model".into(), "models/props/part.mdl".into())],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+    let mut control = document.clone();
+    for (sources, scale, message) in [
+        (vec![brush], DVec3::ZERO, "finite and positive"),
+        (vec![brush], DVec3::splat(-1.0), "finite and positive"),
+        (vec![brush], DVec3::NAN, "finite and positive"),
+        (
+            vec![brush],
+            DVec3::splat(f64::INFINITY),
+            "finite and positive",
+        ),
+        (vec![brush], DVec3::splat(1e300), "overflows or collapses"),
+        (vec![brush], DVec3::splat(1e-300), "overflows or collapses"),
+        (vec![brush], DVec3::splat(1000.0), "±65536"),
+        (
+            vec![brush, point],
+            DVec3::splat(1.1),
+            "no scalable brush geometry",
+        ),
+        (
+            vec![brush, model],
+            DVec3::splat(1.1),
+            "no scalable brush geometry",
+        ),
+    ] {
+        let before = document.vmf().clone();
+        let history = document.undo_labels().count();
+        let error = document
+            .edit("invalid scale array", |tx| {
+                create(
+                    tx,
+                    &sources,
+                    Options {
+                        scale,
+                        ..options(2)
+                    },
+                    &Catalog::default(),
+                )
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.undo_labels().count(), history);
+    }
+    let request = Options {
+        scale: DVec3::splat(1.1),
+        ..options(2)
+    };
+    let expected = control
+        .edit("valid", |tx| {
+            create(tx, &[brush], request, &Catalog::default())
+        })
+        .unwrap();
+    let actual = document
+        .edit("valid", |tx| {
+            create(tx, &[brush], request, &Catalog::default())
+        })
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(document.vmf(), control.vmf());
 }
 
 #[test]

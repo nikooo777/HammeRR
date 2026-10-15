@@ -174,6 +174,8 @@ pub struct RepeatArrayArgs {
     pub translation: Option<[f64; 3]>,
     /// XYZ degree step in the chosen frame; copy n rotates by n times this step about the fixed world pivot.
     pub rotation: Option<[f64; 3]>,
+    /// Finite positive XYZ scale factors per copy, default [1,1,1]. Copy n uses factor^n on originals, before rotation/translation in the chosen frame about the fixed world pivot. Nonidentity factors require brushes or brush entities.
+    pub scale: Option<[f64; 3]>,
     /// Fixed world pivot. Defaults to the source selection center.
     pub pivot: Option<[f64; 3]>,
     /// Keep textures attached to copied geometry. Defaults to true.

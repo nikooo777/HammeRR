@@ -131,15 +131,11 @@ impl Assets<'_> {
     }
 }
 
-fn transparent(material: &Material) -> bool {
-    material.translucent()
-        || material.alpha_test()
-        || material
-            .get("$alpha")
-            .is_some_and(|value| value.trim().parse::<f64>().is_ok_and(|alpha| alpha < 1.0))
-        || material
-            .get("$additive")
-            .is_some_and(|value| value.trim() != "0")
+fn needs_material_warning(material: &Material) -> bool {
+    !matches!(material.shader.as_str(), "vertexlitgeneric" | "unlitgeneric" | "lightmappedgeneric")
+        || material.translucent() || material.alpha_test()
+        || material.get("$alpha").is_some_and(|value| value.trim().parse::<f64>().is_ok_and(|alpha| alpha < 1.0))
+        || material.get("$additive").is_some_and(|value| value.trim() != "0")
         || !material.blocks.is_empty()
 }
 
@@ -270,9 +266,9 @@ pub(super) fn build(
                             .ok_or("Static-prop shadow skin material is unavailable")?;
                         if warned_materials.insert(material) {
                             match assets.material(&model, material, budget)? {
-                                Some(material) if !transparent(&material) && model.header.flags & CAST_TEXTURE_SHADOWS == 0 => {}
+                                Some(material) if !needs_material_warning(&material) && model.header.flags & CAST_TEXTURE_SHADOWS == 0 => {}
                                 Some(_) => report.diagnostics.push(Diagnostic::warning(
-                                    format!("{path}: static-prop shadows use opaque mesh triangles; texture alpha, translucency and material animation/conditional blocks are not evaluated"),
+                                    format!("{path}: static-prop shadows use opaque mesh triangles; texture alpha, translucency, nonstandard shaders and material animation/conditional blocks are not evaluated"),
                                     Some(format!("entity:{}", entity.id)), entity.origin())),
                                 None => report.diagnostics.push(Diagnostic::warning(
                                     format!("{path}: shadow material {} was not found; mesh casts opaque shadows", model.materials[material]),

@@ -18,7 +18,7 @@ Agents use `set_compile_settings` with `lighting: "direct_ldr"`, then `compile_m
 ## Limits
 
 - MDL versions 44/48, VVD version 4 and DX90 VTX version 7 use the shared bounded model decoder. Shadows use LOD0, body 0 and the native translation/rotation. Static-prop scaling and nonzero bodygroups are unsupported.
-- Shadows are opaque and two-sided. Texture alpha, translucency, additive effects and material animation/conditional blocks are not evaluated; affected selected materials produce warnings. Missing materials also produce an opaque-shadow warning. Missing or malformed mesh files fail the build instead of substituting a bounding box.
+- Shadows are opaque and two-sided. Texture alpha, translucency, additive effects, shaders other than VertexLitGeneric/UnlitGeneric/LightmappedGeneric and material animation/conditional blocks are not evaluated; affected selected materials produce warnings. Missing materials also produce an opaque-shadow warning. Missing or malformed mesh files fail the build instead of substituting a bounding box.
 - Props block bounced and ambient rays but do not reflect light as sources. Per-vertex/per-texel prop baking, animated-prop shadows and HDR remain unfinished.
 - At most 262,144 transformed prop triangles and 256 MiB of model input are accepted per build. Individual model files are limited to 64 MiB; material files to 64 KiB, with at most eight patch includes and 65,536 material lookups. Preparation and ray traversal share the cancellable 100-million-unit lighting budget.
 - A failed or cancelled build preserves the previous BSP. Disable shadows on decoration that does not need them to reduce work.

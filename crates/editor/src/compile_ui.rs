@@ -828,9 +828,17 @@ impl Controller {
                 )
             })
             .unwrap_or_default();
+        let region = &job["compile_region"];
+        let region_label = if let Some(error) = region["error"].as_str() {
+            format!("Invalid region: {error}")
+        } else if region["enabled"] == true {
+            format!("sealed region {} → {}", region["mins"], region["maxs"])
+        } else {
+            "full map".to_owned()
+        };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

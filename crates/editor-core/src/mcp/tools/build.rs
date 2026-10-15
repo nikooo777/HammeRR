@@ -210,3 +210,77 @@ impl EditorServer {
         }
     }
 }
+
+#[tool_router(router = compile_region_tools, vis = "pub(in crate::mcp)")]
+impl EditorServer {
+    #[tool(
+        description = "Inspect committed native compile-region bounds/enabled state, metadata errors, suggested selection/map bounds, owned draft token and limits. Region builds use one sealed axis-aligned box and preserve source geometry/history. Unapplied drafts do not affect builds. Terrain, retained water, overlays, areaportals and occluders are not supported in region builds yet; disable the region for full-map builds and leak checks."
+    )]
+    pub(in crate::mcp) fn get_compile_region(&self) -> ToolResult {
+        ok(self.session().compile_region_state())
+    }
+
+    #[tool(
+        description = "Preview compile-region metadata through the shared Session form without changing the VMF/history or source geometry. Pass the latest snapshot plus enabled and finite mins/maxs (at least 16 units per axis, within ±16368). Or pass clear:true alone with snapshot to preview removing imported metadata. Orange bounds show the draft; compile jobs still use committed settings. A newer draft replaces ownership. Apply or cancel with its token."
+    )]
+    pub(in crate::mcp) fn preview_compile_region(
+        &self,
+        Parameters(args): Parameters<CompileRegionPreviewArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let definition = if args.clear == Some(true) {
+                if args.enabled.is_some() || args.mins.is_some() || args.maxs.is_some() {
+                    return Err("Clear takes no bounds or enabled state".into());
+                }
+                None
+            } else {
+                Some(map_core::compile_region::Definition {
+                    enabled: args.enabled.ok_or("enabled is required")?,
+                    bounds: map_core::compile_region::Bounds {
+                        mins: DVec3::from_array(args.mins.ok_or("mins is required")?),
+                        maxs: DVec3::from_array(args.maxs.ok_or("maxs is required")?),
+                    },
+                })
+            };
+            self.session()
+                .preview_compile_region(Actor::Agent, definition, &args.snapshot)
+        })
+    }
+
+    #[tool(
+        description = "Apply the owned, current compile-region draft as one undoable metadata edit. Bounds, enable/disable and explicit Clear share this operation. Source geometry and selection stay intact; normal revision changes invalidate other edit previews and stale earlier builds. Running jobs retain their original region snapshot."
+    )]
+    pub(in crate::mcp) fn apply_compile_region(
+        &self,
+        Parameters(args): Parameters<CompileRegionTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .apply_compile_region(Actor::Agent, args.token)
+        })
+    }
+
+    #[tool(
+        description = "Cancel only the matching compile-region draft token. Leaves native metadata, geometry, selection, Undo and other previews unchanged. Stale/foreign tokens reject without cancelling replacements."
+    )]
+    pub(in crate::mcp) fn cancel_compile_region(
+        &self,
+        Parameters(args): Parameters<CompileRegionTokenArgs>,
+    ) -> ToolResult {
+        run(|| self.session().cancel_compile_region(args.token))
+    }
+
+    #[tool(
+        description = "Frame the current compile-region draft or committed bounds using the shared camera operation. Optional positive finite aspect defaults to 16:9. Does not enable a region, edit the map, or change selection."
+    )]
+    pub(in crate::mcp) fn frame_compile_region(
+        &self,
+        Parameters(args): Parameters<CompileRegionFrameArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.frame_compile_region(Actor::Agent, args.aspect.unwrap_or(16.0 / 9.0))?;
+            Ok(session.compile_region_state())
+        })
+    }
+}

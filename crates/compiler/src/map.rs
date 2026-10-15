@@ -21,7 +21,7 @@ mod bevels;
 mod support;
 
 #[path = "origins.rs"]
-mod origins;
+pub(crate) mod origins;
 
 #[path = "cubemaps.rs"]
 mod cubemaps;

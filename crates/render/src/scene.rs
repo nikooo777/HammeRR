@@ -891,6 +891,29 @@ impl SceneMesh {
         })
     }
 
+    pub fn add_bounds_lines(&mut self, mins: DVec3, maxs: DVec3, color: [u8; 4]) {
+        let corners: [DVec3; 8] = std::array::from_fn(|bits| {
+            DVec3::new(
+                if bits & 1 == 0 { mins.x } else { maxs.x },
+                if bits & 2 == 0 { mins.y } else { maxs.y },
+                if bits & 4 == 0 { mins.z } else { maxs.z },
+            )
+        });
+        for index in 0..8 {
+            for bit in [1, 2, 4] {
+                let other = index ^ bit;
+                if index < other {
+                    for point in [corners[index], corners[other]] {
+                        self.lines.push(LineVertex {
+                            position: point.as_vec3().to_array(),
+                            color,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     pub fn set_leak_path(&mut self, points: &[DVec3]) {
         self.leak_lines = points
             .windows(2)

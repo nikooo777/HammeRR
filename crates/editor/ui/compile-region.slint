@@ -1,0 +1,80 @@
+import { Button, CheckBox, LineEdit } from "std-widgets.slint";
+
+export component CompileRegionWindow inherits Window {
+    title: "Compile region - HammeRR";
+    preferred-width: 670px;
+    preferred-height: 560px;
+    in-out property <string> min-x;
+    in-out property <string> min-y;
+    in-out property <string> min-z;
+    in-out property <string> max-x;
+    in-out property <string> max-y;
+    in-out property <string> max-z;
+    in-out property <bool> region-enabled;
+    in property <bool> ready;
+    in property <bool> can-review;
+    in property <string> committed;
+    in property <string> message;
+    callback edited();
+    callback use-bounds();
+    callback review();
+    callback preview();
+    callback preview-clear();
+    callback frame();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 10px;
+            Text { text: "Compile part of the map"; font-size: 24px; font-weight: 600; }
+            Text { text: root.committed; color: #bac2ce; wrap: word-wrap; }
+            CheckBox { text: "Enable region for builds"; checked <=> root.region-enabled; toggled => { root.edited(); } }
+            Text { text: "Region corners · world units"; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 80px; text: ""; }
+                Text { horizontal-stretch: 1; text: "X"; }
+                Text { horizontal-stretch: 1; text: "Y"; }
+                Text { horizontal-stretch: 1; text: "Z · height"; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 80px; text: "Minimum"; vertical-alignment: center; }
+                LineEdit { text <=> root.min-x; input-type: decimal; edited => { root.edited(); } }
+                LineEdit { text <=> root.min-y; input-type: decimal; edited => { root.edited(); } }
+                LineEdit { text <=> root.min-z; input-type: decimal; edited => { root.edited(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 80px; text: "Maximum"; vertical-alignment: center; }
+                LineEdit { text <=> root.max-x; input-type: decimal; edited => { root.edited(); } }
+                LineEdit { text <=> root.max-y; input-type: decimal; edited => { root.edited(); } }
+                LineEdit { text <=> root.max-z; input-type: decimal; edited => { root.edited(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Use selection / map bounds"; clicked => { root.use-bounds(); } }
+                Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
+            }
+            Text { text: "Orange lines show the region. Source geometry stays visible and editable. Preview changes nothing until Apply."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Region builds add a solid boundary and can hide full-map leaks. Terrain, water, overlays, areaportals and occluders require a full-map build."; wrap: word-wrap; color: #f2c487; }
+            Text { text: root.message; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Preview clear"; clicked => { root.preview-clear(); } }
+                Button { text: "Frame region"; clicked => { root.frame(); } }
+                Button { text: "Preview region"; clicked => { root.preview(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Apply region"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

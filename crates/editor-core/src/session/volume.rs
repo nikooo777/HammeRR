@@ -169,40 +169,7 @@ impl Session {
         let Some(preview) = self.volume_preview() else {
             return;
         };
-        let corners: Vec<_> = (0..8)
-            .map(|bits| {
-                DVec3::new(
-                    if bits & 1 == 0 {
-                        preview.spec.mins.x
-                    } else {
-                        preview.spec.maxs.x
-                    },
-                    if bits & 2 == 0 {
-                        preview.spec.mins.y
-                    } else {
-                        preview.spec.maxs.y
-                    },
-                    if bits & 4 == 0 {
-                        preview.spec.mins.z
-                    } else {
-                        preview.spec.maxs.z
-                    },
-                )
-            })
-            .collect();
-        for index in 0..8 {
-            for bit in [1, 2, 4] {
-                let other = index ^ bit;
-                if index < other {
-                    for point in [corners[index], corners[other]] {
-                        mesh.lines.push(render::scene::LineVertex {
-                            position: point.as_vec3().to_array(),
-                            color: [80, 205, 255, 255],
-                        });
-                    }
-                }
-            }
-        }
+        mesh.add_bounds_lines(preview.spec.mins, preview.spec.maxs, [80, 205, 255, 255]);
     }
 }
 

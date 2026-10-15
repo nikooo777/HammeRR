@@ -1,0 +1,276 @@
+use super::*;
+use source_formats::{
+    gamefs::{Mount, MountedPath},
+    keyvalues::Node,
+};
+
+use crate::test_common as common;
+
+fn fixture() -> (tempfile::TempDir, GameFs, Vmf) {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("materials/tools")).unwrap();
+    std::fs::write(
+        directory.path().join("materials/tools/toolsnodraw.vmt"),
+        "LightmappedGeneric { %compilenodraw 1 }",
+    )
+    .unwrap();
+    let mut game = common::empty_game();
+    game.game_dir = directory.path().to_owned();
+    game.base_dir = directory.path().to_owned();
+    game.mounts = vec![MountedPath {
+        ids: vec!["game".into()],
+        mount: Mount::Directory(directory.path().to_owned()),
+    }];
+    let mut source = common::room();
+    for entity in &mut source.entities {
+        let mut point = entity.origin().unwrap();
+        point.y = -64.0;
+        entity
+            .properties
+            .set("origin", source_formats::vmf::format_vec3(point));
+    }
+    let mut document = Document::new(source);
+    document
+        .edit("region fixture", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-600.0, -16.0, 0.0),
+                DVec3::new(600.0, 16.0, 32.0),
+                "brick/test",
+            )?;
+            for (classname, origin, name) in [
+                (
+                    "info_target",
+                    Some(DVec3::new(400.0, 0.0, 64.0)),
+                    "outside_region",
+                ),
+                ("logic_auto", None, "global_logic"),
+                ("light", Some(DVec3::new(400.0, 0.0, 64.0)), "outside_light"),
+            ] {
+                edit::create_entity(
+                    tx,
+                    classname,
+                    origin,
+                    &[("targetname".into(), name.into())],
+                    Vec::new(),
+                )?;
+            }
+            compile_region::apply(
+                tx,
+                Some(compile_region::Definition {
+                    enabled: true,
+                    bounds: compile_region::Bounds {
+                        mins: DVec3::new(-128.0, -128.0, 0.0),
+                        maxs: DVec3::new(128.0, 128.0, 256.0),
+                    },
+                }),
+            )
+        })
+        .unwrap();
+    (directory, game, document.into_vmf())
+}
+
+#[test]
+fn preprocessing_seals_retains_crossing_brushes_and_never_mutates_the_source() {
+    let (_directory, game, source) = fixture();
+    let before = source.clone();
+    let mut report = Report::default();
+    let prepared = prepare(&source, &game, &mut report, &Control::default()).unwrap();
+    let summary = prepared.region.as_ref().unwrap();
+    assert!(
+        summary
+            .generated_brushes
+            .iter()
+            .all(|id| *id > source.object_ids().max().unwrap())
+    );
+    assert!(
+        prepared
+            .vmf
+            .world
+            .solids
+            .iter()
+            .flat_map(|solid| &solid.sides)
+            .filter(|side| !source.side_ids().any(|id| id == side.id))
+            .all(|side| side.id > source.side_ids().max().unwrap())
+    );
+    assert!(
+        prepared
+            .vmf
+            .world
+            .solids
+            .iter()
+            .any(|solid| solid == source.world.solids.last().unwrap())
+    );
+    assert!(
+        prepared
+            .vmf
+            .entities
+            .iter()
+            .any(|entity| entity.classname() == Some("logic_auto"))
+    );
+    assert!(
+        !prepared
+            .vmf
+            .entities
+            .iter()
+            .any(|entity| entity.properties.get("targetname") == Some("outside_region"))
+    );
+    assert!(
+        !prepared
+            .vmf
+            .entities
+            .iter()
+            .any(|entity| entity.classname() == Some("light"))
+    );
+    let output = crate::compile(&source, &game);
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.brushes, 9);
+    assert_eq!(source, before);
+    let mut broken = prepared.vmf.into_owned();
+    broken.cordon = None;
+    broken
+        .world
+        .solids
+        .retain(|solid| solid.id != summary.generated_brushes[1]);
+    let output = crate::compile(&broken, &game);
+    assert!(
+        output.leak.is_some() && output.bsp.is_none(),
+        "{:?}",
+        output.report
+    );
+}
+
+#[test]
+fn brush_model_inclusion_uses_the_same_origin_brush_resolution_as_compilation() {
+    let (_directory, game, source) = fixture();
+    let mut document = Document::new(source);
+    document
+        .edit("model pivots", |tx| {
+            for (point, marker, name) in [
+                (
+                    DVec3::new(400.0, 0.0, 64.0),
+                    DVec3::new(32.0, 32.0, 32.0),
+                    "origin_inside",
+                ),
+                (
+                    DVec3::new(32.0, 0.0, 64.0),
+                    DVec3::new(400.0, 0.0, 32.0),
+                    "origin_outside",
+                ),
+            ] {
+                let marker = edit::block_solid(
+                    tx,
+                    marker - DVec3::splat(8.0),
+                    marker + DVec3::splat(8.0),
+                    "tools/toolsorigin",
+                )?;
+                let shape = edit::block_solid(
+                    tx,
+                    DVec3::new(16.0, 32.0, 32.0),
+                    DVec3::new(48.0, 48.0, 64.0),
+                    "brick/test",
+                )?;
+                edit::create_entity(
+                    tx,
+                    "func_brush",
+                    Some(point),
+                    &[("targetname".into(), name.into())],
+                    vec![marker, shape],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    std::fs::write(
+        game.game_dir.join("materials/tools/toolsorigin.vmt"),
+        "LightmappedGeneric { %compileorigin 1 }",
+    )
+    .unwrap();
+    let source = document.into_vmf();
+    let prepared = prepare(&source, &game, &mut Report::default(), &Control::default()).unwrap();
+    assert!(
+        prepared
+            .vmf
+            .entities
+            .iter()
+            .any(|entity| entity.properties.get("targetname") == Some("origin_inside"))
+    );
+    assert!(
+        !prepared
+            .vmf
+            .entities
+            .iter()
+            .any(|entity| entity.properties.get("targetname") == Some("origin_outside"))
+    );
+    let output = crate::compile(&source, &game);
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+}
+
+#[test]
+fn disabled_regions_borrow_input_and_unsupported_scopes_or_id_exhaustion_preserve_outputs() {
+    let (_directory, game, mut source) = fixture();
+    source.cordon = None;
+    let prepared = prepare(&source, &game, &mut Report::default(), &Control::default()).unwrap();
+    assert!(matches!(prepared.vmf, Cow::Borrowed(_)));
+    let mut document = Document::new(source);
+    document
+        .edit("enable", |tx| {
+            compile_region::apply(
+                tx,
+                Some(compile_region::Definition {
+                    enabled: true,
+                    bounds: compile_region::Bounds {
+                        mins: DVec3::new(-128.0, -128.0, 0.0),
+                        maxs: DVec3::new(128.0, 128.0, 256.0),
+                    },
+                }),
+            )
+        })
+        .unwrap();
+    let mut source = document.into_vmf();
+    let mut outside = source.entities.last().unwrap().clone();
+    outside.id = u32::MAX;
+    source.entities.push(outside);
+    let output = crate::compile(&source, &game);
+    assert!(output.bsp.is_none());
+    assert!(
+        output
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("exhausted")),
+        "{:?}",
+        output.report
+    );
+    source.entities.pop();
+    for classname in ["info_overlay", "func_areaportal", "func_occluder"] {
+        let mut unsafe_source = source.clone();
+        unsafe_source
+            .entities
+            .last_mut()
+            .unwrap()
+            .properties
+            .set("classname", classname);
+        let before = unsafe_source.clone();
+        let output = crate::compile(&unsafe_source, &game);
+        assert!(output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains(classname))
+        );
+        assert_eq!(unsafe_source, before);
+    }
+    let mut malformed = source;
+    malformed.cordon = Some(Node::block(
+        "cordon",
+        vec![
+            Node::string("active", "1"),
+            Node::string("mins", "NaN 0 0"),
+            Node::string("maxs", "128 128 128"),
+        ],
+    ));
+    assert!(compile_region::active(&malformed).is_err());
+}

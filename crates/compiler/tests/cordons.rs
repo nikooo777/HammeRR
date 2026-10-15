@@ -10,7 +10,7 @@ fn imported(nodes: &[Node]) -> Vmf {
 }
 
 #[test]
-fn active_or_ambiguous_imported_cordons_fail_before_publishing() {
+fn invalid_or_ambiguous_imported_cordons_fail_before_publishing() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("previous.bsp");
     std::fs::write(&path, b"previous successful BSP").unwrap();

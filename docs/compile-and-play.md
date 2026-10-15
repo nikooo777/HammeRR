@@ -24,6 +24,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
 | **Compile** | Toolbar | Builds the current map, including unsaved edits, into a BSP next to the VMF. Unsaved maps ask for an output file. |
 | **Run Map** | Toolbar | Compiles, then launches the map in the Linux CS:S client. |
 | **Build settings…** | Toolbar | Opens lighting, physics, visibility and sampling settings before or after a build. |
+| **Compile region…** / **Region build…** | Toolbar | Opens saved partial-map bounds, enable/disable and owned preview controls. |
 | **Build details…** | Bar below the toolbar, after the first build | Lighting, physics, visibility and sampling settings, progress, timings, statistics and diagnostics. |
 | **Play built map** | Build details | Launches the last successful build without compiling again. |
 | **Cancel build** | Bar below the toolbar and Build details | Stops the build and keeps the previous output. |
@@ -375,14 +376,14 @@ Not yet: generating subdivision, removed triangles, runtime brush-model terrain,
 
 Imported `info_overlay` projections compile on world, detail and terrain surfaces. Set their material, render order and fades in the entity inspector, then inspect **Overlays** and **Surface references** in Build details. See [Overlays](overlays.md) for the workflow and limits.
 
-## Imported compile regions
+## Compile regions
 
-Active imported Hammer cordons cannot be built yet. **Compile** and **Run Map**
-report an error before producing a BSP; existing output stays intact. Disable
-the cordon in the source editor and save the VMF to build the full map.
-
-Disabled cordon metadata is retained on save and does not change full-map output.
-Editing regions and generating a sealed partial map are unavailable.
+Use **Compile region…** on the toolbar to preview, enable and save a sealed
+partial-map build. **Compile** and **Run Map** use committed bounds; drafts
+leave build scope unchanged. **Build details…** shows the scope captured at
+build start. See [Compile regions](compile-regions.md) for inclusion rules,
+Undo, imported cordons and unsupported content. Disable the region for full-map
+leak checks.
 
 ## Coordinate limits
 

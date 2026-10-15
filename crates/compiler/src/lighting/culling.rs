@@ -169,12 +169,9 @@ fn enabled() -> bool {
 }
 
 #[cfg(test)]
-#[path = "../../tests/common/mod.rs"]
-mod common;
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_common as common;
     use crate::{Control, LightingMode, Options, VisibilityMode};
     use map_core::{BrushGeometry, Document, ObjectId, edit};
     use source_formats::vmf::{DispInfo, Vmf};

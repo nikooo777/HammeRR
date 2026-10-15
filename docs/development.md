@@ -512,19 +512,28 @@ native save/reopen, restart, malformed files and deletion after loading a detach
 draft. Use a fresh output directory. These checks use no desktop input, native
 clipboard or game launch.
 
-### Imported compile regions
+### Compile regions
 
 ```sh
 cargo test -p compiler --test cordons
+cargo test -p compiler --lib cordons::tests
+cargo test -p map-core --lib compile_region::tests
+cargo test -p editor-core --features mcp --lib session::compile_region::tests
+cargo test -p editor --bin editor compile_region_ui::tests
 python3 -B scripts/validate_compile_cordons.py --binary target/debug/hammerr-headless --output /tmp/hammerr-cordon-check
+python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-check --render --runtime
 ```
 
-Compiler regressions cover legacy/plural records, active/disabled flags,
-ambiguous flags, source preservation and output publication. The private
-headless MCP check compares synchronous/background diagnostics and retained
-BSPs, selection and history. Globally disabled metadata must compile identically
-to the full-map baseline. Use a fresh output directory; no game or desktop
-input is needed.
+Compiler regressions cover native legacy/plural parsing, disabled identity,
+whole crossing brushes, origin-brush pivots, fresh IDs, rejected content and
+a leaking control with a missing boundary. Session and software UI tests cover
+owned drafts, explicit review, Undo/Redo and frozen jobs. The private MCP
+workflow checks exact synchronous/background output, filtering across independent
+consumers, saved metadata and preserved source/history/selection. `--render`
+captures an offscreen region guide; `--runtime` uses a private display with
+`-insecure` and `sv_lan 1` for boundary traces and grounded player/prop contact.
+The cordon script separately checks invalid imports and retained prior output.
+Use fresh output directories. Neither script sends desktop input.
 
 ### Compile-region shell experiment
 

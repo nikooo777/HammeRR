@@ -1,6 +1,7 @@
 mod carve_ui;
 mod checks_ui;
 mod clipboard_ui;
+mod compile_region_ui;
 mod compile_ui;
 mod components_ui;
 mod connection_ui;

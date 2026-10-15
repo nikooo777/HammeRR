@@ -617,3 +617,30 @@ pub struct GameLogArgs {
     /// Tail lines per log (default 200, maximum 2000).
     pub lines: Option<usize>,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompileRegionPreviewArgs {
+    /// Latest snapshot from get_compile_region.
+    pub(in crate::mcp) snapshot: String,
+    /// Remove region metadata; no bounds/enabled values may accompany clear.
+    pub(in crate::mcp) clear: Option<bool>,
+    /// Whether the applied region limits builds. Required unless clear is true.
+    pub(in crate::mcp) enabled: Option<bool>,
+    /// Minimum XYZ in world units. Required unless clear is true.
+    pub(in crate::mcp) mins: Option<[f64; 3]>,
+    /// Maximum XYZ in world units. Required unless clear is true.
+    pub(in crate::mcp) maxs: Option<[f64; 3]>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompileRegionTokenArgs {
+    pub(in crate::mcp) token: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompileRegionFrameArgs {
+    pub(in crate::mcp) aspect: Option<f32>,
+}

@@ -17,6 +17,7 @@ struct Job {
     control: compiler::Control,
     path: PathBuf,
     snapshot: Snapshot,
+    region: Value,
     options: compiler::Options,
     recipe: Option<recipes::Identity>,
     started: Instant,
@@ -269,6 +270,7 @@ impl Session {
                 revision: self.document.revision(),
             },
             options: self.compilation.options,
+            region: super::compile_region::build_configuration(self.document.vmf()),
             recipe: self.compilation.recipes.active.clone(),
             started: Instant::now(),
             finished: None,
@@ -386,7 +388,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "recipe":job.recipe,"settings":{"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "compile_region":job.region,"recipe":job.recipe,"settings":{"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {

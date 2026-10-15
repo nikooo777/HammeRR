@@ -1,3 +1,4 @@
+export { CompileRegionWindow } from "compile-region.slint";
 export { PasteWindow } from "clipboard.slint";
 export { MergeWindow, MergeRow } from "merge.slint";
 export { CarveWindow, CarveRow } from "carve.slint";
@@ -1725,6 +1726,8 @@ export component AppWindow inherits Window {
     in property <string> compile-token;
     in property <bool> compile-cancellable;
     callback build-status();
+    callback compile-region();
+    in property <string> compile-region-label: "Compile region…";
     callback cancel-build();
     in property <bool> launching;
     in property <bool> game-running;
@@ -1963,6 +1966,8 @@ export component AppWindow inherits Window {
                     text: "Build settings…";
                     clicked => { root.build-status(); }
                 }
+
+                Button { text: root.compile-region-label; clicked => { root.compile-region(); } }
 
                 Button {
                     text: root.compiling ? "Compiling…" : "Compile";

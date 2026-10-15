@@ -1,0 +1,194 @@
+import argparse
+import json
+import re
+from pathlib import Path
+from unittest.mock import patch
+
+import validate_native_runtime as runtime
+from probe_compile_region_shell import HIGH, LOW, OBSERVER, SOURCE
+from validate_compile_jobs import wait_job
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
+
+
+def preview(client, enabled=True, low=LOW, high=HIGH, clear=False):
+    args = {"snapshot": client.call("get_compile_region")["snapshot"]}
+    if clear:
+        args["clear"] = True
+    else:
+        args.update(enabled=enabled, mins=low, maxs=high)
+    return client.call("preview_compile_region", args)
+
+
+def apply(client, **kwargs):
+    draft = preview(client, **kwargs)
+    return client.call("apply_compile_region", {"token": draft["draft"]["token"]})
+
+
+def validate(args):
+    checks = []
+
+    def check(condition, label):
+        assert condition, label
+        checks.append(label)
+
+    with patch.dict("os.environ", {"HAMMERR_RECENT_MAPS_DIR": str(args.output / "recent"), "HAMMERR_BUILD_RECIPES": str(args.output / "recipes.json")}):
+        client = Client(None, args.binary, args.output)
+    try:
+        ids = [client.call("create_block", {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"})["id"] for low, high in SOURCE]
+        for classname, origin, properties in [
+            ("info_player_terrorist", [-64, -64, 8], {}),
+            ("info_player_counterterrorist", [64, -64, 8], {}),
+            ("light", [0, 0, 192], {"_light": "255 255 255 200", "_constant_attn": "1"}),
+            ("prop_physics", [64, 64, 128], {"targetname": "physics_crate", "model": "models/props_junk/wood_crate001a.mdl"}),
+            ("logic_script", [-64, -64, 64], {"targetname": "hammerr_observer", "vscripts": "hammerr_observer.nut", "thinkfunction": "HammeRRThink"}),
+            ("info_target", [400, 400, 64], {"targetname": "outside_region"}),
+            ("prop_static", [400, 300, 16], {"model": "models/props_junk/wood_crate001a.mdl"}),
+            ("light", [400, 400, 192], {"_light": "255 0 0 5000"}),
+        ]:
+            ids.append(client.call("create_entity", {"classname": classname, "origin": origin, "properties": properties})["id"])
+        outside = ids[-3:]
+        client.call("set_compile_settings", {"lighting": "fullbright", "physics": "none"})
+        source = args.output / "source.vmf"
+        client.call("save_map", {"path": str(source)})
+        full_path = args.output / "full-map.bsp"
+        full = client.call("compile_map", {"path": str(full_path)})
+        check(full["success"] and full["stats"]["static_props"] == 1, "Full-map baseline includes the outside static prop")
+        original_objects = detail(client, ids)
+        original_state = client.call("get_map_info")
+        draft = preview(client)
+        token = draft["draft"]["token"]
+        check(client.call("get_map_info")["undo"] == original_state["undo"] and detail(client, ids) == original_objects, "A region draft changes no source object or history")
+        untouched = args.output / "draft-full-map.bsp"
+        client.call("compile_map", {"path": str(untouched)})
+        check(untouched.read_bytes() == full_path.read_bytes(), "Unapplied region bounds do not affect compilation")
+        client.call("cancel_compile_region", {"token": token})
+        check(client.call("get_compile_region")["committed"] is None, "Cancel leaves native metadata absent")
+        draft = preview(client)
+        old_token = draft["draft"]["token"]
+        replacement = preview(client, enabled=False)
+        client.call("cancel_compile_region", {"token": old_token}, error=True)
+        check(client.call("get_compile_region")["draft"]["token"] == replacement["draft"]["token"], "A stale cancellation preserves the replacement")
+        client.call("cancel_compile_region", {"token": replacement["draft"]["token"]})
+        apply(client)
+        check(client.call("get_compile_region")["committed"]["enabled"], "Apply enables the native region")
+        check(client.call("get_map_info")["undo"] == ["Set compile region", *original_state["undo"][:9]], "Region Apply adds one metadata step to the visible history")
+        client.call("undo")
+        check(client.call("get_compile_region")["committed"] is None, "Undo removes the authored native region")
+        client.call("redo")
+        check(client.call("get_compile_region")["committed"]["enabled"], "Redo restores the region")
+        client.call("frame_compile_region")
+        check(detail(client, ids) == original_objects, "Framing changes no source geometry")
+        if args.render:
+            client.render(args.output / "region-preview.png", width=1000, height=650, camera={"position": [400, -500, 400], "look_at": [0, 0, 96]}, surface="wireframe")
+        client.call("save_map", {"path": str(source)})
+        saved = source.read_bytes()
+        apply(client, enabled=False)
+        client.call("compile_map", {"path": str(full_path)})
+        client.call("undo")
+        history = client.call("get_map_info")["undo"]
+        selection = client.call("get_map_info")["selection"]
+        region_path = args.output / "region.bsp"
+        built = client.call("compile_map", {"path": str(region_path)})
+        scope = built["stats"]["compile_region"]
+        check(scope["mins"] == LOW and scope["maxs"] == HIGH and scope["shell_thickness"] == 16, "The result reports exact region and boundary dimensions")
+        check(built["stats"]["brushes"] == 9 and len(scope["generated_brushes"]) == 6, "Three retained source brushes share six generated sealing slabs")
+        check(all(item in scope["omitted"] for item in outside) and built["stats"]["static_props"] == 0, "Map, lights and independent static-prop baking share the filtered VMF")
+        check(b"outside_region" not in region_path.read_bytes(), "The omitted point entity does not reappear in emitted entities")
+        check(detail(client, ids) == original_objects and client.call("get_map_info")["undo"] == history and client.call("get_map_info")["selection"] == selection and source.read_bytes() == saved, "Compilation preserves source geometry, history, selection and saved bytes")
+        background = args.output / "region-background.bsp"
+        client.call("start_compile", {"path": str(background)})
+        apply(client, enabled=False)
+        job = wait_job(client)
+        check(job["status"] == "completed" and job["compile_region"]["enabled"] and job["compile_region"]["mins"] == LOW, "The background job retains its committed start scope after region edits")
+        check(background.read_bytes() == region_path.read_bytes(), "Synchronous and background region builds produce identical BSPs")
+        check(job["stale"], "Changing region metadata marks the earlier build stale")
+        disabled = args.output / "disabled.bsp"
+        client.call("compile_map", {"path": str(disabled)})
+        check(disabled.read_bytes() == full_path.read_bytes(), "Disabled region metadata preserves exact full-map BSP output")
+        client.call("open_map", {"path": str(source), "discard_changes": True})
+        check(client.call("get_compile_region")["committed"]["enabled"], "Native region metadata survives save and reopen")
+        clear = preview(client, clear=True)
+        client.call("cancel_compile_region", {"token": clear["draft"]["token"]})
+        check(client.call("get_compile_region")["committed"]["enabled"], "Cancel of a Clear draft preserves the region")
+        valid = preview(client)
+        invalid = {"snapshot": client.call("get_compile_region")["snapshot"], "enabled": True, "mins": [0, 0, 0], "maxs": [0, 128, 256]}
+        client.call("preview_compile_region", invalid, error=True)
+        check(client.call("get_compile_region")["draft"]["token"] == valid["draft"]["token"], "Invalid bounds preserve a valid draft and ownership")
+        client.call("cancel_compile_region", {"token": valid["draft"]["token"]})
+        helper = client.call("create_entity", {"classname": "info_overlay", "origin": [400, 400, 64]})["id"]
+        region_path.write_bytes(b"previous region output")
+        rejected = client.call("compile_map", {"path": str(region_path)}, error=True)
+        check("info_overlay" in json.dumps(rejected) and region_path.read_bytes() == b"previous region output", "Unsupported consumed helpers fail explicitly and preserve the previous BSP")
+        client.call("delete_objects", {"ids": [helper]})
+        client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"})
+        native_path = args.output / "native-region.bsp"
+        native = client.call("compile_map", {"path": str(native_path)})
+        check(native["stats"]["world_lights"] == 1, "Direct lighting bakes only the retained white light")
+        native_background = args.output / "native-region-background.bsp"
+        client.call("start_compile", {"path": str(native_background)})
+        check(wait_job(client)["status"] == "completed" and native_path.read_bytes() == native_background.read_bytes(), "Lit engine-physics region builds agree through both paths")
+        check(native["stats"]["physics_models"] == 1, "The generated boundary participates in engine collision")
+        native_source = args.output / "native-source.vmf"
+        client.call("save_map", {"path": str(native_source)})
+        legacy = args.output / "legacy-import.bsp"
+        client.call("compile_map", {"path": str(legacy)})
+        metadata = f'cordons {{ "active" "1" cordon {{ "name" "Imported region" "active" "1" box {{ "mins" "({" ".join(map(str, LOW))})" "maxs" "({" ".join(map(str, HIGH))})" }} }} }}'
+        imported, replaced = re.subn(r"(?ms)^cordon\s*\{.*?^\}", lambda _: metadata, native_source.read_text())
+        assert replaced == 1
+        plural = args.output / "plural-source.vmf"
+        plural.write_text(imported)
+        client.call("open_map", {"path": str(plural), "discard_changes": True})
+        check(client.call("get_compile_region")["build_scope"]["enabled"], "An imported single active plural box has the same effective region")
+        plural_bsp = args.output / "plural-import.bsp"
+        client.call("compile_map", {"path": str(plural_bsp)})
+        synchronous = plural_bsp.read_bytes()
+        client.call("start_compile", {"path": str(plural_bsp)})
+        check(wait_job(client)["status"] == "completed" and plural_bsp.read_bytes() == synchronous == legacy.read_bytes(), "Imported plural regions match legacy BSP output through both build paths")
+        replaced = client.call("preview_compile_region", {"snapshot": client.call("get_compile_region")["snapshot"], "enabled": False, "mins": LOW, "maxs": HIGH}, error=True)
+        check("clear" in json.dumps(replaced).lower() and client.call("get_compile_region")["committed"]["enabled"], "Imported plural records require explicit Clear before replacement")
+        clear = preview(client, clear=True)
+        client.call("cancel_compile_region", {"token": clear["draft"]["token"]})
+        check(plural.read_text() == imported and client.call("get_compile_region")["committed"]["enabled"], "Cancelling Clear preserves imported named boxes and source bytes")
+        apply(client, clear=True)
+        check(client.call("get_compile_region")["committed"] is None, "Applying Clear removes imported plural metadata")
+        client.call("undo")
+        check(client.call("get_compile_region")["committed"]["enabled"] and plural.read_text() == imported, "Undo restores imported region metadata without touching its saved file")
+        (args.output / "validation.json").write_text(json.dumps({"passed": len(checks), "checks": checks, "region": scope, "desktop_input": False}, indent=2) + "\n")
+        print(json.dumps({"passed": len(checks), "output": str(args.output)}))
+        return native_path
+    finally:
+        client.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--render", action="store_true")
+    parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
+    args = parser.parse_args()
+    args.binary = args.binary.resolve()
+    args.output = args.output.resolve()
+    if args.worker:
+        runtime.OBSERVER = OBSERVER
+        runtime.worker(args)
+        return
+    args.output.mkdir(parents=True)
+    bsp = validate(args)
+    if args.runtime:
+        native = runtime.private_display(Path(__file__), args, bsp)
+        result = json.loads((native / "runtime.json").read_text())
+        log = (native / "cstrike/hammerr-runtime.log").read_text(errors="replace")
+        traces = [[float(value) for value in row] for row in re.findall(r"HAMMERR_REGION_TRACE ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)", log)]
+        assert '"sv_lan" = "1"' in log and len(traces) >= 3
+        assert all(abs(value - 128 / 300) < 0.001 for row in traces for value in row), traces
+        assert 0 < result["prop_positions"][-1][2] < 64
+        assert max(abs(a - b) for a, b in zip(result["prop_positions"][-1], result["prop_positions"][-2], strict=True)) < 0.1
+        (args.output / "native-validation.json").write_text(json.dumps({"boundary_traces": traces[-3:], "grounded_player_and_stable_prop": True, "insecure": True, "sv_lan": True}, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()

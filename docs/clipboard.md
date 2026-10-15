@@ -20,6 +20,9 @@ Transfer whole brushes and entities within a map or between maps. A captured cli
 
 Agents use the same operations: `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste` and `cancel_paste`. Headless sessions can transfer exported text directly without a desktop clipboard.
 
+Use the [Prefab library](prefabs.md) to keep named assemblies across editor
+restarts and place them through the same Paste review.
+
 ## Limits
 
 - Capture 1–16 top-level objects, with at most 256 objects including owned brushes, 8,192 sides and 256 native groups plus 256 required layers. A brush has at most 256 sides. Payload text is bounded to 8 MiB, 64 nesting levels and 131,072 KeyValues nodes. Authoring coordinates and the complete pasted geometry stay within ±65,536 units.

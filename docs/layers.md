@@ -15,7 +15,9 @@ can belong to several layers, and layers can contain child layers.
    **Remove** adjust it. Memberships in other layers remain.
 4. Click **Review changes**, inspect any error, then **Apply changes**. Each
    application records one Undo step. Save the VMF to keep the layer.
-5. To revise a layer, choose it on the left and click **Edit layer**. **Review pending edit** opens the exact existing human or MCP draft for inspection and continued editing. **Cancel**,
+5. To revise a layer, choose it on the left and click **Edit layer**.
+   **Review pending edit** opens the exact existing human or MCP draft for
+   inspection and continued editing. **Cancel**,
    Escape and **Close** discard only that draft. A map edit makes it stale;
    reopen the draft before applying.
 

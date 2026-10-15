@@ -5,6 +5,94 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[test]
+pub(crate) fn fog_preview_controls_choose_apply_cancel_and_reject_stale_or_unsupported_settings() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut state = Session::new(Err("no assets".into()));
+    let mut ids = Vec::new();
+    for (name, blend) in [("courtyard_haze", "0"), ("directional_fog", "1")] {
+        let id = state
+            .create_entity(
+                Actor::Agent,
+                "env_fog_controller",
+                None,
+                [
+                    ("targetname", name),
+                    ("fogcolor", "130 170 210"),
+                    ("fogstart", "256"),
+                    ("fogend", "2048"),
+                    ("fogmaxdensity", "0.8"),
+                    ("fogenable", "1"),
+                    ("fogblend", blend),
+                ]
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+            )
+            .unwrap();
+        ids.push(id);
+    }
+    let source = state.document().vmf().clone();
+    let history = state.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(state));
+    let controller = fog_ui::Controller::new(&shared).unwrap();
+    let window = &controller.window;
+    controller.show(&lock(&shared)).unwrap();
+    window.window().set_size(slint::PhysicalSize::new(740, 650));
+    assert_eq!(window.get_controller_index(), 0);
+    window.set_preview_enabled(true);
+    window.invoke_choice_changed();
+    assert!(!window.get_can_apply());
+    window.set_controller_index(1);
+    window.invoke_choice_changed();
+    assert!(window.get_can_apply());
+    assert!(window.get_detail().contains("courtyard_haze"));
+    save_ui_snapshot(window.window(), "fog-preview");
+    assert_dialog_button_visible(window, "Apply preview");
+    assert_dialog_button_visible(window, "Cancel");
+    window.invoke_cancel();
+    assert_eq!(lock(&shared).fog_preview_state()["enabled"], false);
+    controller.show(&lock(&shared)).unwrap();
+    window.set_preview_enabled(true);
+    window.set_controller_index(1);
+    window.invoke_choice_changed();
+    window.invoke_apply();
+    assert_eq!(
+        lock(&shared).fog_preview_state()["controller"],
+        id_string(ids[0])
+    );
+    assert!(lock(&shared).view().fog.is_some());
+    controller.show(&lock(&shared)).unwrap();
+    window.set_controller_index(2);
+    window.invoke_choice_changed();
+    assert!(!window.get_can_apply());
+    assert!(window.get_detail().contains("fogblend"));
+    save_ui_snapshot(window.window(), "fog-preview-unsupported");
+    window.invoke_apply();
+    assert!(window.get_message().contains("fogblend"));
+    window.set_controller_index(1);
+    window.invoke_choice_changed();
+    lock(&shared)
+        .set_surface_view(render::SurfaceView::Flat, 1)
+        .unwrap();
+    window.invoke_apply();
+    assert!(window.get_message().contains("changed"));
+    window.invoke_refresh();
+    window.set_preview_enabled(false);
+    window.invoke_choice_changed();
+    window.invoke_apply();
+    assert!(lock(&shared).view().fog.is_none());
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+}
+
+#[test]
 pub(crate) fn manipulation_controls_share_agent_previews_and_selection_without_desktop_input() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

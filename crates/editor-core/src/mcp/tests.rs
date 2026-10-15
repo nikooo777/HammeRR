@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn fog_preview_parameters_require_review_and_entity_controller_ids() {
+    let args: FogPreviewArgs =
+        serde_json::from_value(json!({"enabled":true,"controller":"entity:12","snapshot":"1:2:3"}))
+            .unwrap();
+    assert_eq!(
+        fog_controller_id(args.controller.as_deref()).unwrap(),
+        Some(12)
+    );
+    assert!(fog_controller_id(Some("solid:12")).is_err());
+    assert!(fog_controller_id(Some("12")).is_err());
+    assert!(
+        serde_json::from_value::<FogPreviewArgs>(json!({"enabled":true,"controller":"entity:12"}))
+            .is_err()
+    );
+    assert!(
+        serde_json::from_value::<FogPreviewArgs>(
+            json!({"enabled":true,"snapshot":"1:2:3","color":[1,2,3]})
+        )
+        .is_err()
+    );
+    let args: RenderArgs =
+        serde_json::from_value(json!({"fog_preview":true,"fog_controller":"entity:12"})).unwrap();
+    assert_eq!(args.fog_preview, Some(true));
+    assert_eq!(args.fog_controller.as_deref(), Some("entity:12"));
+}
+
+#[test]
 fn coordinates_and_camera_round_trip_without_display_rounding() {
     let point_value = DVec3::new(0.000_123_456_789, -31_234.123_456_789, 1.0 / 3.0);
     let decoded: [f64; 3] = serde_json::from_value(point(point_value)).unwrap();

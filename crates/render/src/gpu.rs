@@ -123,6 +123,9 @@ struct Globals {
     light_dir: [f32; 4],
     eye: [f32; 4],
     surface_view: [u32; 4],
+    fog_color: [f32; 4],
+    fog_range: [f32; 4],
+    forward: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -206,6 +209,7 @@ pub struct ViewOptions {
     pub smoothing_group: u32,
     pub tool_textures: bool,
     pub sky_preview: bool,
+    pub fog: Option<crate::fog::Fog>,
     pub leak_path: bool,
     pub grid_visible: bool,
     pub grid_size: f32,
@@ -225,6 +229,7 @@ impl Default for ViewOptions {
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
+            fog: None,
             leak_path: true,
             grid_visible: true,
             grid_size: 16.0,
@@ -680,11 +685,17 @@ impl Renderer {
             self.materials.resize(id + 1, None);
         }
         if self.materials[id].is_none() {
-            self.materials[id] = Some(self.material_bind_group(ctx, library.get(id)));
+            self.materials[id] =
+                Some(self.material_bind_group(ctx, library.get(id), id == MaterialLibrary::EDITOR));
         }
     }
 
-    fn material_bind_group(&self, ctx: &GpuContext, info: &MaterialInfo) -> wgpu::BindGroup {
+    fn material_bind_group(
+        &self,
+        ctx: &GpuContext,
+        info: &MaterialInfo,
+        editor: bool,
+    ) -> wgpu::BindGroup {
         let (white, missing) = (&self.white, &self.missing);
         let untextured = info.base.is_none() && info.helper.is_none() && !info.missing;
         let base = match (info.helper, &info.base) {
@@ -705,7 +716,7 @@ impl Renderer {
             flag(info.translucent),
             flag(untextured),
             flag(info.helper.is_some()),
-            0.0,
+            flag(editor || info.sky),
             0.0,
             0.0,
         ];
@@ -802,10 +813,21 @@ impl Renderer {
         let depth = self.depth_view(ctx, size);
         let aspect = size.0 as f32 / size.1.max(1) as f32;
         let light = glam::Vec3::new(0.35, 0.55, 0.75).normalize();
+        let (fog_color, fog_range) = options
+            .fog
+            .filter(|_| {
+                options.surface == SurfaceView::Textured
+                    && camera.projection == crate::Projection::Perspective
+            })
+            .map(crate::fog::Fog::uniforms)
+            .unwrap_or(([0.0; 4], [0.0; 4]));
         let globals = Globals {
             view_proj: camera.view_projection(aspect).to_cols_array_2d(),
             light_dir: light.extend(0.0).to_array(),
             eye: camera.position.extend(1.0).to_array(),
+            fog_color,
+            fog_range,
+            forward: camera.forward().extend(0.0).to_array(),
             surface_view: [
                 match options.surface {
                     SurfaceView::Textured => 0,

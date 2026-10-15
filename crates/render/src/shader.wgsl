@@ -3,6 +3,9 @@ struct Globals {
     light_dir: vec4<f32>,
     eye: vec4<f32>,
     surface_view: vec4<u32>,
+    fog_color: vec4<f32>,
+    fog_range: vec4<f32>,
+    forward: vec4<f32>,
 }
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
@@ -123,7 +126,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let highlight = 0.15 * pow(max(dot(helper_normal, halfway), 0.0), 64.0);
         return vec4<f32>(mix(shaded, globe + vec3<f32>(highlight), in.color.a), 1.0);
     }
-    return vec4<f32>(texel.rgb * in.color.rgb * shade, alpha);
+    var color = texel.rgb * in.color.rgb * shade;
+    if globals.fog_color.a > 0.0 && material.helper.y < 0.5 {
+        let depth = dot(in.world_position - globals.eye.xyz, globals.forward.xyz);
+        let factor = clamp((depth - globals.fog_range.x) * globals.fog_range.y, 0.0, globals.fog_color.a);
+        color = mix(color, globals.fog_color.rgb, factor * factor);
+    }
+    return vec4<f32>(color, alpha);
 }
 
 struct LineOut {

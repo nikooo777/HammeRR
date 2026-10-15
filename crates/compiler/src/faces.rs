@@ -156,15 +156,20 @@ pub fn build_with_smoothing(
                 continue;
             };
             let source_sides: Arc<[u32]> = side.source_id.into_iter().collect::<Vec<_>>().into();
-            let mut pending = vec![(0, winding.clone(), None, side.plane, side.texinfo, false)];
-            if entity == 0
+            let bottom = if entity == 0
                 && brush.structural()
-                && let Some(&bottom) = map.water_bottom_texinfos.get(&side.texinfo)
+                && brush.contents & contents::WATER != 0
+                && map
+                    .planes
+                    .get(side.plane)
+                    .normal
+                    .abs_diff_eq(DVec3::Z, 1e-8)
             {
-                let mut reversed = winding.clone();
-                reversed.0.reverse();
-                pending.push((0, reversed, None, side.plane ^ 1, bottom, true));
-            }
+                map.water_bottom_texinfos.get(&side.texinfo).copied()
+            } else {
+                None
+            };
+            let mut pending = vec![(0, winding.clone(), None, side.plane, side.texinfo, false)];
             while let Some((index, winding, on_node, face_plane, texinfo, below_water)) =
                 pending.pop()
             {
@@ -204,16 +209,23 @@ pub fn build_with_smoothing(
                         }
                     }
                     None if !node.solid() && winding.area() > ON_EPSILON * ON_EPSILON => {
-                        if below_water {
-                            let outside =
-                                winding.center() - map.planes.get(face_plane).normal * ON_EPSILON;
-                            let outside = &tree.nodes[tree.leaf_at(outside, &map.planes)];
-                            if node.contents & contents::WATER == 0
-                                || outside.solid()
-                                || outside.contents & contents::WATER != 0
-                            {
-                                continue;
-                            }
+                        if below_water && node.contents & contents::WATER == 0 {
+                            continue;
+                        }
+                        if !below_water
+                            && node.contents & (contents::WATER | contents::SLIME) == 0
+                            && let Some(bottom) = bottom
+                        {
+                            let mut reversed = winding.clone();
+                            reversed.0.reverse();
+                            pending.push((
+                                on_node.unwrap_or(0),
+                                reversed,
+                                None,
+                                face_plane ^ 1,
+                                bottom,
+                                true,
+                            ));
                         }
                         groups
                             .entry((

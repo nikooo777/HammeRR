@@ -17,6 +17,7 @@ pub struct Preview {
 #[derive(Default)]
 pub struct State {
     pub preview: Option<Preview>,
+    discarded_scope: Option<Vec<u32>>,
     serial: u64,
 }
 
@@ -34,11 +35,18 @@ fn object_id(id: ObjectId) -> String {
 }
 
 impl Session {
+    fn merge_source_ids(&self) -> Vec<u32> {
+        self.merging
+            .preview
+            .as_ref()
+            .map(|preview| &preview.scope)
+            .or(self.merging.discarded_scope.as_ref())
+            .cloned()
+            .unwrap_or_else(|| self.component_solids())
+    }
+
     pub fn merge_sources(&self) -> Result<Vec<Source>, String> {
-        let ids = self.merging.preview.as_ref().map_or_else(
-            || self.component_solids(),
-            |preview| preview.scope.clone(),
-        );
+        let ids = self.merge_source_ids();
         if ids.len() > merge::MAX_BRUSHES {
             return Err("Choose at most 16 source brushes to merge".into());
         }
@@ -67,7 +75,9 @@ impl Session {
     }
 
     pub fn clear_merge_preview(&mut self) {
-        if self.merging.preview.take().is_some() {
+        let preview = self.merging.preview.take();
+        let scope = self.merging.discarded_scope.take();
+        if preview.is_some() || scope.is_some() {
             self.merging.serial += 1;
             self.scene_serial += 1;
             self.view_serial += 1;
@@ -80,7 +90,7 @@ impl Session {
         }
         let mut document = self.document.preview_snapshot();
         let result = document.edit("preview merge", |tx| merge::merge(tx, sources)).map_err(|error| error.to_string())?;
-        let selected = self.component_solids();
+        let selected = self.merge_source_ids();
         let scope = if selected.len() <= merge::MAX_BRUSHES && sources.iter().all(|id| selected.contains(id)) {
             selected
         } else {
@@ -137,8 +147,9 @@ impl Session {
     }
 
     pub fn cancel_merge(&mut self, token:u64) -> Result<(),String> {
-        self.checked_merge(token)?;
+        let scope = self.checked_merge(token)?.scope.clone();
         self.clear_merge_preview();
+        self.merging.discarded_scope = Some(scope);
         Ok(())
     }
 }
@@ -275,12 +286,22 @@ mod tests {
         let owner = session.edit(Actor::Agent,"tie",|tx|map_core::edit::tie_to_entity(tx,&sources,"func_detail",&[])).unwrap();
         session.select(&[owner],SelectMode::Replace).unwrap();
         assert!(session.merge_sources().is_err());
+        let candidates = sources[..3].to_vec();
+        session.set_component_picking(Some(super::super::component_picking::Kind::Face),&candidates,&session.component_stamp()).unwrap();
         session.preview_merge(&[first,second],&session.merge_stamp()).unwrap();
-        assert_eq!(session.merge_sources().unwrap().len(),2);
+        assert_eq!(session.merge_sources().unwrap().len(),3);
+        let discarded_token = token(&session);
+        session.cancel_merge(discarded_token).unwrap();
+        assert_eq!(session.merge_sources().unwrap().iter().map(|source|source.solid).collect::<Vec<_>>(),candidates);
+        assert!(session.cancel_merge(discarded_token).is_err());
+        session.preview_merge(&[first,second],&session.merge_stamp()).unwrap();
+        session.preview_merge(&[first,second],&session.merge_stamp()).unwrap();
+        assert_eq!(session.merge_sources().unwrap().len(),3);
         let merge_token = token(&session);
         session.commit_merge(Actor::Agent,merge_token).unwrap();
         let ObjectId::Entity(entity) = owner else {unreachable!()};
         assert_eq!(session.document.entity(entity).unwrap().solids.len(),19);
         assert_eq!(session.selected_ids(),vec![owner]);
+        assert!(session.merge_sources().is_err());
     }
 }

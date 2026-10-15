@@ -48,6 +48,11 @@ fn boolean(entity: &Entity, key: &str) -> Result<bool, String> {
 }
 
 fn parse(entity: &Entity) -> Result<Fog, String> {
+    if entity.hidden {
+        return Err(
+            "Authored-hidden fog controller is unavailable; show it before previewing".into(),
+        );
+    }
     if !entity.solids.is_empty() {
         return Err("env_fog_controller must be a point entity".into());
     }
@@ -200,7 +205,11 @@ impl Session {
         enabled: Option<bool>,
         controller: Option<u32>,
     ) -> Result<(Option<Fog>, Value), String> {
-        let fog = self.fog_preview_for_render(enabled, controller)?;
+        let fog = if enabled.is_none() && controller.is_none() {
+            self.current_fog()
+        } else {
+            self.fog_preview_for_render(enabled, controller)?
+        };
         let report = self.fog_preview_report(
             enabled.unwrap_or(self.fog_preview.enabled),
             controller.or(self.fog_preview.controller),
@@ -244,6 +253,20 @@ mod tests {
         id
     }
 
+    fn assert_unavailable_render_parity(session: &Session, issue: &str) {
+        let (fog, report) = session.fog_render_state(None, None).unwrap();
+        assert_eq!(fog, session.view().fog);
+        assert!(fog.is_none());
+        assert!(report["issue"].as_str().unwrap().contains(issue));
+        assert_eq!(report, session.fog_preview_state());
+        assert!(session.fog_render_state(Some(true), None).is_err());
+        assert!(
+            session
+                .fog_render_state(None, session.fog_preview.controller)
+                .is_err()
+        );
+    }
+
     #[test]
     fn fog_selection_guards_errors_changes_and_history() {
         let mut session = Session::new(Err("no assets".into()));
@@ -277,6 +300,7 @@ mod tests {
             )
             .unwrap();
         assert!(session.view().fog.is_none());
+        assert_unavailable_render_parity(&session, "finite");
         assert!(
             session.fog_preview_state()["issue"]
                 .as_str()
@@ -286,11 +310,27 @@ mod tests {
         session.undo(Actor::Agent).unwrap();
         assert!(session.view().fog.is_some());
         session
+            .set_visibility(Actor::Agent, "hide", &[ObjectId::Entity(first)])
+            .unwrap();
+        assert_unavailable_render_parity(&session, "hidden");
+        let choices = session.fog_preview_state();
+        let choice = choices["controllers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|choice| choice["id"] == format!("entity:{first}"))
+            .unwrap();
+        assert_eq!(choice["ready"], false);
+        assert!(choice["issue"].as_str().unwrap().contains("hidden"));
+        session.undo(Actor::Agent).unwrap();
+        assert!(session.view().fog.is_some());
+        session
             .edit(Actor::Agent, "delete fog controller", |tx| {
                 map_core::edit::delete(tx, &[ObjectId::Entity(first)])
             })
             .unwrap();
         assert!(session.view().fog.is_none());
+        assert_unavailable_render_parity(&session, "no longer exists");
         assert!(
             session.fog_preview_state()["issue"]
                 .as_str()

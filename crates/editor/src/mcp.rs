@@ -2389,8 +2389,25 @@ pub struct ContextScopeArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PolygonArgs {
+    /// Boundary order; closing corner is implicit. Simple concave outlines are decomposed.
+    pub outline: Vec<[f64; 2]>,
+    /// x draws in YZ, y in XZ, z (default) in XY.
+    pub axis: Option<String>,
+    pub base: f64,
+    /// Positive extrusion distance, at least 0.125 units.
+    pub depth: f64,
+    pub material: Option<String>,
+    /// Snap corners to the current shared grid; defaults to current snapping.
+    pub snap: Option<bool>,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrimitiveArgs {
-    /// wedge, cylinder, cone, sphere or arch. Results are editable convex VMF brushes.
+    /// wedge, cylinder, cone, sphere, arch or polygon. Editable convex VMF brushes.
     pub shape: String,
     pub mins: [f64; 3],
     pub maxs: [f64; 3],
@@ -2406,6 +2423,8 @@ pub struct PrimitiveArgs {
     /// Arch angular span, 1..360 degrees; default 180.
     pub sweep_angle: Option<f64>,
     pub material: Option<String>,
+    /// Polygon world-plane corners (YZ/XZ/XY by axis); supplied bounds must agree.
+    pub outline: Option<Vec<[f64; 2]>>,
     /// Preview without changing the map, selection or history; default false.
     #[serde(default)]
     pub preview: bool,
@@ -2439,6 +2458,13 @@ impl PrimitiveArgs {
         }
         if let Some(value) = &self.material {
             spec.material = value.clone();
+        }
+        if let Some(outline) = &self.outline {
+            spec.outline = outline
+                .iter()
+                .copied()
+                .map(glam::DVec2::from_array)
+                .collect();
         }
         Ok(spec)
     }
@@ -2912,7 +2938,39 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Create a wedge, cylinder, cone, faceted sphere or segmented arch in one undoable edit, or set preview=true for shared cancellable geometry. Curves are inscribed in mins/maxs; arch bounds describe the full ellipse and its sweep chooses the built portion. Axis controls extrusion/poles; wedges rise along the first transverse axis. get_primitive_preview returns actual bounds and a guarded token for commit/cancel/framing. Defaults to nodraw material."
+        description = "Draw and extrude a 3–64-corner simple polygon into editable convex brushes. outline contains world-plane pairs (YZ/XZ/XY for axis x/y/z); base and positive depth give axial placement. Convex outlines produce one brush; concave outlines decompose without filling their concavity. Repeats, crossings, touching/collinear edges and invalid dimensions fail atomically. snap defaults to shared grid settings. preview=true shares the existing owned primitive preview/inspect/frame/commit/cancel lifecycle; applied edits use one Undo step. UI: Draw polygon…."
+    )]
+    fn create_polygon_brush(&self, Parameters(args): Parameters<PolygonArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let spec = map_core::primitive::PolygonSpec {
+                outline: args
+                    .outline
+                    .iter()
+                    .copied()
+                    .map(glam::DVec2::from_array)
+                    .collect(),
+                axis: map_core::primitive::Axis::parse(args.axis.as_deref().unwrap_or("z"))
+                    .map_err(|error| error.to_string())?,
+                base: args.base,
+                depth: args.depth,
+                material: args.material.unwrap_or_else(|| "TOOLS/TOOLSNODRAW".into()),
+            };
+            let snap = args.snap.unwrap_or(session.spatial().snap);
+            let ids = session.create_polygon(Actor::Agent, spec, snap, args.preview)?;
+            let document = if args.preview {
+                session.render_document()
+            } else {
+                session.document()
+            };
+            Ok(
+                json!({"preview":args.preview,"objects":ids.iter().map(|&id|summary(document,id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Create a wedge, cylinder, cone, faceted sphere, segmented arch or polygon in one undoable edit, or set preview=true for shared cancellable geometry. Polygon outline gives world-plane pairs and must agree with mins/maxs; create_polygon_brush calculates those bounds automatically. Curves are inscribed in mins/maxs; arch bounds describe the full ellipse and its sweep chooses the built portion. Axis controls extrusion/poles; wedges rise along the first transverse axis. get_primitive_preview returns actual bounds and a guarded token for commit/cancel/framing. Defaults to nodraw material."
     )]
     fn create_primitive(&self, Parameters(args): Parameters<PrimitiveArgs>) -> ToolResult {
         run(|| {

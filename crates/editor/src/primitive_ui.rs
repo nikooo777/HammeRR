@@ -70,6 +70,7 @@ fn load(window: &PrimitiveWindow, spec: &Spec) {
         Shape::Cone => 2,
         Shape::Sphere => 3,
         Shape::Arch => 4,
+        Shape::Polygon => unreachable!("Polygons have their own drawing controls"),
     });
     window.set_axis(match spec.axis {
         Axis::X => 0,
@@ -91,6 +92,15 @@ fn load(window: &PrimitiveWindow, spec: &Spec) {
 }
 
 pub fn refresh(window: &PrimitiveWindow, session: &mut Session) {
+    if session
+        .primitive_preview()
+        .is_some_and(|preview| preview.spec.shape == Shape::Polygon)
+    {
+        window.set_token("".into());
+        window.set_can_preview(false);
+        window.set_summary("A polygon preview is active. Open Draw polygon… to review it.".into());
+        return;
+    }
     if let Some(preview) = session.primitive_preview() {
         let token = preview.token.to_string();
         if window.get_token() != token {

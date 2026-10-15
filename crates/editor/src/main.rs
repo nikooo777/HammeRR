@@ -19,6 +19,7 @@ mod model_preview;
 mod model_ui;
 mod placement_ui;
 mod pointfile_ui;
+mod polygon_ui;
 mod primitive_ui;
 mod recovery;
 mod recovery_ui;
@@ -166,6 +167,7 @@ struct Ui {
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
     primitive_window: Option<PrimitiveWindow>,
+    polygon: Option<polygon_ui::Controller>,
     seen_primitive: u64,
     seen_context: (u64, u64),
     seen_checks: (u64, u64, u64),
@@ -197,6 +199,7 @@ struct Ui {
     material_for_faces: bool,
     material_for_clip: bool,
     material_for_primitive: bool,
+    material_for_polygon: bool,
     material_for_extrusion: bool,
     material_for_partition: bool,
     partition_material_target: Option<components_ui::PartitionMaterialTarget>,
@@ -2273,6 +2276,17 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                             return;
                         }
                     }
+                } else if ui.borrow().material_for_polygon {
+                    if let Some(polygon) = &ui.borrow().polygon {
+                        let Some(target) = ui.borrow().primitive_material_target else {
+                            return;
+                        };
+                        if let Err(error) = polygon.choose_material(&mut session, target, &material)
+                        {
+                            window.set_detail(error.into());
+                            return;
+                        }
+                    }
                 } else if ui.borrow().material_for_partition {
                     if let Some(components) = &ui.borrow().components_window {
                         let Some(target) = ui.borrow().partition_material_target.clone() else {
@@ -2339,6 +2353,7 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     ui.borrow_mut().material_for_faces = key == "@faces";
     ui.borrow_mut().material_for_clip = key == "@clip";
     ui.borrow_mut().material_for_primitive = key == "@primitive";
+    ui.borrow_mut().material_for_polygon = key == "@polygon";
     ui.borrow_mut().material_for_extrusion = key == "@extrusion";
     ui.borrow_mut().material_for_partition = key == "@partition";
     ui.borrow_mut().partition_material_target =
@@ -2349,16 +2364,18 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             session.document_generation(),
         )
     });
-    ui.borrow_mut().primitive_material_target = (key == "@primitive").then(|| {
-        (
-            session.primitive_preview().map(|preview| preview.token),
-            session.document_generation(),
-        )
-    });
+    ui.borrow_mut().primitive_material_target =
+        (key == "@primitive" || key == "@polygon").then(|| {
+            (
+                session.primitive_preview().map(|preview| preview.token),
+                session.document_generation(),
+            )
+        });
     let target = if key.is_empty()
         || key == "@faces"
         || key == "@clip"
         || key == "@primitive"
+        || key == "@polygon"
         || key == "@partition"
         || key == "@extrusion"
         || key.starts_with("@replace-")
@@ -2398,6 +2415,12 @@ fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             .primitive_window
             .as_ref()
             .map(|window| window.get_material().to_string())
+            .unwrap_or_default()
+    } else if key == "@polygon" {
+        ui.borrow()
+            .polygon
+            .as_ref()
+            .map(|controller| controller.window.get_material().to_string())
             .unwrap_or_default()
     } else if key == "@group" {
         ui.borrow()
@@ -3170,6 +3193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         checks_window: None,
         context_window: None,
         primitive_window: None,
+        polygon: None,
         seen_primitive: 0,
         seen_context: (0, 0),
         seen_checks: (0, 0, 0),
@@ -3201,6 +3225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         material_for_faces: false,
         material_for_clip: false,
         material_for_primitive: false,
+        material_for_polygon: false,
         material_for_extrusion: false,
         material_for_partition: false,
         partition_material_target: None,
@@ -3559,6 +3584,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             checks_ui::refresh(&window, &lock(&session_of(&ui)));
             if let Err(error) = window.show() {
                 app.set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_draw_polygon({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let app = app.unwrap();
+            if ui.borrow().polygon.is_none() {
+                match polygon_ui::Controller::new(&session_of(&ui)) {
+                    Ok(controller) => {
+                        controller.window.on_browse_material({
+                            let (app, ui) = (app.as_weak(), ui.clone());
+                            move || show_material_window(&app.unwrap(), &ui, "@polygon")
+                        });
+                        ui.borrow_mut().polygon = Some(controller);
+                    }
+                    Err(error) => {
+                        app.set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let shared = session_of(&ui);
+            let ui = ui.borrow();
+            let controller = ui.polygon.as_ref().unwrap();
+            controller
+                .window
+                .set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
+            match controller.initialize(&mut lock(&shared), &app.get_material()) {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.set_message(error.into()),
             }
         }
     });
@@ -4946,6 +5004,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && window.window().is_visible()
                     {
                         primitive_ui::refresh(window, &mut session);
+                    }
+                    if let Some(controller) = &ui.polygon
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
                     }
                 }
                 let context = (session.context_serial(), session.scene_serial());

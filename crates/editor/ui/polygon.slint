@@ -1,0 +1,126 @@
+import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "std-widgets.slint";
+
+export struct PolygonCorner { label:string, u:string, v:string, x:float, y:float }
+
+export component PolygonWindow inherits Window {
+    title:"Draw polygon - HammeRR";preferred-width:900px;preferred-height:740px;
+    in-out property <int> axis:2;
+    in-out property <string> base:"0";
+    in-out property <string> depth:"64";
+    in-out property <bool> snap:true;
+    in-out property <string> center-u:"0";
+    in-out property <string> center-v:"0";
+    in-out property <string> span:"512";
+    in-out property <string> corner-u:"0";
+    in-out property <string> corner-v:"0";
+    in-out property <string> material;
+    in property <image> material-image;
+    in property <[PolygonCorner]> corners;
+    in property <string> outline;
+    in property <string> summary;
+    in property <string> message;
+    in property <bool> ready;
+    in property <float> aspect:1;
+    callback add-corner();callback draw-corner(float,float);callback remove-corner(int);
+    callback clear-corners();callback undo-corner();callback change-corner(int,string,string);
+    callback edited();callback view-edited();callback preview();callback frame();
+    callback apply();callback cancel();callback browse-material();
+    forward-focus:dialog-focus;
+    dialog-focus:=FocusScope {
+        key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
+        VerticalLayout {
+            padding:20px;spacing:12px;
+            Text {text:"Draw a polygon, then give it depth";font-size:22px;}
+            Text {text:"Click corners in boundary order. The last corner closes to the first automatically.";wrap:word-wrap;color:#b6c1cf;}
+            HorizontalLayout {
+                spacing:10px;
+                Text {text:"Plane";vertical-alignment:center;}
+                ComboBox {model:["YZ · depth along X","XZ · depth along Y","XY · depth along Z"];current-index<=>root.axis;selected=>{root.edited();}}
+                Text {text:"Start";vertical-alignment:center;}
+                LineEdit {width:75px;text<=>root.base;input-type:decimal;edited=>{root.edited();}}
+                Text {text:"Depth";vertical-alignment:center;}
+                LineEdit {width:75px;text<=>root.depth;input-type:decimal;edited=>{root.edited();}}
+                CheckBox {text:"Snap corners to grid";checked<=>root.snap;toggled=>{root.edited();}}
+            }
+            HorizontalLayout {
+                spacing:16px;vertical-stretch:1;
+                VerticalLayout {
+                    spacing:8px;horizontal-stretch:1;
+                    Rectangle {
+                        background:#141920;border-width:1px;border-color:#526074;clip:true;
+                        min-height:320px;vertical-stretch:1;
+                        pad:=Rectangle {
+                        width:min(parent.width,parent.height);height:self.width;
+                        x:(parent.width-self.width)/2;y:(parent.height-self.height)/2;
+                        for i in 17:Rectangle {x:parent.width*i/16;y:0;width:1px;height:parent.height;background:i==8 ? #4a596a : #242f3d;}
+                        for i in 17:Rectangle {x:0;y:parent.height*i/16;width:parent.width;height:1px;background:i==8 ? #4a596a : #242f3d;}
+                        Path {width:parent.width;height:parent.height;viewbox-width:512;viewbox-height:512;commands:root.outline;stroke:#72c7ee;stroke-width:2px;fill:#386c8a30;}
+                        for corner in root.corners:Rectangle {
+                            x:parent.width*corner.x - 4px;y:parent.height*corner.y - 4px;
+                            width:8px;height:8px;border-radius:4px;background:#e6d383;
+                        }
+                        TouchArea {clicked=>{root.draw-corner(self.mouse-x/self.width,self.mouse-y/self.height);}}
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing:7px;
+                        Text {text:"View center";vertical-alignment:center;}
+                        LineEdit {min-width:0px;width:90px;text<=>root.center-u;input-type:decimal;edited=>{root.view-edited();}}
+                        LineEdit {min-width:0px;width:90px;text<=>root.center-v;input-type:decimal;edited=>{root.view-edited();}}
+                        Text {text:"Span";vertical-alignment:center;}
+                        LineEdit {min-width:0px;width:90px;text<=>root.span;input-type:decimal;edited=>{root.view-edited();}}
+                    }
+                    HorizontalLayout {
+                        spacing:8px;
+                        Button {text:"Undo corner";enabled:root.corners.length>0;clicked=>{root.undo-corner();}}
+                        Button {text:"Clear outline";enabled:root.corners.length>0;clicked=>{root.clear-corners();}}
+                    }
+                }
+                VerticalLayout {
+                    width:300px;min-width:300px;max-width:300px;horizontal-stretch:0;spacing:8px;
+                    Text {text:root.axis==0 ? "Corners · Y / Z" : root.axis==1 ? "Corners · X / Z" : "Corners · X / Y";font-weight:600;}
+                    ScrollView {
+                        vertical-stretch:1;
+                        VerticalLayout {
+                            spacing:5px;
+                            for corner[index] in root.corners:HorizontalLayout {
+                                spacing:5px;min-height:32px;max-height:32px;
+                                Text {text:corner.label;vertical-alignment:center;width:22px;}
+                                LineEdit {min-width:0px;width:90px;max-width:90px;text:corner.u;input-type:decimal;accepted=>{root.change-corner(index,self.text,corner.v);}}
+                                LineEdit {min-width:0px;width:90px;max-width:90px;text:corner.v;input-type:decimal;accepted=>{root.change-corner(index,corner.u,self.text);}}
+                                Button {text:"×";min-width:28px;width:28px;max-width:28px;clicked=>{root.remove-corner(index);}}
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing:5px;
+                        LineEdit {min-width:0px;width:85px;text<=>root.corner-u;input-type:decimal;}
+                        LineEdit {min-width:0px;width:85px;text<=>root.corner-v;input-type:decimal;}
+                        Button {text:"Add corner";min-width:90px;width:90px;clicked=>{root.add-corner();}}
+                    }
+                    Text {text:"Exact corner changes use Enter. Concave outlines become several editable convex brushes.";wrap:word-wrap;color:#b6c1cf;}
+                }
+            }
+            HorizontalLayout {
+                spacing:10px;
+                Image {source:root.material-image;width:48px;height:48px;image-fit:contain;}
+                VerticalLayout {
+                    spacing:3px;
+                    Text {text:"Material";}
+                    LineEdit {text<=>root.material;edited=>{root.edited();}}
+                }
+                Button {text:"Browse materials…";clicked=>{root.browse-material();}}
+            }
+            Text {text:root.summary;wrap:word-wrap;}
+            Text {text:root.message;wrap:word-wrap;color:#b6c1cf;min-height:28px;}
+            HorizontalLayout {
+                spacing:10px;
+                Button {text:"Cancel";clicked=>{root.cancel();}}
+                Rectangle {horizontal-stretch:1;}
+                Button {text:"Preview polygon";enabled:root.corners.length>=3;clicked=>{root.preview();}}
+                Button {text:"Frame preview";enabled:root.ready;clicked=>{root.frame();}}
+                Button {text:"Create brushes";enabled:root.ready;clicked=>{root.apply();}}
+            }
+        }
+    }
+}

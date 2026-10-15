@@ -1,5 +1,5 @@
 use glam::DVec3;
-use map_core::primitive::{self, Spec};
+use map_core::primitive::{self, PolygonSpec, Spec};
 use map_core::{Document, ObjectId, query};
 use serde_json::{Value, json};
 
@@ -22,10 +22,29 @@ pub struct State {
 }
 
 pub fn spec_json(spec: &Spec) -> Value {
-    json!({"shape":spec.shape.name(),"mins":spec.mins.to_array(),"maxs":spec.maxs.to_array(),"axis":spec.axis.name(),"segments":spec.segments,"bands":spec.bands,"inset":spec.inset,"start_angle":spec.start_angle,"sweep_angle":spec.sweep_angle,"material":spec.material})
+    json!({"shape":spec.shape.name(),"mins":spec.mins.to_array(),"maxs":spec.maxs.to_array(),"axis":spec.axis.name(),"segments":spec.segments,"bands":spec.bands,"inset":spec.inset,"start_angle":spec.start_angle,"sweep_angle":spec.sweep_angle,"material":spec.material,"outline":spec.outline.iter().map(|point|point.to_array()).collect::<Vec<_>>()})
 }
 
 impl Session {
+    pub fn create_polygon(
+        &mut self,
+        actor: Actor,
+        mut spec: PolygonSpec,
+        snap: bool,
+        preview: bool,
+    ) -> Result<Vec<ObjectId>, String> {
+        if snap {
+            for point in &mut spec.outline {
+                *point = (*point / self.spatial.grid_size).round() * self.spatial.grid_size;
+            }
+        }
+        self.create_primitive(
+            actor,
+            spec.into_spec().map_err(|error| error.to_string())?,
+            preview,
+        )
+    }
+
     pub fn primitive_serial(&self) -> u64 {
         self.primitives.serial
     }

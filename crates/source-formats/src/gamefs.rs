@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::keyvalues::{self, Node};
@@ -59,11 +60,32 @@ pub enum Mount {
 }
 
 impl Mount {
-    fn read(&self, path: &str) -> io::Result<Option<Vec<u8>>> {
+    fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
         match self {
-            Self::Pak(vpk) => vpk.read(path),
+            Self::Pak(vpk) => vpk.read_limited(path, maximum),
             Self::Directory(root) => match find_case_insensitive(root, path) {
-                Some(file) if file.is_file() => fs::read(file).map(Some),
+                Some(file) if file.is_file() => {
+                    let file = fs::File::open(file)?;
+                    let size = file.metadata()?.len();
+                    if size > maximum as u64 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "asset exceeds the caller's byte read limit",
+                        ));
+                    }
+                    let mut data = Vec::new();
+                    data.try_reserve_exact(size as usize)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                    file.take(maximum.saturating_add(1) as u64)
+                        .read_to_end(&mut data)?;
+                    if data.len() > maximum {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "asset grew beyond its byte read limit",
+                        ));
+                    }
+                    Ok(Some(data))
+                }
                 Some(_) => Ok(None),
                 None => Ok(None),
             },
@@ -257,6 +279,36 @@ impl GameFs {
 
     /// Reads a file from mounts tagged with `id`, or from every mount.
     pub fn read_from(&self, path: &str, id: Option<&str>) -> io::Result<Option<Vec<u8>>> {
+        self.read_from_limited(path, id, usize::MAX)
+    }
+
+    pub fn contains(&self, path: &str) -> io::Result<bool> {
+        let path = asset_relative(path)?;
+        if path.is_empty() {
+            return Ok(false);
+        }
+        Ok(self
+            .mounts
+            .iter()
+            .filter(|mount| mount.ids.iter().any(|id| id == "game"))
+            .any(|mounted| match &mounted.mount {
+                Mount::Pak(pak) => pak.contains(&path),
+                Mount::Directory(root) => {
+                    find_case_insensitive(root, &path).is_some_and(|file| file.is_file())
+                }
+            }))
+    }
+
+    pub fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
+        self.read_from_limited(path, Some("game"), maximum)
+    }
+
+    pub fn read_from_limited(
+        &self,
+        path: &str,
+        id: Option<&str>,
+        maximum: usize,
+    ) -> io::Result<Option<Vec<u8>>> {
         let path = asset_relative(path)?;
         if path.is_empty() {
             return Ok(None);
@@ -265,7 +317,7 @@ impl GameFs {
             if id.is_some_and(|id| !mounted.ids.iter().any(|m| m == id)) {
                 continue;
             }
-            if let Some(data) = mounted.mount.read(&path)? {
+            if let Some(data) = mounted.mount.read_limited(&path, maximum)? {
                 return Ok(Some(data));
             }
         }
@@ -358,6 +410,37 @@ fn find_block<'a>(nodes: &'a [Node], path: &[&str]) -> Option<&'a [Node]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_reads_preserve_mount_lookup_and_reject_oversized_files() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("small.mdl"), b"data").unwrap();
+        let gameinfo = root.path().join("gameinfo.txt");
+        fs::write(
+            &gameinfo,
+            "GameInfo { FileSystem { SearchPaths { game |gameinfo_path|. } } }",
+        )
+        .unwrap();
+        let game = GameFs::from_gameinfo(gameinfo).unwrap();
+        assert!(game.contains("SMALL.MDL").unwrap());
+        assert!(!game.contains("missing.mdl").unwrap());
+        assert_eq!(game.read_limited("SMALL.MDL", 4).unwrap().unwrap(), b"data");
+        assert_eq!(
+            game.read_limited("small.mdl", 3).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::File::create(root.path().join("large.mdl"))
+            .unwrap()
+            .set_len(100_000_000)
+            .unwrap();
+        assert!(
+            game.read_limited("large.mdl", 64)
+                .unwrap_err()
+                .to_string()
+                .contains("limit")
+        );
+        assert!(game.read_limited("../outside", 64).is_err());
+    }
 
     #[test]
     fn normalizes_game_paths() {

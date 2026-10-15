@@ -258,3 +258,10 @@ python3 -B scripts/validate_subdivided_terrain.py --output /tmp/hammerr-subdivid
 ```
 
 Checks connected folded power-2/3/4 cages, shared samples and pinned base boundaries, preserved metadata, repeated-generation no-ops, invalid previews, generated-grid editing, Cancel/Undo/Redo/reopen and active native positions with LOD snapping through both build paths. The saved-grid check compares marked/unmarked native output and exercises supported sewing/resizing on imported marked rows. Core checks cover subdivision stencils, manifold/half-edge rejection and actual cache guards; software UI drives the operation and Cancel.
+
+```sh
+python3 -B scripts/validate_model_previews.py --output /tmp/hammerr-model-previews-check
+cargo test -p source-formats --test css decodes_css_static_model_geometry -- --nocapture
+```
+
+Checks CPU model inspection, invalid paths/skins/arguments, three real model meshes, pixel picks beyond helper bounds, skin-render differences, draft transforms, cache reload, helper fallbacks, source/history preservation, native static-prop positions/angles/skins through both builds and save/reopen. Decoder tests cover fixups, mesh-relative indices, triangle strips, checksums, malformed ranges and nonfinite data. Bounded-read tests reject oversized directory/VPK entries before allocation. Software UI checks inspection, reload and Cancel. The CSS format check uses the local install (`CSS_DIR` overrides its location).

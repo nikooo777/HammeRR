@@ -788,8 +788,9 @@ impl CameraSpec {
         }
         if let Some(focus) = &self.focus {
             let ids = parse_ids(focus)?;
-            let (lo, hi) =
-                query::bounds_of(session.document(), &ids).ok_or("focus objects have no bounds")?;
+            let (lo, hi) = session
+                .object_bounds_in(session.render_document(), &ids)
+                .ok_or("focus objects have no bounds")?;
             return Ok(camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect));
         }
         if let Some(center) = self.center {
@@ -1313,7 +1314,7 @@ fn transform_state(session: &Session) -> Value {
     let tool = session.transform_tool();
     json!({"settings": {"mode": transform_mode_name(tool.mode), "space": if tool.local {"local"} else {"world"}, "pivot": tool.pivot.map(|pivot| pivot.to_array()), "texture_lock": tool.texture_lock, "texture_scale_lock": tool.texture_scale_lock.unwrap_or(tool.texture_lock), "angle_step": tool.angle_step},
         "drag": session.transform_drag().map(|drag| json!({"handle": drag.handle.name(), "mode": transform_mode_name(Some(drag.mode)), "amount": drag.amount.to_array(), "pivot": drag.pivot.to_array(), "basis": drag.basis.to_cols_array_2d(), "camera": camera_json(&drag.camera)})),
-        "preview": session.transform_preview().map(|preview| { let presentation = preview.presentation(); json!({"display": {"primary": if presentation.operations.is_empty() { "identity" } else { presentation.primary.name() }, "operations": presentation.operations.iter().map(|operation| operation.name()).collect::<Vec<_>>(), "summary": presentation.summary}, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "reflection": preview.transform.reflection, "shear": preview.transform.shear.map(|shear| json!({"axis": (["x", "y", "z"][shear.axis]), "reference": (["x", "y", "z"][shear.reference]), "factor": shear.factor})), "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "texture_scale_lock": preview.transform.texture_scale_lock.unwrap_or(preview.transform.texture_lock), "bounds": bounds_json(query::bounds_of(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()} )})})
+        "preview": session.transform_preview().map(|preview| { let presentation = preview.presentation(); json!({"display": {"primary": if presentation.operations.is_empty() { "identity" } else { presentation.primary.name() }, "operations": presentation.operations.iter().map(|operation| operation.name()).collect::<Vec<_>>(), "summary": presentation.summary}, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "reflection": preview.transform.reflection, "shear": preview.transform.shear.map(|shear| json!({"axis": (["x", "y", "z"][shear.axis]), "reference": (["x", "y", "z"][shear.reference]), "factor": shear.factor})), "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "texture_scale_lock": preview.transform.texture_scale_lock.unwrap_or(preview.transform.texture_lock), "bounds": bounds_json(session.object_bounds_in(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()} )})})
 }
 
 fn area_matches(matches: &map_core::region::Selection) -> Value {
@@ -1986,6 +1987,13 @@ pub struct TieArgs {
 pub struct EntityArgs {
     /// Entity id; defaults to the single selected entity.
     pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectModelArgs {
+    pub path: String,
+    pub skin: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -4459,7 +4467,7 @@ impl EditorServer {
         ok(json!({
             "objects": ids.iter().map(|&id| summary(doc, id)).collect::<Vec<_>>(),
             "face_selection": face_state(&session),
-            "bounds": bounds_json(query::bounds_of(doc, &ids)),
+            "bounds": bounds_json(session.object_bounds_in(doc, &ids)),
         }))
     }
 
@@ -4605,6 +4613,36 @@ impl EditorServer {
                     )
                 })
         })
+    }
+
+    #[tool(
+        description = "Inspect a static-prop MDL44/48 mesh with VVD4/VTX7 LOD0 geometry, selected skin family, materials, counts and local bounds. CPU-only and read-only; does not initialize graphics or edit source. Unsupported/missing/malformed assets return a recoverable error. UI: model entity → Model details….",
+        annotations(read_only_hint = true)
+    )]
+    fn inspect_model(&self, Parameters(args): Parameters<InspectModelArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .inspect_model(&args.path, args.skin.unwrap_or(0))
+        })
+    }
+
+    #[tool(
+        description = "Inspect the selected/explicit model entity's shared viewport asset, skin and transformed bounds, displayed state and fallback reason. Reads the rendered draft, preserving source/history. Static-prop models, body0, scale1 and LOD0 are currently supported. UI: Model details….",
+        annotations(read_only_hint = true)
+    )]
+    fn inspect_entity_model(&self, Parameters(args): Parameters<EntityArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            session.inspect_entity_model(single_entity(&session, args.id.as_deref())?)
+        })
+    }
+
+    #[tool(
+        description = "Clear the bounded shared model asset cache and refresh viewport geometry/picks after external asset changes. No map/history changes; graphics remain lazy. UI: Model details… → Reload models."
+    )]
+    fn reload_model_assets(&self) -> ToolResult {
+        self.session().refresh_model_assets(Actor::Agent);
+        ok(json!({"reloaded":true}))
     }
 
     #[tool(
@@ -4965,7 +5003,7 @@ impl EditorServer {
             };
             Ok(json!({
                 "pivot": point(pivot),
-                "bounds": bounds_json(query::bounds_of(document, &ids)),
+                "bounds": bounds_json(session.object_bounds_in(document, &ids)),
                 "objects": ids.iter().map(|&id| summary(document, id)).collect::<Vec<_>>(),
                 "preview": args.preview, "state": transform_state(&session),
             }))

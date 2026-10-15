@@ -19,6 +19,42 @@ fn css_gameinfo() -> Option<PathBuf> {
 }
 
 #[test]
+fn decodes_css_static_model_geometry() {
+    let Some(gameinfo) = css_gameinfo() else {
+        eprintln!("CS:S not installed; skipping");
+        return;
+    };
+    let fs = GameFs::from_gameinfo(gameinfo).unwrap();
+    for path in [
+        "models/props_junk/wood_crate001a.mdl",
+        "models/props/cs_office/file_cabinet1.mdl",
+        "models/props_c17/oildrum001.mdl",
+    ] {
+        let stem = path.strip_suffix(".mdl").unwrap();
+        let read = |path: &str| {
+            fs.read_limited(path, source_formats::mdl::MAX_MODEL_BYTES)
+                .unwrap()
+                .unwrap()
+        };
+        let model = source_formats::model::Model::parse(
+            &read(path),
+            &read(&format!("{stem}.vvd")),
+            &read(&format!("{stem}.dx90.vtx")),
+        )
+        .unwrap_or_else(|error| panic!("{path}: {error}"));
+        assert!(!model.vertices.is_empty());
+        assert!(model.parts.iter().any(|part| !part.indices.is_empty()));
+        assert_eq!(model.skins.len(), model.header.skins);
+        eprintln!(
+            "{path}: {} vertices, {} meshes, {} skins",
+            model.vertices.len(),
+            model.parts.len(),
+            model.skins.len()
+        );
+    }
+}
+
+#[test]
 fn mounts_css_search_paths() {
     let Some(gameinfo) = css_gameinfo() else {
         eprintln!("CS:S not installed; skipping");

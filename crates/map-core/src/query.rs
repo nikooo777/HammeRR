@@ -1,6 +1,7 @@
 //! Read-only queries: picking and bounds.
 
 mod terrain;
+pub use terrain::intersects_box as ray_intersects_bounds;
 
 use glam::DVec3;
 use source_formats::vmf::{Entity, Solid};
@@ -103,11 +104,27 @@ pub fn point_entity_bounds(origin: DVec3) -> (DVec3, DVec3) {
 /// The nearest visible object along the ray. `include_solid` filters brushes,
 /// e.g. to skip tool brushes while they're hidden.
 pub fn pick(doc: &Document, ray: &Ray, include_solid: impl Fn(&Solid) -> bool) -> Option<Hit> {
-    pick_with_points(doc, ray, include_solid, |_, _, _| true, true)
+    pick_with_entity_filter(doc, ray, include_solid, |_| true)
+}
+
+pub fn pick_with_entity_filter(
+    doc: &Document,
+    ray: &Ray,
+    include_solid: impl Fn(&Solid) -> bool,
+    include_entity: impl Fn(&Entity) -> bool,
+) -> Option<Hit> {
+    pick_with_points(
+        doc,
+        ray,
+        include_solid,
+        |_, _, _| true,
+        true,
+        include_entity,
+    )
 }
 
 pub fn pick_face(doc: &Document, ray: &Ray, include_solid: impl Fn(&Solid) -> bool) -> Option<Hit> {
-    pick_with_points(doc, ray, include_solid, |_, _, _| true, false)
+    pick_with_points(doc, ray, include_solid, |_, _, _| true, false, |_| true)
 }
 
 pub fn pick_face_filtered(
@@ -116,7 +133,7 @@ pub fn pick_face_filtered(
     include_solid: impl Fn(&Solid) -> bool,
     include_face: impl Fn(&Solid, &source_formats::vmf::Side, DVec3) -> bool,
 ) -> Option<Hit> {
-    pick_with_points(doc, ray, include_solid, include_face, false)
+    pick_with_points(doc, ray, include_solid, include_face, false, |_| true)
 }
 
 fn pick_with_points(
@@ -125,6 +142,7 @@ fn pick_with_points(
     include_solid: impl Fn(&Solid) -> bool,
     include_face: impl Fn(&Solid, &source_formats::vmf::Side, DVec3) -> bool,
     include_points: bool,
+    include_entity: impl Fn(&Entity) -> bool,
 ) -> Option<Hit> {
     if !ray.origin.is_finite()
         || !ray.direction.is_finite()
@@ -158,7 +176,7 @@ fn pick_with_points(
         })
     };
     let test_point_entity = |entity: &Entity| {
-        if !include_points || !entity.solids.is_empty() {
+        if !include_points || !entity.solids.is_empty() || !include_entity(entity) {
             return None;
         }
         let (mins, maxs) = entity_bounds(entity)?;

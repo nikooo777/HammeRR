@@ -19,6 +19,8 @@ Select an entity to see its properties in the inspector. Common settings come fi
 
 Every entity dialog has a Cancel button and closes with Escape.
 
+Model entities can display mounted static meshes directly. See [Models](models.md) for **World Model**, **Skin** and **Model details…**.
+
 ## Lights and helpers
 
 Point lights are drawn as a light bulb. Spotlights and sunlight show direction helpers, and a selected spotlight shows its cone. These helpers are editor-only: they appear in the viewport and in agent renders, but add nothing to the compiled map.

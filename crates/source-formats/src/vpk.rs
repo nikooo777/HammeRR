@@ -203,6 +203,10 @@ impl Vpk {
 
     /// Reads a file by its normalized path (lowercase, `/` separators).
     pub fn read(&self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        self.read_limited(path, usize::MAX)
+    }
+
+    pub fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
         let Some(entry) = self.entries.get(path) else {
             return Ok(None);
         };
@@ -211,6 +215,9 @@ impl Vpk {
             .len()
             .checked_add(entry.length as usize)
             .ok_or_else(|| invalid("VPK entry length overflow"))?;
+        if total > maximum {
+            return Err(invalid("VPK entry exceeds the caller's byte read limit"));
+        }
         let mut data = entry.preload.to_vec();
         if entry.length > 0 {
             let (archive_path, start) = if entry.archive == DIR_ARCHIVE {
@@ -252,5 +259,32 @@ impl Vpk {
     /// The CRC32 recorded for a file, for integrity checks.
     pub fn crc(&self, path: &str) -> Option<u32> {
         self.entries.get(path).map(|e| e.crc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_reads_reject_declared_sizes_before_opening_an_archive() {
+        let pak = Vpk {
+            dir_path: "missing_dir.vpk".into(),
+            archive_stem: "missing".into(),
+            dir_data_start: 0,
+            entries: HashMap::from([(
+                "models/large.mdl".into(),
+                Entry {
+                    crc: 0,
+                    preload: Box::new([]),
+                    archive: 0,
+                    offset: 0,
+                    length: u32::MAX,
+                },
+            )]),
+        };
+        let error = pak.read_limited("models/large.mdl", 64).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("limit"));
     }
 }

@@ -31,6 +31,12 @@ pub(crate) struct Stats {
 
 pub(super) struct PropTriangle(Triangle);
 
+impl PropTriangle {
+    pub(super) fn new(points: [DVec3; 3]) -> Result<Self, String> {
+        Triangle::new(points).map(Self)
+    }
+}
+
 impl ShadowObject for PropTriangle {
     const MAX_OBJECTS: usize = MAX_TRIANGLES;
 
@@ -178,7 +184,7 @@ fn append(
             if triangles.len() >= MAX_TRIANGLES {
                 return Err("Static-prop shadows exceed the 262,144 world-space triangle limit; disable shadows on unnecessary props".into());
             }
-            triangles.push(PropTriangle(Triangle::new(points)?));
+            triangles.push(PropTriangle::new(points)?);
         }
     }
     Ok(degenerate)

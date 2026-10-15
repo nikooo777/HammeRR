@@ -444,7 +444,7 @@ impl Session {
         limit: usize,
     ) -> Result<crate::materials::Catalog, String> {
         if self.material_index.is_none() {
-            self.material_index = Some(self.search_materials("", usize::MAX));
+            self.material_index = Some(self.search_materials("", usize::MAX)?);
         }
         let used = self
             .document
@@ -2118,10 +2118,12 @@ impl Session {
     }
 
     /// Material names (as used in maps) containing `query`, case-insensitive.
-    pub fn search_materials(&self, query: &str, limit: usize) -> Vec<String> {
+    pub fn search_materials(&self, query: &str, limit: usize) -> Result<Vec<String>, String> {
         let query = query.to_ascii_lowercase();
-        self.game
+        Ok(self
+            .game
             .list("materials", ".vmt")
+            .map_err(|error| format!("Material catalog: {error}"))?
             .into_iter()
             .filter_map(|p| {
                 Some(
@@ -2132,7 +2134,7 @@ impl Session {
             })
             .filter(|name| name.contains(&query))
             .take(limit)
-            .collect()
+            .collect())
     }
 }
 

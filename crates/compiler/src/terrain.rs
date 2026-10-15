@@ -111,9 +111,6 @@ impl Map<'_> {
             let Some(disp) = &side.displacement else {
                 continue;
             };
-            if disp.normals.is_some() != disp.distances.is_some() {
-                return Err("Displacement normals and distances must be provided together".into());
-            }
             if self.terrains.len() + terrains.len() >= bsp::MAX_DISPLACEMENTS {
                 return Err("Native displacement patch limit exceeded".into());
             }
@@ -133,11 +130,12 @@ impl Map<'_> {
                 return Err("Displacement start position must match a base corner".into());
             }
             let mesh = DisplacementMesh::build(face, disp).map_err(|e| e.to_string())?;
-            if mesh.positions.iter().any(|point| {
-                !point.is_finite() || point.abs().max_element() > super::MAX_COMPILE_COORD
-            }) || mesh.alphas.iter().any(|alpha| !(*alpha as f32).is_finite())
+            if mesh
+                .positions
+                .iter()
+                .any(|point| point.abs().max_element() > super::MAX_COMPILE_COORD)
             {
-                return Err("Displacement vertices/alphas must be finite and positions must fit Source compile bounds".into());
+                return Err("Displacement positions must fit Source compile bounds".into());
             }
             let material = self.materials.load(&side.material)?;
             let material_info = self.materials.get(material);

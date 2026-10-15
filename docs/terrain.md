@@ -262,3 +262,18 @@ Limits: 1–16 faces, angles 0–180 degrees, world/func_detail terrain with sha
 ## Connected lighting
 
 Compatible full/half edges share lighting normals according to the selected border rules in the viewport and compiled map. See [Compile and play](compile-and-play.md#terrain-displacements) for the settings and limits.
+
+If terrain preparation fails, the viewport shows its error above the map and
+marks checked terrain geometry with a red wireframe, or its base face with an
+outline when the grid itself is invalid. The patch is omitted from shaded
+geometry. Open **Check map… → Run checks**, then **Select issue**
+or **Focus issue** to inspect it. Invalid imported border angles can be repaired
+with **Edit terrain… → Border smoothing → Automatic**.
+
+Terrain normals and distances must be supplied together. Nonfinite values,
+positions or blend weights that exceed native floating-point range, invalid
+smoothing fields and exceeded shared-normal limits are reported. They are not
+replaced with automatic, local or zero normals. Invalid patches are excluded
+before normal assembly for the remaining valid patches. Hiding an invalid patch
+removes its viewport warning. More than 2,048 visible world/detail patches
+exceeds the native shared-normal limit and leaves those patches unshaded.

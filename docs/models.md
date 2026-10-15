@@ -40,3 +40,7 @@ Limits: MDL versions 44/48 with VVD4 and DX90 VTX7 companions, LOD 0 and scale 1
 HammeRR limits each companion file to 64 MiB, the model cache to 128 entries and 256 MiB, and a scene to one million model vertices and six million model indices. Reference pose decoding supports up to 256 bones and three weights per vertex. Entities beyond those budgets retain helpers. These are editor resource limits. Inspection and rendering preserve map properties and Undo history.
 
 The browser edits a single point entity’s **World Model**, **Skin** and bodygroups. Other model-reference fields and batch-property drafts retain text entry. Finish geometry previews before browsing. If the map, selection, definitions or a geometry preview changes, cancel and reopen the browser. Folder searches list mounted paths, including unsupported assets; selecting one explains why it cannot be previewed. Catalog pages contain at most 100 models. Isolated images are limited to 64–1024 pixels per side.
+
+Content-directory read failures show **Model catalog unavailable** and clear the
+displayed results. Repair the content path and edit the search field to retry.
+Failed discovery is not cached as a successful empty result.

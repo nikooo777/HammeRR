@@ -12,6 +12,8 @@ use source_formats::vmf::{Color, Entity, Solid, Vmf};
 use crate::helpers::bulb_model;
 use crate::materials::{MaterialId, MaterialLibrary};
 
+mod terrain;
+
 const HELPER_SEGMENTS: usize = 16;
 
 /// Hammer's color for entities whose editor block has none.
@@ -27,6 +29,24 @@ fn lightmap_vertex(side: &source_formats::vmf::Side, point: DVec3) -> [f32; 3] {
         .map(|uv| [uv.x as f32, uv.y as f32, side.lightmap_scale as f32])
         .filter(|values| values.iter().all(|value| value.is_finite()))
         .unwrap_or([0.0, 0.0, -1.0])
+}
+
+fn displacement_lines(
+    mesh: &DisplacementMesh,
+    color: [u8; 4],
+) -> impl Iterator<Item = LineVertex> + '_ {
+    let mut edges = BTreeSet::new();
+    for [a, b, c] in mesh.triangles() {
+        for (a, b) in [(a, b), (b, c), (c, a)] {
+            edges.insert((a.min(b), a.max(b)));
+        }
+    }
+    edges.into_iter().flat_map(move |(a, b)| {
+        [a, b].map(|index| LineVertex {
+            position: mesh.positions[index].as_vec3().to_array(),
+            color,
+        })
+    })
 }
 
 #[repr(C)]
@@ -67,6 +87,7 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub issues: Vec<SceneIssue>,
     pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
@@ -79,6 +100,25 @@ pub struct SceneMesh {
     pub mins: Vec3,
     pub maxs: Vec3,
     pub stats: SceneStats,
+}
+
+#[derive(Debug, Clone)]
+pub struct SceneIssue {
+    pub face: FaceId,
+    pub message: String,
+}
+
+impl SceneIssue {
+    pub fn description(&self) -> String {
+        format!(
+            "Terrain face {} on brush {}: {}",
+            self.face.side, self.face.solid, self.message
+        )
+    }
+}
+
+pub fn terrain_issues(vmf: &Vmf) -> Vec<SceneIssue> {
+    terrain::prepare(vmf).issues
 }
 
 #[derive(Debug, Clone)]
@@ -104,94 +144,13 @@ struct Builder<'a> {
     stats: SceneStats,
     light_targets: map_core::light::Targets<'a>,
     displacements: HashMap<FaceId, Displacement>,
+    terrain_geometry: HashMap<u32, Result<BrushGeometry, String>>,
+    unshaded_terrain: HashMap<FaceId, DisplacementMesh>,
 }
 
 struct Displacement {
     mesh: DisplacementMesh,
     normals: Vec<[f64; 3]>,
-}
-
-fn local_normals(mesh: &DisplacementMesh) -> Vec<[f64; 3]> {
-    source_formats::bsp::DisplacementInfo {
-        power: (mesh.size - 1).ilog2() as i32,
-        ..Default::default()
-    }
-    .vertex_normals(
-        &mesh
-            .positions
-            .iter()
-            .map(|point| point.to_array())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap_or_else(|_| vec![[0.0; 3]; mesh.positions.len()])
-}
-
-fn world_displacements(vmf: &Vmf) -> HashMap<FaceId, Displacement> {
-    use map_core::displacement::neighbors::{self, SurfaceGrid};
-    let mut meshes = Vec::new();
-    for solid in vmf
-        .world
-        .solids
-        .iter()
-        .chain(
-            vmf.entities
-                .iter()
-                .filter(|entity| !entity.hidden && entity.classname() == Some("func_detail"))
-                .flat_map(|entity| &entity.solids),
-        )
-        .filter(|solid| !solid.hidden && solid.sides.iter().any(|side| side.displacement.is_some()))
-    {
-        let Ok(brush) = BrushGeometry::from_solid(solid) else {
-            continue;
-        };
-        for face in &brush.faces {
-            let side = &solid.sides[face.side];
-            if let Some(disp) = &side.displacement
-                && let Ok(mesh) = DisplacementMesh::build(face, disp)
-            {
-                if meshes.len() == source_formats::bsp::MAX_DISPLACEMENTS {
-                    return HashMap::new();
-                }
-                meshes.push((
-                    FaceId {
-                        solid: solid.id,
-                        side: side.id,
-                    },
-                    mesh,
-                    map_core::displacement::smoothing::angle(disp).unwrap_or(None),
-                ));
-            }
-        }
-    }
-    let grids = meshes
-        .iter()
-        .map(|(_, mesh, _)| SurfaceGrid {
-            power: (mesh.size - 1).ilog2(),
-            corners: [
-                0,
-                (mesh.size - 1) * mesh.size,
-                mesh.size * mesh.size - 1,
-                mesh.size - 1,
-            ]
-            .map(|index| mesh.base_positions[index].as_vec3().as_dvec3()),
-            positions: &mesh.positions,
-        })
-        .collect::<Vec<_>>();
-    let angles = meshes
-        .iter()
-        .map(|(_, _, angle)| *angle)
-        .collect::<Vec<_>>();
-    let normals = neighbors::find_spans(&grids, &mut |_| Ok(())).and_then(|links| {
-        neighbors::vertex_normals_with_smoothing(&grids, &links.pairs, &angles, &mut |_| Ok(()))
-    });
-    let mut normals = normals.unwrap_or_default().into_iter();
-    meshes
-        .into_iter()
-        .map(|(face, mesh, _)| {
-            let normals = normals.next().unwrap_or_else(|| local_normals(&mesh));
-            (face, Displacement { mesh, normals })
-        })
-        .collect()
 }
 
 impl Builder<'_> {
@@ -223,7 +182,11 @@ impl Builder<'_> {
 
     fn add_solid(&mut self, solid: &Solid, selected: bool) {
         self.stats.brushes += 1;
-        let Ok(brush) = BrushGeometry::from_solid(solid) else {
+        let geometry = match self.terrain_geometry.remove(&solid.id) {
+            Some(geometry) => geometry,
+            None => BrushGeometry::from_solid(solid).map_err(|error| error.to_string()),
+        };
+        let Ok(brush) = geometry else {
             self.stats.invalid_brushes += 1;
             return;
         };
@@ -244,20 +207,18 @@ impl Builder<'_> {
             let uv = |p: DVec3| (texel_uv(side, p) / size.truncate()).as_vec2().to_array();
 
             match (&side.displacement, has_displacement) {
-                (Some(disp), _) => {
-                    let displacement = self
-                        .displacements
-                        .remove(&FaceId {
-                            solid: solid.id,
-                            side: side.id,
-                        })
-                        .or_else(|| {
-                            DisplacementMesh::build(face, disp).ok().map(|mesh| {
-                                let normals = local_normals(&mesh);
-                                Displacement { mesh, normals }
-                            })
-                        });
+                (Some(_), _) => {
+                    let id = FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    };
+                    let displacement = self.displacements.remove(&id);
                     let Some(Displacement { mesh, normals }) = displacement else {
+                        if let Some(mesh) = self.unshaded_terrain.remove(&id) {
+                            self.lines.extend(displacement_lines(&mesh, SELECTED_EDGE));
+                        } else {
+                            self.push_loop(face.vertices.iter().map(|point| point.as_vec3()));
+                        }
                         continue;
                     };
                     self.stats.displacements += 1;
@@ -366,23 +327,12 @@ impl Builder<'_> {
     }
 
     fn push_displacement_wire(&mut self, mesh: &DisplacementMesh, tool: bool) {
-        let mut edges = BTreeSet::new();
-        for [a, b, c] in mesh.triangles() {
-            for (a, b) in [(a, b), (b, c), (c, a)] {
-                edges.insert((a.min(b), a.max(b)));
-            }
-        }
         let lines = if tool {
             &mut self.tool_wire_lines
         } else {
             &mut self.wire_lines
         };
-        for (a, b) in edges {
-            lines.extend([a, b].map(|index| LineVertex {
-                position: mesh.positions[index].as_vec3().to_array(),
-                color: WIRE_EDGE,
-            }));
-        }
+        lines.extend(displacement_lines(mesh, WIRE_EDGE));
     }
 
     fn add_displacement(
@@ -843,6 +793,7 @@ impl SceneMesh {
         overlays: &[FaceOverlay],
         models: &[crate::models::Instance],
     ) -> Self {
+        let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
             models,
             overlays,
@@ -855,7 +806,9 @@ impl SceneMesh {
             wire_lines: Vec::new(),
             tool_wire_lines: Vec::new(),
             stats: SceneStats::default(),
-            displacements: world_displacements(vmf),
+            displacements: terrain.meshes,
+            terrain_geometry: terrain.geometries,
+            unshaded_terrain: terrain.unshaded,
             light_targets: {
                 let mut targets = map_core::light::Targets::new();
                 for entity in vmf.entities.iter().filter(|entity| !entity.hidden) {
@@ -908,6 +861,7 @@ impl SceneMesh {
             indices.extend(list);
         }
         Self {
+            issues: terrain.issues,
             skybox: vmf
                 .world
                 .properties
@@ -925,6 +879,16 @@ impl SceneMesh {
             maxs,
             stats,
         }
+    }
+
+    pub fn issue_summary(&self) -> String {
+        self.issues.first().map_or_else(String::new, |issue| {
+            let mut summary = issue.description();
+            if self.issues.len() > 1 {
+                summary.push_str(&format!(" ({} more preview issues)", self.issues.len() - 1));
+            }
+            summary
+        })
     }
 
     pub fn set_leak_path(&mut self, points: &[DVec3]) {

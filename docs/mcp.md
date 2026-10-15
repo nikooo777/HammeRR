@@ -524,3 +524,19 @@ face IDs, shared with **Check map…**. Neither operation edits source or histor
 required by compilation and preserve prior BSPs. Absent content is separately
 reported; external asset repairs require rerunning checks, and cached viewport
 materials require a new editor Session until general material reload exists.
+
+Directory lookup and scanning failures propagate through `search_materials`,
+`browse_materials`, `browse_models` and `browse_sounds`. A failed catalog load
+remains retryable after repairing the path. A genuine missing file may be
+resolved from the next configured mount; an I/O failure cannot silently select
+that mount instead. `run_map_checks` reports `asset_scan_failed` and skips
+existence-based conclusions when discovery fails.
+
+`render_view` includes `preview_issues` in its metadata, each with a `face`
+(`solid`, `side`) and `message`. These describe the same terrain preparation
+errors shown above the human viewport, including cached renders. Invalid
+patches retain checked geometry as diagnostic wireframes, or base-face outlines
+when their grids cannot be built, with no replacement shading.
+`run_map_checks` / `get_map_checks` expose the underlying errors without a GPU;
+shared-normal failures use `terrain_preview`. Checking and rendering preserve
+imported data and history.

@@ -19,4 +19,8 @@ Limits: isolated previews require FFmpeg and ffplay on `PATH`. Browsing, header 
 
 The browser reads the active game's `game_sounds_manifest.txt`, including `preload_file` and `precache_file` entries. **Used in this map** matches entity fields declared as sounds in the loaded FGD. Finish geometry previews before browsing. Changed maps, selection, definitions, sound assets or geometry previews invalidate pending choices. Reopening the same field resumes a valid pending choice, including one prepared by an agent. An unseen agent change at **Use sound** is shown for review before it can be applied.
 
+Content-directory read failures show **Sound catalog unavailable** and clear the
+displayed results. Repair the content path and edit the search field to retry.
+These errors are separate from the manifest/script warnings above.
+
 HammeRR caps source audio files at 16 MiB, decoded previews at 2 MiB, decoding at five seconds, catalog pages at 100 entries, mounted audio files at 100,000, manifest files at 128, and script entries at 32,768 total (8,192 per file). Script files are limited to 2 MiB each and 32 MiB together, with 128 waves per entry and 32 nested blocks. These are application resource limits. Sound browsing, audition and exported agent audio preserve map source, selection, camera and Undo history.

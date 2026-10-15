@@ -1705,6 +1705,7 @@ export component AppWindow inherits Window {
     in property <string> map-title: "untitled.vmf";
     in property <string> message;
     in property <string> stats;
+    in property <string> preview-error;
     in property <string> camera;
     in property <string> mcp-status;
     in property <bool> flying;
@@ -2060,6 +2061,18 @@ export component AppWindow inherits Window {
                 Text { text: root.compile-label; vertical-alignment: center; horizontal-stretch: 1; color: #dce2ec; }
                 Button { text: "Build details…"; clicked => { root.build-status(); } }
                 if root.compiling: Button { text: "Cancel build"; enabled: root.compile-cancellable; clicked => { root.cancel-build(); } }
+            }
+        }
+
+        if root.preview-error != "": Rectangle {
+            min-height: 42px;
+            background: #392027;
+            HorizontalLayout {
+                padding: 7px;
+                padding-left: 14px;
+                spacing: 10px;
+                Text { text: root.preview-error; color: #ffd4d4; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
+                Button { text: "Check map…"; clicked => { root.map-checks(); } }
             }
         }
 

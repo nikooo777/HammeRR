@@ -53,10 +53,12 @@ pub(super) struct Catalog {
 }
 
 pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
-    let mut files = game.list("sound", ".wav");
-    files.extend(game.list("sound", ".mp3"));
-    files.sort();
-    files.dedup();
+    let files = game
+        .list("sound", "")
+        .map_err(|error| format!("Sound catalog: {error}"))?
+        .into_iter()
+        .filter(|path| path.ends_with(".wav") || path.ends_with(".mp3"))
+        .collect::<Vec<_>>();
     if files.len() > MAX_FILES {
         return Err("Sound catalog exceeds 100,000 mounted files".into());
     }

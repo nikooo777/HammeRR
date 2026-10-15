@@ -95,30 +95,39 @@ impl Session {
         for side in vmf.solids().flat_map(|solid| &solid.sides) {
             *face_counts.entry(side.id).or_default() += 1;
         }
-        let asset_checks = self.game_error.is_none();
+        let mut asset_checks = self.game_error.is_none();
         let mut material_errors = BTreeMap::<String, Option<String>>::new();
-        let materials = if asset_checks {
-            self.game
-                .list("materials", ".vmt")
-                .into_iter()
-                .collect::<BTreeSet<_>>()
+        let (materials, models) = if asset_checks {
+            match self.game.list("materials", ".vmt").and_then(|materials| {
+                self.game
+                    .list("models", ".mdl")
+                    .map(|models| (materials, models))
+            }) {
+                Ok((materials, models)) => (
+                    materials.into_iter().collect::<BTreeSet<_>>(),
+                    models.into_iter().collect::<BTreeSet<_>>(),
+                ),
+                Err(error) => {
+                    asset_checks = false;
+                    result.add(
+                        Severity::Error,
+                        "asset_scan_failed",
+                        &Location::default(),
+                        format!("Game content could not be inspected: {error}"),
+                        None,
+                    );
+                    (BTreeSet::new(), BTreeSet::new())
+                }
+            }
         } else {
-            BTreeSet::new()
-        };
-        let models = if asset_checks {
-            self.game
-                .list("models", ".mdl")
-                .into_iter()
-                .collect::<BTreeSet<_>>()
-        } else {
-            BTreeSet::new()
+            (BTreeSet::new(), BTreeSet::new())
         };
         if !asset_checks {
             result.add(
                 Severity::Warning,
                 "assets_unchecked",
                 &Location::default(),
-                "Game content is unavailable. Material and model existence checks were skipped.",
+                "Game content could not be fully inspected. Material and model existence checks were skipped.",
                 None,
             );
         }
@@ -382,6 +391,39 @@ impl Session {
                     }
                 }
             }
+        }
+        for issue in render::scene::terrain_issues(vmf) {
+            if result.issues.iter().any(|existing| {
+                existing.location.face == Some(issue.face)
+                    && matches!(
+                        existing.code,
+                        "invalid_displacement" | "displacement_smoothing" | "invalid_brush"
+                    )
+            }) {
+                continue;
+            }
+            let owner = self.document.owner_of_solid(issue.face.solid);
+            let location = Location {
+                object: owner,
+                face: Some(issue.face),
+                ambiguous: owner.is_none_or(|owner| {
+                    let id = match owner {
+                        ObjectId::Solid(id) | ObjectId::Entity(id) => id,
+                    };
+                    id == 0 || counts[&id] != 1
+                }) || issue.face.solid == 0
+                    || counts[&issue.face.solid] != 1
+                    || issue.face.side == 0
+                    || face_counts[&issue.face.side] != 1,
+                ..Default::default()
+            };
+            result.add(
+                Severity::Error,
+                "terrain_preview",
+                &location,
+                issue.message,
+                None,
+            );
         }
         spawns::check(
             vmf,

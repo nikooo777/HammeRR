@@ -133,6 +133,7 @@ pub struct MaterialLibrary {
     generation: u64,
     materials: Vec<MaterialInfo>,
     by_name: HashMap<String, MaterialId>,
+    unavailable_model: Option<MaterialId>,
     skyboxes: HashMap<String, Arc<crate::sky::Skybox>>,
 }
 
@@ -142,6 +143,7 @@ impl Default for MaterialLibrary {
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             materials: vec![MaterialInfo::untextured(Self::EDITOR_NAME)],
             by_name: HashMap::from([(Self::EDITOR_NAME.to_owned(), Self::EDITOR)]),
+            unavailable_model: None,
             skyboxes: HashMap::new(),
         }
     }
@@ -170,8 +172,8 @@ impl MaterialLibrary {
 
     pub fn reload(&mut self, fs: &GameFs) -> ReloadReport {
         let mut report = ReloadReport::default();
-        for material in self.materials.iter_mut().skip(1) {
-            if material.helper.is_some() {
+        for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
+            if material.helper.is_some() || Some(id) == self.unavailable_model {
                 continue;
             }
             *material = MaterialInfo::load(fs, &material.name);
@@ -198,6 +200,34 @@ impl MaterialLibrary {
         }
         self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
         report
+    }
+
+    pub fn reload_with_names(
+        &mut self,
+        fs: &GameFs,
+        names: impl IntoIterator<Item = String>,
+    ) -> ReloadReport {
+        for name in names {
+            let key = name.to_ascii_lowercase();
+            if !self.by_name.contains_key(&key) {
+                let id = self.materials.len();
+                self.materials.push(MaterialInfo::untextured(&key));
+                self.by_name.insert(key, id);
+            }
+        }
+        self.reload(fs)
+    }
+
+    pub(crate) fn unavailable_model(&mut self) -> MaterialId {
+        if let Some(id) = self.unavailable_model {
+            return id;
+        }
+        let mut material = MaterialInfo::untextured("Unavailable model materials");
+        material.missing = true;
+        let id = self.materials.len();
+        self.materials.push(material);
+        self.unavailable_model = Some(id);
+        id
     }
 
     pub fn skybox(&mut self, fs: &GameFs, name: &str) -> Arc<crate::sky::Skybox> {

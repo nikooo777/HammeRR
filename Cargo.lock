@@ -4057,6 +4057,7 @@ dependencies = [
  "png",
  "pollster 1.0.1",
  "source-formats",
+ "tempfile",
  "wgpu",
 ]
 

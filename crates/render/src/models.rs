@@ -1,5 +1,8 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{
+    Arc, RwLock, RwLockReadGuard,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use glam::{DMat3, DQuat, DVec3, EulerRot};
 use map_core::{
@@ -15,6 +18,9 @@ use source_formats::{
 const MAX_CACHE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_CACHE_ENTRIES: usize = 128;
 const MAX_MATERIAL_LOOKUPS: usize = 65_536;
+const MAX_MATERIAL_ERROR_CHARS: usize = 1024;
+const MATERIAL_BINDING_RESERVE_BYTES: usize = MAX_MATERIAL_ERROR_CHARS * 4;
+const MATERIAL_BINDINGS_ERROR: &str = "Model material state was interrupted; reload models";
 pub const MAX_SCENE_VERTICES: usize = 1_000_000;
 pub const MAX_SCENE_INDICES: usize = 6_000_000;
 
@@ -25,15 +31,66 @@ mod tests;
 pub struct Asset {
     pub path: String,
     pub model: Model,
-    pub materials: Vec<String>,
+    materials: RwLock<Result<Vec<String>, String>>,
+    material_bytes: AtomicUsize,
+}
+
+#[derive(Debug)]
+pub struct MaterialBindings<'a>(RwLockReadGuard<'a, Result<Vec<String>, String>>);
+
+impl std::ops::Deref for MaterialBindings<'_> {
+    type Target = [String];
+
+    fn deref(&self) -> &Self::Target {
+        match &*self.0 {
+            Ok(materials) => materials,
+            Err(_) => unreachable!(),
+        }
+    }
+}
+
+fn material_binding_bytes(materials: &Result<Vec<String>, String>) -> usize {
+    match materials {
+        Ok(materials) => {
+            materials.capacity() * std::mem::size_of::<String>()
+                + materials.iter().map(String::capacity).sum::<usize>()
+        }
+        Err(error) => error.capacity(),
+    }
+    .max(MATERIAL_BINDING_RESERVE_BYTES)
 }
 
 impl Asset {
+    fn new(path: String, model: Model, materials: Result<Vec<String>, String>) -> Self {
+        let material_bytes = AtomicUsize::new(material_binding_bytes(&materials));
+        Self {
+            path,
+            model,
+            materials: RwLock::new(materials),
+            material_bytes,
+        }
+    }
+
+    pub fn materials(&self) -> Result<MaterialBindings<'_>, String> {
+        let materials = self
+            .materials
+            .read()
+            .map_err(|_| MATERIAL_BINDINGS_ERROR.to_owned())?;
+        if let Err(error) = &*materials {
+            return Err(error.clone());
+        }
+        Ok(MaterialBindings(materials))
+    }
+
     pub fn memory_bytes(&self) -> usize {
+        self.memory_bytes_with(self.material_bytes.load(Ordering::Relaxed))
+    }
+
+    fn memory_bytes_with(&self, material_bytes: usize) -> usize {
         self.model.memory_bytes() + std::mem::size_of::<Self>() - std::mem::size_of::<Model>()
+            + 2 * std::mem::size_of::<usize>()
             + self.path.capacity()
-            + self.materials.capacity() * std::mem::size_of::<String>()
-            + self.materials.iter().map(String::capacity).sum::<usize>()
+            + material_bytes
     }
 }
 
@@ -76,6 +133,16 @@ fn load(fs: &GameFs, path: &str) -> Result<Asset, String> {
     let vvd = read(fs, &format!("{stem}.vvd"))?;
     let vtx = read(fs, &format!("{stem}.dx90.vtx"))?;
     let model = Model::parse(&mdl, &vvd, &vtx).map_err(|error| format!("{path}: {error}"))?;
+    let materials = resolve_materials(fs, &model);
+    Ok(Asset::new(path.into(), model, materials))
+}
+
+fn resolve_materials(fs: &GameFs, model: &Model) -> Result<Vec<String>, String> {
+    resolve_materials_checked(fs, model)
+        .map_err(|error| error.chars().take(MAX_MATERIAL_ERROR_CHARS).collect())
+}
+
+fn resolve_materials_checked(fs: &GameFs, model: &Model) -> Result<Vec<String>, String> {
     let mut materials = Vec::with_capacity(model.materials.len());
     let mut resolved = BTreeMap::<String, String>::new();
     let mut work = 0;
@@ -104,7 +171,7 @@ fn load(fs: &GameFs, path: &str) -> Result<Asset, String> {
             }
             if fs
                 .contains(&format!("materials/{candidate}.vmt"))
-                .map_err(|error| error.to_string())?
+                .map_err(|error| format!("Model material {candidate}: {error}"))?
             {
                 path = candidate;
                 break;
@@ -113,11 +180,15 @@ fn load(fs: &GameFs, path: &str) -> Result<Asset, String> {
         resolved.insert(name.to_owned(), path.clone());
         materials.push(path);
     }
-    Ok(Asset {
-        path: path.into(),
-        model,
-        materials,
-    })
+    Ok(materials)
+}
+
+#[derive(Default)]
+pub struct MaterialReloadReport {
+    pub refreshed: usize,
+    pub changed: usize,
+    pub materials: Vec<String>,
+    pub failures: Vec<(String, String)>,
 }
 
 impl Library {
@@ -161,6 +232,44 @@ impl Library {
             },
         );
         result
+    }
+
+    pub fn reload_materials(&mut self, fs: &GameFs) -> MaterialReloadReport {
+        let mut report = MaterialReloadReport::default();
+        let mut names = BTreeSet::new();
+        for (path, entry) in &mut self.entries {
+            let Ok(asset) = &entry.result else {
+                continue;
+            };
+            report.refreshed += 1;
+            let mut materials = resolve_materials(fs, &asset.model);
+            let mut bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+            if self.bytes - entry.bytes + bytes > MAX_CACHE_BYTES {
+                materials = Err("Model material resolution exceeds the cache budget".into());
+                bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+            }
+            let Ok(mut bindings) = asset.materials.write() else {
+                report
+                    .failures
+                    .push((path.clone(), MATERIAL_BINDINGS_ERROR.into()));
+                continue;
+            };
+            match &materials {
+                Ok(materials) => names.extend(materials.iter().cloned()),
+                Err(error) => report.failures.push((path.clone(), error.clone())),
+            }
+            if materials != *bindings {
+                report.changed += 1;
+                self.bytes = self.bytes - entry.bytes + bytes;
+                entry.bytes = bytes;
+                asset
+                    .material_bytes
+                    .store(material_binding_bytes(&materials), Ordering::Relaxed);
+                *bindings = materials;
+            }
+        }
+        report.materials = names.into_iter().collect();
+        report
     }
 
     pub fn clear(&mut self) {

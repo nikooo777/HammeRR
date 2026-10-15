@@ -12,6 +12,8 @@ pub struct Failure {
 pub struct Report {
     pub generation: u64,
     pub reloaded: usize,
+    pub models_refreshed: usize,
+    pub models_changed: usize,
     pub failed: usize,
     pub failures: Vec<Failure>,
     pub summary: String,
@@ -23,7 +25,13 @@ impl Session {
     }
 
     pub fn reload_material_assets(&mut self, actor: Actor) -> Report {
-        let mut result = self.materials.reload(&self.game);
+        let models = self.models.borrow_mut().reload_materials(&self.game);
+        let mut result = self
+            .materials
+            .reload_with_names(&self.game, models.materials);
+        for (path, error) in models.failures {
+            result.record_failure(path, error);
+        }
         self.material_index = None;
         match self.search_materials("", usize::MAX) {
             Ok(names) => self.material_index = Some(names),
@@ -41,12 +49,14 @@ impl Session {
             .materials_reloaded(previous_scene, self.scene_serial);
         self.view_serial += 1;
         let summary = format!(
-            "Reloaded {} cached materials · {} unavailable previews",
-            result.reloaded, result.failed
+            "Reloaded {} cached materials · {} model material sets refreshed · {} unavailable previews",
+            result.reloaded, models.refreshed, result.failed
         );
         let report = Report {
             generation: self.materials.generation(),
             reloaded: result.reloaded,
+            models_refreshed: models.refreshed,
+            models_changed: models.changed,
             failed: result.failed,
             failures: result
                 .failures
@@ -209,6 +219,127 @@ mod tests {
         std::fs::remove_file(folder.join("new.vmt")).unwrap();
         session.reload_material_assets(Actor::User);
         assert_eq!(session.material_catalog("", "all", 0, 36).unwrap().total, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn model_material_failures_preserve_geometry_choices_and_owned_previews_until_repaired() {
+        use source_formats::gamefs::{Mount, MountedPath};
+        use std::{collections::BTreeMap, sync::Arc};
+
+        for actor in [Actor::User, Actor::Agent] {
+            let Ok(mut game) = crate::startup::mount_game(None) else {
+                return;
+            };
+            let directory = tempfile::tempdir().unwrap();
+            game.mounts.insert(
+                0,
+                MountedPath {
+                    ids: vec!["game".into()],
+                    mount: Mount::Directory(directory.path().into()),
+                },
+            );
+            let mut session = Session::new(Ok(game));
+            let path = "models/kleiner.mdl";
+            let map_core::ObjectId::Entity(id) = session
+                .create_entity(
+                    actor,
+                    "prop_dynamic",
+                    Some(DVec3::ZERO),
+                    BTreeMap::from([("model".into(), path.into())]),
+                )
+                .unwrap()
+            else {
+                panic!()
+            };
+            let initial = session
+                .models
+                .borrow_mut()
+                .get(&session.game, path)
+                .unwrap();
+            let initial_materials = initial.materials().unwrap().to_vec();
+            let before = session.inspect_entity_model(id).unwrap();
+            let guide = session.show_model_attachment(id, 1).unwrap();
+            let choice = session.begin_model_choice(id).unwrap()["token"]
+                .as_u64()
+                .unwrap();
+            session.choose_model(choice, path, 0).unwrap();
+            let source = session.document.vmf().clone();
+            let history = session
+                .document
+                .undo_labels()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let camera = session.camera();
+            let materials = directory.path().join("materials");
+            std::fs::create_dir(&materials).unwrap();
+            let component = initial.model.material_directories[0]
+                .split('/')
+                .next()
+                .unwrap();
+            assert!(!component.is_empty());
+            std::os::unix::fs::symlink(component, materials.join(component)).unwrap();
+            let report = session.reload_material_assets(actor);
+            assert!(report.models_changed > 0);
+            assert!(
+                report
+                    .failures
+                    .iter()
+                    .any(|failure| failure.material == path)
+            );
+            let current = session
+                .models
+                .borrow_mut()
+                .get(&session.game, path)
+                .unwrap();
+            assert!(Arc::ptr_eq(&initial, &current));
+            assert!(current.materials().is_err());
+            let failed = session.inspect_entity_model(id).unwrap();
+            assert_eq!(failed["displayed"], true);
+            assert_eq!(failed["world_bounds"], before["world_bounds"]);
+            assert!(failed["asset"]["material_error"].is_string());
+            assert!(session.model_choice(choice).unwrap()["asset"]["material_error"].is_string());
+            assert_eq!(session.model_attachment_guide(), guide);
+            let (scene, _, _) = session.model_preview_scene(path, 0, 0, 1.5).unwrap();
+            assert_eq!(scene.stats.model_entities, 1);
+            assert!(scene.stats.missing_materials > 0);
+            std::fs::remove_file(materials.join(component)).unwrap();
+            session.reload_material_assets(actor);
+            let repaired = session
+                .models
+                .borrow_mut()
+                .get(&session.game, path)
+                .unwrap();
+            assert!(Arc::ptr_eq(&initial, &repaired));
+            assert_eq!(&*repaired.materials().unwrap(), initial_materials);
+            assert!(session.model_choice(choice).unwrap()["asset"]["material_error"].is_null());
+            assert_eq!(session.model_attachment_guide(), guide);
+            session
+                .select(&[], super::super::SelectMode::Replace)
+                .unwrap();
+            session.reload_material_assets(actor);
+            assert!(session.model_choice(choice).is_err());
+            assert_eq!(session.model_attachment_guide()["valid"], false);
+            session
+                .preview_transform(
+                    actor,
+                    &[map_core::ObjectId::Entity(id)],
+                    Transform {
+                        translation: DVec3::X * 32.0,
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+            let draft = session.render_document().vmf().clone();
+            session.reload_material_assets(actor);
+            assert_eq!(session.render_document().vmf(), &draft);
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.document.undo_labels().collect::<Vec<_>>(), history);
+            assert_eq!(session.camera(), camera);
+            session.commit_transform_preview(actor).unwrap();
+            assert_eq!(session.document.vmf(), &draft);
+        }
     }
 }
 

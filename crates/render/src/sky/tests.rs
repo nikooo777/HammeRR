@@ -59,7 +59,7 @@ impl Drop for Fixture {
 fn six_faces_resolve_patch_materials_and_distinct_sizes_without_editor_substitutes() {
     let fixture = Fixture::new();
     fixture.faces();
-    fixture.write("materials/skybox/testrt.vmt", "patch { include skybox/testbk insert { $basetexture skybox/missing } replace { $basetexture skybox/testrt } }");
+    fixture.write("materials/skybox/testrt.vmt", "patch { include materials/skybox/testbk.vmt insert { $basetexture skybox/missing } replace { $basetexture skybox/testrt } }");
     let skybox = Skybox::load(&fixture.fs, " TEST ");
     assert!(skybox.ready(), "{}", skybox.summary());
     for (index, face) in skybox.faces.iter().enumerate() {
@@ -117,7 +117,12 @@ fn scene_retains_sky_geometry_and_resolves_custom_compile_sky_materials() {
     assert!(mesh.skybox.as_ref().unwrap().ready());
     assert_eq!(mesh.indices.len(), 36);
     assert!(library.get(mesh.batches[0].material).sky);
+    assert!(library.get(mesh.batches[0].material).tool);
     assert_eq!(&before, document.vmf());
+    for name in ["tools/toolsskybox", "tools/toolsskybox2d"] {
+        let missing_tool = crate::MaterialInfo::load(&fixture.fs, name);
+        assert!(missing_tool.sky && missing_tool.tool);
+    }
 }
 
 #[test]

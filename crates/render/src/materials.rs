@@ -49,15 +49,17 @@ impl MaterialInfo {
         let (width, height) = base
             .as_ref()
             .map_or((FALLBACK_SIZE, FALLBACK_SIZE), |v| (v.width, v.height));
+        let sky = material.as_ref().is_some_and(|material| {
+            material.compile_semantics().surface & source_formats::bsp::surf::SKY != 0
+        }) || matches!(name.as_str(), "tools/toolsskybox" | "tools/toolsskybox2d");
 
         Self {
             helper: None,
             missing: base.is_none(),
             alpha_test: material.as_ref().is_some_and(Material::alpha_test),
             translucent: material.as_ref().is_some_and(Material::translucent),
-            tool: material.as_ref().is_some_and(Material::is_tool),
-            sky: material.as_ref().is_some_and(|material| material.compile_semantics().surface & source_formats::bsp::surf::SKY != 0)
-                || matches!(name.as_str(), "tools/toolsskybox" | "tools/toolsskybox2d"),
+            tool: sky || material.as_ref().is_some_and(Material::is_tool),
+            sky,
             name,
             base,
             blend,

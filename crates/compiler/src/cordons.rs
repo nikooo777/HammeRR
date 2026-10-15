@@ -17,11 +17,7 @@ const MAX_SIDES_PER_BRUSH: usize = 128;
 const SHELL_MATERIAL: &str = "tools/toolsblack";
 const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
 const UNSUPPORTED: &[&str] = &[
-    "info_overlay",
     "info_overlay_transition",
-    "func_areaportal",
-    "func_areaportalwindow",
-    "func_occluder",
     "func_instance",
     "func_viscluster",
 ];
@@ -126,6 +122,48 @@ fn check_liquid_volume(
     Ok(())
 }
 
+fn selected_helper(
+    entity: &Entity,
+    bounds: compile_region::Bounds,
+    report: &mut Report,
+    control: &Control,
+) -> Result<bool, String> {
+    let classname = entity.classname().unwrap_or("brush helper");
+    let (mut mins, mut maxs) = (DVec3::MAX, DVec3::MIN);
+    let mut visible = false;
+    for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
+        control.checkpoint()?;
+        visible = true;
+        if solid.sides.len() > MAX_SIDES_PER_BRUSH {
+            return Err(format!(
+                "Compile region supports at most {MAX_SIDES_PER_BRUSH} sides per source brush (entity:{}, solid:{})",
+                entity.id, solid.id
+            ));
+        }
+        let geometry = origins::checked_geometry(solid, report).ok_or_else(|| {
+            format!(
+                "Compile region cannot determine the complete bounds of an invalid {classname} (entity:{}, solid:{})",
+                entity.id, solid.id
+            )
+        })?;
+        mins = mins.min(geometry.mins);
+        maxs = maxs.max(geometry.maxs);
+    }
+    if !visible {
+        return Ok(entity.solids.is_empty());
+    }
+    if !bounds.intersects(mins, maxs) {
+        return Ok(false);
+    }
+    if !bounds.contains(mins) || !bounds.contains(maxs) {
+        return Err(format!(
+            "{classname} crosses a compile-region boundary; include every visible brush in the helper or disable the region (entity:{})",
+            entity.id
+        ));
+    }
+    Ok(true)
+}
+
 fn origin(entity: &Entity) -> Result<Option<DVec3>, String> {
     let point = entity.origin();
     if entity.properties.get("origin").is_some()
@@ -191,7 +229,20 @@ pub(super) fn prepare<'a>(
                 entity.id
             ));
         }
+        if classname.eq_ignore_ascii_case("info_overlay") {
+            entities.insert(entity.id, None);
+            continue;
+        }
         let point = origin(entity)?;
+        if ["func_occluder", "func_areaportal", "func_areaportalwindow"]
+            .iter()
+            .any(|name| classname.eq_ignore_ascii_case(name))
+        {
+            if selected_helper(entity, bounds, report, control)? {
+                entities.insert(entity.id, None);
+            }
+            continue;
+        }
         if classname.eq_ignore_ascii_case("func_detail") {
             let mut retained = BTreeSet::new();
             for solid in &entity.solids {

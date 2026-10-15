@@ -112,8 +112,8 @@ impl Session {
             "draft":self.compile_region.draft.as_ref().map(|draft| json!({"token":draft.token,"clear":draft.definition.is_none(),"region":definition_json(draft.definition),"valid":draft.generation==self.document_generation && draft.revision==self.document.revision()})),
             "suggested_bounds":suggested,
             "limits":{"minimum_extent":compile_region::MIN_EXTENT,"coordinate":compile_region::MAX_COORDINATE,"shell_thickness":compile_region::SHELL_THICKNESS},
-            "help":"Region builds add a black solid boundary and can hide full-map leaks. Include the complete terrain base and grid or water volume. Water belongs to the world; terrain can also be detail geometry. Slime, entity water, overlays, areaportals and occluders need a full-map build.",
-            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals, sun and water LOD controls remain. Nonspatial sun/water controls preserve origins without seeding exterior region leaks. World/detail terrain must have its entire base cage and displaced grid contained; combined disjoint bounds are omitted. Water must be fully contained and structural world geometry. Slime, detail/model water, runtime-model terrain and consumed region helpers are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
+            "help":"Region builds add a black solid boundary and can hide full-map leaks. Include whole terrain, world-water volumes and portal/occluder helpers. Imported overlays need all their target surfaces. Crossing helpers, slime and entity water need a full-map build.",
+            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals, sun and water LOD controls remain. Nonspatial sun/water controls preserve origins without seeding exterior region leaks. World/detail terrain needs its complete base cage and displaced grid contained. Water must be fully contained and structural world geometry. Areaportals, windows and occluders use complete visible world-space geometry; contained helpers remain, disjoint helpers are omitted and crossing bounds reject. Imported overlays retain their full definitions regardless of marker origin and require every target to emit a surface. Slime, detail/model water, runtime-model terrain, overlay transitions, instances and visclusters are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
         })
     }
 
@@ -272,6 +272,150 @@ mod tests {
             let hint = session.compile_region_state()["suggested_bounds"].clone();
             assert!(hint["mins"][2].as_f64().unwrap() <= 0.0);
             assert!(hint["maxs"][2].as_f64().unwrap() >= 32.0);
+        }
+    }
+
+    #[test]
+    fn imported_active_scope_shares_readback_frame_guides_and_guarded_clear_history() {
+        for actor in [Actor::User, Actor::Agent] {
+            for multiple_roots in [false, true] {
+                let (_directory, game) = crate::test_assets::game();
+                let mut session = Session::new(Ok(game));
+                let mut text = session.document.vmf().write(&Default::default());
+                text.push_str(
+                    r#"
+cordons
+{
+    "active" "1"
+    "vendor" "preserved root metadata"
+    cordon
+    {
+        "name" "Enabled box"
+        "active" "1"
+        box { "mins" "(-128 -128 0)" "maxs" "(128 128 256)" }
+    }
+    cordon
+    {
+        "name" "Disabled box"
+        "active" "0"
+        box { "mins" "(512 512 512)" "maxs" "(768 768 768)" }
+        vendor { "opaque" "preserved child metadata" }
+    }
+}
+"#,
+                );
+                if multiple_roots {
+                    text.push_str(
+                        "cordon { \"active\" \"0\" \"mins\" \"(-512 -512 -512)\" \"maxs\" \"(-256 -256 -256)\" \"name\" \"Disabled root\" }",
+                    );
+                }
+                let source = source_formats::vmf::Vmf::parse(&text).unwrap();
+                session.replace_document(map_core::Document::new(source), None);
+                for offset in [0.0, 64.0] {
+                    session
+                        .create_block(
+                            actor,
+                            DVec3::splat(offset),
+                            DVec3::splat(offset + 32.0),
+                            "test",
+                            false,
+                        )
+                        .unwrap();
+                }
+                session.undo(actor).unwrap();
+                let source = session.document.vmf().clone();
+                let serialized = source.write(&Default::default());
+                let revision = session.document.revision();
+                let undo = session
+                    .document
+                    .undo_labels()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let redo = session
+                    .document
+                    .redo_labels()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let selection = session.selected_ids();
+                let stamp = session.compile_region_stamp();
+                let state = session.compile_region_state();
+                let region = definition(true).unwrap();
+                assert_eq!(state["committed"], definition_json(Some(region)));
+                assert_eq!(state["committed"], state["build_scope"]);
+                assert_eq!(state["build_scope_label"], "Region build…");
+                let expected_camera = session.camera.frame_bounds(
+                    region.bounds.mins.as_vec3(),
+                    region.bounds.maxs.as_vec3(),
+                    1.6,
+                );
+                session.frame_compile_region(actor, 1.6).unwrap();
+                assert_eq!(session.camera, expected_camera);
+                let mesh = session.build_scene();
+                let guide = mesh
+                    .lines
+                    .iter()
+                    .filter(|line| line.color == [255, 170, 70, 255])
+                    .collect::<Vec<_>>();
+                assert_eq!(guide.len(), 24);
+                assert!(guide.iter().all(|line| {
+                    line.position.iter().enumerate().all(|(axis, coordinate)| {
+                        *coordinate == region.bounds.mins[axis] as f32
+                            || *coordinate == region.bounds.maxs[axis] as f32
+                    })
+                }));
+                assert_eq!(session.document.vmf(), &source);
+                assert_eq!(
+                    session.document.vmf().write(&Default::default()),
+                    serialized
+                );
+                assert_eq!(session.document.revision(), revision);
+                assert_eq!(session.document.undo_labels().collect::<Vec<_>>(), undo);
+                assert_eq!(session.document.redo_labels().collect::<Vec<_>>(), redo);
+                assert_eq!(session.selected_ids(), selection);
+                assert_eq!(session.compile_region_stamp(), stamp);
+
+                let error = session
+                    .preview_compile_region(actor, definition(false), &stamp)
+                    .unwrap_err();
+                assert!(error.contains("clear"));
+                assert_eq!(session.compile_region_stamp(), stamp);
+                let clear =
+                    session.preview_compile_region(actor, None, &stamp).unwrap()["draft"]["token"]
+                        .as_u64()
+                        .unwrap();
+                session.cancel_compile_region(clear).unwrap();
+                assert_eq!(
+                    session.compile_region_state()["committed"],
+                    state["committed"]
+                );
+                assert_eq!(session.document.vmf(), &source);
+                assert_eq!(session.document.revision(), revision);
+                assert_eq!(session.document.undo_labels().collect::<Vec<_>>(), undo);
+                assert_eq!(session.document.redo_labels().collect::<Vec<_>>(), redo);
+                let clear = session
+                    .preview_compile_region(actor, None, &session.compile_region_stamp())
+                    .unwrap()["draft"]["token"]
+                    .as_u64()
+                    .unwrap();
+                session.apply_compile_region(actor, clear).unwrap();
+                assert!(session.compile_region_state()["committed"].is_null());
+                assert_eq!(
+                    compile_region::active(session.document.vmf()).unwrap(),
+                    None
+                );
+                assert_eq!(session.document.undo_labels().count(), undo.len() + 1);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document.vmf(), &source);
+                assert_eq!(
+                    session.document.vmf().write(&Default::default()),
+                    serialized
+                );
+                assert_eq!(
+                    session.compile_region_state()["committed"],
+                    state["committed"]
+                );
+                session.frame_compile_region(actor, 1.6).unwrap();
+            }
         }
     }
 

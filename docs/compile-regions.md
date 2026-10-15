@@ -62,6 +62,20 @@ pending draft stale. Preview it again before applying.
    cage and grid, move the whole patch, or disable the region. Terrain is never
    clipped or flattened to fit.
 
+## Include overlays and visibility helpers
+
+1. Open a map with [imported overlays](overlays.md),
+   [areaportals or windows](compile-and-play.md#areaportals), or
+   [occluders](occluders.md).
+2. Open **Region build…** and include every overlay target surface and the
+   complete brush bounds of each portal or occluder you want to keep. Include
+   the rendered models referenced by a window as well.
+3. Click **Preview region**, then **Apply region** and **Compile**. The helper's
+   editor origin does not determine its inclusion.
+4. Read **Diagnostics** in **Build details…** if a helper crosses the boundary,
+   an overlay target is unavailable, or a portal no longer joins two areas.
+   Enlarge the region or disable it before rebuilding.
+
 ## Inclusion and limits
 
 - One axis-aligned region, at least 16 units wide on every axis. Corners must
@@ -75,6 +89,8 @@ pending draft stale. Preview it again before applying.
 - References are retained unchanged. Targets outside the region may be absent.
   The solid boundary can hide leaks, block views and change light or sound;
   region output is for partial-map work.
+  Boundary slabs can cover coincident authored faces. Put bounds beyond finished
+  floors or walls when you want to keep their visible materials.
 - Fully contained structural world water retains native water leaves and engine
   fluid bodies. The compiler's existing flat-top, overlap and material limits
   still apply. Entirely outside water is omitted.
@@ -82,8 +98,16 @@ pending draft stale. Preview it again before applying.
   grid fit. Combined bounds entirely outside the region are omitted. Existing
   [terrain compiler limits](compile-and-play.md#terrain-displacements) still
   apply; terrain in runtime brush models remains unsupported.
-- Overlays, areaportals, areaportal windows, occluders,
-  instances and visibility clusters require full-map builds. Retained slime,
+- Imported overlays retain their whole projection and every source-side binding,
+  regardless of the overlay marker's position. Every target must emit a visible
+  world, detail or terrain surface. Omitted or buried targets stop the build;
+  projections are never shortened to fit.
+- Areaportals, areaportal windows and occluders use their complete visible brush
+  bounds, independently of their editor origins. Fully contained helpers stay
+  whole; disjoint helpers are omitted. Boundary crossings stop the build.
+  Portal openings still need two sealed areas. Window render models must remain
+  available, and occluders must satisfy their normal area and geometry limits.
+- Overlay transitions, instances and visibility clusters require full-map builds. Retained slime,
   detail/model water and boundary-crossing water or terrain are also unsupported. These
   cases stop compilation and preserve prior output.
 - At most 16,384 source objects, 65,536 source sides and 128 sides per brush.
@@ -92,8 +116,8 @@ pending draft stale. Preview it again before applying.
 - Imported legacy cordons and a single enabled box under active plural cordons
   can compile. Plural or multiple records need **Preview clear** and
   **Apply region** before authoring a replacement. Clearing is undoable.
-- A plural record containing extra disabled boxes can build its one active
-  region, but its viewport guide and **Frame region** are unavailable until
-  a replacement single region is authored.
+- Readback, the viewport guide and **Frame region** follow the one effective
+  active box even when imported metadata retains additional disabled boxes or
+  roots. Ambiguous disabled-only sets still need explicit clearing before editing.
 - Unapplied drafts never affect compilation. Region settings belong to the
   VMF, independently of named build recipes.

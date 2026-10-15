@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use slint::ComponentHandle;
@@ -10,12 +10,254 @@ use crate::session::{Actor, Session};
 pub struct Controller {
     pub window: CompileWindow,
     token: Rc<Cell<Option<u64>>>,
+    recipes: Rc<RefCell<RecipeForm>>,
+}
+
+#[derive(Default)]
+struct RecipeForm {
+    revision: u64,
+    selected: Option<String>,
+    rows: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+enum RecipeAction {
+    Apply,
+    Save,
+    Replace,
+    Rename,
+    Delete,
+}
+
+fn refresh_recipes(window: &CompileWindow, session: &Session, form: &RefCell<RecipeForm>) {
+    let state = session.build_recipes();
+    let mut form = form.borrow_mut();
+    let revision = state["revision"].as_u64().unwrap_or_default();
+    if form.revision != revision {
+        form.revision = revision;
+        let entries = state["recipes"].as_array().cloned().unwrap_or_default();
+        form.rows = entries
+            .iter()
+            .filter_map(|entry| entry["id"].as_str().map(str::to_owned))
+            .collect();
+        window.set_recipe_names(
+            Rc::new(slint::VecModel::from(
+                entries
+                    .iter()
+                    .map(|entry| {
+                        slint::SharedString::from(entry["name"].as_str().unwrap_or_default())
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+            .into(),
+        );
+        let selected = entries
+            .iter()
+            .find(|entry| entry["id"].as_str() == form.selected.as_deref())
+            .or_else(|| {
+                entries
+                    .iter()
+                    .find(|entry| entry["id"] == state["active"]["id"])
+            })
+            .or_else(|| entries.first());
+        if let Some(selected) = selected {
+            form.selected = selected["id"].as_str().map(str::to_owned);
+            let name = selected["name"].as_str().unwrap_or_default();
+            window.set_selected_recipe(name.into());
+            window.set_recipe_name(if selected["builtin"] == true {
+                "".into()
+            } else {
+                name.into()
+            });
+            window.set_custom_recipe_selected(selected["builtin"] == false);
+            window.set_recipe_description(
+                selected["description"].as_str().unwrap_or_default().into(),
+            );
+        }
+    }
+    window.set_custom_recipes_enabled(state["custom_editable"].as_bool().unwrap_or(false));
+    let active = state["active"]["name"]
+        .as_str()
+        .unwrap_or("Custom settings");
+    let storage = match state["persistence"].as_str() {
+        Some("persistent") => "Custom recipes are saved on this computer.",
+        Some("blocked") => "Custom recipe storage is blocked.",
+        _ => "Custom recipes last for this session.",
+    };
+    let error = state["error"]
+        .as_str()
+        .map(|error| format!("\n{error}"))
+        .unwrap_or_default();
+    window.set_recipe_status(format!("Current recipe: {active}. {storage}{error}").into());
+}
+
+fn choose_recipe(
+    window: &CompileWindow,
+    session: &Session,
+    form: &RefCell<RecipeForm>,
+    index: i32,
+) {
+    let state = session.build_recipes();
+    if state["revision"].as_u64() != Some(form.borrow().revision) {
+        refresh_recipes(window, session, form);
+        window
+            .set_message("Build recipes changed. Choose a recipe from the refreshed list.".into());
+        return;
+    }
+    let mut form = form.borrow_mut();
+    let Some(id) = usize::try_from(index)
+        .ok()
+        .and_then(|index| form.rows.get(index))
+    else {
+        return;
+    };
+    let Some(entry) = state["recipes"].as_array().and_then(|entries| {
+        entries
+            .iter()
+            .find(|entry| entry["id"].as_str() == Some(id))
+    }) else {
+        return;
+    };
+    form.selected = entry["id"].as_str().map(str::to_owned);
+    form.revision = state["revision"].as_u64().unwrap_or_default();
+    let name = entry["name"].as_str().unwrap_or_default();
+    window.set_selected_recipe(name.into());
+    window.set_recipe_name(if entry["builtin"] == true {
+        "".into()
+    } else {
+        name.into()
+    });
+    window.set_custom_recipe_selected(entry["builtin"] == false);
+    window.set_recipe_description(entry["description"].as_str().unwrap_or_default().into());
+    window.set_message("Choose Apply recipe to use its settings, or save the current settings as a new named recipe.".into());
+}
+
+fn recipe_action(
+    window: &CompileWindow,
+    session: &mut Session,
+    form: &RefCell<RecipeForm>,
+    action: RecipeAction,
+) {
+    let (revision, selected) = {
+        let form = form.borrow();
+        (Some(form.revision), form.selected.clone())
+    };
+    let id = selected.as_deref().unwrap_or_default();
+    let name = window.get_recipe_name();
+    let result = match action {
+        RecipeAction::Apply => session.apply_build_recipe(Actor::User, id, revision),
+        RecipeAction::Save => session.save_build_recipe(Actor::User, &name, None, revision),
+        RecipeAction::Replace => session.save_build_recipe(Actor::User, &name, Some(id), revision),
+        RecipeAction::Rename => session.rename_build_recipe(Actor::User, id, &name, revision),
+        RecipeAction::Delete => session.delete_build_recipe(Actor::User, id, revision),
+    };
+    match result {
+        Ok(state) => {
+            let mut form = form.borrow_mut();
+            form.revision = 0;
+            if matches!(
+                action,
+                RecipeAction::Apply | RecipeAction::Save | RecipeAction::Replace
+            ) {
+                form.selected = state["active"]["id"].as_str().map(str::to_owned);
+            }
+            window.set_message(
+                match action {
+                    RecipeAction::Apply => {
+                        "Recipe applied. Compile or Run Map will use these settings."
+                    }
+                    RecipeAction::Save | RecipeAction::Replace => {
+                        "Recipe saved from the current settings."
+                    }
+                    RecipeAction::Rename => {
+                        "Recipe renamed. Existing jobs retain their original name."
+                    }
+                    RecipeAction::Delete => "Recipe deleted. Current settings are unchanged.",
+                }
+                .into(),
+            );
+        }
+        Err(error) => window.set_message(error.into()),
+    }
+    refresh_recipes(window, session, form);
 }
 
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = CompileWindow::new()?;
         let token = Rc::new(Cell::new(None));
+        let recipes = Rc::new(RefCell::new(RecipeForm::default()));
+        window.on_choose_recipe({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move |index| choose_recipe(&window.unwrap(), &lock(&shared), &recipes, index)
+        });
+        window.on_apply_recipe({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move || {
+                recipe_action(
+                    &window.unwrap(),
+                    &mut lock(&shared),
+                    &recipes,
+                    RecipeAction::Apply,
+                )
+            }
+        });
+        window.on_save_recipe({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move || {
+                recipe_action(
+                    &window.unwrap(),
+                    &mut lock(&shared),
+                    &recipes,
+                    RecipeAction::Save,
+                )
+            }
+        });
+        window.on_replace_recipe({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move || {
+                recipe_action(
+                    &window.unwrap(),
+                    &mut lock(&shared),
+                    &recipes,
+                    RecipeAction::Replace,
+                )
+            }
+        });
+        window.on_rename_recipe({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move || {
+                recipe_action(
+                    &window.unwrap(),
+                    &mut lock(&shared),
+                    &recipes,
+                    RecipeAction::Rename,
+                )
+            }
+        });
+        window.on_delete_recipe({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move || {
+                recipe_action(
+                    &window.unwrap(),
+                    &mut lock(&shared),
+                    &recipes,
+                    RecipeAction::Delete,
+                )
+            }
+        });
+        window.on_cancel_recipe_edit({
+            let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
+            move || {
+                let session = lock(&shared);
+                *recipes.borrow_mut() = RecipeForm::default();
+                let window = window.unwrap();
+                refresh_recipes(&window, &session, &recipes);
+                window.set_message(
+                    "Recipe edit cancelled. Current build settings are unchanged.".into(),
+                );
+            }
+        });
         let settings = lock(shared).compile_settings();
         let labels = settings["choices"]
             .as_array()
@@ -209,10 +451,15 @@ impl Controller {
                 let _ = window.unwrap().hide();
             }
         });
-        Ok(Self { window, token })
+        Ok(Self {
+            window,
+            token,
+            recipes,
+        })
     }
 
     pub fn refresh(&self, session: &Session) {
+        refresh_recipes(&self.window, session, &self.recipes);
         self.token.set(session.compile_token());
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
@@ -566,8 +813,9 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
+                job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::VisibilityMode::parse(job["settings"]["visibility"].as_str().unwrap_or_default()).unwrap_or_default().label(),
@@ -625,5 +873,160 @@ impl Controller {
         self.window.set_message("Closing this window leaves an active build running. Cancel build stops it and preserves previous output.".into());
         self.refresh(session);
         self.window.show()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn recipe_controls_share_crud_apply_cancel_and_job_guards() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (directory, game, _) = crate::game::tests::fixture(true);
+        let mut session = Session::new(Ok(game));
+        session.replace_document(
+            map_core::Document::new(crate::test_assets::room()),
+            Some(directory.path().join("room.vmf")),
+        );
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.window.get_selected_recipe(), "Fast preview");
+        assert!(
+            controller
+                .window
+                .get_recipe_status()
+                .contains("Current recipe: Fast preview")
+        );
+        assert!(!controller.window.get_custom_recipe_selected());
+        controller.window.invoke_choose_recipe(1);
+        assert_eq!(lock(&shared).compile_settings()["lighting"], "fullbright");
+        controller.window.invoke_apply_recipe();
+        controller.refresh(&lock(&shared));
+        assert_eq!(lock(&shared).compile_settings()["lighting"], "direct_ldr");
+        assert!(
+            controller
+                .window
+                .get_recipe_status()
+                .contains("Current recipe: Final lighting")
+        );
+        controller.window.invoke_change_physics(0);
+        controller.refresh(&lock(&shared));
+        assert!(
+            controller
+                .window
+                .get_recipe_status()
+                .contains("Current recipe: Custom settings")
+        );
+        controller.window.set_recipe_name("Evening lighting".into());
+        controller.window.invoke_save_recipe();
+        let id = lock(&shared).build_recipes()["active"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(controller.window.get_selected_recipe(), "Evening lighting");
+        assert!(controller.window.get_custom_recipe_selected());
+        controller.window.set_recipe_name("Unfinished edit".into());
+        controller.window.invoke_cancel_recipe_edit();
+        assert_eq!(controller.window.get_recipe_name(), "Evening lighting");
+        assert_eq!(
+            lock(&shared).build_recipes()["recipes"][2]["name"],
+            "Evening lighting"
+        );
+        controller.window.set_recipe_name("Night lighting".into());
+        controller.window.invoke_rename_recipe();
+        assert_eq!(
+            lock(&shared).build_recipes()["recipes"][2]["name"],
+            "Night lighting"
+        );
+        controller.window.invoke_choose_recipe(0);
+        controller.window.invoke_apply_recipe();
+        assert_eq!(lock(&shared).compile_settings()["lighting"], "fullbright");
+        controller.window.invoke_choose_recipe(2);
+        controller.window.invoke_apply_recipe();
+        assert_eq!(lock(&shared).compile_settings()["lighting"], "direct_ldr");
+        assert_eq!(lock(&shared).compile_settings()["physics"], "none");
+        controller.window.invoke_change_bounces(1);
+        controller.window.invoke_replace_recipe();
+        assert_eq!(
+            lock(&shared).build_recipes()["recipes"][2]["settings"]["bounces"],
+            1
+        );
+        lock(&shared)
+            .rename_build_recipe(Actor::Agent, &id, "Evening preview", None)
+            .unwrap();
+        controller.window.set_recipe_name("Stale rename".into());
+        controller.window.invoke_rename_recipe();
+        assert!(controller.window.get_message().contains("changed"));
+        assert_eq!(
+            lock(&shared).build_recipes()["recipes"][2]["name"],
+            "Evening preview"
+        );
+        controller.refresh(&lock(&shared));
+        controller.window.show().unwrap();
+        controller.window.invoke_choose_recipe(2);
+        for label in [
+            "Apply recipe",
+            "Save current as new",
+            "Replace with current",
+            "Rename recipe",
+            "Delete recipe",
+            "Cancel recipe edit",
+        ] {
+            assert!(
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                    &controller.window,
+                    label
+                )
+                .next()
+                .is_some(),
+                "Missing {label}"
+            );
+        }
+        crate::tests::save_ui_snapshot(controller.window.window(), "build-recipes");
+        let request = lock(&shared).begin_compile(Actor::Agent, None).unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(!controller.window.get_custom_recipes_enabled());
+        assert!(!controller.window.get_lighting_enabled());
+        assert!(
+            controller
+                .window
+                .get_details()
+                .contains("Recipe at build start: Evening preview")
+        );
+        controller.window.invoke_delete_recipe();
+        assert!(controller.window.get_message().contains("active compile"));
+        assert_eq!(
+            lock(&shared).build_recipes()["recipes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        controller.window.invoke_cancel_build();
+        let result = request.run();
+        lock(&shared).finish_compile(Actor::Agent, &result);
+        assert!(result.is_err());
+        controller.refresh(&lock(&shared));
+        controller.window.invoke_delete_recipe();
+        assert_eq!(
+            lock(&shared).build_recipes()["recipes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(lock(&shared).document().undo_labels().count(), 0);
+        controller.window.invoke_close_dialog();
+        assert!(!controller.window.window().is_visible());
     }
 }

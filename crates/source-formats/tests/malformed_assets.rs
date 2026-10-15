@@ -131,6 +131,15 @@ fn vpk_validates_tree_and_entry_lengths_before_reserving_memory() {
     tree.extend_from_slice(&u32::MAX.to_le_bytes());
     tree.extend_from_slice(&0xffffu16.to_le_bytes());
     tree.extend_from_slice(&[0, 0, 0]);
+    for end in 0..tree.len() {
+        let mut bytes = [0x55aa_1234u32, 1, end as u32]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>();
+        bytes.extend_from_slice(&tree[..end]);
+        fs::write(&path, bytes).unwrap();
+        assert!(Vpk::open(&path).is_err(), "tree prefix {end}");
+    }
     let mut bytes = [0x55aa_1234u32, 1, tree.len() as u32]
         .into_iter()
         .flat_map(u32::to_le_bytes)
@@ -138,6 +147,11 @@ fn vpk_validates_tree_and_entry_lengths_before_reserving_memory() {
     bytes.extend(tree);
     fs::write(&path, bytes).unwrap();
     assert!(Vpk::open(&path).unwrap().read("payload.txt").is_err());
+    let mut bytes = fs::read(&path).unwrap();
+    bytes[12] = 0xff;
+    fs::write(&path, bytes).unwrap();
+    let error = Vpk::open(&path).unwrap_err();
+    assert!(error.to_string().contains("non-UTF-8"));
 }
 
 #[test]

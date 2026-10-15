@@ -1,5 +1,6 @@
 //! Finding installed games through Steam's library folders.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use source_formats::gamefs::GameFs;
@@ -41,13 +42,8 @@ fn libraries() -> Vec<PathBuf> {
             }
         }
     }
-    let mut seen = Vec::new();
-    libraries.retain(|p| {
-        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
-        let new = !seen.contains(&canonical);
-        seen.push(canonical);
-        new
-    });
+    let mut seen = HashSet::new();
+    libraries.retain(|path| seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())));
     libraries
 }
 

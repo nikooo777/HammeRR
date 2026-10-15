@@ -1,3 +1,4 @@
+use std::ffi::CStr;
 use std::io;
 
 pub const MAX_MODEL_BYTES: usize = 64 * 1024 * 1024;
@@ -106,10 +107,8 @@ pub fn validate_physics(data: &[u8], checksum: i32) -> io::Result<usize> {
         }
         payload = tail;
     }
-    if payload.is_empty()
-        || payload.len() > crate::bsp::MAX_PHYSICS_KEY_BYTES
-        || payload.last() != Some(&0)
-        || payload[..payload.len() - 1].contains(&0)
+    if payload.len() > crate::bsp::MAX_PHYSICS_KEY_BYTES
+        || CStr::from_bytes_with_nul(payload).is_err()
     {
         return Err(invalid(
             "model physics keys need bounded, singly terminated text",

@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ffi::CStr;
 use std::io;
 
 use super::{Bsp, Lump, Model, invalid, lump};
@@ -122,11 +123,7 @@ fn bounded(value: i32, maximum: usize, label: &str) -> io::Result<usize> {
 }
 
 fn check_keys(data: &[u8]) -> io::Result<()> {
-    if data.is_empty()
-        || data.len() > MAX_PHYSICS_KEY_BYTES
-        || data.last() != Some(&0)
-        || data[..data.len() - 1].contains(&0)
-    {
+    if data.len() > MAX_PHYSICS_KEY_BYTES || CStr::from_bytes_with_nul(data).is_err() {
         return Err(invalid(
             "physics key data needs bounded, singly terminated text",
         ));

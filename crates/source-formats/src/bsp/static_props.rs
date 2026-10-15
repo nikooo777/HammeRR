@@ -1,3 +1,4 @@
+use std::ffi::CStr;
 use std::io;
 
 use super::{Bsp, GameLump, Leaf, invalid};
@@ -101,11 +102,9 @@ impl StaticProps {
             .models
             .get(index)
             .ok_or_else(|| invalid("static-prop model index is invalid"))?;
-        let end = raw
-            .iter()
-            .position(|&byte| byte == 0)
-            .ok_or_else(|| invalid("static-prop model name is not terminated"))?;
-        let name = std::str::from_utf8(&raw[..end])
+        let name = CStr::from_bytes_until_nul(raw)
+            .map_err(|_| invalid("static-prop model name is not terminated"))?
+            .to_str()
             .map_err(|_| invalid("static-prop model name is not UTF-8"))?;
         if name.is_empty() || name.chars().any(char::is_control) {
             return Err(invalid(

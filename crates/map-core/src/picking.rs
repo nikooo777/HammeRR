@@ -1,5 +1,5 @@
 use glam::DVec3;
-use source_formats::vmf::Solid;
+use source_formats::vmf::{Entity, Solid};
 
 use crate::query::{Hit, Ray, entity_bounds};
 use crate::{BrushGeometry, Document, ObjectId, Plane};
@@ -110,6 +110,16 @@ impl Picker {
         include_solid: impl Fn(&Solid) -> bool,
         include_points: bool,
     ) -> Self {
+        Self::with_entity_filter(document, include_solid, include_points, |_| true)
+    }
+
+    /// Filters point entities and brush owners; children also pass `include_solid`.
+    pub fn with_entity_filter(
+        document: &Document,
+        include_solid: impl Fn(&Solid) -> bool,
+        include_points: bool,
+        include_entity: impl Fn(&Entity) -> bool,
+    ) -> Self {
         let mut primitives = Vec::new();
         let mut add = |order, object, solid: &Solid| {
             if solid.hidden || !include_solid(solid) {
@@ -185,7 +195,7 @@ impl Picker {
         }
         let mut order = document.vmf().world.solids.len();
         for entity in &document.vmf().entities {
-            if !entity.hidden {
+            if !entity.hidden && !entity.solids.is_empty() && include_entity(entity) {
                 for (index, solid) in entity.solids.iter().enumerate() {
                     add(order + index, ObjectId::Entity(entity.id), solid);
                 }
@@ -197,6 +207,7 @@ impl Picker {
             for entity in &document.vmf().entities {
                 if !entity.hidden
                     && entity.solids.is_empty()
+                    && include_entity(entity)
                     && let Some((mins, maxs)) = entity_bounds(entity)
                 {
                     primitives.push(Primitive {
@@ -369,6 +380,102 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[test]
+    fn entity_filter_reveals_allowed_points_owners_and_world_brushes() {
+        let mut document = Document::empty();
+        let (near, allowed, owner, owned, world) = document
+            .edit("fixture", |tx| {
+                let near = edit::create_entity(
+                    tx,
+                    "info_target",
+                    Some(DVec3::Z * 192.0),
+                    &[],
+                    Vec::new(),
+                )?;
+                let allowed = edit::create_entity(
+                    tx,
+                    "info_target",
+                    Some(DVec3::Z * 144.0),
+                    &[],
+                    Vec::new(),
+                )?;
+                let ObjectId::Solid(owned) = edit::create_block(
+                    tx,
+                    DVec3::new(-16.0, -16.0, 64.0),
+                    DVec3::new(16.0, 16.0, 96.0),
+                    "brick/test",
+                )?
+                else {
+                    unreachable!()
+                };
+                let owner = edit::tie_to_entity(tx, &[owned], "func_detail", &[])?;
+                let world = edit::create_block(
+                    tx,
+                    DVec3::new(-16.0, -16.0, 0.0),
+                    DVec3::new(16.0, 16.0, 32.0),
+                    "brick/test",
+                )?;
+                Ok((near, allowed, owner, owned, world))
+            })
+            .unwrap();
+        let ray = Ray {
+            origin: DVec3::Z * 256.0,
+            direction: DVec3::NEG_Z,
+        };
+        assert_eq!(
+            Picker::new(&document, |_| true, true)
+                .pick(&ray)
+                .unwrap()
+                .object,
+            near
+        );
+        let include_entity = |entity: &Entity| ObjectId::Entity(entity.id) != near;
+        let filtered = Picker::with_entity_filter(&document, |_| true, true, include_entity);
+        assert_eq!(filtered.pick(&ray).unwrap().object, allowed);
+        assert_eq!(
+            filtered.pick(&ray),
+            query::pick_with_entity_filter(&document, &ray, |_| true, include_entity)
+        );
+        let brushes = Picker::with_entity_filter(
+            &document,
+            |_| true,
+            true,
+            |entity| !entity.solids.is_empty(),
+        );
+        let hit = brushes.pick(&ray).unwrap();
+        assert_eq!(hit.object, owner);
+        assert_eq!(hit.solid, Some(owned));
+        assert!(hit.side.is_some());
+        assert_eq!(
+            Picker::new(&document, |_| true, false).pick(&ray),
+            Some(hit)
+        );
+        assert_eq!(
+            Picker::with_entity_filter(
+                &document,
+                |_| true,
+                false,
+                |entity| {
+                    assert!(!entity.solids.is_empty());
+                    true
+                }
+            )
+            .pick(&ray),
+            Some(hit)
+        );
+        assert_eq!(
+            Picker::with_entity_filter(&document, |_| true, true, |_| false)
+                .pick(&ray)
+                .unwrap()
+                .object,
+            world
+        );
+        let world_only =
+            Picker::with_entity_filter(&document, |solid| solid.id != owned, false, |_| true);
+        assert_eq!(world_only.pick(&ray).unwrap().object, world);
+    }
+
     #[test]
     fn indexed_terrain_matches_direct_queries_for_raised_offset_and_entity_sheets() {
         for power in 2..=4 {

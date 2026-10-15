@@ -663,7 +663,7 @@ fn alpha_cutouts_share_spot_and_sun_rays_and_shader_reference_defaults() {
     assert_eq!(floor_sample(&sun, DVec3::ZERO).x, 200.0);
     assert_eq!(floor_sample(&sun, DVec3::new(-16.0, 0.0, 0.0)), DVec3::ZERO);
     let mut texture = alpha_texture();
-    for pixel in texture[80..].chunks_exact_mut(4) {
+    for pixel in texture[80..].as_chunks_mut::<4>().0 {
         pixel[3] = 128;
     }
     std::fs::write(directory.path().join("materials/test.vtf"), texture).unwrap();

@@ -245,7 +245,13 @@ pub(super) fn prepare(
             let texture = Arc::new(Texture {
                 dimensions: [vtf.width as usize, vtf.height as usize],
                 clamp: [vtf.flags & CLAMP_S != 0, vtf.flags & CLAMP_T != 0],
-                alpha: image.pixels.chunks_exact(4).map(|pixel| pixel[3]).collect(),
+                alpha: image
+                    .pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|pixel| pixel[3])
+                    .collect(),
             });
             assets.alpha_bytes += pixels;
             assets.textures.insert(path, Arc::clone(&texture));

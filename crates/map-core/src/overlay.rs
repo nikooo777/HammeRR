@@ -384,8 +384,30 @@ pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> 
     Ok((face, definition))
 }
 
+pub fn fit_rebind(vmf: &Vmf, id: u32, source: FaceId) -> Result<Definition, String> {
+    let (previous, existing) = fit_existing(vmf, id)?;
+    if previous == source {
+        return Err("Choose a different destination face, or use Refit selected overlay".into());
+    }
+    fit(vmf, source, existing.options)
+}
+
 pub fn refit(tx: &mut Transaction<'_>, id: u32) -> Result<ObjectId, EditError> {
     let (face, definition) = fit_existing(tx.document().vmf(), id).map_err(EditError::Invalid)?;
+    write_projection(tx, id, face, &definition)
+}
+
+pub fn rebind(tx: &mut Transaction<'_>, id: u32, source: FaceId) -> Result<ObjectId, EditError> {
+    let definition = fit_rebind(tx.document().vmf(), id, source).map_err(EditError::Invalid)?;
+    write_projection(tx, id, source, &definition)
+}
+
+fn write_projection(
+    tx: &mut Transaction<'_>,
+    id: u32,
+    face: FaceId,
+    definition: &Definition,
+) -> Result<ObjectId, EditError> {
     let entity = tx.entity_mut(id)?;
     for (key, value) in [
         ("origin", definition.basis_origin),

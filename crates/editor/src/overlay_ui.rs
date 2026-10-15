@@ -3,10 +3,10 @@ use std::{cell::RefCell, rc::Rc};
 use glam::{DVec2, DVec3};
 use map_core::{overlay::Options, surface::FaceId};
 use serde_json::Value;
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    OverlayWindow,
+    OverlayTargetRow, OverlayWindow,
     runtime::{SharedSession, lock},
     session::{Actor, Session, overlay::Request},
     ui::preview_image,
@@ -18,6 +18,11 @@ struct Form {
     token: Option<u64>,
     reviewed: Option<Options>,
     refit: bool,
+    rebind: bool,
+    target: Option<u32>,
+    choices: Vec<Value>,
+    choices_snapshot: String,
+    choices_offset: usize,
     snapshot: String,
     seen: String,
     serial: u64,
@@ -152,15 +157,161 @@ fn refresh_material(window: &OverlayWindow, session: &Session) {
     }
 }
 
+const OVERLAY_PAGE_SIZE: usize = 8;
+
+fn refresh_choices(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
+    let offset = form.borrow().choices_offset;
+    match session.browse_overlay_targets(&window.get_overlay_search(), offset, OVERLAY_PAGE_SIZE) {
+        Ok(report) => {
+            let entries = report["entries"].as_array().unwrap().clone();
+            let total = report["total"].as_u64().unwrap() as usize;
+            if offset > 0 && offset >= total {
+                form.borrow_mut().choices_offset =
+                    total.saturating_sub(1) / OVERLAY_PAGE_SIZE * OVERLAY_PAGE_SIZE;
+                refresh_choices(window, session, form);
+                return;
+            }
+            window.set_overlay_targets(ModelRc::new(VecModel::from(
+                entries
+                    .iter()
+                    .map(|entry| {
+                        let name = entry["name"]
+                            .as_str()
+                            .filter(|name| !name.trim().is_empty())
+                            .unwrap_or("Unnamed overlay");
+                        let source = &entry["source"];
+                        OverlayTargetRow {
+                            entity: entry["entity"].as_str().unwrap().into(),
+                            label: format!("{} · {}", name, entry["entity"].as_str().unwrap())
+                                .into(),
+                            detail: if entry["eligible"] == true {
+                                format!(
+                                    "{} · brush {} / face {}",
+                                    entry["material"].as_str().unwrap(),
+                                    source["solid"],
+                                    source["side"]
+                                )
+                            } else {
+                                format!(
+                                    "Unavailable: {}",
+                                    entry["error"].as_str().unwrap_or("Unsupported binding")
+                                )
+                            }
+                            .into(),
+                            eligible: entry["eligible"] == true,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )));
+            window.set_overlay_previous(offset > 0);
+            window.set_overlay_next(offset.saturating_add(OVERLAY_PAGE_SIZE) < total);
+            window.set_overlay_page(if total == 0 {
+                "No matching overlays".into()
+            } else {
+                format!(
+                    "{}–{} of {}",
+                    offset.saturating_add(1),
+                    offset.saturating_add(entries.len()),
+                    total
+                )
+                .into()
+            });
+            let mut form = form.borrow_mut();
+            form.choices = entries;
+            form.choices_snapshot = report["snapshot"].as_str().unwrap().into();
+        }
+        Err(error) => {
+            window.set_overlay_targets(ModelRc::default());
+            window.set_overlay_previous(false);
+            window.set_overlay_next(false);
+            window.set_overlay_page(error.into());
+            let mut form = form.borrow_mut();
+            form.choices.clear();
+            form.choices_snapshot.clear();
+        }
+    }
+}
+
+fn choose_overlay(window: &OverlayWindow, session: &Session, form: &RefCell<Form>, entity: &str) {
+    if form.borrow().choices_snapshot != session.overlay_stamp() {
+        refresh_choices(window, session, form);
+        window.set_message("Overlay choices changed. Choose from the refreshed list.".into());
+        return;
+    }
+    let choice = form
+        .borrow()
+        .choices
+        .iter()
+        .find(|entry| entry["entity"] == entity && entry["eligible"] == true)
+        .cloned();
+    let Some(choice) = choice else {
+        return;
+    };
+    load(window, &choice["options"]);
+    let mut state = form.borrow_mut();
+    state.target = choice["id"].as_u64().and_then(|id| u32::try_from(id).ok());
+    state.refit = true;
+    state.rebind = true;
+    state.reviewed = None;
+    state.serial += 1;
+    drop(state);
+    window.set_rebind_target(
+        format!(
+            "Rebind {} · {} to the destination face above",
+            choice["name"]
+                .as_str()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or("Unnamed overlay"),
+            entity
+        )
+        .into(),
+    );
+    window.set_message(
+        "Preview rebind checks the destination and preserves existing settings.".into(),
+    );
+    refresh_material(window, session);
+    refresh(window, session, form);
+}
+
+fn preview_rebind(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
+    let request = {
+        let form = form.borrow();
+        form.target
+            .zip(form.source)
+            .map(|(id, source)| (id, source, form.snapshot.clone()))
+    };
+    let result = request
+        .ok_or("Select a destination face and choose an existing overlay".into())
+        .and_then(|(id, source, snapshot)| {
+            session.preview_overlay_rebind(Actor::User, id, source, &snapshot)
+        });
+    match result {
+        Ok(state) => {
+            adopt(window, &state, form);
+            window.set_message("Review the destination outline, then Apply rebind. The existing overlay keeps its ID and settings.".into());
+        }
+        Err(error) => window.set_message(error.into()),
+    }
+    refresh_material(window, session);
+    refresh(window, session, form);
+}
+
 fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     let state = session.get_overlay_state();
     let draft = &state["draft"];
     let snapshot = state["snapshot"].as_str().unwrap_or_default();
+    if form.borrow().choices_snapshot != snapshot {
+        refresh_choices(window, session, form);
+    }
     let mut form = form.borrow_mut();
     let context_refreshed = form.seen != snapshot;
     form.seen = snapshot.into();
     window.set_can_review(draft["valid"] == true);
     window.set_refit_mode(form.refit);
+    window.set_rebind_mode(form.rebind);
+    window.set_can_rebind(
+        form.rebind && form.target.is_some() && form.source.is_some() && form.snapshot == snapshot,
+    );
     window.set_can_preview(!form.refit && form.source.is_some() && form.snapshot == snapshot);
     window.set_can_refit(!state["selected_overlay"].is_null() && form.snapshot == snapshot);
     let matches = draft["token"].as_u64() == form.token && draft["owner"] == "you";
@@ -174,7 +325,13 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         "No overlay draft · Fit / Preview leaves the map unchanged".into()
     } else if draft["valid"] != true {
         "The shared draft is stale · reopen Overlay to preview the current source".into()
-    } else if matches && form.refit {
+    } else if matches && draft["operation"] == "rebind" {
+        format!(
+            "Rebind {} · Apply rebind moves this existing overlay to the destination",
+            draft["entity"].as_str().unwrap_or("overlay")
+        )
+        .into()
+    } else if matches && draft["operation"] == "refit" {
         format!(
             "Refit {} · Apply refit updates this existing entity",
             draft["entity"].as_str().unwrap_or("overlay")
@@ -185,8 +342,10 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     } else {
         "A shared draft is available · Review current draft to use it".into()
     });
-    let display_source = if matches && draft["valid"] == true {
+    let display_source = if matches && draft["valid"] == true && form.reviewed.is_some() {
         &draft["source"]
+    } else if form.rebind {
+        &state["selected_source"]
     } else if !state["selected_overlay"].is_null() {
         &state["selected_overlay"]["source"]
     } else {
@@ -208,8 +367,10 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         .unwrap_or("Select exactly one visible world or detail quad face")
         .into()
     });
-    let corners = if matches && draft["valid"] == true {
+    let corners = if matches && draft["valid"] == true && form.reviewed.is_some() {
         &draft["corners"]
+    } else if form.rebind {
+        &state["selected_source"]["corners"]
     } else if !state["selected_overlay"].is_null() {
         &state["selected_overlay"]["corners"]
     } else {
@@ -240,9 +401,27 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
     form.source = source(&draft["source"]);
     form.token = draft["token"].as_u64();
     form.reviewed = fields(window).ok();
-    form.refit = draft["operation"] == "refit";
+    form.refit = matches!(draft["operation"].as_str(), Some("refit" | "rebind"));
+    form.rebind = draft["operation"] == "rebind";
+    form.target = draft["entity"]
+        .as_str()
+        .and_then(|value| value.strip_prefix("entity:"))
+        .and_then(|value| value.parse().ok());
     form.snapshot = state["snapshot"].as_str().unwrap_or_default().into();
     form.serial += 1;
+    if form.rebind {
+        window.set_rebind_target(
+            format!(
+                "Existing {} · previous brush {} / face {} → destination brush {} / face {}",
+                draft["entity"].as_str().unwrap_or("overlay"),
+                draft["previous_source"]["solid"],
+                draft["previous_source"]["side"],
+                draft["source"]["solid"],
+                draft["source"]["side"]
+            )
+            .into(),
+        );
+    }
 }
 
 fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
@@ -250,7 +429,7 @@ fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) 
         let (source, snapshot) = {
             let form = form.borrow();
             if form.refit {
-                return Err("Refit preserves existing settings. Use Apply refit or Cancel.".into());
+                return Err("Existing-overlay updates preserve settings. Use Preview rebind, Apply or Cancel.".into());
             }
             (
                 form.source
@@ -328,6 +507,33 @@ impl Controller {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || preview(&window.unwrap(), &mut lock(&shared), &form)
         });
+        window.on_search_overlays({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                form.borrow_mut().choices_offset = 0;
+                refresh_choices(&window.unwrap(), &lock(&shared), &form);
+            }
+        });
+        window.on_overlay_page_change({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move |direction| {
+                let offset = form.borrow().choices_offset;
+                form.borrow_mut().choices_offset = if direction < 0 {
+                    offset.saturating_sub(OVERLAY_PAGE_SIZE)
+                } else {
+                    offset.saturating_add(OVERLAY_PAGE_SIZE)
+                };
+                refresh_choices(&window.unwrap(), &lock(&shared), &form);
+            }
+        });
+        window.on_choose_overlay({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move |entity| choose_overlay(&window.unwrap(), &lock(&shared), &form, &entity)
+        });
+        window.on_rebind({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || preview_rebind(&window.unwrap(), &mut lock(&shared), &form)
+        });
         window.on_refit({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || preview_refit(&window.unwrap(), &mut lock(&shared), &form)
@@ -360,7 +566,7 @@ impl Controller {
                 match session.review_overlay(Actor::User, token) {
                     Ok(state) => {
                         adopt(&window, &state, &form);
-                        window.set_message(if state["draft"]["operation"] == "refit" { "Refit draft loaded. Apply refit updates the existing entity; Cancel discards this reviewed draft." } else { "Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft." }.into());
+                        window.set_message(if state["draft"]["operation"] == "rebind" { "Rebind draft loaded. Apply rebind updates the existing entity to the reviewed destination; Cancel discards this draft." } else if state["draft"]["operation"] == "refit" { "Refit draft loaded. Apply refit updates the existing entity; Cancel discards this reviewed draft." } else { "Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft." }.into());
                     }
                     Err(error) => window.set_message(error.into()),
                 }
@@ -390,7 +596,7 @@ impl Controller {
                 match session.apply_overlay(Actor::User, token) {
                     Ok(result) => {
                         *form.borrow_mut() = Form::default();
-                        window.set_message(if result["operation"] == "refit" { "Overlay refitted and selected. Undo restores its previous projection." } else { "Overlay created and selected. Undo removes it." }.into());
+                        window.set_message(if result["operation"] == "rebind" { "Overlay rebound and selected. Undo restores its previous binding and projection." } else if result["operation"] == "refit" { "Overlay refitted and selected. Undo restores its previous projection." } else { "Overlay created and selected. Undo removes it." }.into());
                         refresh(&window, &session, &form);
                         let _ = window.hide();
                     }
@@ -425,8 +631,16 @@ impl Controller {
         form.snapshot = state["snapshot"].as_str().unwrap_or_default().into();
         form.reviewed = None;
         form.refit = false;
+        form.rebind = false;
+        form.target = None;
+        form.choices_offset = 0;
         form.serial += 1;
         drop(form);
+        self.window.set_overlay_search("".into());
+        self.window.set_rebind_target(
+            "Choose an existing overlay to move it to the selected destination face.".into(),
+        );
+        refresh_choices(&self.window, session, &self.form);
         load(&self.window, &Value::Null);
         self.window.set_material(material.into());
         self.window.set_message(if !state["selected_overlay"].is_null() { "Refit selected overlay previews its existing face binding. Apply refit updates the same entity." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
@@ -478,6 +692,7 @@ impl Controller {
 mod tests {
     use super::*;
     use map_core::{BrushGeometry, ObjectId};
+    use slint::Model;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -857,5 +1072,144 @@ mod tests {
             assert_eq!(lock(&shared).document().vmf(), &original);
             app.hide().unwrap();
         }
+        let (overlay_id, destination) = {
+            let mut session = lock(&shared);
+            let snapshot = session.overlay_stamp();
+            let token = session
+                .preview_overlay(
+                    Actor::Agent,
+                    Request {
+                        source,
+                        options: Options {
+                            material: "test/checker".into(),
+                            targetname: Some("Rebind sign".into()),
+                            u: [1.0, 0.0],
+                            ..Default::default()
+                        },
+                    },
+                    &snapshot,
+                )
+                .unwrap()["draft"]["token"]
+                .as_u64()
+                .unwrap();
+            let applied = session.apply_overlay(Actor::Agent, token).unwrap();
+            let ObjectId::Entity(id) =
+                crate::identity::parse_id(applied["created"].as_str().unwrap()).unwrap()
+            else {
+                unreachable!()
+            };
+            session
+                .edit(Actor::Agent, "raw rebind settings", |tx| {
+                    tx.entity_mut(id)?.properties.set("StartU", "01.000");
+                    Ok(())
+                })
+                .unwrap();
+            let side = session
+                .document()
+                .solid(source.solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| side.id != source.side)
+                .unwrap()
+                .id;
+            let destination = FaceId {
+                solid: source.solid,
+                side,
+            };
+            session
+                .select_faces(&[destination], crate::session::SelectMode::Replace)
+                .unwrap();
+            (id, destination)
+        };
+        let before_rebind = lock(&shared).document().vmf().clone();
+        let history_rebind = lock(&shared).document().undo_labels().count();
+        let rebind = Controller::new(&shared).unwrap();
+        rebind.show(&mut lock(&shared), "test/checker").unwrap();
+        rebind
+            .window
+            .window()
+            .set_size(slint::PhysicalSize::new(860, 940));
+        rebind.window.set_overlay_search("rebind SIGN".into());
+        rebind.window.invoke_search_overlays();
+        assert_eq!(rebind.window.get_overlay_targets().row_count(), 1);
+        let row = rebind.window.get_overlay_targets().row_data(0).unwrap();
+        assert!(row.eligible);
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &rebind.window,
+            &row.label,
+        )
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+        assert!(rebind.window.get_rebind_mode());
+        assert!(rebind.window.get_can_rebind());
+        assert!(!rebind.window.get_can_preview());
+        assert_eq!(lock(&shared).selected_faces(), [destination]);
+        rebind.window.invoke_rebind();
+        assert!(rebind.window.get_ready(), "{}", rebind.window.get_message());
+        let draft = lock(&shared).get_overlay_state();
+        assert_eq!(draft["draft"]["operation"], "rebind");
+        assert_eq!(draft["draft"]["entity"], format!("entity:{overlay_id}"));
+        assert_eq!(lock(&shared).document().vmf(), &before_rebind);
+        assert_eq!(
+            lock(&shared).document().undo_labels().count(),
+            history_rebind
+        );
+        for label in ["Preview rebind", "Apply rebind", "Cancel"] {
+            crate::ui::tests::assert_dialog_button_visible(&rebind.window, label);
+        }
+        crate::ui::tests::save_ui_snapshot(rebind.window.window(), "overlay-rebind");
+        rebind.window.invoke_cancel();
+        assert!(lock(&shared).get_overlay_state()["draft"].is_null());
+        assert_eq!(lock(&shared).document().vmf(), &before_rebind);
+        let foreign = {
+            let mut session = lock(&shared);
+            session
+                .select(
+                    &[ObjectId::Entity(overlay_id)],
+                    crate::session::SelectMode::Replace,
+                )
+                .unwrap();
+            assert!(!session.face_mode());
+            let snapshot = session.overlay_stamp();
+            session
+                .preview_overlay_rebind(Actor::Agent, overlay_id, destination, &snapshot)
+                .unwrap()["draft"]["token"]
+                .as_u64()
+                .unwrap()
+        };
+        rebind.show(&mut lock(&shared), "test/checker").unwrap();
+        rebind.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &before_rebind);
+        rebind.window.invoke_review();
+        assert!(rebind.window.get_rebind_mode());
+        assert!(rebind.window.get_ready());
+        assert_ne!(lock(&shared).get_overlay_state()["draft"]["token"], foreign);
+        rebind.window.invoke_apply();
+        assert_eq!(
+            lock(&shared)
+                .document()
+                .entity(overlay_id)
+                .unwrap()
+                .properties
+                .get("sides"),
+            Some(destination.side.to_string().as_str())
+        );
+        assert_eq!(
+            lock(&shared)
+                .document()
+                .entity(overlay_id)
+                .unwrap()
+                .properties
+                .get("StartU"),
+            Some("01.000")
+        );
+        assert_eq!(
+            lock(&shared).document().undo_labels().count(),
+            history_rebind + 1
+        );
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before_rebind);
     }
 }

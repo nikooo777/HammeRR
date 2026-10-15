@@ -32,7 +32,31 @@ struct Draft {
     owner: Actor,
     source: FaceId,
     definition: Definition,
-    refit_entity: Option<u32>,
+    operation: Operation,
+}
+
+#[derive(Clone, Copy)]
+enum Operation {
+    Create,
+    Refit(u32),
+    Rebind { id: u32, previous: FaceId },
+}
+
+impl Operation {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Refit(_) => "refit",
+            Self::Rebind { .. } => "rebind",
+        }
+    }
+
+    fn entity(self) -> Option<u32> {
+        match self {
+            Self::Create => None,
+            Self::Refit(id) | Self::Rebind { id, .. } => Some(id),
+        }
+    }
 }
 
 fn options_json(options: &Options) -> Value {
@@ -79,7 +103,7 @@ impl Session {
         }
         if !std::ptr::eq(self.render_document(), &self.document) {
             return Err(
-                "Apply or cancel the geometry preview before creating or refitting an overlay"
+                "Apply or cancel the geometry preview before creating, refitting or rebinding an overlay"
                     .into(),
             );
         }
@@ -148,8 +172,9 @@ impl Session {
         let draft = self.overlay.draft.as_ref().map(|draft| {
             json!({
                 "token":draft.token,"owner":draft.owner.label(),
-                "operation":if draft.refit_entity.is_some(){"refit"}else{"create"},
-                "entity":draft.refit_entity.map(|id|format!("entity:{id}")),
+                "operation":draft.operation.label(),
+                "entity":draft.operation.entity().map(|id|format!("entity:{id}")),
+                "previous_source":match draft.operation { Operation::Rebind { previous, .. } => Some(json!({"solid":previous.solid,"side":previous.side})), _ => None },
                 "valid":self.checked_overlay(draft.token).is_ok(),
                 "source":{"solid":draft.source.solid,"side":draft.source.side},
                 "options":options_json(&draft.definition.options),
@@ -163,7 +188,7 @@ impl Session {
             "revision":self.document.revision(),"selected_source":selected_source,
             "selection_error":selection_error,"draft":draft,
             "selected_overlay":selected_overlay,"refit_error":refit_error,
-            "policy":"Create on one visible world/detail quad, or explicitly refit one existing overlay to its single bound quad. Refit updates the same entity's projection and origin while preserving authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. New-face rebinding and multiside refitting are unavailable.",
+            "policy":"Create on one visible world/detail quad, refit one existing overlay to its single bound quad, or explicitly rebind it to a different visible world/detail quad. Refit and rebind preserve the entity ID, authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. Existing bindings must contain one eligible quad; multiside and automatic rebinding are unavailable.",
         })
     }
 
@@ -178,7 +203,7 @@ impl Session {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
         let definition = overlay::fit(self.document.vmf(), request.source, request.options)?;
-        Ok(self.set_overlay_draft(actor, request.source, definition, None))
+        Ok(self.set_overlay_draft(actor, request.source, definition, Operation::Create))
     }
 
     pub fn preview_overlay_refit(
@@ -192,7 +217,73 @@ impl Session {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
         let (source, definition) = overlay::fit_existing(self.document.vmf(), id)?;
-        Ok(self.set_overlay_draft(actor, source, definition, Some(id)))
+        Ok(self.set_overlay_draft(actor, source, definition, Operation::Refit(id)))
+    }
+
+    pub fn browse_overlay_targets(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Value, String> {
+        if query.len() > 256 || !(1..=50).contains(&limit) {
+            return Err("Use an overlay search up to 256 bytes and a page of 1 to 50 rows".into());
+        }
+        let query = query.to_ascii_lowercase();
+        let words = query.split_whitespace().collect::<Vec<_>>();
+        let matches = self
+            .document
+            .vmf()
+            .entities
+            .iter()
+            .filter(|entity| {
+                if !entity
+                    .classname()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("info_overlay"))
+                {
+                    return false;
+                }
+                let label = format!(
+                    "entity:{} {} {}",
+                    entity.id,
+                    entity.properties.get("targetname").unwrap_or(""),
+                    entity.properties.get("material").unwrap_or("")
+                )
+                .to_ascii_lowercase();
+                words.iter().all(|word| label.contains(word))
+            })
+            .collect::<Vec<_>>();
+        let entries = matches.iter().skip(offset).take(limit).map(|entity| {
+            let (source, options, error) = match overlay::fit_existing(self.document.vmf(), entity.id) {
+                Ok((face, definition)) => (Some(json!({"solid":face.solid,"side":face.side})), Some(options_json(&definition.options)), None),
+                Err(error) => (None, None, Some(error)),
+            };
+            json!({"id":entity.id,"entity":format!("entity:{}",entity.id),"name":entity.properties.get("targetname").unwrap_or(""),"material":entity.properties.get("material").unwrap_or(""),"source":source,"options":options,"eligible":error.is_none(),"error":error})
+        }).collect::<Vec<_>>();
+        Ok(
+            json!({"snapshot":self.overlay_stamp(),"query":query,"offset":offset,"limit":limit,"total":matches.len(),"entries":entries}),
+        )
+    }
+
+    pub fn preview_overlay_rebind(
+        &mut self,
+        actor: Actor,
+        id: u32,
+        source: FaceId,
+        snapshot: &str,
+    ) -> Result<Value, String> {
+        self.overlay_context()?;
+        if snapshot != self.overlay_stamp() {
+            return Err("Map, selection or overlay draft changed; inspect overlays again".into());
+        }
+        let definition = overlay::fit_rebind(self.document.vmf(), id, source)?;
+        let (previous, _) = overlay::fit_existing(self.document.vmf(), id)?;
+        Ok(self.set_overlay_draft(
+            actor,
+            source,
+            definition,
+            Operation::Rebind { id, previous },
+        ))
     }
 
     fn set_overlay_draft(
@@ -200,7 +291,7 @@ impl Session {
         actor: Actor,
         source: FaceId,
         definition: Definition,
-        refit_entity: Option<u32>,
+        operation: Operation,
     ) -> Value {
         self.overlay.serial += 1;
         self.scene_serial += 1;
@@ -212,15 +303,15 @@ impl Session {
             owner: actor,
             source,
             definition,
-            refit_entity,
+            operation,
         });
         self.view_serial += 1;
         self.log(
             actor,
-            if refit_entity.is_some() {
-                "Preview overlay refit"
-            } else {
-                "Preview overlay creation"
+            match operation {
+                Operation::Create => "Preview overlay creation",
+                Operation::Refit(_) => "Preview overlay refit",
+                Operation::Rebind { .. } => "Preview overlay rebind",
             },
         );
         self.get_overlay_state()
@@ -244,10 +335,15 @@ impl Session {
         }
         let source = draft.source;
         let options = draft.definition.options.clone();
-        let refit_entity = draft.refit_entity;
-        let id = match refit_entity {
-            Some(id) => self.edit(actor, "Refit overlay", |tx| overlay::refit(tx, id))?,
-            None => self.edit(actor, "Create overlay", |tx| {
+        let operation = draft.operation;
+        let id = match operation {
+            Operation::Refit(id) => {
+                self.edit(actor, "Refit overlay", |tx| overlay::refit(tx, id))?
+            }
+            Operation::Rebind { id, .. } => self.edit(actor, "Rebind overlay", |tx| {
+                overlay::rebind(tx, id, source)
+            })?,
+            Operation::Create => self.edit(actor, "Create overlay", |tx| {
                 overlay::create(tx, source, options)
             })?,
         };
@@ -257,12 +353,8 @@ impl Session {
         self.view_serial += 1;
         self.select(&[id], SelectMode::Replace)?;
         let mut result = self.get_overlay_state();
-        result["operation"] = json!(if refit_entity.is_some() {
-            "refit"
-        } else {
-            "create"
-        });
-        result[if refit_entity.is_some() {
+        result["operation"] = json!(operation.label());
+        result[if operation.entity().is_some() {
             "updated"
         } else {
             "created"

@@ -415,3 +415,174 @@ fn refit_rejects_ambiguous_hidden_missing_and_malformed_bindings_atomically() {
         assert_eq!(invalid.revision(), revision);
     }
 }
+
+#[test]
+fn explicit_rebinding_fits_a_different_owner_face_and_preserves_raw_entity_data() {
+    use source_formats::keyvalues::Node;
+    use source_formats::vmf::{Connection, Properties};
+
+    for destination_detail in [false, true] {
+        let (mut document, original_face) = fixture(!destination_detail);
+        let ObjectId::Entity(id) = document
+            .edit("create overlay", |tx| create(tx, original_face, options()))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let destination = document
+            .edit("destination and imported fields", |tx| {
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::new(-180.125, 32.375, 128.625),
+                    DVec3::new(-84.125, 96.375, 144.625),
+                    "test/checker",
+                )?
+                else {
+                    unreachable!()
+                };
+                let side = tx
+                    .solid_mut(solid)?
+                    .sides
+                    .iter()
+                    .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                    .unwrap()
+                    .id;
+                edit::transform(
+                    tx,
+                    &[ObjectId::Solid(solid)],
+                    edit::Transform {
+                        rotation: DVec3::new(13.125, -24.625, 7.375),
+                        ..Default::default()
+                    },
+                )?;
+                if destination_detail {
+                    edit::tie_to_entity(tx, &[solid], "func_detail", &[])?;
+                }
+                let entity = tx.entity_mut(id)?;
+                for (key, value) in [
+                    ("material", "Materials/Decals/marking.VMT"),
+                    ("targetname", "  original marking  "),
+                    ("RenderOrder", "03"),
+                    ("StartU", "01.000"),
+                    ("custom", "opaque value"),
+                ] {
+                    entity.properties.set(key, value);
+                }
+                entity.connections = Some(vec![Connection {
+                    output: "OnUser1".into(),
+                    value: "relay,Trigger,,0,-1".into(),
+                }]);
+                entity.editor = Some(Properties(vec![("color".into(), "1 2 3".into())]));
+                entity.extra.push(Node::block(
+                    "opaque",
+                    vec![Node::string("keep", "unchanged")],
+                ));
+                Ok(FaceId { solid, side })
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let expected = fit_rebind(&before, id, destination).unwrap();
+        assert_eq!(expected.sides, [destination.side]);
+        assert!(fit_rebind(&before, id, original_face).is_err());
+        assert_eq!(
+            document
+                .edit("Rebind overlay", |tx| rebind(tx, id, destination))
+                .unwrap(),
+            ObjectId::Entity(id)
+        );
+        assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
+        let after = document.vmf().clone();
+        let original = before
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        let mut retained = document.entity(id).unwrap().clone();
+        for key in [
+            "origin",
+            "sides",
+            "BasisOrigin",
+            "BasisNormal",
+            "BasisU",
+            "BasisV",
+            "uv0",
+            "uv1",
+            "uv2",
+            "uv3",
+        ] {
+            retained
+                .properties
+                .set(key, original.properties.get(key).unwrap());
+        }
+        assert_eq!(&retained, original);
+        assert_eq!(before.entities.len(), after.entities.len());
+        for solid in before.solids() {
+            assert_eq!(
+                after
+                    .solids()
+                    .find(|candidate| candidate.id == solid.id)
+                    .unwrap(),
+                solid
+            );
+        }
+        assert_eq!(document.undo().unwrap().label, "Rebind overlay");
+        assert_eq!(document.vmf(), &before);
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &after);
+    }
+}
+
+#[test]
+fn rebind_rejects_an_unsupported_existing_binding_or_hidden_destination_atomically() {
+    let (mut document, source) = fixture(false);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create(tx, source, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let destination = document
+        .edit("destination", |tx| {
+            let ObjectId::Solid(solid) = edit::create_block(
+                tx,
+                DVec3::splat(-256.0),
+                DVec3::splat(-192.0),
+                "test/checker",
+            )?
+            else {
+                unreachable!()
+            };
+            Ok(FaceId {
+                solid,
+                side: tx.solid_mut(solid)?.sides[0].id,
+            })
+        })
+        .unwrap();
+    for unsupported_binding in [false, true] {
+        let mut vmf = document.vmf().clone();
+        if unsupported_binding {
+            vmf.entities
+                .iter_mut()
+                .find(|entity| entity.id == id)
+                .unwrap()
+                .properties
+                .set("sides", format!("{} {}", source.side, destination.side));
+        } else {
+            vmf.world
+                .solids
+                .iter_mut()
+                .find(|solid| solid.id == destination.solid)
+                .unwrap()
+                .hidden = true;
+        }
+        let mut invalid = Document::new(vmf);
+        let before = invalid.vmf().clone();
+        assert!(
+            invalid
+                .edit("invalid rebind", |tx| rebind(tx, id, destination))
+                .is_err()
+        );
+        assert_eq!(invalid.vmf(), &before);
+        assert_eq!(invalid.revision(), 0);
+    }
+}

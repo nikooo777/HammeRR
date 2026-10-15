@@ -91,6 +91,7 @@ To build the map, set the build options once, then compile:
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
+| Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
 | Repeated placement | `get_repeat_array`, `preview_repeat_array`, `apply_repeat_array`, `cancel_repeat_array` |
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
@@ -416,3 +417,22 @@ Custom recipes use `build-recipes.json` in recovery storage; `HAMMERR_BUILD_RECI
 Existing synchronous and background compile results expose `prop_shadow_props`, `prop_shadow_models`, `prop_shadow_triangles`, `prop_shadow_disabled` and `prop_shadow_work`, also shown in **Build details…**. Direct LDR uses supported opaque LOD0 prop meshes for direct, sky, bounce and ambient occlusion, honoring native `disableshadows`. Material approximations generate warnings; missing or invalid required companions fail without replacing prior output. No new setting or tool is required. See [Static-prop shadows](prop-shadows.md).
 
 Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. One visible convex brush per helper must fit one unambiguous world area. Native records and activation indices are emitted; runtime culling and input transitions remain unverified. See [Occluders](occluders.md).
+
+### Cut, copy and paste
+
+`get_clipboard` returns the current `snapshot`, detached `payload`, owned paste `preview`, `can_restore_cut_names`, format and bounds. Inspection never reads the system clipboard. Copy/import preserves geometry, camera, selection and map Undo. Payloads survive source edits, Undo and map replacement. Whole VMF text transfers only objects, required native groups and attached object notes; world settings, map notes, regions and cameras stay local.
+
+| Tool | Arguments and behavior |
+| --- | --- |
+| `copy_objects` | Latest `snapshot`, optional `ids` (selection by default), `destination: "session"` (default) or `"system"`. Fully captures before replacing the old payload. |
+| `cut_objects` | Same arguments; validates capture and deletion, publishes the requested clipboard, then removes sources in one Undo step. Publication failure leaves objects and prior clipboard intact. |
+| `export_clipboard` | Exact `payload.content_revision`; `destination: "response"` (default) returns portable VMF `text`, or `"system"` publishes it. |
+| `import_clipboard` | Latest `snapshot`, plus `text` or `system: true`, exclusively. Invalid text preserves the old payload and valid preview. System reads are explicit. |
+| `preview_paste` | Latest `snapshot`, optional XYZ `offset` (zero/in place), `texture_lock` (true), `keep_external_links` (false) and `restore_cut_names` (true only for an unchanged same-map Cut). |
+| `apply_paste` / `cancel_paste` | Exact owned `token` from `preview_paste`. Apply checks the full regenerated VMF/result and records one Undo step. Old tokens cannot cancel replacement tools. |
+
+`payload.external_links` reports outgoing references, source fields and current destination matches. External links need explicit keep-by-name acknowledgement. Unique generated names and certain exact internal FGD/I/O/parent links are remapped together. Generated-name acquisitions, ambiguity, numeric/overlay references and named script/dynamic-I/O dependencies reject. Unknown object metadata remains verbatim.
+
+Original-name restoration requires the exact unchanged post-Cut revision, document generation, entity definitions and clipboard content. Opening another map, Undo or another map edit disables it; imported data cannot manufacture a receipt. Cancel affects only the paste preview, leaving a completed Cut in Undo.
+
+Limits: 16 top-level sources, 256 objects including owned brushes, 8192 sides, 256 groups, 256 sides per brush, 8 MiB text, 64 nesting levels, 131072 KeyValues nodes and ±65536 authoring coordinates. Manual visgroups and saved partitions on copied brushes reject. Native clipboard support is UTF-8 VMF text through the available platform backend; private Hammer formats are unsupported. Use response export/import between independent headless sessions. See [Cut, copy and paste](clipboard.md).

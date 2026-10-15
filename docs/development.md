@@ -367,3 +367,17 @@ python3 -B scripts/validate_occluders.py --binary target/debug/editor --output /
 The prop fixture mounts synthetic bounded model companions, compares actual BSP light samples through both compile paths, checks shadow flags and selected-material warnings, and verifies malformed-asset failure preserves output/source/history. Compiler `prop_shadows`, `direct_lighting`, `static_props` and `bounced_lighting` integration tests cover lighting interaction and probe relocation outside a closed prop; `prop_occlusion` unit tests check before/on/behind-source indirect rays. Source-format checks cover bounded patch-material includes.
 
 The occluder fixture checks native polygon planes/global vertices, dense entity indices, active state, metadata preservation, foreground/background equality, hidden helpers and atomic rejection of unsupported geometry. Source-format `occlusion` and compiler `occluders` integration tests cover malformed/versioned records, empty native sentinels, area ambiguity, pruned-solid adjacency and world bounds. These checks do not establish in-game culling or input-transition behavior.
+
+### Clipboard transfer
+
+```sh
+cargo test -p source-formats --lib bounded_tests
+cargo test -p map-core --lib transfer::tests
+cargo test -p editor clipboard
+python3 -B scripts/validate_clipboard.py --binary target/debug/editor --output /tmp/hammerr-clipboard-check
+python3 -B scripts/validate_clipboard_native.py --binary target/debug/editor --output /tmp/hammerr-clipboard-native-check
+```
+
+Core checks cover detached source/destination identity collisions, exact internal references, external policies, texture placement, groups, owned-brush notes, terrain, native round trips and atomic history. Parser checks bound nesting/nodes before typed conversion. Session/UI checks cover publication failure before Cut, unchanged-map name receipts, invalid import retention, stale/foreign previews and parameter review; `HAMMERR_UI_SNAPSHOTS` writes `clipboard-paste.png` through the software testing backend.
+
+The default validator uses two private stdio Sessions and exported text, with source replacement, offscreen preview/Apply/Cancel agreement, malformed payloads, metadata, save/reopen and identical foreground/background compilation. It never reads or writes the system clipboard. The native wrapper starts a separate Cage headless Wayland compositor with a private runtime directory, removes inherited display connections and runs the same transfer with explicit native publication/read. Its output directory must be new. It requires Cage and leaves desktop focus, input and the user's clipboard untouched; it does not launch the game.

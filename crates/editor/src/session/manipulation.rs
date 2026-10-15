@@ -354,6 +354,7 @@ impl Session {
             self.clip_tool = false;
             self.cancel_clip_preview();
             self.clear_hollow_preview();
+            self.clear_paste_preview();
             self.clear_repeat_preview();
             self.clear_carve_preview();
             self.clear_merge_preview();
@@ -395,6 +396,7 @@ impl Session {
             || self.hollowing.preview.is_some()
             || self.carving.preview.is_some()
             || self.merging.preview.is_some()
+            || self.clipboard.preview.is_some()
         {
             return None;
         }
@@ -489,6 +491,7 @@ impl Session {
             self.cancel_transform_preview();
         }
         self.select(ids, SelectMode::Replace)?;
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.cancel_clip_preview();
         self.clear_hollow_preview();
@@ -794,6 +797,7 @@ impl Session {
         }
         self.cancel_clip_preview();
         self.clear_hollow_preview();
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();

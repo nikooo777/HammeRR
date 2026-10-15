@@ -56,6 +56,9 @@ pub enum ParseErrorKind {
     UnexpectedCloseBrace,
     UnclosedBlock,
     MissingValue,
+    NestingLimit,
+    NodeLimit,
+    NulByte,
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -66,6 +69,9 @@ impl fmt::Display for ParseErrorKind {
             Self::UnexpectedCloseBrace => "'}' without a matching '{'",
             Self::UnclosedBlock => "block opened here is never closed",
             Self::MissingValue => "key is missing a value or block",
+            Self::NestingLimit => "block nesting exceeds the input limit",
+            Self::NodeLimit => "node count exceeds the input limit",
+            Self::NulByte => "NUL bytes are not accepted",
         })
     }
 }
@@ -162,16 +168,32 @@ impl<'a> Lexer<'a> {
 /// Parses strictly: unclosed blocks are errors. Use for files we write back,
 /// where silently accepting a truncated file would lose data on save.
 pub fn parse(src: &str) -> Result<Vec<Node>, ParseError> {
-    parse_impl(src, false)
+    parse_impl(src, false, None)
 }
 
 /// Parses the way the engine reads game files: blocks left open at the end
 /// of the file are closed, and `/* */` comments are skipped.
 pub fn parse_lenient(src: &str) -> Result<Vec<Node>, ParseError> {
-    parse_impl(src, true)
+    parse_impl(src, true, None)
 }
 
-fn parse_impl(src: &str, lenient: bool) -> Result<Vec<Node>, ParseError> {
+pub fn parse_bounded(
+    src: &str,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<Vec<Node>, ParseError> {
+    if let Some(offset) = src.find('\0') {
+        return Err(ParseError::at(src, offset, ParseErrorKind::NulByte));
+    }
+    parse_impl(src, false, Some((max_depth, max_nodes)))
+}
+
+fn parse_impl(
+    src: &str,
+    lenient: bool,
+    limits: Option<(usize, usize)>,
+) -> Result<Vec<Node>, ParseError> {
+    let mut count = 0_usize;
     let mut lexer = Lexer {
         src,
         pos: 0,
@@ -214,15 +236,24 @@ fn parse_impl(src: &str, lenient: bool) -> Result<Vec<Node>, ParseError> {
                 let children = std::mem::replace(&mut current, siblings);
                 current.push(Node::block(key, children));
             }
-            Token::Str(key) => match lexer.next()? {
-                (Token::Str(value), _) => current.push(Node::string(key, value)),
-                (Token::Open, open) => {
-                    stack.push((key.to_owned(), std::mem::take(&mut current), open));
+            Token::Str(key) => {
+                count = count.saturating_add(1);
+                if limits.is_some_and(|(_, nodes)| count > nodes) {
+                    return Err(ParseError::at(src, offset, ParseErrorKind::NodeLimit));
                 }
-                (Token::Close | Token::Eof, _) => {
-                    return Err(ParseError::at(src, offset, ParseErrorKind::MissingValue));
+                match lexer.next()? {
+                    (Token::Str(value), _) => current.push(Node::string(key, value)),
+                    (Token::Open, open) => {
+                        if limits.is_some_and(|(depth, _)| stack.len() >= depth) {
+                            return Err(ParseError::at(src, open, ParseErrorKind::NestingLimit));
+                        }
+                        stack.push((key.to_owned(), std::mem::take(&mut current), open));
+                    }
+                    (Token::Close | Token::Eof, _) => {
+                        return Err(ParseError::at(src, offset, ParseErrorKind::MissingValue));
+                    }
                 }
-            },
+            }
         }
     }
 }
@@ -381,5 +412,30 @@ mod tests {
         assert_eq!(parse(&lf).unwrap(), nodes);
         let crlf = write(&nodes, &WriteOptions::default());
         assert_eq!(crlf, lf.replace('\n', "\r\n"));
+    }
+}
+
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+    #[test]
+    fn bounded_input_checks_structure_before_building_recursive_nodes() {
+        assert!(parse_bounded("root { key value }", 1, 2).is_ok());
+        assert_eq!(
+            parse_bounded("root { nested {} }", 1, 3).unwrap_err().kind,
+            ParseErrorKind::NestingLimit
+        );
+        assert_eq!(
+            parse_bounded("root { key value }", 1, 1).unwrap_err().kind,
+            ParseErrorKind::NodeLimit
+        );
+        assert_eq!(
+            parse_bounded("root {", 1, 2).unwrap_err().kind,
+            ParseErrorKind::UnclosedBlock
+        );
+        assert_eq!(
+            parse_bounded("root {}\0", 1, 2).unwrap_err().kind,
+            ParseErrorKind::NulByte
+        );
     }
 }

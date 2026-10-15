@@ -24,6 +24,7 @@ pub mod carving;
 pub mod checks;
 pub mod clip_drag;
 pub mod clip_points;
+pub mod clipboard;
 mod clipping;
 pub mod compilation;
 pub mod component_drag;
@@ -160,6 +161,7 @@ pub struct Session {
     context: context::State,
     primitives: primitives::State,
     repeat: repeat::State,
+    clipboard: clipboard::State,
     clip_preview: Option<ClipPreview>,
     clip_tool: bool,
     clip_epoch: u64,
@@ -271,6 +273,7 @@ impl Session {
             context: context::State::default(),
             primitives: primitives::State::default(),
             repeat: repeat::State::default(),
+            clipboard: clipboard::State::default(),
             clip_preview: None,
             clip_tool: false,
             clip_epoch: 0,
@@ -634,6 +637,7 @@ impl Session {
                 .map_err(|error| error.to_string())?;
             self.cancel_clip_preview();
             self.clear_hollow_preview();
+            self.clear_paste_preview();
             self.clear_repeat_preview();
             self.clear_carve_preview();
             self.clear_merge_preview();
@@ -1070,6 +1074,7 @@ impl Session {
     }
 
     fn changed(&mut self) {
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.cancel_block_preview();
         self.cancel_face_preview();
@@ -1485,6 +1490,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_clip_preview();
         self.clear_hollow_preview();
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();
@@ -1513,6 +1519,7 @@ impl Session {
     pub fn preview_block(&mut self, mins: DVec3, maxs: DVec3) -> Result<(), String> {
         spatial::validate_bounds(mins, maxs)?;
         self.clear_hollow_preview();
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();
@@ -1801,6 +1808,12 @@ impl Session {
                     .map(|preview| &preview.document)
             })
             .or_else(|| {
+                self.clipboard
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
                 self.transform_preview
                     .as_ref()
                     .map(|preview| &preview.document)
@@ -1867,6 +1880,12 @@ impl Session {
                     .map(|preview| &preview.document)
             })
             .or_else(|| {
+                self.clipboard
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
                 self.transform_preview
                     .as_ref()
                     .map(|preview| &preview.document)
@@ -1919,6 +1938,9 @@ impl Session {
             .map_or(selected, |preview| preview.ids.iter().copied().collect());
         let selected = self.repeat.preview.as_ref().map_or(selected, |preview| {
             preview.result.objects().into_iter().collect()
+        });
+        let selected = self.clipboard.preview.as_ref().map_or(selected, |preview| {
+            preview.result.objects.iter().copied().collect()
         });
         let selected = self
             .area_preview
@@ -2005,6 +2027,12 @@ impl Session {
             .map(|preview| &preview.document)
             .or_else(|| {
                 self.repeat
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
+                self.clipboard
                     .preview
                     .as_ref()
                     .map(|preview| &preview.document)

@@ -13,6 +13,7 @@ HammeRR is in active development.
 | --- | --- |
 | Opening and saving VMFs | Works. Imported properties and extra blocks are retained; saves increment the map version and use standard VMF formatting. Round trips through other editors haven't been verified yet. |
 | Recent maps | Up to twenty paths retain compatible build settings, with shared reopen, remove and clear controls. Game content and custom FGD files do not switch automatically; automatic relocation and coordinated writes from multiple editors are unavailable. |
+| Cut, copy and paste | Shared capture, guarded Cut, detached cross-map payloads, native VMF text and owned Paste previews work for bounded whole-object sets. Native group ancestors, owned-brush notes, terrain and exact internal links transfer. Private Hammer clipboard formats, component copies, manual visgroups and saved partitions are unsupported. |
 | Object groups | Native nested groups for world brushes and whole entities support membership/name/parent edits, group selection, temporary bypass and Undo. Imported entity-owned child-brush memberships are preserved but cannot be edited; malformed group graphs cannot be authored. |
 | Brushes, transforms and shapes | Works. |
 | Polygon brushes | Convex and simple concave outlines, grid/exact corners, axis-aligned extrusion, materials and shared previews/Undo work. Oblique drawing planes and holes are planned. |
@@ -50,6 +51,6 @@ HammeRR is in active development.
 
 ## Next
 
-**Editor:** shared cut/copy/paste with safe cross-document transfer, free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, broader model formats and poses and broader map checks.
+**Editor:** broader clipboard formats and metadata transfer, free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, broader model formats and poses and broader map checks.
 
 **Compiler:** HDR, broader physics collision, broader terrain topology, prop lighting, brush-model overlays and water transitions.

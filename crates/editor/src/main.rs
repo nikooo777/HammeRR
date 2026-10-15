@@ -1,5 +1,6 @@
 mod carve_ui;
 mod checks_ui;
+mod clipboard_ui;
 mod compile_ui;
 mod components_ui;
 mod connection_ui;
@@ -189,6 +190,7 @@ struct Ui {
     sounds: Option<sounds_ui::Controller>,
     placement: Option<placement_ui::Controller>,
     repeat: Option<repeat_ui::Controller>,
+    clipboard: Option<clipboard_ui::Controller>,
     object_groups: Option<groups_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
@@ -2910,11 +2912,38 @@ fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
     true
 }
 
+fn copy_clipboard_selection(app: &AppWindow, ui: &SharedUi, cut: bool) {
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    if session.face_mode()
+        || session.component_picking().is_some()
+        || !session.component_selection().is_empty()
+    {
+        app.set_message(
+            "Switch to Objects and finish component editing before copying whole objects.".into(),
+        );
+        return;
+    }
+    let ids = session.selected_ids();
+    let snapshot = session.clipboard_stamp();
+    match session.capture_clipboard(Actor::User, &ids, &snapshot, cut, true) {
+        Ok(_) => app.set_message(
+            format!(
+                "{} {} objects. Paste… previews their placement.",
+                if cut { "Cut" } else { "Copied" },
+                ids.len()
+            )
+            .into(),
+        ),
+        Err(error) => app.set_message(error.into()),
+    }
+}
+
 /// Keyboard commands; returns whether the key was handled.
 fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift: bool) -> bool {
     let key = text.to_lowercase();
     let object_shortcut = if control {
-        key == "d"
+        matches!(key.as_str(), "d" | "c" | "x" | "v")
     } else {
         [
             Key::Delete,
@@ -2944,6 +2973,9 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
             "z" => drop(lock(&session_of(ui)).undo(Actor::User)),
             "y" => drop(lock(&session_of(ui)).redo(Actor::User)),
             "s" => save(app, ui),
+            "c" => app.invoke_copy_objects(),
+            "x" => app.invoke_cut_objects(),
+            "v" => app.invoke_paste_objects(),
             "n" => {
                 let ui2 = ui.clone();
                 confirm_discard(ui, move || {
@@ -3220,6 +3252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sounds: None,
         placement: None,
         repeat: None,
+        clipboard: None,
         object_groups: None,
         color_target: None,
         material_window: None,
@@ -4023,6 +4056,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
             cancel_surface_pick(&app.unwrap(), &ui);
+        }
+    });
+    app.on_copy_objects({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || copy_clipboard_selection(&app.unwrap(), &ui, false)
+    });
+    app.on_cut_objects({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || copy_clipboard_selection(&app.unwrap(), &ui, true)
+    });
+    app.on_paste_objects({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().clipboard.is_none() {
+                match clipboard_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().clipboard = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.clipboard.as_ref().unwrap();
+            controller.initialize(&mut lock(&shared), true);
+            let _ = controller.window.show();
         }
     });
     app.on_repeat_array({
@@ -4974,6 +5034,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         controller.refresh(&session);
                     }
+                    if let Some(controller) = &ui.clipboard
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.placement
                         && (controller.window.window().is_visible() || controller.is_picking())
                     {
@@ -5035,6 +5100,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&mut session);
                     }
                     if let Some(controller) = &ui.repeat
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
+                    if let Some(controller) = &ui.clipboard
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&session);

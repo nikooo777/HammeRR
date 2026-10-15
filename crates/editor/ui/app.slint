@@ -1,3 +1,4 @@
+export { PasteWindow } from "clipboard.slint";
 export { MergeWindow, MergeRow } from "merge.slint";
 export { CarveWindow, CarveRow } from "carve.slint";
 export { HollowWindow } from "hollow.slint";
@@ -1876,6 +1877,9 @@ export component AppWindow inherits Window {
     callback browse-sound(string);
     callback place-on-surface();
     callback repeat-array();
+    callback copy-objects();
+    callback cut-objects();
+    callback paste-objects();
     callback object-groups();
     callback cancel-surface-pick();
     callback material-changed();
@@ -2442,6 +2446,12 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
 
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Copy"; enabled: root.has-selection; clicked => { root.copy-objects(); } }
+                        Button { text: "Cut"; enabled: root.has-selection; clicked => { root.cut-objects(); } }
+                        Button { text: "Paste…"; clicked => { root.paste-objects(); } }
+                    }
                     if root.has-selection: CheckBox {
                         text: "Transform selection";
                         checked <=> root.show-transform;

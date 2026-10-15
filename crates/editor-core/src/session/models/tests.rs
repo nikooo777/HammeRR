@@ -149,6 +149,64 @@ fn model_previews_share_real_assets_picks_bounds_cache_and_source_history() {
 }
 
 #[test]
+fn rotated_model_grid_snap_roundtrips_do_not_add_alignment_history() {
+    for actor in [Actor::User, Actor::Agent] {
+        let Ok(game) = crate::startup::mount_game(None) else {
+            eprintln!("CS:S not installed; skipping");
+            return;
+        };
+        let mut session = Session::new(Ok(game));
+        let ObjectId::Entity(id) = session
+            .create_entity(
+                actor,
+                "prop_static",
+                Some(DVec3::ZERO),
+                BTreeMap::from([(
+                    "model".into(),
+                    "models/props_junk/wood_crate001a.mdl".into(),
+                )]),
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let ids = [ObjectId::Entity(id)];
+        for angle in [1, 17, 30, 63] {
+            for origin in [-8.3, 0.1, 128.125] {
+                session
+                    .set_entity_properties(
+                        actor,
+                        id,
+                        &[
+                            ("origin".into(), Some(format!("{origin} {origin} 0.1"))),
+                            ("angles".into(), Some(format!("0 {angle} 0"))),
+                        ],
+                    )
+                    .unwrap();
+                assert_eq!(
+                    session.model_instances(session.document()).instances.len(),
+                    1
+                );
+                let snap = session.preview_snap_to_grid(actor, &ids).unwrap();
+                assert_ne!(snap.delta, [0.0; 3]);
+                session.commit_transform_preview(actor).unwrap();
+                let before = session.document.vmf().clone();
+                let revision = session.document.revision();
+                let history = session.document.undo_labels().count();
+                for _ in 0..3 {
+                    let aligned = session.preview_snap_to_grid(actor, &ids).unwrap();
+                    assert_eq!(aligned.delta, [0.0; 3], "angle {angle}, origin {origin}");
+                    session.commit_transform_preview(actor).unwrap();
+                    assert_eq!(session.document.vmf(), &before);
+                    assert_eq!(session.document.revision(), revision);
+                    assert_eq!(session.document.undo_labels().count(), history);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn model_bounds_drive_region_reports_local_handles_and_helper_fallbacks() {
     use crate::session::{ObjectFilter, Pointer, SelectMode, volume};
     use glam::{DMat3, DVec2, Vec3};

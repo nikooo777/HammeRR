@@ -1,4 +1,5 @@
 export { CompileRegionWindow } from "compile-region.slint";
+export { OverlayWindow } from "overlay.slint";
 export { PasteWindow } from "clipboard.slint";
 export { MergeWindow, MergeRow } from "merge.slint";
 export { CarveWindow, CarveRow } from "carve.slint";
@@ -1846,6 +1847,7 @@ export component AppWindow inherits Window {
     callback apply-clip();
     callback cancel-clip();
     callback apply-transform();
+    callback preview-snap-to-grid();
     callback transform-tool-changed();
     callback area-settings-changed();
     callback apply-transform-preview();
@@ -1855,6 +1857,7 @@ export component AppWindow inherits Window {
     callback apply-material();
     callback selection-mode-changed(int);
     callback edit-face-textures();
+    callback create-overlay();
     callback edit-face-lighting();
     callback create-terrain(int, int);
     in property <[string]> terrain-corner-choices: ["Corner 1", "Corner 2", "Corner 3", "Corner 4"];
@@ -1919,7 +1922,7 @@ export component AppWindow inherits Window {
     // Returns whether the key was handled.
     callback key(text: string, down: bool, control: bool, shift: bool) -> bool;
     // button: 0 = left, 1 = right, 2 = middle
-    callback mouse-button(button: int, down: bool, x: length, y: length, control: bool);
+    callback mouse-button(button: int, down: bool, x: length, y: length, control: bool, alt: bool);
     callback mouse-moved(x: length, y: length);
     callback wheel(delta: length, x: length, y: length);
     callback viewport-focus-lost();
@@ -2122,7 +2125,8 @@ export component AppWindow inherits Window {
                                     event.kind == PointerEventKind.down,
                                     self.mouse-x,
                                     self.mouse-y,
-                                    event.modifiers.control);
+                                    event.modifiers.control,
+                                    event.modifiers.alt);
                             }
                         }
                         moved => {
@@ -2403,6 +2407,7 @@ export component AppWindow inherits Window {
                         current-index: root.face-mode ? 1 : 0;
                         selected => { root.selection-mode-changed(self.current-index); }
                     }
+                    if !root.face-mode: Text { text: "Alt+click: cycle overlapping objects"; color: #aeb9c8; wrap: word-wrap; }
 
                         if root.has-faces: VerticalLayout {
                             spacing: 6px;
@@ -2600,6 +2605,12 @@ export component AppWindow inherits Window {
                             enabled: !root.has-transform-preview;
                             clicked => { root.apply-transform(); }
                         }
+                        Button {
+                            text: "Preview snap to grid";
+                            enabled: !root.has-transform-preview;
+                            clicked => { root.preview-snap-to-grid(); }
+                        }
+                        Text { text: "Anchor: selection bounds minimum. Moves the whole selection to the nearest grid point. Relative positions and brush shapes stay fixed."; color: #8a909c; font-size: 12px; wrap: word-wrap; }
                     }
 
                     HorizontalLayout {
@@ -2700,6 +2711,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    Button { text: "Overlay…"; clicked => { root.create-overlay(); } }
                     Button { text: "Replace materials…"; clicked => { root.replace-materials(); } }
 
                     SectionTitle {

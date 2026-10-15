@@ -183,11 +183,55 @@ fn pick_with_points(
     include_points: bool,
     include_entity: impl Fn(&Entity) -> bool,
 ) -> Option<Hit> {
+    let mut nearest: Option<Hit> = None;
+    visit_hits(
+        doc,
+        ray,
+        include_solid,
+        include_face,
+        include_points,
+        include_entity,
+        |hit| {
+            if nearest.is_none_or(|old| hit.distance.total_cmp(&old.distance).is_lt()) {
+                nearest = Some(hit);
+            }
+        },
+    );
+    nearest
+}
+
+pub fn visit_object_hits(
+    doc: &Document,
+    ray: &Ray,
+    include_solid: impl Fn(&Solid) -> bool,
+    include_point: impl Fn(&Entity) -> bool,
+    visit: impl FnMut(Hit),
+) {
+    visit_hits(
+        doc,
+        ray,
+        include_solid,
+        |_, _, _| true,
+        true,
+        include_point,
+        visit,
+    );
+}
+
+fn visit_hits(
+    doc: &Document,
+    ray: &Ray,
+    include_solid: impl Fn(&Solid) -> bool,
+    include_face: impl Fn(&Solid, &source_formats::vmf::Side, DVec3) -> bool,
+    include_points: bool,
+    include_entity: impl Fn(&Entity) -> bool,
+    visit: impl FnMut(Hit),
+) {
     if !ray.origin.is_finite()
         || !ray.direction.is_finite()
         || ray.direction.length_squared() < 1e-24
     {
-        return None;
+        return;
     }
     let ray = Ray {
         origin: ray.origin,
@@ -247,9 +291,7 @@ fn pick_with_points(
                 .filter_map(move |s| test_solid(id, s))
                 .chain(test_point_entity(e))
         });
-    world
-        .chain(entities)
-        .min_by(|a, b| a.distance.total_cmp(&b.distance))
+    world.chain(entities).for_each(visit);
 }
 
 pub fn face_bounds(solid: &Solid, side_id: u32) -> Option<(DVec3, DVec3)> {
@@ -413,6 +455,126 @@ mod tests {
     use super::*;
     use crate::edit::{create_block, create_entity};
     use crate::surface::FaceId;
+
+    #[test]
+    fn all_object_hits_keep_owned_brush_evidence_and_the_existing_nearest_result() {
+        let mut document = Document::empty();
+        let (far, owner, point) = document
+            .edit("overlapping ray targets", |tx| {
+                let far = create_block(
+                    tx,
+                    DVec3::new(80.0, -8.0, -8.0),
+                    DVec3::new(96.0, 8.0, 8.0),
+                    "test",
+                )?;
+                let mut solids = Vec::new();
+                for x in [32.0, 56.0] {
+                    solids.push(crate::edit::block_solid(
+                        tx,
+                        DVec3::new(x, -8.0, -8.0),
+                        DVec3::new(x + 8.0, 8.0, 8.0),
+                        "test",
+                    )?);
+                }
+                let owner = create_entity(tx, "func_brush", None, &[], solids)?;
+                let point = create_entity(
+                    tx,
+                    "info_target",
+                    Some(DVec3::new(24.0, 0.0, 0.0)),
+                    &[],
+                    Vec::new(),
+                )?;
+                Ok((far, owner, point))
+            })
+            .unwrap();
+        let ray = Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::X * 7.0,
+        };
+        let mut hits = Vec::new();
+        visit_object_hits(&document, &ray, |_| true, |_| true, |hit| hits.push(hit));
+        assert_eq!(hits.len(), 4);
+        assert_eq!(hits.iter().filter(|hit| hit.object == owner).count(), 2);
+        assert!(
+            hits.iter()
+                .filter(|hit| hit.object == owner)
+                .all(|hit| hit.solid.is_some() && hit.side.is_some())
+        );
+        let nearest = hits
+            .iter()
+            .min_by(|a, b| a.distance.total_cmp(&b.distance))
+            .copied();
+        assert_eq!(pick(&document, &ray, |_| true), nearest);
+        assert_eq!(nearest.unwrap().object, point);
+        assert_eq!(nearest.unwrap().distance, 16.0);
+        let mut filtered = Vec::new();
+        visit_object_hits(
+            &document,
+            &ray,
+            |solid| ObjectId::Solid(solid.id) != far,
+            |_| false,
+            |hit| filtered.push(hit),
+        );
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|hit| hit.object == owner));
+        assert_eq!(
+            pick_with_entity_filter(
+                &document,
+                &ray,
+                |solid| ObjectId::Solid(solid.id) != far,
+                |_| false
+            ),
+            filtered
+                .into_iter()
+                .min_by(|a, b| a.distance.total_cmp(&b.distance))
+        );
+    }
+
+    #[test]
+    fn object_hit_traversal_keeps_terrain_hidden_and_invalid_ray_rules() {
+        let (mut document, _) = raised_terrain();
+        let ray = Ray {
+            origin: DVec3::new(8.0, 8.0, 200.0),
+            direction: DVec3::NEG_Z * 3.0,
+        };
+        let mut hits = Vec::new();
+        visit_object_hits(&document, &ray, |_| true, |_| true, |hit| hits.push(hit));
+        assert_eq!(hits.first().copied(), pick(&document, &ray, |_| true));
+        assert!(hits[0].point.z > 16.0);
+        for ray in [
+            Ray {
+                origin: DVec3::splat(f64::INFINITY),
+                ..ray
+            },
+            Ray {
+                direction: DVec3::ZERO,
+                ..ray
+            },
+        ] {
+            visit_object_hits(
+                &document,
+                &ray,
+                |_| true,
+                |_| true,
+                |_| panic!("invalid ray produced a hit"),
+            );
+            assert!(pick(&document, &ray, |_| true).is_none());
+        }
+        let id = document.vmf().world.solids[0].id;
+        document
+            .edit("hide terrain", |tx| {
+                tx.solid_mut(id)?.hidden = true;
+                Ok(())
+            })
+            .unwrap();
+        visit_object_hits(
+            &document,
+            &ray,
+            |_| true,
+            |_| true,
+            |_| panic!("hidden terrain produced a hit"),
+        );
+    }
 
     #[test]
     fn surface_hits_report_geometric_brush_and_terrain_normals() {

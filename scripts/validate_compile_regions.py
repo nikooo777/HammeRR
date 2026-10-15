@@ -8,6 +8,7 @@ import validate_native_runtime as runtime
 from probe_compile_region_shell import HIGH, LOW, OBSERVER, SOURCE
 from validate_compile_jobs import wait_job
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
+from validate_static_props import static_records
 
 
 def preview(client, enabled=True, low=LOW, high=HIGH, clear=False):
@@ -47,6 +48,10 @@ def validate(args):
         ]:
             ids.append(client.call("create_entity", {"classname": classname, "origin": origin, "properties": properties})["id"])
         outside = ids[-3:]
+        if args.lighting_origins:
+            lighting = client.call("create_entity", {"classname": "info_lighting", "origin": [400.125, 64.25, 80.375], "properties": {"targetname": "region_lighting"}})["id"]
+            prop = client.call("create_entity", {"classname": "prop_static", "origin": [-64, 64, 16], "properties": {"model": "models/props_junk/wood_crate001a.mdl", "lightingorigin": "region_lighting"}})["id"]
+            ids.extend([lighting, prop])
         global_ids = []
         if args.global_markers:
             for classname, properties in [
@@ -77,7 +82,7 @@ def validate(args):
         client.call("save_map", {"path": str(source)})
         full_path = args.output / "full-map.bsp"
         full = client.call("compile_map", {"path": str(full_path)})
-        check(full["success"] and full["stats"]["static_props"] == 1, "Full-map baseline includes the outside static prop")
+        check(full["success"] and full["stats"]["static_props"] == 1 + int(args.lighting_origins), "Full-map baseline includes the outside static prop")
         original_objects = detail(client, ids)
         original_state = client.call("get_map_info")
         draft = preview(client)
@@ -119,9 +124,30 @@ def validate(args):
         check(scope["boundary_material"] == "tools/toolsblack", "The boundary has a checked rendered black material")
         check(built["stats"]["brushes"] == 9 + int(args.water) and len(scope["generated_brushes"]) == 6, "Retained source brushes share six generated sealing slabs")
         check(client.call("get_map_info")["compile_region"] == client.call("get_compile_region")["build_scope"], "The map-info summary reports effective region scope without form bounds")
-        check(all(item in scope["omitted"] for item in outside) and built["stats"]["static_props"] == 0, "Map, lights and independent static-prop baking share the filtered VMF")
-        check(b"outside_region" not in region_path.read_bytes(), "The omitted point entity does not reappear in emitted entities")
+        check(all(item in scope["omitted"] for item in outside) and built["stats"]["static_props"] == int(args.lighting_origins), "Map, lights and independent static-prop baking share the filtered VMF")
         check(detail(client, ids) == original_objects and client.call("get_map_info")["undo"] == history and client.call("get_map_info")["selection"] == selection and source.read_bytes() == saved, "Compilation preserves source geometry, history, selection and saved bytes")
+        if args.lighting_origins:
+            original_selection = client.call("get_map_info")
+            record = static_records(region_path.read_bytes())["props"][0]
+            check(lighting in scope["included"] and record[14:17] == (400.125, 64.25, 80.375) and record[10] & 2, "Outside compiler-only helpers retain the exact native static-prop lighting origin")
+            previous = region_path.read_bytes()
+            for duplicate in [False, True]:
+                if duplicate:
+                    client.call("create_entity", {"classname": "info_lighting", "origin": [32, 32, 64], "properties": {"targetname": "region_lighting"}})
+                else:
+                    client.call("set_object_visibility", {"ids": [lighting], "action": "hide"})
+                rejected = client.call("compile_map", {"path": str(region_path)}, error=True)
+                expected = "multiple info_lighting" if duplicate else "one visible info_lighting"
+                check(expected in json.dumps(rejected) and region_path.read_bytes() == previous, "Missing or ambiguous region lighting references preserve previous output")
+                client.call("start_compile", {"path": str(region_path)})
+                check(wait_job(client)["status"] == "failed" and region_path.read_bytes() == previous, "Background lighting-reference rejection preserves the same output")
+                client.call("undo")
+            if original_selection["face_selection"]["mode"] == "faces":
+                faces = [{key: face[key] for key in ["solid", "side"]} for face in original_selection["face_selection"]["faces"]]
+                client.call("select_faces", {"faces": faces})
+            else:
+                client.call("select", {"ids": original_selection["selection"]})
+        check(b"outside_region" not in region_path.read_bytes(), "The omitted point entity does not reappear in emitted entities")
         background = args.output / "region-background.bsp"
         client.call("start_compile", {"path": str(background)})
         apply(client, enabled=False)
@@ -230,6 +256,7 @@ def main():
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--water", action="store_true", help="Include contained world water and check crossing-volume rejection")
     parser.add_argument("--global-markers", action="store_true", help="Keep outside sun and authored water controls without leaking or replacing settings")
+    parser.add_argument("--lighting-origins", action="store_true", help="Retain outside static-prop lighting helpers and reject missing or ambiguous references")
     parser.add_argument("--terrain", action="store_true", help="Include whole contained terrain, suggested cage bounds and crossing-terrain publication guards")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)

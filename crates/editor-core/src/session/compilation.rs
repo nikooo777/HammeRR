@@ -320,7 +320,7 @@ impl Session {
                     .leak
                     .clone()
                     .map(|leak| (snapshot.clone(), leak));
-                self.changed();
+                self.refresh_scene();
             }
             if result.output.bsp.is_some() {
                 self.compiled = Some(CompiledMap {

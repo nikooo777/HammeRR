@@ -241,8 +241,12 @@ impl Controller {
             let (window, shared, target) = (window.as_weak(), shared.clone(), target.clone());
             move || {
                 let mut session = lock(&shared);
-                session.refresh_model_assets(Actor::User);
-                refresh(&window.unwrap(), &session, target.get());
+                let snap_preview_cancelled = session.refresh_model_assets(Actor::User);
+                let window = window.unwrap();
+                refresh(&window, &session, target.get());
+                if snap_preview_cancelled {
+                    window.set_message("Model assets reloaded; preview snap to grid again".into());
+                }
             }
         });
         window.on_cancel({
@@ -365,7 +369,17 @@ mod tests {
         controller.window.show().unwrap();
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-details");
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-attachments");
+        lock(&shared)
+            .preview_snap_to_grid(Actor::User, &[ObjectId::Entity(id)])
+            .unwrap();
         controller.window.invoke_reload();
+        assert!(
+            controller
+                .window
+                .get_message()
+                .contains("preview snap to grid again")
+        );
+        assert!(lock(&shared).transform_preview().is_none());
         controller.refresh(&lock(&shared));
         assert!(!controller.window.get_show_axes());
         assert!(!controller.window.get_geometry().contains("unavailable"));

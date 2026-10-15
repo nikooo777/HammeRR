@@ -162,12 +162,26 @@ impl Session {
         )
     }
 
-    pub fn refresh_model_assets(&mut self, actor: Actor) {
+    pub fn refresh_model_assets(&mut self, actor: Actor) -> bool {
+        let snap_preview_cancelled = self
+            .transform_preview()
+            .is_some_and(|preview| preview.grid_snap.is_some());
+        if snap_preview_cancelled {
+            self.cancel_transform_preview();
+        }
         self.models.get_mut().clear();
         self.model_browser.catalog = None;
         self.scene_serial += 1;
         self.view_serial += 1;
-        self.log(actor, "reloaded model assets");
+        self.log(
+            actor,
+            if snap_preview_cancelled {
+                "reloaded model assets; preview snap to grid again"
+            } else {
+                "reloaded model assets"
+            },
+        );
+        snap_preview_cancelled
     }
 
     pub fn object_bounds_in(

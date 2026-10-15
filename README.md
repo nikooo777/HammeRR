@@ -63,7 +63,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Transforms and texture lock | Mirror and shear |
 | --- | --- |
 | ![A resized brush with its texture stretched](docs/images/object-texture-stretch.png) | ![A sheared brush](docs/images/brush-shear-after.png) |
-| Move, rotate and scale with handles or exact values. Textures follow, stretch or stay fixed. | Reflect across any axis or slant one coordinate by another, with textures attached. |
+| Move, rotate, scale or snap selections to the grid, with shared previews and texture controls. | Reflect across any axis or slant one coordinate by another, with textures attached. |
 
 | Polygon brushes |
 | --- |
@@ -131,6 +131,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | --- | --- |
 | ![Painting a selection with a circular brush](docs/images/paint-selection.png) | ![A blue volume box and its matching brush](docs/images/volume-preview.png) |
 | Brush over the objects or faces you want. | Select everything inside exact XYZ bounds. |
+
+| Overlapping objects |
+| --- |
+| ![Rear brush selected among three overlapping objects](docs/images/object-hit-cycling.png) |
+| Alt+click to cycle through objects and groups in depth order. |
 
 | Viewport modes | Saved camera views |
 | --- | --- |
@@ -323,10 +328,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Hint face and skip bounds in the editor](docs/images/hint-planes.png) |
 | Guide structural and visibility partitions with finite hint surfaces and skip bounds. |
 
-| Imported overlays |
+| Overlays |
 | --- |
-| ![Graffiti projected onto the floor in Counter-Strike: Source](docs/images/overlays.png) |
-| Compile surface markings with material, render order, distance fade and preserved face bindings. |
+| ![Fitted overlay controls with material preview and source corners](docs/images/overlay-authoring.png) |
+| Fit surface markings to world/detail faces, preview their corners and compile materials, order and fades. |
 
 [Overlays →](docs/overlays.md)
 

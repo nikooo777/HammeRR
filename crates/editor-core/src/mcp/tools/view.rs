@@ -306,4 +306,38 @@ impl EditorServer {
             }))
         })
     }
+
+    #[tool(
+        description = "Inspect depth-ordered object hits along an explicit world ray without changing selection or history. Returns at most 64 candidates, exact total/truncation, actual hit object/brush/side/point/distance, and each expanded selection unit. Visible brush children deduplicate to owners, then outer object groups unless bypassed, before the cap. Usable model triangles replace helper boxes; hidden/tool filters match ordinary picking. Stable IDs break equal-depth ties. Objects mode only; active specialized tools and geometry previews reject.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_object_hit_candidates(
+        &self,
+        Parameters(args): Parameters<ObjectHitArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().object_hit_candidates(&Ray {
+                origin: vec3(args.origin),
+                direction: vec3(args.direction),
+            })
+        })
+    }
+
+    #[tool(
+        description = "Cycle object selection along an explicit world ray through the shared Alt-click operation. Replace-only and stateless: if the exact current selection equals a candidate's expanded owner/group unit, select the next candidate and wrap; otherwise select the nearest. Empty rays leave selection unchanged. Recomputes current visible brush/model geometry and group bypass each call; returns chosen zero-based index plus candidates/total/truncation. Limited to the nearest 64 deduplicated units. No geometry or Undo edit; incompatible modes/tools/previews reject."
+    )]
+    pub(in crate::mcp) fn cycle_object_hit(
+        &self,
+        Parameters(args): Parameters<ObjectHitArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().cycle_object_hit(
+                Actor::Agent,
+                &Ray {
+                    origin: vec3(args.origin),
+                    direction: vec3(args.direction),
+                },
+            )
+        })
+    }
 }

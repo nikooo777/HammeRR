@@ -1,0 +1,133 @@
+import { Button, LineEdit, ScrollView, SpinBox } from "std-widgets.slint";
+
+export component OverlayWindow inherits Window {
+    title: "Overlay - HammeRR";
+    preferred-width: 780px;
+    preferred-height: 790px;
+    in-out property <string> material;
+    in-out property <string> targetname;
+    in-out property <int> render-order;
+    in-out property <string> u-start: "0";
+    in-out property <string> u-end: "1";
+    in-out property <string> v-start: "0";
+    in-out property <string> v-end: "1";
+    in-out property <string> fade-min: "-1";
+    in-out property <string> fade-max: "0";
+    in property <image> material-image;
+    in property <string> material-detail;
+    in property <string> source-label;
+    in property <string> outline;
+    in property <string> draft-label;
+    in property <string> message;
+    in property <bool> ready;
+    in property <bool> can-preview;
+    in property <bool> can-review;
+    callback edited();
+    callback browse-material();
+    callback fit();
+    callback preview();
+    callback review();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            Text { text: "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
+            Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 10px;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        VerticalLayout {
+                            spacing: 5px;
+                            Text { text: "Source face outline"; font-weight: 600; }
+                            Rectangle {
+                                min-width: 320px; min-height: 180px; background: #1a2430; border-color: #40536a; border-width: 1px; border-radius: 4px;
+                                if root.outline != "": Path {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    width: 320px; height: 180px;
+                                    viewbox-width: 320; viewbox-height: 180;
+                                    commands: root.outline;
+                                    stroke: #75cfee; stroke-width: 2px; fill: #386c8a40;
+                                }
+                                if root.outline == "": Text {
+                                    text: "Fit / Preview to check the four corners";
+                                    horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; color: #bac2ce;
+                                }
+                            }
+                            Text { text: "Face plane · original proportions"; font-size: 12px; color: #bac2ce; }
+                        }
+                        VerticalLayout {
+                            width: 220px; spacing: 5px;
+                            Text { text: "Material thumbnail"; font-weight: 600; }
+                            Rectangle {
+                                height: 180px; background: #1a2430; border-color: #40536a; border-width: 1px; border-radius: 4px;
+                                Image { width: parent.width; height: parent.height; source: root.material-image; image-fit: contain; }
+                            }
+                            Text { text: root.material-detail; wrap: word-wrap; font-size: 12px; color: #bac2ce; }
+                        }
+                    }
+                    Text { text: "Material"; font-weight: 600; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        LineEdit { text <=> root.material; horizontal-stretch: 1; accessible-label: "Overlay material"; edited => { root.edited(); } }
+                        Button { text: "Browse materials…"; clicked => { root.browse-material(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Name"; width: 72px; vertical-alignment: center; }
+                        LineEdit { text <=> root.targetname; placeholder-text: "Optional runtime name"; accessible-label: "Overlay name"; horizontal-stretch: 1; edited => { root.edited(); } }
+                        Text { text: "Render order"; vertical-alignment: center; }
+                        SpinBox { minimum: 0; maximum: 3; value <=> root.render-order; accessible-label: "Overlay render order"; edited => { root.edited(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Texture"; width: 72px; vertical-alignment: center; }
+                        Text { text: "U start"; vertical-alignment: center; }
+                        LineEdit { text <=> root.u-start; width: 80px; input-type: decimal; accessible-label: "Overlay U start"; edited => { root.edited(); } }
+                        Text { text: "U end"; vertical-alignment: center; }
+                        LineEdit { text <=> root.u-end; width: 80px; input-type: decimal; accessible-label: "Overlay U end"; edited => { root.edited(); } }
+                        Text { text: "V start"; vertical-alignment: center; }
+                        LineEdit { text <=> root.v-start; width: 80px; input-type: decimal; accessible-label: "Overlay V start"; edited => { root.edited(); } }
+                        Text { text: "V end"; vertical-alignment: center; }
+                        LineEdit { text <=> root.v-end; width: 80px; input-type: decimal; accessible-label: "Overlay V end"; edited => { root.edited(); } }
+                    }
+                    Text { text: "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Fade"; width: 72px; vertical-alignment: center; }
+                        Text { text: "Start distance"; vertical-alignment: center; }
+                        LineEdit { text <=> root.fade-min; input-type: decimal; accessible-label: "Overlay fade start distance"; edited => { root.edited(); } }
+                        Text { text: "End distance"; vertical-alignment: center; }
+                        LineEdit { text <=> root.fade-max; input-type: decimal; accessible-label: "Overlay fade end distance"; edited => { root.edited(); } }
+                    }
+                    Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                    Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
+                    Text { text: "Cyan lines mark the fitted corners. The viewport does not preview the projected material. Compile and run the map to see the overlay."; wrap: word-wrap; color: #bac2ce; }
+                }
+            }
+            Text { text: root.message; wrap: word-wrap; color: #f2c487; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Fit / Preview"; enabled: root.can-preview; clicked => { root.fit(); } }
+                Button { text: "Preview settings"; enabled: root.can-preview; clicked => { root.preview(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

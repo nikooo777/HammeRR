@@ -41,6 +41,12 @@ members. Invalid cycles and missing members appear in the draft and disable
    choose **Ungroup**. Members move to its parent; nested groups remain intact.
    Undo restores the group and all memberships together.
 
+In **Objects** mode, Alt+click cycles overlapping hits in depth order. An
+outermost group appears once even if several members lie under the cursor.
+Each click replaces the selection with the next whole group; **Bypass groups**
+keeps the same gesture and cycles individual objects instead. Alt does not
+change the **Bypass groups** setting. See [Selecting](selection.md#cycle-overlapping-objects).
+
 ## Limits
 
 - Grouping edits world brushes and whole entities. Imported membership links on

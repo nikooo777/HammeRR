@@ -24,6 +24,12 @@ pub(super) struct SelectionIndex {
 }
 
 impl SelectionIndex {
+    pub(super) fn key(&self, id: ObjectId) -> Member {
+        self.roots
+            .get(&id)
+            .map_or(Member::Object(id), |&root| Member::Group(root))
+    }
+
     pub(super) fn members(&self, id: ObjectId) -> Vec<ObjectId> {
         let mut members = self
             .roots
@@ -40,10 +46,7 @@ impl SelectionIndex {
     fn units(&self, ids: &[ObjectId]) -> Vec<Vec<ObjectId>> {
         let mut units: BTreeMap<Member, BTreeSet<ObjectId>> = BTreeMap::new();
         for &id in ids {
-            let key = self
-                .roots
-                .get(&id)
-                .map_or(Member::Object(id), |&root| Member::Group(root));
+            let key = self.key(id);
             units.entry(key).or_default().extend(self.members(id));
         }
         units

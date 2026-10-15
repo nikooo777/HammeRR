@@ -7,17 +7,15 @@ rust-version.workspace = true
 
 [dependencies]
 editor-core = { path = "../editor-core", features = ["mcp"] }
+editor-ui = { path = "../editor-ui" }
 compiler = { path = "../compiler" }
 glam.workspace = true
 map-core.workspace = true
 render.workspace = true
 rfd = "0.17.2"
 serde_json = "1.0.151"
-slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
+slint.workspace = true
 source-formats.workspace = true
-
-[build-dependencies]
-slint-build = "1.18"
 
 [dev-dependencies]
 editor-core = { path = "../editor-core", features = ["test-support"] }

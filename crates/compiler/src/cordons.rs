@@ -229,7 +229,9 @@ pub(super) fn prepare<'a>(
                 entity.id
             ));
         }
-        if classname.eq_ignore_ascii_case("info_overlay") {
+        if classname.eq_ignore_ascii_case("info_overlay")
+            || classname.eq_ignore_ascii_case("info_lighting")
+        {
             entities.insert(entity.id, None);
             continue;
         }

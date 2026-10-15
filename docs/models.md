@@ -15,7 +15,7 @@ View Source model meshes and checked reference poses with their materials and sk
 9. If the model has attachment points, choose a name under **Attachment**. Its **Position** is shown in world coordinates for the displayed reference pose.
 10. Turn on **Show attachment axes** to mark that point in the viewport: X is red, Y green and Z blue.
 11. Click **Frame attachment** to focus the viewport on it. Inspection and guides leave the map and Undo history unchanged; framing moves the camera.
-12. **Reload models** rereads model files after external changes. **Cancel**, **Escape** or closing the window clears its own attachment guide and closes the window. An agent’s replacement guide is preserved.
+12. **Reload models** rereads model files after external changes. It cancels pending snap-to-grid previews; preview again after reloading because model bounds may change. **Cancel**, **Escape** or closing the window clears its own attachment guide and closes the window. An agent’s replacement guide is preserved.
 
 Use [Surface placement](placement.md) to drop models onto floors or ceilings, or align them against a picked surface using their displayed mesh vertices.
 

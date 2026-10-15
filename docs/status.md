@@ -18,7 +18,8 @@ HammeRR is in active development.
 | Prefab library | Named portable VMF assemblies share save/search/inspection, centered Paste previews, safe IDs/links/groups/layers/notes and separate library deletion. Assets stay external; thumbnails, direct replacement/renaming and rotated/scaled placement are unavailable. |
 | Layers | Native nested layers support names, colors, reparenting, multiple memberships, exact selection, shared undoable map hide/show and clipboard transfer. Automatic categories and separate editor-only filters are unavailable. |
 | Object groups | Native nested groups for world brushes and whole entities support membership/name/parent edits, group selection, temporary bypass and Undo. Imported entity-owned child-brush memberships are preserved but cannot be edited; malformed group graphs cannot be authored. |
-| Brushes, transforms and shapes | Works. |
+| Brushes, transforms and shapes | Works. Rigid grid snapping previews the combined selection bounds minimum and shares Apply/Cancel. Surface and vertex snap targets remain unavailable. |
+| Overlapping selection | Alt+click and shared MCP operations cycle depth-ordered objects, brush owners and native groups, with model triangle picking and the same visibility rules as ordinary selection. The nearest 64 distinct hits are available; persistent selection filters and separate solid/group modes are planned. |
 | Polygon brushes | Convex and simple concave outlines, grid/exact corners, axis-aligned extrusion, materials and shared previews/Undo work. Oblique drawing planes and holes are planned. |
 | Surface placement | Shared floor/ceiling and picked-surface previews, mesh/terrain contact, normal alignment, offsets and one-step Undo work. Independent object settling, overlap resolution and physics placement are planned. |
 | Repeated placement | Fixed world translation/rotation arrays share previews, unique generated names, checked internal-reference remapping and one-step Undo. Uncertain internal links and named source sets with scripts or dynamic I/O reject; local/scale arrays and surface sprinkle are unavailable. |
@@ -51,7 +52,7 @@ HammeRR is in active development.
 | Cubemaps | Sample positions and sizes | Baked reflections |
 | Static props | Models, transforms, collision, skins, fading, named lighting origins; bounded [opaque LOD0 mesh shadows](prop-shadows.md) with native disabled-shadow flags, selected-material warnings and checked asset failures | Texture-alpha/translucent shadows, per-vertex/per-texel prop lighting, reflected prop sources, animated-prop shadows and exact placement in the BSP tree |
 | Terrain | World/func_detail power 2/3/4 surfaces, collision, matching full-edge and corner-only links, full/half-edge LOD masks/snapping, saved subdivided grids, authored border shading and shared vertex normals | Other fractional spans, half-edge cage subdivision, removed triangles |
-| Overlays | Imported `info_overlay` projections on world, detail and terrain surfaces; materials, render order, distance fading and named accessors | Placement, corner editing, viewport projection, geometry-edit rebinding, brush-model targets, water transitions and decals |
+| Overlays | Fit new projections to one world/detail quad with owned previews, material browsing, corner guides and atomic Apply/Cancel; imported world/detail/terrain projections, render order, fades and named accessors | Existing-projection editing, multiple-face/terrain/model creation, corner handles, viewport material projection, geometry rebinding, transitions and decals |
 
 ## Next
 

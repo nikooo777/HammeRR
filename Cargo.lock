@@ -1222,6 +1222,7 @@ version = "0.1.0"
 dependencies = [
  "compiler",
  "editor-core",
+ "editor-ui",
  "glam",
  "i-slint-backend-testing",
  "map-core",
@@ -1230,7 +1231,6 @@ dependencies = [
  "rfd",
  "serde_json",
  "slint",
- "slint-build",
  "source-formats",
  "tempfile",
 ]
@@ -1254,6 +1254,14 @@ dependencies = [
  "source-formats",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "editor-ui"
+version = "0.1.0"
+dependencies = [
+ "slint",
+ "slint-build",
 ]
 
 [[package]]

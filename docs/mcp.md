@@ -101,6 +101,7 @@ To build the map, set the build options once, then compile:
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
+| Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
 | Prefab library | `get_prefabs`, `save_prefab`, `preview_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
 | Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
 | Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |
@@ -108,6 +109,8 @@ To build the map, set the build options once, then compile:
 | Repeated placement | `get_repeat_array`, `preview_repeat_array`, `apply_repeat_array`, `cancel_repeat_array` |
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
+| Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
+| Overlay authoring | `get_overlay_state`, `preview_overlay`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
@@ -147,11 +150,18 @@ To build the map, set the build options once, then compile:
 
 These details aren't obvious from the tool list.
 
+**Overlapping objects**
+
+- `get_object_hit_candidates` and `cycle_object_hit` accept world-space `origin` and nonzero `direction`; distances are in world units even for non-unit directions. Use Objects mode and finish conflicting tools or geometry previews first.
+- Reports include actual hit object/solid/side/point, its expanded `selection_unit`, the exact `total`, `limit: 64`, `truncated` and zero-based `chosen` (null for inspection or a miss). A cycle's `message` matches the human status and activity log, including label and truncation. Brush owners and outermost groups are deduplicated before the cap. Group bypass and visibility follow ordinary selection.
+- Cycling advances from an exact current selection match and wraps; other selections start with the nearest hit. A miss preserves selection. Inspection and cycling leave authored data, camera and Undo history unchanged.
+
 **Transforms**
 
 - `transform_objects` does move, rotation, positive scale, reflection and single-axis shear, with an optional `pivot` and `space: "world"` or `"local"`. Combined operations apply scale and reflection first, then shear, then rotation, then translation.
 - `texture_lock` controls textures during movement and rotation. `texture_scale_lock` controls stretching, mirroring and shear. Leaving out `texture_scale_lock` makes it follow `texture_lock`.
 - `get_transform_handles.state.preview.display` holds the same summary the inspector shows.
+- `preview_snap_to_grid` accepts optional `ids`, otherwise the selection. It rigidly moves the combined world bounds minimum to the nearest shared grid coordinate, using the current grid even when automatic Snap is off. `grid_snap` reports the grid, original/nearest bounds minimum and delta. Relative geometry and the current texture-lock policy stay intact; use normal transform inspection, commit or cancellation. Already aligned coordinates, including floating-point roundoff, create no history. Reloading model assets cancels this derived preview; preview it again afterward.
 
 **Faces and textures**
 
@@ -308,7 +318,7 @@ Source, mask, camera, viewport-size, visibility and grid changes guard the gestu
 - `inspect_model` takes a `path` under `models/` and optional zero-based `skin` and native `body` number. It reads MDL44/48, VVD4 and DX90 VTX7 LOD0 data on the CPU, returning geometry counts, selected-body material paths, skin count, local/hull bounds and resource limits. `pose` is `static` or `reference`; `reference_bones` counts decoded pose bones, and `static_prop` reports asset eligibility. It preserves map/history and does not initialize graphics.
 - `inspect_entity_model` takes optional `id` (defaults to the selected entity). It reports the shared asset, authored skin, transformed bounds, displayed/hidden state and helper fallback reason from the rendered draft. Static meshes, checked reference poses and selected bodygroups at scale 1 and LOD 0 are supported. Unsupported/missing/malformed assets remain helpers and inspection errors explain unavailable data.
 - Existing `create_entity`, `set_entity_properties`, transforms, `pick_at_pixel`, `raycast`, camera focus and `render_view` author, inspect and view the same model instances as the editor. Loaded meshes replace helper-box picking; model bounds drive framing and shared selection/transform bounds. `select_area` and `select_volume` match transformed asset bounds for loaded models. Contained tests require the full box; intersecting tests include touching bounds and empty space inside them. Hidden models are excluded; unsupported assets retain helper bounds.
-- `reload_model_assets` clears the bounded CPU model cache and refreshes geometry/picks after model-file changes, without editing source/history. It refreshes MDL/VVD/VTX data and material search paths; existing VMT/VTF texture content remains cached.
+- `reload_model_assets` clears the bounded CPU model cache and refreshes geometry/picks after model-file changes, without editing source/history. It refreshes MDL/VVD/VTX data and material search paths; existing VMT/VTF texture content remains cached. It cancels pending grid-snap previews and reports `snap_preview_cancelled`; other transform drafts remain intact.
 - UI: model entity → **World Model**, **Position**, **Rotation**, **Skin**, **Model details… → Reload models / Cancel**. Files are limited to 64 MiB each; the cache holds at most 128 entries/256 MiB, and a scene has at most one million model vertices/six million indices. These are HammeRR resource caps.
 
 Model selection uses the same Session draft as **World Model → Browse…**:
@@ -514,6 +524,30 @@ changed file metadata or Session state invalidates stale requests. Direct librar
 replacement/renaming, private formats and referenced instances are unavailable.
 See [Prefab library](prefabs.md).
 
+### Overlay authoring
+
+| Tool | Inputs and result |
+| --- | --- |
+| `get_overlay_state` | Current `snapshot`, eligible selected source or `selection_error`, and draft owner/token/validity, options, corners, basis and bounds. |
+| `preview_overlay` | Latest `snapshot`, explicit `source:{solid,side}` and `material`; optional `targetname`, `render_order` (0–3), `u`/`v` endpoint pairs and `fade_min`/`fade_max` world distances. Fits a new owned draft without editing source/history/selection. |
+| `review_overlay` | A valid draft `token`; transfers ownership and issues a fresh token without editing the map. |
+| `apply_overlay` | Current owned `token`; creates and selects the entity in one Undo step. |
+| `cancel_overlay` | Matching owned `token`; discards only that draft, including a stale owned draft. |
+
+Creation supports one visible convex planar world or `func_detail` quad,
+including tilted trapezoids. Defaults are order `0`, U/V `0–1`, fade start `-1`
+and end `0` (disabled). Preview fits the actual source corners; it does not accept
+derived basis/corner fields. The compiler and authoring share projection checks.
+Source availability and final surface budgets are checked during compilation.
+
+Map/selection changes stale Apply and Review. Invalid requests preserve valid
+drafts; replaced tokens cannot cancel their successors. Explicit sources work
+without changing face selection; humans can open **Overlay…** and review that
+draft directly. `render_view` shows the cyan outline; `preview_material` exposes
+the same material thumbnail. Projected viewport materials, editing an existing
+projection, terrain/model creation and automatic rebinding remain unavailable.
+See [Overlays](overlays.md).
+
 ### Compile regions
 
 | Tool | Inputs and behavior |
@@ -551,6 +585,9 @@ reject before publication.
 Runtime-model terrain remains unsupported by the normal compiler too.
 Sun and water LOD controllers retain original origins/settings even outside
 the region. Their editor positions do not seed region-only exterior leaks.
+Visible `info_lighting` helpers remain compiler-only reference data regardless
+of marker position. Retained static props keep their authored lighting origins;
+hidden or duplicate named helpers still fail ordinary reference validation.
 The generated boundary requires mounted solid rendering `tools/toolsblack`;
 missing or incompatible assets reject without substitution.
 Disable regions for full-map leak checks. Globally disabled imported plural

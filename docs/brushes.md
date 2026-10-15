@@ -44,6 +44,22 @@ The **Pivot** can be the **Selection center**, the **World origin** or **Custom*
 
 Typed transforms are exact and ignore grid snapping. While a transform preview is open, from the handles, the inspector or an agent, the inspector shows its values and a summary of every operation in it. Click **Apply transform** or **Cancel** before starting another.
 
+### Snap selection to grid
+
+Move an off-grid selection onto the grid without changing its shape or the spacing between objects:
+
+1. Select the objects and set **Grid** in the viewport toolbar.
+2. Check **Transform selection** in the inspector.
+3. Click **Preview snap to grid**. Its helper text names the **Anchor: selection bounds minimum**.
+4. Review the **Anchor** coordinates and movement in the transform summary. The anchor is the minimum corner of the combined world bounds.
+5. Click **Apply transform** for one Undo step, or **Cancel** to discard the preview.
+
+This explicit action uses the current grid spacing even when **Snap** is off. All selected objects move by the same XYZ offset; individual vertices and entity origins are not rounded separately. Bounds include displaced terrain, loaded models or their helper fallback. **Follow move and rotation** controls texture attachment. An anchor already on the grid produces no map edit; floating-point roundoff counts as aligned. Halfway coordinates round away from zero. World/local axes and custom pivots do not change this world-space anchor.
+
+**Reload models** cancels a pending snap preview because the bounds may change. Click **Preview snap to grid** again after reloading assets. Missing or unsupported model assets use their helper bounds; aligning those helpers does not align a model that becomes available later.
+
+Agents use `preview_snap_to_grid`, then the same transform inspection, commit and cancellation tools.
+
 ### Textures during transforms
 
 Two independent options control what happens to textures:

@@ -9,6 +9,7 @@ mod files;
 mod geometry;
 mod groups;
 mod materials;
+mod overlay;
 mod partitions;
 mod placement;
 mod recovery;

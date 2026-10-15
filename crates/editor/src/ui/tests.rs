@@ -6340,6 +6340,51 @@ pub(crate) fn mirror_controls_share_brush_transform_and_agent_preview() {
 }
 
 #[test]
+pub(crate) fn snap_to_grid_control_previews_the_named_anchor_before_apply() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let app = AppWindow::new().unwrap();
+    let mut state = Session::new(Err("no assets needed".into()));
+    state
+        .create_block(
+            Actor::User,
+            DVec3::new(-3.0, 5.0, 7.0),
+            DVec3::new(61.0, 69.0, 71.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let before = state.document().vmf().clone();
+    let history = state.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(state));
+    bind_manipulation_controls(&app, shared.clone());
+    app.set_show_transform(true);
+    app.invoke_preview_snap_to_grid();
+    assert!(app.get_has_transform_preview());
+    assert!(
+        app.get_transform_preview_summary()
+            .contains("bounds minimum")
+    );
+    assert!(app.get_transform_preview_summary().contains("grid 16"));
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+    app.show().unwrap();
+    save_ui_snapshot(app.window(), "snap-to-grid-preview");
+    app.invoke_apply_transform_preview();
+    let state = lock(&shared);
+    let bounds = state.selection_bounds().unwrap();
+    assert!(bounds.0.abs_diff_eq(DVec3::ZERO, 1e-8));
+    assert_eq!(state.document().undo_labels().count(), history + 1);
+    assert!(state.transform_preview().is_none());
+}
+
+#[test]
 pub(crate) fn independent_texture_controls_share_numeric_and_agent_preview_modes() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

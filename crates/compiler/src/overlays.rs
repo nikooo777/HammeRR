@@ -3,14 +3,12 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use source_formats::bsp::{self, Overlay, OverlayData, OverlayFade};
-use source_formats::gamefs::asset_relative;
-use source_formats::vmf::{Entity, Vmf, format_vec3, parse_vec3};
+use source_formats::vmf::{Entity, Vmf, format_vec3};
 
-use crate::map::{MAX_COMPILE_COORD, Map};
+use crate::map::Map;
 use crate::{Control, Diagnostic, Report};
 
 const MAX_SOURCE_REFERENCES: usize = 65_536;
-const BASIS_TOLERANCE: f64 = 0.01;
 
 pub(crate) struct Definition {
     pub entity: u32,
@@ -171,149 +169,38 @@ pub(crate) fn load(
     Ok(())
 }
 
-fn number(entity: &Entity, key: &str, default: f32) -> Result<f32, String> {
-    entity.properties.get(key).map_or(Ok(default), |raw| {
-        raw.trim()
-            .parse::<f32>()
-            .ok()
-            .filter(|value| value.is_finite())
-            .ok_or_else(|| format!("Overlay {key} must be a finite native number"))
-    })
-}
-
-fn vector(entity: &Entity, key: &str) -> Result<DVec3, String> {
-    entity
-        .properties
-        .get(key)
-        .and_then(parse_vec3)
-        .filter(|value| value.is_finite() && value.as_vec3().is_finite())
-        .ok_or_else(|| format!("Overlay {key} must contain three finite native numbers"))
-}
-
-fn fade(entity: &Entity, key: &str, default: f32) -> Result<f32, String> {
-    let value = number(entity, key, default)?;
-    let squared = if value > 0.0 { value * value } else { value };
-    if !squared.is_finite() {
-        return Err(format!(
-            "Overlay {key} squared distance exceeds native float bounds"
-        ));
-    }
-    Ok(squared)
-}
-
 fn parse(
     entity: &Entity,
     map: &mut Map,
     sources: &BTreeSet<u32>,
     id: usize,
 ) -> Result<Definition, String> {
-    if entity.solids.iter().any(|solid| !solid.hidden) {
-        return Err("info_overlay is a point helper; remove its brush geometry".into());
-    }
-    let normal = vector(entity, "BasisNormal")?;
-    let u = vector(entity, "BasisU")?;
-    let v = vector(entity, "BasisV")?;
-    if [normal, u, v]
-        .iter()
-        .any(|axis| (axis.length_squared() - 1.0).abs() > BASIS_TOLERANCE)
-        || normal
-            .dot(u)
-            .abs()
-            .max(normal.dot(v).abs())
-            .max(u.dot(v).abs())
-            > BASIS_TOLERANCE
-    {
-        return Err(
-            "Overlay BasisNormal, BasisU and BasisV must form perpendicular unit axes".into(),
-        );
-    }
-    let origin = vector(entity, "BasisOrigin")?;
-    let mut points = [[0.0; 3]; 4];
-    for (index, point) in points.iter_mut().enumerate() {
-        let uv = vector(entity, &format!("uv{index}"))?;
-        let world = origin + u * uv.x + v * uv.y;
-        if world.abs().max_element() > MAX_COMPILE_COORD {
-            return Err(format!(
-                "Overlay projected corners must fit ±{MAX_COMPILE_COORD} units"
-            ));
-        }
-        *point = [uv.x as f32, uv.y as f32, 0.0];
-    }
-    if origin.abs().max_element() > MAX_COMPILE_COORD {
-        return Err(format!(
-            "Overlay BasisOrigin must fit ±{MAX_COMPILE_COORD} units"
-        ));
-    }
-    let mut turn = 0.0f64;
-    for index in 0..4 {
-        let [a, b, c] = [index, (index + 1) % 4, (index + 2) % 4].map(|index| points[index]);
-        let cross = (f64::from(b[0]) - f64::from(a[0])) * (f64::from(c[1]) - f64::from(b[1]))
-            - (f64::from(b[1]) - f64::from(a[1])) * (f64::from(c[0]) - f64::from(b[0]));
-        if cross.abs() < 1e-8 || (turn != 0.0 && cross.signum() != turn.signum()) {
-            return Err(
-                "Overlay uv0–uv3 must form a nondegenerate convex quadrilateral in perimeter order"
-                    .into(),
-            );
-        }
-        turn = cross;
-    }
-    for index in 0..3 {
-        points[index][2] = u[index] as f32;
-    }
-    points[3][2] = u8::from(normal.cross(u).dot(v) < 0.0) as f32;
-    let texture_u = [number(entity, "StartU", 0.0)?, number(entity, "EndU", 1.0)?];
-    let texture_v = [number(entity, "StartV", 0.0)?, number(entity, "EndV", 1.0)?];
-    if texture_u[0] == texture_u[1] || texture_v[0] == texture_v[1] {
-        return Err("Overlay U/V start and end must differ".into());
-    }
-    let order = entity
-        .properties
-        .get("RenderOrder")
-        .unwrap_or("0")
-        .trim()
-        .parse::<u16>()
-        .ok()
-        .filter(|order| *order <= 3)
-        .ok_or("Overlay RenderOrder must be an integer from 0 to 3")?;
-    let fade = OverlayFade {
-        min_distance_squared: fade(entity, "fademindist", -1.0)?,
-        max_distance_squared: fade(entity, "fademaxdist", 0.0)?,
-    };
-    let mut sides = BTreeSet::new();
-    for raw in entity
-        .properties
-        .get("sides")
-        .unwrap_or("")
-        .split_whitespace()
-    {
-        let side = raw
-            .parse::<u32>()
-            .map_err(|_| "Overlay sides must contain integer VMF side IDs")?;
-        if !sources.contains(&side) {
+    let projection = map_core::overlay::parse(entity)?;
+    for side in &projection.sides {
+        if !sources.contains(side) {
             return Err(format!(
                 "Overlay side {side} is absent, hidden, non-rendering or belongs to an unsupported brush model; choose world, detail or terrain surfaces"
             ));
         }
-        sides.insert(side);
-        if sides.len() > bsp::MAX_OVERLAY_FACES {
-            return Err(format!(
-                "Overlay sources exceed their {}-side allocation budget",
-                bsp::MAX_OVERLAY_FACES
-            ));
-        }
     }
-    if sides.is_empty() {
-        return Err("Overlay requires at least one visible source side in sides".into());
+    let normal = DVec3::from_array(projection.basis_normal);
+    let u = DVec3::from_array(projection.basis_u);
+    let v = DVec3::from_array(projection.basis_v);
+    let origin = DVec3::from_array(projection.basis_origin);
+    let mut points = projection
+        .uv_points
+        .map(|point| [point[0] as f32, point[1] as f32, 0.0]);
+    for index in 0..3 {
+        points[index][2] = u[index] as f32;
     }
-    let material = entity.properties.get("material").unwrap_or("").trim();
-    let material =
-        asset_relative(material).map_err(|error| format!("Overlay material: {error}"))?;
-    let material = material.strip_prefix("materials/").unwrap_or(&material);
-    let material = material.strip_suffix(".vmt").unwrap_or(material);
-    if material.is_empty() || material.contains(['"', '\n', '\r']) {
-        return Err("Overlay material must name a relative game material".into());
-    }
-    let material = map.materials.load(material)?;
+    points[3][2] = u8::from(normal.cross(u).dot(v) < 0.0) as f32;
+    let [min_distance_squared, max_distance_squared] = projection.fade_squared()?;
+    let fade = OverlayFade {
+        min_distance_squared,
+        max_distance_squared,
+    };
+    let options = &projection.options;
+    let material = map.materials.load(&options.material)?;
     let texdata = map.texture_data(material);
     let texinfo = map.texinfos.add(bsp::TexInfo {
         texture_vecs: [[0.0, 0.0, 0.0, -99999.0]; 2],
@@ -324,33 +211,29 @@ fn parse(
     let record = Overlay {
         id: id as i32,
         texinfo: i16::try_from(texinfo).map_err(|_| "Overlay texture info limit exceeded")?,
-        u: texture_u,
-        v: texture_v,
+        u: options.u,
+        v: options.v,
         uv_points: points,
         origin: origin.as_vec3().to_array(),
         basis_normal: normal.as_vec3().to_array(),
         ..Overlay::default()
     }
-    .with_render_order(order)
+    .with_render_order(options.render_order)
     .map_err(|error| error.to_string())?;
-    let accessor = entity
-        .properties
-        .get("targetname")
-        .filter(|name| !name.trim().is_empty())
-        .map(|name| {
-            vec![
-                ("classname".into(), "info_overlay_accessor".into()),
-                ("targetname".into(), name.to_owned()),
-                ("origin".into(), format_vec3(origin)),
-                ("OverlayID".into(), id.to_string()),
-                ("hammerid".into(), entity.id.to_string()),
-            ]
-        });
+    let accessor = options.targetname.as_ref().map(|name| {
+        vec![
+            ("classname".into(), "info_overlay_accessor".into()),
+            ("targetname".into(), name.to_owned()),
+            ("origin".into(), format_vec3(origin)),
+            ("OverlayID".into(), id.to_string()),
+            ("hammerid".into(), entity.id.to_string()),
+        ]
+    });
     Ok(Definition {
         entity: entity.id,
         record,
         fade,
-        sides: sides.into_iter().collect(),
+        sides: projection.sides,
         accessor,
     })
 }

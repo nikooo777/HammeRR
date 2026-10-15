@@ -16,7 +16,7 @@ const DEFAULT_SPEED: f32 = 600.0;
 const FAST_MULTIPLIER: f32 = 4.0;
 const DOLLY_UNITS_PER_PIXEL: f32 = 2.0;
 /// A left press and release closer than this (logical pixels) is a click.
-const CLICK_SLOP: f32 = 4.0;
+pub(crate) const CLICK_SLOP: f32 = 4.0;
 
 /// A left click in the viewport, in normalized device coordinates.
 pub struct Click {

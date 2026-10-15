@@ -47,9 +47,15 @@ pub fn pick_surface(
     include_solid: impl Fn(&Solid) -> bool,
 ) -> Option<SurfaceHit> {
     let hit = pick_face(doc, ray, include_solid)?;
-    let solid = doc.solid(hit.solid?)?;
+    let (owner, solid) = crate::subobject::solid(doc, hit.solid?).ok()?;
+    if owner != hit.object {
+        return None;
+    }
     let geometry = BrushGeometry::from_solid(solid).ok()?;
     let side = hit.side?;
+    if solid.sides.iter().filter(|face| face.id == side).count() != 1 {
+        return None;
+    }
     let face = geometry
         .faces
         .iter()
@@ -450,6 +456,123 @@ mod tests {
     use super::*;
     use crate::edit::{create_block, create_entity};
     use crate::surface::FaceId;
+
+    fn surface_targets(owned: bool) -> (Document, ObjectId, ObjectId, u32) {
+        let mut document = Document::empty();
+        let (far, near, solid) = document
+            .edit("surface targets", |tx| {
+                let far = create_block(
+                    tx,
+                    DVec3::new(80.0, -8.0, -8.0),
+                    DVec3::new(96.0, 8.0, 8.0),
+                    "brick/test",
+                )?;
+                let solid = crate::edit::block_solid(
+                    tx,
+                    DVec3::new(32.0, -8.0, -8.0),
+                    DVec3::new(40.0, 8.0, 8.0),
+                    "tools/toolsnodraw",
+                )?;
+                let id = solid.id;
+                let near = if owned {
+                    create_entity(tx, "func_detail", None, &[], vec![solid])?
+                } else {
+                    tx.add_solid(solid)?
+                };
+                Ok((far, near, id))
+            })
+            .unwrap();
+        (document, far, near, solid)
+    }
+
+    #[test]
+    fn surface_hits_resolve_world_and_owned_brushes_with_the_same_visibility_rules() {
+        let ray = Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::X * 7.0,
+        };
+        for owned in [false, true] {
+            let (mut document, far, near, solid) = surface_targets(owned);
+            let hit = pick_surface(&document, &ray, |_| true).unwrap();
+            assert_eq!(hit.hit, pick_face(&document, &ray, |_| true).unwrap());
+            assert_eq!(hit.hit.object, near);
+            assert_eq!(hit.hit.solid, Some(solid));
+            assert_eq!(hit.hit.point, DVec3::new(32.0, 0.0, 0.0));
+            assert_eq!(hit.hit.distance, 32.0);
+            assert_eq!(hit.normal, DVec3::NEG_X);
+            assert_eq!(
+                pick_surface(&document, &ray, |solid| {
+                    !solid
+                        .sides
+                        .iter()
+                        .all(|side| side.material.starts_with("tools/"))
+                })
+                .unwrap()
+                .hit
+                .object,
+                far
+            );
+            document
+                .edit("hide child brush", |tx| {
+                    match near {
+                        ObjectId::Solid(id) => tx.solid_mut(id)?.hidden = true,
+                        ObjectId::Entity(id) => tx.entity_mut(id)?.solids[0].hidden = true,
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(
+                pick_surface(&document, &ray, |_| true).unwrap().hit.object,
+                far
+            );
+            document.undo().unwrap();
+            if let ObjectId::Entity(id) = near {
+                document
+                    .edit("hide brush owner", |tx| {
+                        tx.entity_mut(id)?.hidden = true;
+                        Ok(())
+                    })
+                    .unwrap();
+                assert_eq!(
+                    pick_surface(&document, &ray, |_| true).unwrap().hit.object,
+                    far
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn surface_hits_reject_ambiguous_brush_owner_and_side_ids() {
+        let (document, _, _, solid) = surface_targets(true);
+        let ray = Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        };
+        let side = pick_face(&document, &ray, |_| true).unwrap().side.unwrap();
+        for ambiguity in ["brush", "owner", "side"] {
+            let mut vmf = document.vmf().clone();
+            match ambiguity {
+                "brush" => vmf.world.solids[0].id = solid,
+                "owner" => {
+                    let mut duplicate = vmf.entities[0].clone();
+                    duplicate.solids.clear();
+                    vmf.entities.push(duplicate);
+                }
+                "side" => {
+                    vmf.entities[0].solids[0]
+                        .sides
+                        .iter_mut()
+                        .find(|face| face.id != side)
+                        .unwrap()
+                        .id = side;
+                }
+                _ => unreachable!(),
+            }
+            let document = Document::new(vmf);
+            assert!(pick_face(&document, &ray, |_| true).is_some());
+            assert!(pick_surface(&document, &ray, |_| true).is_none());
+        }
+    }
 
     #[test]
     fn all_object_hits_keep_owned_brush_evidence_and_the_existing_nearest_result() {

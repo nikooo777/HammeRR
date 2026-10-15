@@ -11,6 +11,70 @@ fn options() -> Options {
 }
 
 #[test]
+fn owned_brush_placement_uses_the_nearest_child_surface_and_keeps_atomic_history() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = Session::new(Err("Brush placement needs no assets".into()));
+        session
+            .create_block(
+                actor,
+                DVec3::new(-32.0, -32.0, -16.0),
+                DVec3::new(32.0, 32.0, 0.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        let (owner, solid) = session
+            .edit(actor, "owned placement target", |tx| {
+                let solid = map_core::edit::block_solid(
+                    tx,
+                    DVec3::new(-32.0, -32.0, 16.0),
+                    DVec3::new(32.0, 32.0, 24.0),
+                    "brick/test",
+                )?;
+                let id = solid.id;
+                let owner =
+                    map_core::edit::create_entity(tx, "func_detail", None, &[], vec![solid])?;
+                Ok((owner, id))
+            })
+            .unwrap();
+        let selected = session
+            .create_block(
+                actor,
+                DVec3::new(-4.0, -4.0, 48.0),
+                DVec3::new(4.0, 4.0, 56.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
+        session
+            .select(&[selected], super::super::SelectMode::Replace)
+            .unwrap();
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let report = session
+            .preview_surface_placement(actor, &[selected], Method::Floor, None, options())
+            .unwrap();
+        assert_eq!(report["plan"]["target"], object_id(owner));
+        assert_eq!(report["plan"]["solid"], solid);
+        assert_eq!(report["plan"]["point"], json!([0.0, 0.0, 24.0]));
+        assert_eq!(report["plan"]["normal"], json!([0.0, 0.0, 1.0]));
+        assert_eq!(report["plan"]["translation"], json!([0.0, 0.0, -24.0]));
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        session
+            .apply_surface_placement(actor, report["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(session.document().undo_labels().count(), history + 1);
+        assert_eq!(
+            query::bounds(session.document(), selected).unwrap().0.z,
+            24.0
+        );
+        session.undo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &source);
+    }
+}
+
+#[test]
 fn surface_placement_floor_ceiling_alignment_and_undo_share_contact_math() {
     let (mut session, id) = fixture();
     let source = session.document().vmf().clone();

@@ -13,6 +13,8 @@ In Top, Front or Side:
 
 In Perspective, **Add brush** places a default block.
 
+Use [Polygon brushes](polygon-brushes.md) to draw a convex or concave outline and extrude it into editable solids.
+
 ## Transform handles
 
 Choose **Move handles**, **Rotate handles** or **Scale handles** in the viewport toolbar, then drag:

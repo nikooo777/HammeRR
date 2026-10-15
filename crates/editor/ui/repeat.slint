@@ -9,11 +9,11 @@ component VectorRow inherits HorizontalLayout {
     spacing:8px;
     Text {text:root.label;width:108px;vertical-alignment:center;}
     Text {text:"X";vertical-alignment:center;}
-    LineEdit {horizontal-stretch:1;text<=>root.value-x;input-type:decimal;edited=>{root.edited();}}
+    LineEdit {min-width:60px;preferred-width:100px;horizontal-stretch:1;text<=>root.value-x;input-type:decimal;edited=>{root.edited();}}
     Text {text:"Y";vertical-alignment:center;}
-    LineEdit {horizontal-stretch:1;text<=>root.value-y;input-type:decimal;edited=>{root.edited();}}
+    LineEdit {min-width:60px;preferred-width:100px;horizontal-stretch:1;text<=>root.value-y;input-type:decimal;edited=>{root.edited();}}
     Text {text:"Z";vertical-alignment:center;}
-    LineEdit {horizontal-stretch:1;text<=>root.value-z;input-type:decimal;edited=>{root.edited();}}
+    LineEdit {min-width:60px;preferred-width:100px;horizontal-stretch:1;text<=>root.value-z;input-type:decimal;edited=>{root.edited();}}
 }
 
 export component RepeatWindow inherits Window {

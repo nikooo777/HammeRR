@@ -620,7 +620,7 @@ pub(crate) fn bake(
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
-    let (prop_shadows, prop_stats) =
+    let (prop_shadows, prop_bounds, prop_stats) =
         super::props::build(bsp, settings.vmf, settings.fs, report, &mut budget)?;
     let ambient_directions = super::sky::ambient_directions(sky_quality);
     let sun_directions = lights
@@ -924,6 +924,7 @@ pub(crate) fn bake(
             shadows: &shadows,
             terrain: &terrain_shadows,
             prop_shadows: &prop_shadows,
+            prop_bounds: &prop_bounds,
             directions: &ambient_directions,
             quality: sky_quality,
             sky_radiance,

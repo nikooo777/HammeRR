@@ -9892,6 +9892,42 @@ mod tests {
         assert_eq!(lock(&shared).recovery_settings().interval_seconds, 90);
     }
 
+    fn scroll_inspector_to_control(
+        app: &AppWindow,
+        label: &str,
+    ) -> i_slint_backend_testing::ElementHandle {
+        let size = app.window().size();
+        let scale = app.window().scale_factor();
+        let width = size.width as f32 / scale;
+        let height = size.height as f32 / scale;
+        let position = slint::LogicalPosition::new(width - 180.0, height * 0.5);
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position,
+                delta_x: 0.0,
+                delta_y: 10_000.0,
+            });
+        for _ in 0..32 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
+            if let Some(control) =
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, label).next()
+            {
+                let top = control.absolute_position().y;
+                let bottom = top + control.size().height;
+                if top >= 44.0 && bottom <= height - 32.0 {
+                    return control;
+                }
+            }
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                    position,
+                    delta_x: 0.0,
+                    delta_y: -160.0,
+                });
+        }
+        panic!("Inspector control {label:?} cannot be scrolled into view");
+    }
+
     fn assert_dialog_button_visible<C: ComponentHandle>(component: &C, label: &str) {
         let button =
             i_slint_backend_testing::ElementHandle::find_by_accessible_label(component, label)
@@ -10507,6 +10543,7 @@ mod tests {
             .unwrap();
         refresh_interaction(&app, &state);
         app.show().unwrap();
+        scroll_inspector_to_control(&app, "Keep textures attached while shearing");
         save_ui_snapshot(app.window(), "brush-shear");
         assert_eq!(app.get_transform_mode(), 4);
         assert_eq!(app.get_transform_shear_axis(), 2);
@@ -11704,6 +11741,7 @@ mod tests {
     fn transform_controls_apply_usable_defaults_and_shared_selection_operations() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().unwrap();
+        app.show().unwrap();
         app.set_transform_x("90".into());
         app.set_transform_y("-45".into());
         app.set_transform_z("30".into());
@@ -11772,12 +11810,7 @@ mod tests {
             app.set_pivot_x("10".into());
             app.set_pivot_y("20".into());
             i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1));
-            let button = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
-                &app,
-                "Scale selection",
-            )
-            .next()
-            .unwrap();
+            let button = scroll_inspector_to_control(&app, "Scale selection");
             button.invoke_accessible_default_action();
             assert_eq!(
                 query::bounds(session.borrow().document(), id),
@@ -11787,20 +11820,14 @@ mod tests {
         }
         let before = session.borrow().document().vmf().clone();
         app.set_transform_y("0".into());
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Scale selection")
-            .next()
-            .unwrap()
-            .invoke_accessible_default_action();
+        scroll_inspector_to_control(&app, "Scale selection").invoke_accessible_default_action();
         assert_eq!(session.borrow().document().vmf(), &before);
         assert!(app.get_message().contains("positive"));
         app.set_transform_pivot_mode(0);
         app.set_transform_mode(1);
         i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1));
         app.set_transform_z("90".into());
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Rotate selection")
-            .next()
-            .unwrap()
-            .invoke_accessible_default_action();
+        scroll_inspector_to_control(&app, "Rotate selection").invoke_accessible_default_action();
         let (mins, maxs) = query::bounds(session.borrow().document(), id).unwrap();
         assert!(mins.abs_diff_eq(DVec3::new(16.0, -16.0, 0.0), 1e-8));
         assert!(maxs.abs_diff_eq(DVec3::new(48.0, 48.0, 16.0), 1e-8));
@@ -11810,10 +11837,7 @@ mod tests {
         app.set_transform_x("0.125".into());
         app.set_transform_y("-0.25".into());
         app.set_transform_z("0.5".into());
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Move selection")
-            .next()
-            .unwrap()
-            .invoke_accessible_default_action();
+        scroll_inspector_to_control(&app, "Move selection").invoke_accessible_default_action();
         assert_eq!(
             query::bounds(session.borrow().document(), id),
             Some((

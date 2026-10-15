@@ -534,7 +534,7 @@ fn build(
     output.stats.hint_splits = hints.splits;
     output.stats.hint_priority_splits = hints.priority_splits;
     output.stats.hint_work = hints.work;
-    if hints.splits > 0 {
+    if hints.splits > 0 || !map.occluders.is_empty() {
         control.advance(Stage::Portals)?;
         portals = portals::build_controlled(&tree, &map.planes, control)?;
     }

@@ -296,3 +296,17 @@ fn separate_areas_receive_distinct_indices_and_straddling_occluders_are_rejected
         output.report
     );
 }
+
+#[test]
+fn helpers_inside_solid_cover_use_pruned_leaf_neighbors_and_outside_helpers_fail() {
+    let (_directory, fs) = game();
+    let mut document = Document::new(common::room());
+    add_occluder(&mut document, DVec3::new(-264.0, -64.0, 16.0), DVec3::new(-260.0, 64.0, 192.0), true);
+    let output = compiler::compile(document.vmf(), &fs);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.bsp.unwrap().occlusion().unwrap().unwrap().occluders[0].area, 1);
+    let outside = add_occluder(&mut document, DVec3::new(1000.0, -64.0, 16.0), DVec3::new(1004.0, 64.0, 192.0), true);
+    let output = compiler::compile(document.vmf(), &fs);
+    assert!(output.bsp.is_none());
+    assert!(output.report.diagnostics.iter().any(|diagnostic| diagnostic.object.as_deref() == Some(&format!("entity:{outside}")) && diagnostic.message.contains("outside the world bounds")), "{:?}", output.report);
+}

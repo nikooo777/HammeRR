@@ -256,7 +256,16 @@ pub(crate) fn assign_areas(
             neighbors[b].push(a);
         }
     }
+    let (world_mins, world_maxs) = tree.nodes[0].volume.bounds();
     for definition in &mut map.occluders {
+        if definition.mins.cmplt(world_mins).any() || definition.maxs.cmpgt(world_maxs).any() {
+            report.diagnostics.push(Diagnostic::error(
+                "Occluder lies outside the world bounds; move it inside the sealed map",
+                Some(format!("entity:{}", map.entities[definition.entity].id)),
+                Some((definition.mins + definition.maxs) * 0.5),
+            ));
+            continue;
+        }
         let mut leaves = BTreeSet::new();
         for polygon in &definition.polygons {
             let mut pending = vec![(0, polygon.winding.clone())];

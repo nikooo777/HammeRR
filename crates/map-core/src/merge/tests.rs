@@ -23,7 +23,7 @@ fn adjacent_union_retains_exact_outer_faces_metadata_and_history() {
     document.edit("metadata",|tx| {
         for id in [first,second] {
             let solid = tx.solid_mut(id)?;
-            solid.extra.push(Node::string("vendor",format!("brush-{id}")));
+            solid.extra.push(Node::block("vendor",vec![Node::string("name",format!("brush-{id}"))]));
             solid.extra_properties.set("custom",format!("solid-{id}"));
             for side in &mut solid.sides {
                 side.material = format!("CUSTOM/FACE_{}",side.id);
@@ -32,7 +32,7 @@ fn adjacent_union_retains_exact_outer_faces_metadata_and_history() {
                 side.rotation = 17.0;
                 side.lightmap_scale = 32;
                 side.smoothing_groups = Some(7);
-                side.extra.push(Node::string("vendor","face"));
+                side.extra.push(Node::block("vendor",vec![Node::string("name","face")]));
                 side.extra_properties.set("custom","side");
             }
         }

@@ -242,6 +242,7 @@ impl Session {
             self.cancel_face_preview();
             self.cancel_clip_preview();
             self.clear_hollow_preview();
+            self.clear_repeat_preview();
             self.clear_carve_preview();
             self.clear_merge_preview();
             self.clear_component_edit();
@@ -374,6 +375,7 @@ impl Session {
         self.cancel_face_preview();
         self.cancel_clip_preview();
         self.clear_hollow_preview();
+        self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();
         self.clear_component_edit();

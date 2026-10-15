@@ -354,6 +354,7 @@ impl Session {
             self.clip_tool = false;
             self.cancel_clip_preview();
             self.clear_hollow_preview();
+            self.clear_repeat_preview();
             self.clear_carve_preview();
             self.clear_merge_preview();
             self.clear_primitive_preview();
@@ -793,6 +794,7 @@ impl Session {
         }
         self.cancel_clip_preview();
         self.clear_hollow_preview();
+        self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();
         self.clear_component_edit();

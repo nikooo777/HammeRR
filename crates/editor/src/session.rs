@@ -631,6 +631,7 @@ impl Session {
                 .map_err(|error| error.to_string())?;
             self.cancel_clip_preview();
             self.clear_hollow_preview();
+            self.clear_repeat_preview();
             self.clear_carve_preview();
             self.clear_merge_preview();
             self.clear_component_edit();
@@ -1454,6 +1455,7 @@ impl Session {
         self.cancel_block_preview();
         self.cancel_clip_preview();
         self.clear_hollow_preview();
+        self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();
         self.clear_component_edit();
@@ -1481,6 +1483,7 @@ impl Session {
     pub fn preview_block(&mut self, mins: DVec3, maxs: DVec3) -> Result<(), String> {
         spatial::validate_bounds(mins, maxs)?;
         self.clear_hollow_preview();
+        self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();
         self.clear_component_edit();

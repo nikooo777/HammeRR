@@ -33,6 +33,7 @@ pub mod component_picking;
 pub mod components;
 pub mod context;
 mod favorites;
+pub mod fog;
 pub mod groups;
 pub mod hollowing;
 pub mod layers;
@@ -200,6 +201,7 @@ pub struct Session {
     material_recent: VecDeque<String>,
     camera: Camera,
     view: ViewOptions,
+    fog_preview: fog::Selection,
     spatial: spatial::Settings,
     saved_cameras: [Option<Camera>; 4],
     block_preview: Option<(DVec3, DVec3)>,
@@ -310,6 +312,7 @@ impl Session {
                 glam::Vec3::ZERO,
             ),
             view: ViewOptions::default(),
+            fog_preview: fog::Selection::default(),
             spatial: spatial::Settings::default(),
             saved_cameras: [None; 4],
             block_preview: None,
@@ -1135,6 +1138,7 @@ impl Session {
             })
         });
         self.document = document;
+        self.fog_preview = fog::Selection::default();
         self.saved_cameras = [None; 4];
         self.document_generation += 1;
         self.compiled = None;
@@ -1358,6 +1362,7 @@ impl Session {
 
     pub fn view(&self) -> ViewOptions {
         ViewOptions {
+            fog: self.current_fog(),
             grid_size: self.spatial.grid_size as f32,
             grid_visible: self.spatial.grid_visible,
             grid_elevation: self.spatial.elevation as f32,

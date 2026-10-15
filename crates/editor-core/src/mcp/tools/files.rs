@@ -62,6 +62,7 @@ impl EditorServer {
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
             "view": view_state(session.view()),
             "skybox": skybox,
+            "fog_preview": session.fog_preview_state(),
             "spatial": session.spatial(),
             "block_preview": bounds_json(session.block_preview()),
             "clipping": clip_state(&session),

@@ -3,6 +3,28 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect shared Fog preview settings and all authored env_fog_controller choices, parsed parameters and visible errors. Defaults off; no automatic controller selection. Snapshot guards reviewed settings. Static initial view-depth range fog in perspective Textured views only; sky/helpers unchanged. No native parity, radial/directional blend, far-Z clipping, HDR/zoom scaling, water, fog-volume switching, runtime I/O or transitions.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_fog_preview(&self) -> ToolResult {
+        ok(self.session().fog_preview_state())
+    }
+
+    #[tool(
+        description = "Apply Fog preview using the same Session operation as the Fog preview… dialog. Pass enabled, explicit env_fog_controller entity:<id> when enabling, and latest get_fog_preview.snapshot. Invalid/unsupported controllers and stale snapshots leave settings unchanged. Disabling always works with a fresh snapshot. Preview controls leave map/history unchanged. render_view accepts temporary fog_preview/fog_controller overrides."
+    )]
+    pub(in crate::mcp) fn set_fog_preview(
+        &self,
+        Parameters(args): Parameters<FogPreviewArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let controller = fog_controller_id(args.controller.as_deref())?;
+            self.session()
+                .set_fog_preview(args.enabled, controller, &args.snapshot)
+        })
+    }
+
+    #[tool(
         description = "List named camera views stored in this VMF, including projection, position, orientation, field of view and planar zoom. Also returns generation/revision guards. Up to 64 views; names up to 80 characters. Imported Hammer cameras remain preserved separately."
     )]
     pub(in crate::mcp) fn get_camera_views(&self) -> ToolResult {
@@ -236,16 +258,36 @@ impl EditorServer {
         if let Some(sky) = args.sky_preview {
             view.sky_preview = sky;
         }
+        let mut fog_preview = {
+            let session = self.session();
+            let controller = match fog_controller_id(args.fog_controller.as_deref()) {
+                Ok(controller) => controller,
+                Err(error) => return fail(error),
+            };
+            match session.fog_render_state(args.fog_preview, controller) {
+                Ok((fog, report)) => {
+                    view.fog = fog;
+                    report
+                }
+                Err(error) => return fail(error),
+            }
+        };
         let rendered = match self.render_png(&camera, size, view) {
             Ok(rendered) => rendered,
             Err(error) => return fail(error),
         };
         let data = base64::engine::general_purpose::STANDARD.encode(rendered.png);
         let skybox = skybox_state(&mut self.session());
+        fog_preview["applied"] = json!(
+            view.fog
+                .is_some_and(|fog| fog.enabled() && fog.max_density() > 0.0)
+                && view.surface == render::SurfaceView::Textured
+                && camera.projection == Projection::Perspective
+        );
         let material_reload = self.session().material_reload_report().cloned();
         let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
-        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "preview_issues":preview_issues, "material_reload":material_reload,
-            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
+        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "preview_issues":preview_issues, "material_reload":material_reload,
+            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "fog":fog_parameters(view), "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
                 "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),

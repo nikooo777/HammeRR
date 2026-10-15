@@ -81,6 +81,7 @@ struct Ui {
     object_groups: Option<groups_ui::Controller>,
     layers: Option<layers_ui::Controller>,
     compile_region: Option<compile_region_ui::Controller>,
+    fog: Option<fog_ui::Controller>,
     overlay: Option<overlay_ui::Controller>,
     prefabs: Option<prefabs_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
@@ -130,6 +131,12 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
+    app.set_fog_preview_status(
+        session.fog_preview_state()["summary"]
+            .as_str()
+            .unwrap()
+            .into(),
+    );
     let doc = session.document();
     app.set_map_title(session.title().into());
     app.set_can_undo(doc.undo_labels().next().is_some());
@@ -305,6 +312,7 @@ pub(super) fn run(
         object_groups: None,
         layers: None,
         compile_region: None,
+        fog: None,
         overlay: None,
         prefabs: None,
         color_target: None,
@@ -411,6 +419,24 @@ pub(super) fn run(
                 }
             }
             if let Err(error) = ui.saved_views.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_fog_preview({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.fog.is_none() {
+                match fog_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.fog = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.fog.as_ref().unwrap().show(&lock(&ui.session)) {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -2328,6 +2354,12 @@ pub(super) fn run(
                 }
                 if session.view_serial() != ui.seen_view {
                     ui.seen_view = session.view_serial();
+                    app.set_fog_preview_status(
+                        session.fog_preview_state()["summary"]
+                            .as_str()
+                            .unwrap()
+                            .into(),
+                    );
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);

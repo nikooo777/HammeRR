@@ -1,0 +1,58 @@
+import { Button, CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+
+export component FogWindow inherits Window {
+    title: "Fog preview - HammeRR";
+    preferred-width: 740px;
+    preferred-height: 570px;
+    in-out property <bool> preview-enabled;
+    in-out property <int> controller-index;
+    in property <[string]> controllers;
+    in property <string> current;
+    in property <string> detail;
+    in property <string> message;
+    in property <bool> can-apply;
+    callback choice-changed();
+    callback refresh();
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px; spacing: 16px;
+            Text { text: "Fog preview"; font-size: 24px; font-weight: 600; }
+            Text { text: root.current; wrap: word-wrap; color: #aeb9c8; }
+            CheckBox {
+                text: "Enable fog preview";
+                checked <=> root.preview-enabled;
+                toggled => { root.choice-changed(); }
+            }
+            Text { text: "Active controller"; font-weight: 600; }
+            ComboBox {
+                accessible-label: "Active fog controller";
+                model: root.controllers;
+                current-index <=> root.controller-index;
+                selected => { root.choice-changed(); }
+            }
+            ScrollView {
+                VerticalLayout {
+                    spacing: 14px;
+                    Text { text: root.detail; wrap: word-wrap; }
+                    Text {
+                        text: "Perspective · Textured view\nStatic authored initial values. Linear view-depth ramp, capped at maximum density; squared factor blends linear-space color. Sky, background and editor helpers stay unchanged.\n\nRadial fog, directional color blending, positive far-Z clipping and HDR/zoom scaling are unsupported. Fog volumes, transitions and runtime I/O are not evaluated. Controller choice is explicit; Master flags do not choose it automatically.";
+                        wrap: word-wrap; color: #aeb9c8; font-size: 12px;
+                    }
+                }
+            }
+            if root.message != "": Text { text: root.message; color: #f5b477; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Refresh choices"; clicked => { root.refresh(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply preview"; enabled: root.can-apply; clicked => { root.apply(); } }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+            }
+        }
+    }
+}

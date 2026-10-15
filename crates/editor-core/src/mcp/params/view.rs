@@ -148,7 +148,30 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+}
+
+pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
+    view.fog.map_or(Value::Null, |fog|json!({"color":fog.color(),"start":fog.start(),"end":fog.end(),"max_density":fog.max_density(),"enabled":fog.enabled()}))
+}
+
+pub(in crate::mcp) fn fog_controller_id(controller: Option<&str>) -> Result<Option<u32>, String> {
+    controller
+        .map(|id| match parse_id(id)? {
+            ObjectId::Entity(id) => Ok(id),
+            _ => Err("Fog controller must be an entity:<id>".into()),
+        })
+        .transpose()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FogPreviewArgs {
+    pub enabled: bool,
+    /// Explicit env_fog_controller entity:<id>. Required when enabling. No automatic Master selection.
+    pub controller: Option<String>,
+    /// Latest get_fog_preview.snapshot. Rejects map or view changes while reviewing the dialog.
+    pub snapshot: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -242,6 +265,10 @@ pub struct RenderArgs {
     pub tool_textures: Option<bool>,
     /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six LDR faces.
     pub sky_preview: Option<bool>,
+    /// Temporary static linear fog override. Requires a supported explicit or currently selected controller.
+    pub fog_preview: Option<bool>,
+    /// Temporary env_fog_controller entity:<id>; does not change shared settings.
+    pub fog_controller: Option<String>,
     pub leak_path: Option<bool>,
     /// Optional viewport mode override; does not change the user's view.
     pub surface: Option<String>,

@@ -4,7 +4,7 @@ use map_core::displacement::DisplacementMesh;
 use source_formats::bsp::{
     self, DisplacementInfo, DisplacementTriangle, DisplacementVertex, contents, surf,
 };
-use source_formats::vmf::Solid;
+use source_formats::vmf::{DispInfo, Solid};
 
 use super::{Map, support};
 use crate::emit::stored_vertex;
@@ -15,6 +15,36 @@ use crate::{Control, Diagnostic, Report};
 
 const MAX_LEAF_WORK: usize = 16_000_000;
 const GEOMETRY_EPSILON: f64 = 0.02;
+
+pub(crate) fn checked_mesh(
+    face: &map_core::brush::Face,
+    disp: &DispInfo,
+) -> Result<([DVec3; 4], DisplacementMesh), String> {
+    if disp.flags.unwrap_or(0) & !14 != 0 {
+        return Err("Bumped/unknown displacement flags are not supported yet".into());
+    }
+    let base: [DVec3; 4] = face
+        .vertices
+        .as_slice()
+        .try_into()
+        .map_err(|_| "Displacements need a convex quad base face")?;
+    if !disp.start_position.is_finite()
+        || base
+            .iter()
+            .all(|point| point.distance(disp.start_position) > GEOMETRY_EPSILON)
+    {
+        return Err("Displacement start position must match a base corner".into());
+    }
+    let mesh = DisplacementMesh::build(face, disp).map_err(|error| error.to_string())?;
+    if mesh
+        .positions
+        .iter()
+        .any(|point| !point.is_finite() || point.abs().max_element() > super::MAX_COMPILE_COORD)
+    {
+        return Err("Displacement positions must fit Source compile bounds".into());
+    }
+    Ok((base, mesh))
+}
 #[path = "terrain/lod.rs"]
 mod lod;
 
@@ -114,29 +144,7 @@ impl Map<'_> {
             if self.terrains.len() + terrains.len() >= bsp::MAX_DISPLACEMENTS {
                 return Err("Native displacement patch limit exceeded".into());
             }
-            if disp.flags.unwrap_or(0) & !14 != 0 {
-                return Err("Bumped/unknown displacement flags are not supported yet".into());
-            }
-            let base: [DVec3; 4] = face
-                .vertices
-                .clone()
-                .try_into()
-                .map_err(|_| "Displacements need a convex quad base face")?;
-            if !disp.start_position.is_finite()
-                || base
-                    .iter()
-                    .all(|point| point.distance(disp.start_position) > GEOMETRY_EPSILON)
-            {
-                return Err("Displacement start position must match a base corner".into());
-            }
-            let mesh = DisplacementMesh::build(face, disp).map_err(|e| e.to_string())?;
-            if mesh
-                .positions
-                .iter()
-                .any(|point| point.abs().max_element() > super::MAX_COMPILE_COORD)
-            {
-                return Err("Displacement positions must fit Source compile bounds".into());
-            }
+            let (base, mesh) = checked_mesh(face, disp)?;
             let material = self.materials.load(&side.material)?;
             let material_info = self.materials.get(material);
             if !material_info.draws

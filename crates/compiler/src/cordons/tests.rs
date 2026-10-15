@@ -235,6 +235,109 @@ fn contained_world_water_compiles_but_crossing_and_entity_liquids_preserve_prior
 }
 
 #[test]
+fn whole_terrain_retains_world_and_detail_meshes_but_rejects_crossing_cages_and_sheets() {
+    let (_directory, game, source) = fixture();
+    let mut document = Document::new(source);
+    let (id, face) = document
+        .edit("terrain", |tx| {
+            let map_core::ObjectId::Solid(id) = edit::create_block(
+                tx,
+                DVec3::new(32.0, 32.0, 0.0),
+                DVec3::new(112.0, 112.0, 32.0),
+                "brick/test",
+            )?
+            else {
+                unreachable!()
+            };
+            let side = tx
+                .solid_mut(id)?
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let face = map_core::surface::FaceId { solid: id, side };
+            map_core::displacement::edit::create(tx, &[face], 2, 0)?;
+            Ok((id, face))
+        })
+        .unwrap();
+    let source = document.into_vmf();
+    let output = crate::compile(&source, &game);
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.displacements, 1);
+    assert_eq!(output.stats.displacement_triangles, 32);
+    let path = game.game_dir.join("terrain.bsp");
+    assert!(output.write(&path).unwrap());
+    let bytes = std::fs::read(&path).unwrap();
+    let mut detail = Document::new(source.clone());
+    detail
+        .edit("detail terrain", |tx| {
+            edit::tie_to_entity(tx, &[id], "func_detail", &[])
+        })
+        .unwrap();
+    let output = crate::compile(detail.vmf(), &game);
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.displacement_triangles, 32);
+    for sheet in [false, true] {
+        let mut crossing = Document::new(source.clone());
+        crossing
+            .edit("crossing terrain", |tx| {
+                if sheet {
+                    let info = tx
+                        .solid_mut(id)?
+                        .sides
+                        .iter_mut()
+                        .find(|side| side.id == face.side)
+                        .unwrap()
+                        .displacement
+                        .as_mut()
+                        .unwrap();
+                    info.distances.as_mut().unwrap()[2][2] = 300.0;
+                } else {
+                    edit::translate(tx, &[map_core::ObjectId::Solid(id)], DVec3::Z * 240.0, true)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let output = crate::compile(crossing.vmf(), &game);
+        assert!(output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.message.contains("Terrain crosses")),
+            "{:?}",
+            output.report
+        );
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    let mut outside = Document::new(source);
+    outside
+        .edit("outside terrain", |tx| {
+            edit::translate(
+                tx,
+                &[map_core::ObjectId::Solid(id)],
+                DVec3::X * 1024.0,
+                true,
+            )
+        })
+        .unwrap();
+    let output = crate::compile(outside.vmf(), &game);
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.displacements, 0);
+    assert!(
+        output
+            .stats
+            .compile_region
+            .unwrap()
+            .omitted
+            .contains(&format!("solid:{id}"))
+    );
+}
+
+#[test]
 fn global_markers_keep_authored_origins_without_seeding_exterior_region_leaks() {
     let (_directory, game, source) = fixture();
     let mut document = Document::new(source);

@@ -63,6 +63,15 @@ def validate(args):
             client.call("select_faces", {"faces": [{"solid": brush["solid"], "side": top["side"]}]})
             client.call("edit_faces", {"material": "liquids/aztecwater"})
             ids.append(pool)
+        if args.terrain:
+            terrain = client.call("create_block", {"mins": [32, 32, 0], "maxs": [112, 112, 32], "material": "dev/dev_measuregeneric01"})["id"]
+            brush = detail(client, [terrain])[0]
+            top = next(face for face in brush["faces"] if face["normal"] == [0, 0, 1])
+            client.call("select_faces", {"faces": [{"solid": brush["solid"], "side": top["side"]}]})
+            client.call("create_terrain", {"power": 2, "start_corner": 0})
+            hint = client.call("get_compile_region")["suggested_bounds"]
+            check(hint["mins"][2] <= 0 and hint["maxs"][2] >= 32, "Suggested terrain bounds include its complete base cage")
+            ids.append(terrain)
         client.call("set_compile_settings", {"lighting": "fullbright", "physics": "none"})
         source = args.output / "source.vmf"
         client.call("save_map", {"path": str(source)})
@@ -143,6 +152,17 @@ def validate(args):
             client.call("start_compile", {"path": str(crossing)})
             check(wait_job(client)["status"] == "failed" and crossing.read_bytes() == previous, "Background crossing-water rejection preserves the same output")
             client.call("undo")
+        if args.terrain:
+            previous = region_path.read_bytes()
+            crossing = args.output / "crossing-terrain.bsp"
+            crossing.write_bytes(previous)
+            client.call("move_objects", {"ids": [terrain], "offset": [0, 0, 240]})
+            rejected = client.call("compile_map", {"path": str(crossing)}, error=True)
+            check("Terrain crosses a compile-region boundary" in json.dumps(rejected) and crossing.read_bytes() == previous, "Crossing terrain rejects without replacing the previous BSP")
+            client.call("start_compile", {"path": str(crossing)})
+            check(wait_job(client)["status"] == "failed" and crossing.read_bytes() == previous, "Background crossing-terrain rejection preserves prior output")
+            client.call("undo")
+            check(detail(client, [terrain]) == [row for row in original_objects if row["id"] == terrain], "Undo restores the exact terrain cage and grid after the control")
         helper = client.call("create_entity", {"classname": "info_overlay", "origin": [400, 400, 64]})["id"]
         region_path.write_bytes(b"previous region output")
         rejected = client.call("compile_map", {"path": str(region_path)}, error=True)
@@ -162,6 +182,8 @@ def validate(args):
         check(native["stats"]["physics_models"] == 1, "The generated boundary participates in engine collision")
         if args.water:
             check(native["stats"]["water_regions"] == native["stats"]["physics_fluids"] == 1 and native["stats"]["water_leaves"] > 0, "Contained world water retains native leaves and one engine fluid body")
+        if args.terrain:
+            check(native["stats"]["displacements"] == 1 and native["stats"]["displacement_triangles"] == native["stats"]["physics_mesh_triangles"] == 32, "Contained terrain retains its native grid and collision triangles")
         native_source = args.output / "native-source.vmf"
         client.call("save_map", {"path": str(native_source)})
         legacy = args.output / "legacy-import.bsp"
@@ -202,6 +224,7 @@ def main():
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--water", action="store_true", help="Include contained world water and check crossing-volume rejection")
     parser.add_argument("--global-markers", action="store_true", help="Keep outside sun and authored water controls without leaking or replacing settings")
+    parser.add_argument("--terrain", action="store_true", help="Include whole contained terrain, suggested cage bounds and crossing-terrain publication guards")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
@@ -216,7 +239,8 @@ def main():
     args.output.mkdir(parents=True)
     bsp = validate(args)
     if args.runtime:
-        native = runtime.private_display(Path(__file__), args, bsp, extra_flags=["--water"] if args.water else ())
+        flags = (["--water"] if args.water else []) + (["--terrain"] if args.terrain else [])
+        native = runtime.private_display(Path(__file__), args, bsp, extra_flags=flags)
         result = json.loads((native / "runtime.json").read_text())
         log = (native / "cstrike/hammerr-runtime.log").read_text(errors="replace")
         traces = [[float(value) for value in row] for row in re.findall(r"HAMMERR_REGION_TRACE ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)", log)]
@@ -224,13 +248,17 @@ def main():
         assert all(abs(value - 128 / 300) < 0.001 for row in traces for value in row), traces
         positions = result["prop_positions"]
         if args.water:
-            assert 40 < positions[-1][2] < 96
+            assert (54.5 if args.terrain else 40) < positions[-1][2] < 96
             assert all(-128 < point[0] < 128 and 16 < point[1] < 128 for point in positions[-3:])
-            assert any(b[2] - a[2] > 8 for a, b in zip(positions[1:], positions[2:]))
+            if not args.terrain:
+                assert any(b[2] - a[2] > 8 for a, b in zip(positions[1:], positions[2:]))
+        elif args.terrain:
+            assert 48 < positions[-1][2] < 64
+            assert all(32 < point[0] < 112 and 32 < point[1] < 112 for point in positions[-3:])
         else:
             assert 0 < positions[-1][2] < 64
         assert max(abs(a - b) for a, b in zip(positions[-1], positions[-2], strict=True)) < (2 if args.water else 0.1)
-        (args.output / "native-validation.json").write_text(json.dumps({"boundary_traces": traces[-3:], "grounded_player_and_stable_prop": True, "buoyant_prop": args.water, "insecure": True, "sv_lan": True}, indent=2) + "\n")
+        (args.output / "native-validation.json").write_text(json.dumps({"boundary_traces": traces[-3:], "grounded_player_and_stable_prop": True, "terrain_contact": args.terrain and not args.water, "buoyant_prop": args.water, "insecure": True, "sv_lan": True}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

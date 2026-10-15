@@ -49,6 +49,19 @@ pending draft stale. Preview it again before applying.
    explanation, then **Apply region**. **Cancel** keeps it.
 3. Compile again with the region disabled to check full-map leaks.
 
+## Include terrain
+
+1. Create [terrain](terrain.md) as world or detail geometry.
+2. Open **Compile region…** / **Region build…**, then click
+   **Use selection / map bounds** or set **Minimum** and **Maximum** manually.
+   Suggested terrain bounds include its parent cage and displaced sheet.
+   Leave enough room for player spawns, lights and other objects to retain.
+3. Click **Preview region**, review the orange box, then **Apply region** and
+   **Compile**. Use **CS:S engine physics** for native terrain collision.
+4. A crossing-terrain diagnostic keeps the previous output. Include the entire
+   cage and grid, move the whole patch, or disable the region. Terrain is never
+   clipped or flattened to fit.
+
 ## Inclusion and limits
 
 - One axis-aligned region, at least 16 units wide on every axis. Corners must
@@ -65,9 +78,13 @@ pending draft stale. Preview it again before applying.
 - Fully contained structural world water retains native water leaves and engine
   fluid bodies. The compiler's existing flat-top, overlap and material limits
   still apply. Entirely outside water is omitted.
-- Visible terrain, overlays, areaportals, areaportal windows, occluders,
+- World/detail terrain is retained when its complete base cage and displaced
+  grid fit. Combined bounds entirely outside the region are omitted. Existing
+  [terrain compiler limits](compile-and-play.md#terrain-displacements) still
+  apply; terrain in runtime brush models remains unsupported.
+- Overlays, areaportals, areaportal windows, occluders,
   instances and visibility clusters require full-map builds. Retained slime,
-  detail/model water and boundary-crossing water are also unsupported. These
+  detail/model water and boundary-crossing water or terrain are also unsupported. These
   cases stop compilation and preserve prior output.
 - At most 16,384 source objects, 65,536 source sides and 128 sides per brush.
   Bounds, source IDs and the mounted solid rendering `tools/toolsblack` material

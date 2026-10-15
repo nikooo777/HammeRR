@@ -289,7 +289,7 @@ impl Map<'_> {
             });
         }
         if !self.terrains.is_empty() {
-            report.diagnostics.push(Diagnostic::warning("World and func_detail terrain surfaces do not seal the map. Native full/whole-to-half links include compatible mixed powers, LOD masks and snapping; corner-only contacts have reciprocal lists. Other fractional spans and subdivision generation remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
+            report.diagnostics.push(Diagnostic::warning("World and func_detail terrain surfaces do not seal the map. Native full/whole-to-half links include compatible mixed powers, LOD masks and snapping; corner-only contacts have reciprocal lists. Other fractional spans and removed triangles remain unfinished. CS:S engine physics adds terrain contact bodies", None, None));
         }
         Ok(faces)
     }

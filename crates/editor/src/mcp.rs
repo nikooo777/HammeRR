@@ -1403,6 +1403,12 @@ pub struct TerrainFacesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainSubdivisionArgs {
+    pub faces: Option<Vec<FaceRef>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TerrainSewArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub blend: Option<bool>,
@@ -5120,7 +5126,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview sewing 2–16 selected/explicit terrain faces along unambiguous full/half base edges or matching base corners, including mixed powers. Shared coarse vertex groups average original world positions once, including junctions; unmatched fine border vertices interpolate the sewn coarse edge. blend=true also sews/interpolates alpha(default false). Interiors/IDs/material/mapping/flags remain. Rejects ambiguous edges and unsupported caches atomically. Returns neighbor pairs, corner_joins (additional corner unions), shared groups, interpolated_vertices and a shared summary. Inspect the draft then commit/cancel_face_preview with state.preview_token. Other fractional spans/subdivision are not supported. UI: Edit terrain… → Sew borders & corners."
+        description = "Preview sewing 2–16 selected/explicit terrain faces along unambiguous full/half base edges or matching base corners, including mixed powers. Shared coarse vertex groups average original world positions once, including junctions; unmatched fine border vertices interpolate the sewn coarse edge. blend=true also sews/interpolates alpha(default false). Interiors/IDs/material/mapping/flags remain. Rejects ambiguous edges and unsupported caches atomically. Returns neighbor pairs, corner_joins (additional corner unions), shared groups, interpolated_vertices and a shared summary. Inspect the draft then commit/cancel_face_preview with state.preview_token. Other fractional spans are not supported. The saved subdivision marker alone does not block sewing. UI: Edit terrain… → Sew borders & corners."
     )]
     fn preview_terrain_sew(&self, Parameters(args): Parameters<TerrainSewArgs>) -> ToolResult {
         run(|| {
@@ -5240,7 +5246,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect up to 16 selected or explicit terrain faces: power, grid size, ordered world positions, alpha blend values 0–255, flags and border_smoothing_angle/error. Null angle is Automatic; 0 is a hard border; positive angles are bounded limits. preview=true reads the rendered draft. Uses the same grid reconstruction as the viewport.",
+        description = "Inspect up to 16 selected or explicit terrain faces: power, grid size, saved subdivided marker, ordered world positions, alpha blend values 0–255, flags and border_smoothing_angle/error. Null angle is Automatic; 0 is a hard border; positive angles are bounded limits. preview=true reads the rendered draft. Uses the same grid reconstruction as the viewport.",
         annotations(read_only_hint = true)
     )]
     fn get_terrain_grids(&self, Parameters(args): Parameters<TerrainGridsArgs>) -> ToolResult {
@@ -5252,7 +5258,7 @@ impl EditorServer {
             );
             let grids = session.terrain_grids(&faces, args.preview.unwrap_or(false))?;
             Ok(
-                json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"grid_size":grid.mesh.size,"flags":grid.flags,"physics_collision":grid.collision.physics,"player_collision":grid.collision.player,"ray_collision":grid.collision.ray,"border_smoothing_angle":grid.smoothing_angle,"border_smoothing_error":grid.smoothing_error,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
+                json!({"faces":grids.iter().map(|grid|json!({"solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"subdivided":grid.subdivided,"grid_size":grid.mesh.size,"flags":grid.flags,"physics_collision":grid.collision.physics,"player_collision":grid.collision.player,"ray_collision":grid.collision.ray,"border_smoothing_angle":grid.smoothing_angle,"border_smoothing_error":grid.smoothing_error,"positions":grid.mesh.positions.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"alphas":grid.mesh.alphas})).collect::<Vec<_>>() }),
             )
         })
     }
@@ -5395,6 +5401,26 @@ impl EditorServer {
             let mut session = self.session();
             session.cancel_terrain_move_handles(parse_token(&args.token)?)?;
             Ok(json!({"handles":session.terrain_move_handles_json(),"state":face_state(&session)}))
+        })
+    }
+
+    #[tool(
+        description = "Generate a rounded terrain preview from up to16 selected/explicit base quad cages. Replaces sculpted positions; retains powers, start corners, blend values, flags/tags, materials and mapping. Uses four Catmull-Clark rounds and fixed base boundary edges. Matching full edges share samples; half-edge and non-manifold/corner-only networks reject atomically. Saved explicit grids remain editable unless unsupported caches are present. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain… → Subdivide base cage."
+    )]
+    fn preview_terrain_subdivision(
+        &self,
+        Parameters(args): Parameters<TerrainSubdivisionArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let faces = args.faces.as_ref().map_or_else(
+                || session.selected_faces(),
+                |faces| faces.iter().map(face_id).collect(),
+            );
+            let result = session.preview_terrain_subdivision(Actor::Agent, &faces)?;
+            Ok(
+                json!({"faces_changed":result.changed,"shared_edges":result.shared_edges,"vertices":result.vertices,"state":face_state(&session)}),
+            )
         })
     }
 
@@ -5852,7 +5878,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview changing selected or explicit terrain grids to power 2/3/4. Refinement samples the old triangles, preserving shared heights/blends; coarsening can lose detail. Preserves start corners, IDs and face metadata. Rejects malformed data, subdivision, mixed triangle tags, restricted vertex masks, nonzero offset normals and extra terrain blocks atomically. Source/history stay unchanged. Review get_terrain_grids(preview=true) or render_view, then commit_face_preview or cancel_face_preview with state.preview_token. UI: Edit terrain… with Grid resolution."
+        description = "Preview changing selected or explicit terrain grids to power 2/3/4. Refinement samples the old triangles, preserving shared heights/blends; coarsening can lose detail. Preserves start corners, IDs and face metadata. Rejects malformed data, mixed triangle tags, restricted vertex masks, nonzero offset normals and extra terrain blocks atomically. Preserves the subdivision marker; the marker alone does not block resizing. Source/history stay unchanged. Review get_terrain_grids(preview=true) or render_view, then commit_face_preview or cancel_face_preview with state.preview_token. UI: Edit terrain… with Grid resolution."
     )]
     fn preview_terrain_resolution(
         &self,

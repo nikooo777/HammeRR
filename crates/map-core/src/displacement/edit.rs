@@ -173,6 +173,7 @@ fn removal_targets(
 pub struct TerrainGrid {
     pub face: FaceId,
     pub power: u32,
+    pub subdivided: bool,
     pub flags: u32,
     pub collision: super::collision::State,
     pub smoothing_angle: Option<f64>,
@@ -209,6 +210,7 @@ pub fn inspect(document: &Document, faces: &[FaceId]) -> Result<Vec<TerrainGrid>
             Ok(TerrainGrid {
                 face: target,
                 power: info.power,
+                subdivided: info.subdivided,
                 flags: info.flags.unwrap_or(0),
                 collision: super::collision::state(info.flags.unwrap_or(0)),
                 smoothing_angle,

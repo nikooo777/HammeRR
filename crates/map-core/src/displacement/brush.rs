@@ -38,13 +38,12 @@ fn invalid(message: &str) -> EditError {
 }
 
 fn mesh(face: &Face, info: &DispInfo) -> Result<DisplacementMesh, EditError> {
-    if info.subdivided
-        || !info.extra.is_empty()
+    if !info.extra.is_empty()
         || info.normals.is_some() != info.distances.is_some()
         || !info.start_position.is_finite()
     {
         return Err(invalid(
-            "Terrain subdivision, opaque blocks or malformed geometry need repair before editing",
+            "Opaque terrain blocks or malformed geometry need repair before editing",
         ));
     }
     let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(&error.to_string()))?;

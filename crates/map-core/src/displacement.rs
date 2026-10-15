@@ -11,12 +11,14 @@ pub mod resample;
 pub mod sew;
 pub mod smoothing;
 pub mod stroke;
+pub mod subdivide;
 pub mod triangles;
 
 #[derive(Debug, Clone)]
 pub enum Operation {
     Resolution(u32),
     Sewn(Box<source_formats::vmf::DispInfo>),
+    Subdivided(Box<source_formats::vmf::DispInfo>),
     Collision(collision::Settings),
     Smoothing(Option<f64>),
     TriangleTags {

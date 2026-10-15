@@ -631,6 +631,7 @@ impl Session {
             .map(|operation| match operation {
                 map_core::displacement::Operation::Resolution(_) => "change terrain resolution",
                 map_core::displacement::Operation::Sewn(_) => "sew terrain edges",
+                map_core::displacement::Operation::Subdivided(_) => "subdivide terrain base cage",
                 map_core::displacement::Operation::Collision(_) => "edit terrain collision",
                 map_core::displacement::Operation::Smoothing(_) => "edit terrain border smoothing",
                 map_core::displacement::Operation::TriangleTags { .. } => {

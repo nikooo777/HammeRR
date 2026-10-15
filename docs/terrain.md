@@ -29,7 +29,22 @@ Limits: 1–16 world quad faces per action, one per parent brush. Nonquad faces,
 
 ![A refined terrain grid retaining its heights](images/terrain-refinement.png)
 
-Limits: 1–16 terrain faces per action. Start corners, material, mapping, lighting and IDs stay fixed. Uniform triangle tags, unrestricted vertex masks and zero offset-normal rows are resized or retained. Subdivision, mixed triangle tags, restricted masks, nonzero offset normals, opaque grid blocks and malformed/nonfinite rows reject together; these need topology remapping. Coarsening samples the old grid rather than preserving every old detail. A stale dialog cannot apply or cancel another actor's preview.
+Limits: 1–16 terrain faces per action. Start corners, material, mapping, lighting and IDs stay fixed. Uniform triangle tags, unrestricted vertex masks and zero offset-normal rows are resized or retained. Mixed triangle tags, restricted masks, nonzero offset normals, opaque grid blocks and malformed/nonfinite rows reject together; these need topology remapping. Coarsening samples the old grid rather than preserving every old detail. A stale dialog cannot apply or cancel another actor's preview.
+
+## Subdivide connected terrain
+
+Round connected base quad faces into a smooth terrain surface.
+
+1. Create terrain on the base faces that form the shape. Include every face you want rounded; each surface may use its own grid resolution and start corner.
+2. Select those faces and open **Edit terrain…**. Choose **Operation → Subdivide base cage**.
+3. Click **Preview**. This replaces existing sculpted positions. Blend values, materials, mapping, flags, triangle tags, powers and start corners stay fixed. Matching full edges share samples; the outer base edges stay fixed.
+4. Inspect the shape, then click **Apply** for one Undo step or **Cancel** to discard it. Repeating the same subdivision is a no-op. Generated grids can still be sculpted, moved, painted, sewn or resized.
+
+![Connected terrain subdivision controls](images/terrain-subdivision-controls.png)
+
+![Three connected terrain faces rounded across mixed resolutions](images/subdivided-terrain.png)
+
+Limits: 1–16 quad cages, four Catmull–Clark refinement rounds, sampled at each surface's existing power. It generates geometry from the base faces, replacing prior sculpting on interiors and boundaries. Half-edge connections, corner-only contacts, ambiguous overlaps, non-manifold or inconsistently oriented cages, opaque data and nonzero offset-normal caches reject together. Base boundary edges are pinned; crease controls and half-edge cage subdivision remain planned. Compilation applies its existing mixed-resolution LOD rules. The saved `subdiv` marker alone does not block supported editing operations.
 
 ## Sculpt heights
 
@@ -41,7 +56,7 @@ Limits: 1–16 terrain faces per action. Start corners, material, mapping, light
 
 ![Terrain sculpting controls with viewport center picking](images/terrain-center-picker.png)
 
-Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Subdivision, opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Fixed previews use the entered world-space center; use **Draw stroke in viewport…** for a path. **Sew borders & corners** joins matching full/half borders across grid sizes; sewing is not automatic.
+Limits: 1–16 terrain faces. Radius is 1–8192 world units; height/noise change is within ±4096. Positions must remain within ±65536. The same source and noise seed repeat exactly. Opaque terrain blocks, malformed rows and nonzero offset-normal caches reject together. Start corner, material, texture mapping, IDs, alpha and authored flags/tags remain. Fixed previews use the entered world-space center; use **Draw stroke in viewport…** for a path. **Sew borders & corners** joins matching full/half borders across grid sizes; sewing is not automatic.
 
 ## Draw a brush stroke
 
@@ -158,7 +173,7 @@ Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can r
 
 For corner-only contacts, **Preview** reports **corner joins** separately from joined borders. Only those shared corner vertices move; optional alpha averages once across the same group. Unrelated borders and interiors stay fixed.
 
-Limits: full or exact whole-to-half base edges and matching base corners at powers 2–4. Missing matches, ambiguous overlaps, Source-float-collapsed corners and unsupported subdivision/cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and subdivision authoring remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
+Limits: full or exact whole-to-half base edges and matching base corners at powers 2–4. Missing matches, ambiguous overlaps, Source-float-collapsed corners and unsupported cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and half-edge cage subdivision remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
 
 ## Set collision behavior
 
@@ -204,7 +219,7 @@ Limits: every target must contain terrain, with 1–16 faces per action. Invalid
 
 ![Compiled terrain with adjacent grid resolutions](images/terrain-mixed-resolution.png)
 
-Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans, subdivision and holes remain planned. **Sew borders & corners** repairs these source borders through a preview.
+Limits: powers 2–4, complete base edges with matching common heights, and bounded topology work. Compilation removes unsupported fine vertices and snaps their geometry onto the compatible surface. The editable grid remains unchanged, so the compiled surface can be less detailed near a coarse neighbor. Lighting and physics use the compiled geometry. Exact whole-to-half connections also compile; other partial spans and holes remain planned. **Sew borders & corners** repairs these source borders through a preview.
 
 ## Compile split borders
 
@@ -215,7 +230,7 @@ Limits: powers 2–4, complete base edges with matching common heights, and boun
 
 ![Compiled terrain across a split border](images/terrain-half-edge.png)
 
-Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans, subdivision generation and holes remain planned. Imported subdivided grids compile their saved rows; source-editing tools still require cache remapping. Source grids stay unchanged.
+Limits: exact full-to-half base edges with matching common samples. Masks and geometry snapping follow sample spacing within each covered interval. Shared junction samples stay aligned; other fractional spans and holes remain planned. Imported subdivided grids compile their saved rows; source editing rejects actual unsupported caches. Source grids stay unchanged.
 
 ## Compile terrain as detail
 

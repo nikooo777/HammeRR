@@ -318,7 +318,9 @@ impl Controller {
                 let mut session = lock(&shared);
                 if let Some(target) = target.borrow_mut().as_mut() {
                     let result = target.check(&session).and_then(|_| {
-                        if window.get_operation_index() == 9 {
+                        if window.get_operation_index() == 12 {
+                            session.preview_terrain_subdivision(Actor::User, &target.faces).map(|result|result.summary())
+                        } else if window.get_operation_index() == 9 {
                             session
                                 .preview_terrain_sew(
                                     Actor::User,

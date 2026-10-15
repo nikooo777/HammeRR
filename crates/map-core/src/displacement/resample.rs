@@ -39,9 +39,9 @@ pub fn change(face: &Face, info: &DispInfo, power: u32) -> Result<DispInfo, Edit
     if !info.start_position.is_finite() {
         return Err(invalid("Terrain start position must be finite"));
     }
-    if info.subdivided || !info.extra.is_empty() {
+    if !info.extra.is_empty() {
         return Err(invalid(
-            "Subdivision and extra terrain blocks need topology remapping before changing resolution",
+            "Extra terrain blocks need topology remapping before changing resolution",
         ));
     }
     if info.normals.is_some() != info.distances.is_some() {

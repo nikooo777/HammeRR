@@ -223,8 +223,7 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
             .displacement
             .clone()
             .unwrap();
-        if info.subdivided
-            || !info.extra.is_empty()
+        if !info.extra.is_empty()
             || info.normals.is_some() != info.distances.is_some()
             || info.offset_normals.as_ref().is_some_and(|rows| {
                 rows.len() != grid.mesh.size
@@ -234,7 +233,7 @@ pub fn plan(document: &Document, faces: &[FaceId], blend: bool) -> Result<Plan, 
             })
         {
             return Err(invalid(
-                "Terrain subdivision, opaque blocks or offset-normal caches need remapping before sewing",
+                "Opaque terrain blocks or offset-normal caches need remapping before sewing",
             ));
         }
         if grid

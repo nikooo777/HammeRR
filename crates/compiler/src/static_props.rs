@@ -309,7 +309,7 @@ pub(crate) fn bake(
                 }
                 let name = StaticProps::model_record(&path).map_err(|e| e.to_string())?;
                 let data = fs
-                    .read(&path)
+                    .read_limited(&path, source_formats::mdl::MAX_MODEL_BYTES)
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("model {path} was not found"))?;
                 let header = ModelHeader::parse(&data).map_err(|e| format!("{path}: {e}"))?;

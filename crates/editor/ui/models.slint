@@ -1,0 +1,35 @@
+import {Button, ListView} from "std-widgets.slint";
+
+export component ModelWindow inherits Window {
+    title:"Model details";
+    preferred-width:620px;
+    preferred-height:min(660px, 340px + root.materials.length * 20px);
+    in property <string> model-path;
+    in property <string> geometry;
+    in property <string> skin-info;
+    in property <string> bounds;
+    in property <[string]> materials;
+    in property <string> message;
+    callback reload();
+    callback cancel();
+    forward-focus:dialog-focus;
+    dialog-focus:=FocusScope {
+        key-pressed(event)=>{if event.text==Key.Escape {root.cancel();accept} else {reject}}
+        VerticalLayout {
+            padding:20px;spacing:12px;
+            Text {text:root.model-path;wrap:word-wrap;font-size:17px;}
+            Text {text:root.geometry;wrap:word-wrap;}
+            Text {text:root.skin-info;wrap:word-wrap;}
+            Text {text:root.bounds;wrap:word-wrap;color:#b6bac3;}
+            Text {text:"Skin materials";}
+            ListView {vertical-stretch:1;for material in root.materials:Text {text:material;wrap:word-wrap;color:#b6bac3;}}
+            Text {text:"Static model preview · body 0 · LOD 0. Animation, other bodygroups and scaling remain planned.";wrap:word-wrap;font-size:12px;color:#b6bac3;}
+            Text {text:root.message;wrap:word-wrap;color:#a7adb8;}
+            HorizontalLayout {
+                spacing:8px;
+                Button {text:"Cancel";clicked=>{root.cancel();}}
+                Button {text:"Reload models";clicked=>{root.reload();}}
+            }
+        }
+    }
+}

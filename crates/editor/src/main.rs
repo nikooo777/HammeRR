@@ -14,6 +14,7 @@ mod material_favorites;
 mod material_replace_ui;
 mod materials;
 mod mcp;
+mod model_ui;
 mod pointfile_ui;
 mod primitive_ui;
 mod recovery;
@@ -169,6 +170,7 @@ struct Ui {
     rename_window: Option<RenameWindow>,
     seen_rename: (u64, u64, u64),
     color_window: Option<ColorWindow>,
+    model: Option<model_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -2565,6 +2567,17 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_selection_title(title.into());
     app.set_selection_detail(detail.into());
     app.set_entity_selected(properties.is_some());
+    app.set_can_inspect_model(
+        single_selected_entity(session)
+            .and_then(|id| doc.entity(id))
+            .is_some_and(|entity| {
+                entity.solids.is_empty()
+                    && entity
+                        .properties
+                        .get("model")
+                        .is_some_and(|path| !path.trim().is_empty())
+            }),
+    );
     app.set_brush_entity_selected(
         single_selected_entity(session)
             .and_then(|id| doc.entity(id))
@@ -3134,6 +3147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rename_window: None,
         seen_rename: (0, 0, 0),
         color_window: None,
+        model: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -3966,6 +3980,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    app.on_inspect_model({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().model.is_none() {
+                match model_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().model = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let session = lock(&shared);
+            if let Some(id) = single_selected_entity(&session) {
+                let controller = ui.model.as_ref().unwrap();
+                controller.initialize(&session, id);
+                let _ = controller.window.show();
+            }
+        }
+    });
     app.on_options_changed({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -4566,6 +4602,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.material_replace
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
+                    if let Some(controller) = &ui.model
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&session);
@@ -7741,7 +7782,7 @@ mod tests {
         assert_eq!(lock(&shared).render_document().vmf(), &original);
     }
 
-    fn save_ui_snapshot(window: &slint::Window, name: &str) {
+    pub(crate) fn save_ui_snapshot(window: &slint::Window, name: &str) {
         window.take_snapshot().unwrap();
         i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
         let image = window.take_snapshot().unwrap();

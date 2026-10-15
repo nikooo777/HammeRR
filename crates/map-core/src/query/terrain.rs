@@ -29,7 +29,16 @@ pub(super) fn points(solid: &Solid) -> Vec<DVec3> {
         .collect()
 }
 
-fn intersects_box(ray: &Ray, mins: DVec3, maxs: DVec3) -> bool {
+pub fn intersects_box(ray: &Ray, mins: DVec3, maxs: DVec3) -> bool {
+    if !ray.origin.is_finite()
+        || !ray.direction.is_finite()
+        || ray.direction.length_squared() < 1e-24
+        || !mins.is_finite()
+        || !maxs.is_finite()
+        || mins.cmpgt(maxs).any()
+    {
+        return false;
+    }
     let mut enter: f64 = 0.0;
     let mut exit = f64::INFINITY;
     for axis in 0..3 {

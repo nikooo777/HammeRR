@@ -59,6 +59,7 @@ pub struct SceneStats {
     pub invalid_brushes: usize,
     pub displacements: usize,
     pub point_entities: usize,
+    pub model_entities: usize,
     pub missing_materials: usize,
 }
 
@@ -86,6 +87,7 @@ pub struct FaceOverlay {
 }
 
 struct Builder<'a> {
+    models: &'a [crate::models::Instance],
     overlays: &'a [FaceOverlay],
     selected_faces: &'a HashSet<FaceId>,
     fs: &'a GameFs,
@@ -412,6 +414,14 @@ impl Builder<'_> {
             return;
         };
         self.stats.point_entities += 1;
+        if let Some(instance) = self
+            .models
+            .iter()
+            .find(|instance| instance.id == ObjectId::Entity(entity.id))
+        {
+            self.add_model(instance, selected);
+            return;
+        }
         if self.add_light(entity, selected) {
             return;
         }
@@ -599,6 +609,66 @@ impl Builder<'_> {
         }
     }
 
+    fn add_model(&mut self, instance: &crate::models::Instance, selected: bool) {
+        let first = self.vertices.len() as u32;
+        let model = &instance.asset.model;
+        for vertex in &model.vertices {
+            self.push_vertex(Vertex {
+                position: instance.point(vertex.position).as_vec3().to_array(),
+                normal: (instance.rotation * DVec3::from_array(vertex.normal.map(f64::from)))
+                    .normalize_or_zero()
+                    .as_vec3()
+                    .to_array(),
+                uv: vertex.uv,
+                color: if selected {
+                    [255, 210, 150, 0]
+                } else {
+                    [255, 255, 255, 0]
+                },
+                lightmap: [0.0, 0.0, -1.0],
+                smoothing: 0,
+            });
+        }
+        for part in &model.parts {
+            let material_index = model.skins[instance.skin][part.material];
+            let material = self.material(&instance.asset.materials[material_index]);
+            self.indices[material].extend(part.indices.iter().map(|&index| first + index));
+            for triangle in part.indices.as_chunks::<3>().0 {
+                for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+                    self.wire_lines
+                        .extend([triangle[a], triangle[b]].map(|index| {
+                            LineVertex {
+                                position: instance
+                                    .point(model.vertices[index as usize].position)
+                                    .as_vec3()
+                                    .to_array(),
+                                color: [90, 125, 150, 255],
+                            }
+                        }));
+                }
+            }
+        }
+        if selected {
+            let (mins, maxs) = instance.bounds();
+            for x in [mins.x, maxs.x] {
+                for y in [mins.y, maxs.y] {
+                    for z in [mins.z, maxs.z] {
+                        let corner = DVec3::new(x, y, z);
+                        let sign = (mins + maxs) * 0.5 - corner;
+                        for axis in DVec3::AXES {
+                            self.helper_line(
+                                corner.as_vec3(),
+                                (corner + axis * sign.dot(axis).signum() * 4.0).as_vec3(),
+                                SELECTED_EDGE,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        self.stats.model_entities += 1;
+    }
+
     fn add_light(&mut self, entity: &Entity, selected: bool) -> bool {
         let class = entity.classname().unwrap_or("").to_ascii_lowercase();
         if !matches!(
@@ -751,7 +821,20 @@ impl SceneMesh {
         selected_faces: &HashSet<FaceId>,
         overlays: &[FaceOverlay],
     ) -> Self {
+        Self::build_with_models(vmf, fs, library, selected, selected_faces, overlays, &[])
+    }
+
+    pub fn build_with_models(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selected: &HashSet<ObjectId>,
+        selected_faces: &HashSet<FaceId>,
+        overlays: &[FaceOverlay],
+        models: &[crate::models::Instance],
+    ) -> Self {
         let mut builder = Builder {
+            models,
             overlays,
             selected_faces,
             fs,

@@ -6,6 +6,7 @@ mod grid;
 pub mod handles;
 mod helpers;
 pub mod materials;
+pub mod models;
 pub mod scene;
 
 pub use camera::{Camera, Projection};

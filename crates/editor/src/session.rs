@@ -34,6 +34,7 @@ mod favorites;
 pub mod hollowing;
 mod management;
 pub mod material_search;
+pub mod models;
 pub mod paint;
 pub mod pointfiles;
 pub mod primitives;
@@ -124,6 +125,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    models: std::cell::RefCell<render::models::Library>,
     game: Arc<GameFs>,
     game_error: Option<String>,
     document: Document,
@@ -238,6 +240,7 @@ impl Session {
             terrain_triangle_highlight: None,
             terrain_triangle_serial: 0,
             terrain_strokes: terrain_strokes::State::default(),
+            models: std::cell::RefCell::default(),
             terrain_handles: terrain_handles::State::default(),
             surface_sample: None,
             recovery: recovery::State::default(),
@@ -1367,11 +1370,7 @@ impl Session {
         }
         let bounds = if self.selection.is_empty() && self.face_selection.is_empty() {
             let document = self.render_document();
-            query::union(
-                document
-                    .objects()
-                    .filter_map(|id| query::bounds(document, id)),
-            )
+            self.object_bounds_in(document, &document.objects().collect::<Vec<_>>())
         } else {
             self.selection_bounds_in(self.render_document())
         };
@@ -1390,7 +1389,7 @@ impl Session {
 
     fn selection_bounds_in(&self, document: &Document) -> Option<(DVec3, DVec3)> {
         if !self.face_mode {
-            return query::bounds_of(document, &self.selected_ids());
+            return self.object_bounds_in(document, &self.selected_ids());
         }
         query::union(self.face_selection.iter().filter_map(|selected| {
             let solid = surface::solid(document, selected.solid)?;
@@ -1517,8 +1516,9 @@ impl Session {
                 return Err(format!("{id} does not exist"));
             }
         }
-        let (mins, maxs) =
-            query::bounds_of(&self.document, ids).ok_or("Selected objects have no valid bounds")?;
+        let (mins, maxs) = self
+            .object_bounds_in(&self.document, ids)
+            .ok_or("Selected objects have no valid bounds")?;
         Ok((mins + maxs) * 0.5)
     }
 
@@ -1691,7 +1691,27 @@ impl Session {
         if self.face_mode {
             query::pick_face(document, ray, |s| !hidden.contains(&s.id))
         } else {
-            query::pick(document, ray, |s| !hidden.contains(&s.id))
+            let models = self.model_instances(document);
+            let ids = models
+                .instances
+                .iter()
+                .map(|instance| instance.id)
+                .collect::<HashSet<_>>();
+            let ordinary = query::pick_with_entity_filter(
+                document,
+                ray,
+                |solid| !hidden.contains(&solid.id),
+                |entity| !ids.contains(&ObjectId::Entity(entity.id)),
+            );
+            ordinary
+                .into_iter()
+                .chain(
+                    models
+                        .instances
+                        .iter()
+                        .filter_map(|instance| instance.pick(ray)),
+                )
+                .min_by(|a, b| a.distance.total_cmp(&b.distance))
         }
     }
 
@@ -1919,13 +1939,15 @@ impl Session {
         } else {
             HashSet::new()
         };
-        let mut mesh = SceneMesh::build_with_face_overlays(
+        let models = self.model_instances(document);
+        let mut mesh = SceneMesh::build_with_models(
             document.vmf(),
             &self.game,
             &mut self.materials,
             &selected,
             &selected_faces,
             &overlays,
+            &models.instances,
         );
         if let Some(points) = self.pointfile_points() {
             mesh.set_leak_path(points);

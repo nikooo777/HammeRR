@@ -178,6 +178,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Painted grass and dirt on terrain](docs/images/terrain-blending.png) |
 | Create, sculpt and blend terrain, sew borders or corners, and preview edits with Undo. |
 
+| Source models |
+| --- |
+| ![Source model mesh previews](docs/images/model-previews.png) |
+| Place static model meshes with their materials and skins, then inspect, pick and frame them. |
+
 | Terrain triangles |
 | --- |
 | ![Terrain triangle selection and classifications](docs/images/terrain-triangle-picking.png) |
@@ -265,7 +270,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: creation, resolution edits, sculpting and blending work; live brush strokes, subdivision and other fractional edge tools remain planned.
-- **Models**: static props compile but aren't drawn in the viewport yet.
+- **Models**: static meshes and skins render in the viewport; visual browsing, animation and other bodygroups remain planned.
 - **Compiler**: Fast and Detailed visibility are available; lighting covers direct light, sky ambient and up to four optional diffuse bounces; HDR remains unfinished.
 
 The full picture is in [Status and roadmap](docs/status.md).
@@ -274,7 +279,7 @@ The full picture is in [Status and roadmap](docs/status.md).
 
 The [manual](docs/README.md) covers every feature, step by step:
 
-[Getting started](docs/getting-started.md) · [Editor basics](docs/basics.md) · [Selecting](docs/selection.md) · [Brushes and transforms](docs/brushes.md) · [Hollow, carve and clip](docs/brush-tools.md) · [Vertices, edges and faces](docs/components.md) · [Flat partitions](docs/partitions.md) · [Materials and textures](docs/textures.md) · [Entities and logic](docs/entities.md) · [Organizing and checking maps](docs/map-tools.md) · [Compile and play](docs/compile-and-play.md) · [AI agents and MCP](docs/mcp.md) · [Development](docs/development.md)
+[Getting started](docs/getting-started.md) · [Editor basics](docs/basics.md) · [Selecting](docs/selection.md) · [Brushes and transforms](docs/brushes.md) · [Hollow, carve and clip](docs/brush-tools.md) · [Vertices, edges and faces](docs/components.md) · [Flat partitions](docs/partitions.md) · [Materials and textures](docs/textures.md) · [Entities and logic](docs/entities.md) · [Models](docs/models.md) · [Organizing and checking maps](docs/map-tools.md) · [Compile and play](docs/compile-and-play.md) · [AI agents and MCP](docs/mcp.md) · [Development](docs/development.md)
 
 ## Credits
 

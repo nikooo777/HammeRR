@@ -18,6 +18,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Materials and textures](textures.md) | Material browser, texture editing, sampling, wrapping, painting, replacement, face lighting |
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
 | [Overlays](overlays.md) | Compiling imported surface projections, material, render order and distance fading |
+| [Models](models.md) | Static mesh previews, skin materials, bounds, picking and model inspection |
 | [Entities and logic](entities.md) | Placing entities, lights, brush entities, inputs/outputs, safe renaming, editing many entities |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, lighting, physics, leaks, launching Counter-Strike: Source |

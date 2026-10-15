@@ -177,12 +177,89 @@ fn rendered_six_face_directions_translation_depth_and_fallback() {
     let scene = renderer.upload(&ctx, &mesh, &library);
     assert_ne!(baseline, renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65));
     let disabled = ViewOptions { sky_preview: false, ..options };
+    let complete_scene = scene;
     let mut unavailable = mesh;
     unavailable.skybox = Some(std::sync::Arc::new(Skybox::load(&fixture.fs, "missing")));
     let scene = renderer.upload(&ctx, &unavailable, &library);
     assert_eq!(renderer.render_to_rgba(&ctx, &scene, &camera, &disabled, 65, 65), renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65));
     for surface in [crate::SurfaceView::Flat, crate::SurfaceView::Wireframe, crate::SurfaceView::LightmapDensity, crate::SurfaceView::SmoothingGroups] {
         let options = ViewOptions { surface, ..options };
-        assert_eq!(renderer.render_to_rgba(&ctx, &scene, &camera, &ViewOptions { sky_preview: false, ..options }, 65, 65), renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65));
+        assert_eq!(renderer.render_to_rgba(&ctx, &complete_scene, &camera, &ViewOptions { sky_preview: false, ..options }, 65, 65), renderer.render_to_rgba(&ctx, &complete_scene, &camera, &options, 65, 65));
     }
+    for projection in [crate::Projection::Top, crate::Projection::Front, crate::Projection::Side] {
+        let camera = Camera::planar(projection, Vec3::ZERO, 700.0);
+        assert_eq!(renderer.render_to_rgba(&ctx, &complete_scene, &camera, &disabled, 65, 65), renderer.render_to_rgba(&ctx, &complete_scene, &camera, &options, 65, 65));
+    }
+    let filtered = ViewOptions { tool_textures: false, ..options };
+    assert_eq!(renderer.render_to_rgba(&ctx, &complete_scene, &camera, &ViewOptions { sky_preview: false, ..filtered }, 65, 65), renderer.render_to_rgba(&ctx, &complete_scene, &camera, &filtered, 65, 65));
+
+}
+
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn rendered_sky_uv_corners_follow_sdk_skybox_orientation() {
+    use glam::{DVec3, Vec3};
+    use crate::{Camera, GpuContext, Renderer, SceneMesh, ViewOptions};
+
+    let fixture = Fixture::new();
+    fixture.faces();
+    let colors = [[220, 20, 30, 255], [20, 220, 30, 255], [20, 30, 220, 255], [220, 220, 30, 255]];
+    for suffix in SUFFIXES {
+        let mut data = std::fs::read(fixture.root.join("materials/skybox/testrt.vtf")).unwrap()[..80].to_vec();
+        data[16..18].copy_from_slice(&64u16.to_le_bytes());
+        data[18..20].copy_from_slice(&64u16.to_le_bytes());
+        for y in 0..64 {
+            for x in 0..64 {
+                data.extend_from_slice(&colors[usize::from(x >= 32) + 2 * usize::from(y >= 32)]);
+            }
+        }
+        fixture.write(&format!("materials/skybox/test{suffix}.vtf"), data);
+    }
+    fixture.write("materials/tools/toolsskybox.vmt", "LightmappedGeneric { %compilesky 1 }");
+    let mut document = map_core::Document::empty();
+    document.edit("sky room", |tx| {
+        tx.world_properties_mut().set("skyname", "test");
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                let mut mins = DVec3::splat(-272.0);
+                let mut maxs = DVec3::splat(272.0);
+                mins[axis] = if sign < 0.0 { -272.0 } else { 256.0 };
+                maxs[axis] = if sign < 0.0 { -256.0 } else { 272.0 };
+                map_core::edit::create_block(tx, mins, maxs, "tools/toolsskybox")?;
+            }
+        }
+        Ok(())
+    }).unwrap();
+    let ctx = GpuContext::new().unwrap();
+    let mut renderer = Renderer::new(&ctx);
+    let mut library = crate::MaterialLibrary::default();
+    let mesh = SceneMesh::build(document.vmf(), &fixture.fs, &mut library, &Default::default());
+    let scene = renderer.upload(&ctx, &mesh, &library);
+    let options = ViewOptions { sky_preview: true, grid_visible: false, ..Default::default() };
+    for (index, direction) in [Vec3::X, Vec3::Y, Vec3::NEG_X, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z].into_iter().enumerate() {
+        let mut camera = Camera::looking_at(Vec3::ZERO, direction);
+        if index >= 4 {
+            camera.pitch_degrees = if index == 4 { 89.0 } else { -89.0 };
+        }
+        let pixels = renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65);
+        for ((x, y), expected) in [(8, 8), (56, 8), (8, 56), (56, 56)].into_iter().zip(colors) {
+            let at = (y * 65 + x) * 4;
+            for (actual, expected) in pixels[at..at + 4].iter().zip(expected) {
+                assert!(actual.abs_diff(expected) <= 1, "{} ({x}, {y}): {:?}", SUFFIXES[index], &pixels[at..at + 4]);
+            }
+        }
+    }
+    fixture.write("materials/skybox/testrt.vmt", "UnlitGeneric { $basetexture skybox/testrt $basetexturetransform \"center 0 0 scale 1 2 rotate 0 translate 0 0\" }");
+    let mut library = crate::MaterialLibrary::default();
+    renderer.clear_materials();
+    let mesh = SceneMesh::build(document.vmf(), &fixture.fs, &mut library, &Default::default());
+    let scene = renderer.upload(&ctx, &mesh, &library);
+    let camera = Camera::looking_at(Vec3::ZERO, Vec3::X);
+    let pixels = renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65);
+    for ((x, y), expected) in [(8, 8), (56, 8), (8, 56), (56, 56)].into_iter().zip([colors[2], colors[3], colors[2], colors[3]]) {
+        let at = (y * 65 + x) * 4;
+        assert_eq!(&pixels[at..at + 4], &expected, "vertical stock VMT scale at ({x}, {y})");
+    }
+
 }

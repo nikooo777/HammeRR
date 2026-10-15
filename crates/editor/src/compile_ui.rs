@@ -740,9 +740,15 @@ impl Controller {
             .as_u64()
             .filter(|&count| count > 0)
             .map(|count| {
-                let polygons = result["stats"]["occluder_polygons"].as_u64().unwrap_or_default();
-                let vertices = result["stats"]["occluder_vertex_refs"].as_u64().unwrap_or_default();
-                format!("\nOccluders: {count} · Polygons: {polygons} · Vertex references: {vertices}")
+                let polygons = result["stats"]["occluder_polygons"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let vertices = result["stats"]["occluder_vertex_refs"]
+                    .as_u64()
+                    .unwrap_or_default();
+                format!(
+                    "\nOccluders: {count} · Polygons: {polygons} · Vertex references: {vertices}"
+                )
             })
             .unwrap_or_default();
         let overlays = result["stats"]["overlays"]

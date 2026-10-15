@@ -67,7 +67,8 @@ impl Geometry {
             for polygon in &definition.polygons {
                 control.checkpoint()?;
                 if data.polygons.len() >= bsp::MAX_OCCLUSION_POLYGONS
-                    || data.vertex_indices.len() + polygon.winding.0.len() > bsp::MAX_OCCLUSION_VERTEX_INDICES
+                    || data.vertex_indices.len() + polygon.winding.0.len()
+                        > bsp::MAX_OCCLUSION_VERTEX_INDICES
                 {
                     return Err("Occlusion geometry exceeds HammeRR's polygon or vertex-index allocation cap".into());
                 }
@@ -452,7 +453,8 @@ pub fn build(
         .map_err(|error| error.to_string())?;
     let occlusion = geometry.occlusion(map, control)?;
     bsp.set_values(lump::VERTEXES, &geometry.vertices);
-    bsp.set_occlusion(&occlusion).map_err(|error| error.to_string())?;
+    bsp.set_occlusion(&occlusion)
+        .map_err(|error| error.to_string())?;
     bsp.set_records(&geometry.edges);
     bsp.set_values(lump::SURFEDGES, &geometry.surfedges);
     bsp.set_values(lump::LEAFFACES, &all_leaf_faces);

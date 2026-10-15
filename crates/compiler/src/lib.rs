@@ -540,7 +540,14 @@ fn build(
     }
     control.advance(Stage::Areas)?;
     let areas = areas::build(&mut map, &tree, &portals, control)?;
-    map::occluders::assign_areas(&mut map, &tree, &portals, &areas, &mut output.report, control)?;
+    map::occluders::assign_areas(
+        &mut map,
+        &tree,
+        &portals,
+        &areas,
+        &mut output.report,
+        control,
+    )?;
     if output.report.has_errors() {
         return Ok(());
     }

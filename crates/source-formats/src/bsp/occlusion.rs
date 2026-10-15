@@ -60,7 +60,11 @@ impl Occlusion {
             return Err(invalid("occlusion arrays exceed their allocation caps"));
         }
         for occluder in &self.occluders {
-            range(occluder.first_polygon, occluder.polygon_count, self.polygons.len())?;
+            range(
+                occluder.first_polygon,
+                occluder.polygon_count,
+                self.polygons.len(),
+            )?;
             if occluder.polygon_count == 0 && occluder.area == -1 {
                 continue;
             }
@@ -76,20 +80,37 @@ impl Occlusion {
             }
         }
         for polygon in &self.polygons {
-            range(polygon.first_vertex_index, polygon.vertex_count, self.vertex_indices.len())?;
-            if polygon.vertex_count < 3 || polygon.plane < 0 || polygon.plane as usize >= plane_count {
-                return Err(invalid("occluder polygon needs three vertices and a valid plane"));
+            range(
+                polygon.first_vertex_index,
+                polygon.vertex_count,
+                self.vertex_indices.len(),
+            )?;
+            if polygon.vertex_count < 3
+                || polygon.plane < 0
+                || polygon.plane as usize >= plane_count
+            {
+                return Err(invalid(
+                    "occluder polygon needs three vertices and a valid plane",
+                ));
             }
         }
-        if self.vertex_indices.iter().any(|&index| index < 0 || index as usize >= vertex_count) {
-            return Err(invalid("occluder vertex index is outside the global vertex array"));
+        if self
+            .vertex_indices
+            .iter()
+            .any(|&index| index < 0 || index as usize >= vertex_count)
+        {
+            return Err(invalid(
+                "occluder vertex index is outside the global vertex array",
+            ));
         }
         Ok(())
     }
 }
 
 fn take_records<T: Pod>(input: &mut &[u8], limit: usize) -> io::Result<Vec<T>> {
-    let count_bytes = input.get(..4).ok_or_else(|| invalid("truncated occlusion count"))?;
+    let count_bytes = input
+        .get(..4)
+        .ok_or_else(|| invalid("truncated occlusion count"))?;
     let count = i32::from_le_bytes(count_bytes.try_into().unwrap());
     let count = usize::try_from(count).map_err(|_| invalid("negative occlusion array count"))?;
     if count > limit {
@@ -99,7 +120,9 @@ fn take_records<T: Pod>(input: &mut &[u8], limit: usize) -> io::Result<Vec<T>> {
         .checked_mul(size_of::<T>())
         .and_then(|length| length.checked_add(4))
         .ok_or_else(|| invalid("occlusion array size overflow"))?;
-    let bytes = input.get(4..end).ok_or_else(|| invalid("truncated occlusion array"))?;
+    let bytes = input
+        .get(4..end)
+        .ok_or_else(|| invalid("truncated occlusion array"))?;
     let result = bytemuck::pod_collect_to_vec(bytes);
     *input = &input[end..];
     Ok(result)
@@ -112,7 +135,9 @@ fn reference_count<T: Pod>(bsp: &Bsp, slot: usize, limit: usize) -> io::Result<u
     }
     let count = bsp.checked(slot, size_of::<T>())?.len() / size_of::<T>();
     if count > limit {
-        return Err(invalid("occlusion reference array exceeds its allocation cap"));
+        return Err(invalid(
+            "occlusion reference array exceeds its allocation cap",
+        ));
     }
     Ok(count)
 }
@@ -128,14 +153,18 @@ fn references(bsp: &Bsp) -> io::Result<(usize, usize, usize)> {
 fn finite_references(bsp: &Bsp, data: &Occlusion) -> io::Result<()> {
     for polygon in &data.polygons {
         let offset = polygon.plane as usize * size_of::<Plane>();
-        let plane: Plane = bytemuck::pod_read_unaligned(&bsp.lumps[lump::PLANES].data[offset..offset + size_of::<Plane>()]);
+        let plane: Plane = bytemuck::pod_read_unaligned(
+            &bsp.lumps[lump::PLANES].data[offset..offset + size_of::<Plane>()],
+        );
         if !plane.dist.is_finite() || plane.normal.iter().any(|value| !value.is_finite()) {
             return Err(invalid("occluder references a nonfinite plane"));
         }
     }
     for &index in &data.vertex_indices {
         let offset = index as usize * size_of::<[f32; 3]>();
-        let point: [f32; 3] = bytemuck::pod_read_unaligned(&bsp.lumps[lump::VERTEXES].data[offset..offset + size_of::<[f32; 3]>()]);
+        let point: [f32; 3] = bytemuck::pod_read_unaligned(
+            &bsp.lumps[lump::VERTEXES].data[offset..offset + size_of::<[f32; 3]>()],
+        );
         if point.iter().any(|value| !value.is_finite()) {
             return Err(invalid("occluder references a nonfinite vertex"));
         }

@@ -3,7 +3,7 @@ use super::super::*;
 #[tool_router(router = materials_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Reload cached VMT/VTF display assets from existing mounts, including sky faces, and rescan the material catalog. Retains material IDs, authored source/history/camera and active geometry preview documents; refreshes desktop and offscreen GPU textures. Viewport-dependent snapshots may require renewed review. Returns unavailable-preview details (first 100) and total count; unavailable assets replace stale textures with the missing fallback. Valid untextured/tool materials may have no display texture. Does not remount archives or watch files. UI: Choose Material → Reload material assets."
+        description = "Reload cached VMT/VTF display assets and sky faces, rescan the material catalog, and re-resolve cached model material paths from existing mounts without replacing decoded geometry. Retains material IDs, source/history/camera and active geometry previews; refreshes desktop/offscreen textures. Returns reloaded, models_refreshed, models_changed, and unavailable-preview failures (first 100) with total failed count. Model path errors replace stale bindings and appear in inspect_entity_model.material_error. Unavailable images replace stale textures; valid untextured/tool materials may have no display texture. Viewport snapshots may require renewed review. Does not remount archives, watch files or reload particle definitions. UI: Browse materials… → Reload material assets."
     )]
     pub(in crate::mcp) fn reload_material_assets(&self) -> ToolResult {
         let report = self.session().reload_material_assets(Actor::Agent);

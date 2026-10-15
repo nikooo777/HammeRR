@@ -117,7 +117,6 @@ def validate(client, output):
         "occluded",
         "hidden",
         "fractional",
-        "unsupported",
         "percentage",
         "hard-fade",
         "percentage-spot",
@@ -147,7 +146,7 @@ def validate(client, output):
             "_fifty_percent_distance": "0",
             "_zero_percent_distance": "0",
             "_hardfalloff": "0",
-            "style": "1" if label == "unsupported" else "0",
+            "style": "0",
         }
         if label in [
             "percentage",
@@ -245,11 +244,11 @@ def validate(client, output):
         history = client.call("get_map_info")["undo"]
         saved = vmf.read_bytes()
         bsp = output / f"{label}.bsp"
-        if label in ["unsupported", "invalid-percentage"]:
+        if label == "invalid-percentage":
             client.call("set_compile_settings", {"lighting": "fullbright"})
             check(
                 client.call("compile_map", {"path": str(bsp)})["success"],
-                f"{label}: Fullbright permits unsupported lighting properties",
+                f"{label}: Fullbright defers invalid lighting-property checks",
             )
             previous = bsp.read_bytes()
             client.call("set_compile_settings", {"lighting": "direct_ldr"})

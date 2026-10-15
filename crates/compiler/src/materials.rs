@@ -27,6 +27,7 @@ pub struct MaterialInfo {
     pub found: bool,
     pub unsupported_flags: Vec<String>,
     pub warnings: Vec<String>,
+    pub(crate) bottom_material: Option<String>,
 }
 
 impl MaterialInfo {
@@ -49,6 +50,7 @@ impl MaterialInfo {
             found: material.is_some(),
             unsupported_flags: Vec::new(),
             warnings: Vec::new(),
+            bottom_material: None,
         };
         let Some(m) = material else {
             return info;
@@ -62,6 +64,11 @@ impl MaterialInfo {
         if let Some(value) = m.get("$surfaceprop") {
             info.surface_prop = value.trim().to_ascii_lowercase();
         }
+        info.bottom_material = m
+            .get("$bottommaterial")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
         info.unsupported_flags = semantics.unsupported_flags;
         info
     }

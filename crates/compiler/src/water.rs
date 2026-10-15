@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use glam::DVec3;
 use source_formats::bsp::{self, contents, surf};
+use source_formats::vmt;
 
 use crate::faces::Face;
 use crate::map::Map;
@@ -11,6 +12,83 @@ use crate::{Control, Diagnostic, Report};
 
 const LIQUID_CONTENTS: i32 = contents::WATER | contents::SLIME;
 const SURFACE_EPSILON: f64 = 0.01;
+
+pub(crate) fn prepare_materials(
+    map: &mut Map,
+    report: &mut Report,
+    control: &Control,
+) -> Result<(), String> {
+    let mut surfaces = HashMap::new();
+    for brush in &map.brushes {
+        control.checkpoint()?;
+        if brush.entity != 0 || !brush.structural() || brush.contents & contents::WATER == 0 {
+            continue;
+        }
+        for side in &brush.sides {
+            if side.bevel
+                || !side.visible
+                || map.materials.get(side.material).contents & contents::WATER == 0
+                || !map
+                    .planes
+                    .get(side.plane)
+                    .normal
+                    .abs_diff_eq(DVec3::Z, 1e-8)
+            {
+                continue;
+            }
+            surfaces
+                .entry(side.texinfo)
+                .or_insert((side.material, brush.id));
+        }
+    }
+    let mut surfaces: Vec<_> = surfaces.into_iter().collect();
+    surfaces.sort_unstable_by_key(|&(texinfo, _)| texinfo);
+    for (texinfo, (material, brush)) in surfaces {
+        control.checkpoint()?;
+        let info = map.materials.get(material);
+        let Some(name) = info.bottom_material.clone() else {
+            report.diagnostics.push(Diagnostic::warning(
+                format!(
+                    "Water material {} has no $bottommaterial; its surface has no below-water face",
+                    info.name
+                ),
+                Some(format!("solid:{brush}")),
+                None,
+            ));
+            continue;
+        };
+        let path = vmt::material_path(&name);
+        let material_name = path
+            .strip_prefix("materials/")
+            .and_then(|name| name.strip_suffix(".vmt"))
+            .ok_or("Water bottom material has an invalid material path")?;
+        let bottom = match map.materials.load(material_name) {
+            Ok(material) => material,
+            Err(error) => {
+                report.diagnostics.push(Diagnostic::error(
+                    format!("Water $bottommaterial {name} could not be loaded: {error}"),
+                    Some(format!("solid:{brush}")),
+                    None,
+                ));
+                continue;
+            }
+        };
+        if !map.materials.get(bottom).found {
+            report.diagnostics.push(Diagnostic::error(
+                format!("Water $bottommaterial {name} was not found"),
+                Some(format!("solid:{brush}")),
+                None,
+            ));
+            continue;
+        }
+        let mut info = map.texinfos.infos[texinfo];
+        info.texdata = i32::try_from(map.texture_data(bottom))
+            .map_err(|_| "Water bottom material exceeds the BSP texdata index limit")?;
+        let bottom_texinfo = map.texinfos.add(info);
+        map.water_bottom_texinfos.insert(texinfo, bottom_texinfo);
+    }
+    Ok(())
+}
 
 pub(crate) struct Water {
     pub leaves: Vec<i16>,
@@ -206,7 +284,7 @@ pub(crate) fn build(
         }
     }
     if !water.records.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; depth-specific material patches, below-water materials and broader CS:S rendering validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; depth-specific material patches, exposed side below-water faces and broader CS:S rendering validation remain unfinished", None, None));
     }
     Ok(water)
 }
@@ -216,8 +294,18 @@ impl Water {
         if map.texinfos.infos[face.texinfo].flags & surf::WARP == 0 {
             return -1;
         }
-        let point = face.winding.center() - map.planes.get(face.plane).normal * SURFACE_EPSILON;
-        self.leaves[tree.leaf_at(point, &map.planes)]
+        let center = face.winding.center();
+        let offset = map.planes.get(face.plane).normal * SURFACE_EPSILON;
+        let behind = self.leaves[tree.leaf_at(center - offset, &map.planes)];
+        if behind >= 0 {
+            behind
+        } else {
+            face.leaves
+                .iter()
+                .map(|&leaf| self.leaves[leaf])
+                .find(|&region| region >= 0)
+                .unwrap_or(-1)
+        }
     }
 
     pub(crate) fn distance(&self, bounds: (DVec3, DVec3)) -> u16 {

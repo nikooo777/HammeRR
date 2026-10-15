@@ -159,6 +159,7 @@ pub struct Map<'a> {
     pub texinfos: TexInfos,
     /// Material index of each texdata entry.
     pub texdata: Vec<usize>,
+    pub(crate) water_bottom_texinfos: HashMap<usize, usize>,
     pub brushes: Vec<MapBrush>,
     /// Entity 0 is worldspawn.
     pub entities: Vec<MapEntity>,
@@ -188,6 +189,7 @@ impl<'a> Map<'a> {
             materials: Materials::new(fs),
             texinfos: TexInfos::default(),
             texdata: Vec::new(),
+            water_bottom_texinfos: HashMap::new(),
             brushes: Vec::new(),
             entities: Vec::new(),
             cubemaps: Vec::new(),
@@ -322,6 +324,7 @@ impl<'a> Map<'a> {
             }
         }
         crate::areas::windows::validate(&map, report, control)?;
+        crate::water::prepare_materials(&mut map, report, control)?;
         crate::overlays::load(vmf, &mut map, report, control)?;
         if !map.cubemaps.is_empty() {
             report.diagnostics.push(Diagnostic::warning(

@@ -65,17 +65,41 @@ fn selected_geometry(
     }
     let geometry = origins::checked_geometry(solid, report)
         .ok_or("Compile region cannot determine bounds of an invalid source brush")?;
-    Ok(bounds
-        .intersects(geometry.mins, geometry.maxs)
-        .then_some(geometry))
+    let (mut mins, mut maxs) = (geometry.mins, geometry.maxs);
+    let mut terrain = false;
+    for face in &geometry.faces {
+        let Some(info) = &solid.sides[face.side].displacement else {
+            continue;
+        };
+        control.checkpoint()?;
+        terrain = true;
+        let (_, mesh) = crate::map::terrain::checked_mesh(face, info)?;
+        for point in mesh.positions {
+            mins = mins.min(point);
+            maxs = maxs.max(point);
+        }
+    }
+    if !bounds.intersects(mins, maxs) {
+        return Ok(None);
+    }
+    if terrain && (!bounds.contains(mins) || !bounds.contains(maxs)) {
+        return Err(format!(
+            "Terrain crosses a compile-region boundary; include the complete base and displaced grid or disable the region (solid:{})",
+            solid.id
+        ));
+    }
+    Ok(Some(geometry))
 }
 
-fn check_materials(
+fn check_liquid_volume(
     solid: &Solid,
     world: Option<(compile_region::Bounds, &BrushGeometry)>,
     materials: &mut Materials<'_>,
     control: &Control,
 ) -> Result<(), String> {
+    if solid.sides.iter().any(|side| side.displacement.is_some()) {
+        return Ok(());
+    }
     let mut flags = 0;
     for side in &solid.sides {
         control.checkpoint()?;
@@ -147,24 +171,11 @@ pub(super) fn prepare<'a>(
     {
         return Err("Compile region sealing requires a mounted tools/toolsblack material with solid, rendering semantics".into());
     }
-    let solids = source.world.solids.iter().chain(
-        source
-            .entities
-            .iter()
-            .filter(|entity| !entity.hidden)
-            .flat_map(|entity| &entity.solids),
-    );
-    if solids
-        .filter(|solid| !solid.hidden)
-        .any(|solid| solid.sides.iter().any(|side| side.displacement.is_some()))
-    {
-        return Err("Compile regions do not support visible terrain yet; disable the region for a full-map build".into());
-    }
     let mut world = BTreeSet::new();
     let mut entities = BTreeMap::new();
     for solid in &source.world.solids {
         if let Some(geometry) = selected_geometry(solid, bounds, report, control)? {
-            check_materials(solid, Some((bounds, &geometry)), &mut materials, control)?;
+            check_liquid_volume(solid, Some((bounds, &geometry)), &mut materials, control)?;
             world.insert(solid.id);
         }
     }
@@ -185,7 +196,7 @@ pub(super) fn prepare<'a>(
             let mut retained = BTreeSet::new();
             for solid in &entity.solids {
                 if selected_geometry(solid, bounds, report, control)?.is_some() {
-                    check_materials(solid, None, &mut materials, control)?;
+                    check_liquid_volume(solid, None, &mut materials, control)?;
                     retained.insert(solid.id);
                 }
             }
@@ -203,7 +214,7 @@ pub(super) fn prepare<'a>(
                     .iter()
                     .filter(|solid| !solid.hidden && !plan.volumes.contains(&solid.id))
                 {
-                    check_materials(solid, None, &mut materials, control)?;
+                    check_liquid_volume(solid, None, &mut materials, control)?;
                 }
                 entities.insert(entity.id, None);
             }

@@ -524,6 +524,8 @@ python3 -B scripts/validate_compile_cordons.py --binary target/debug/hammerr-hea
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-check --render --runtime
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-water-check --water --runtime
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-global-check --water --global-markers --runtime
+python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-terrain-check --terrain --global-markers --render --runtime
+python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-mixed-check --terrain --water --global-markers --runtime
 ```
 
 Compiler regressions cover native legacy/plural parsing, disabled identity,
@@ -541,6 +543,12 @@ boundary traces remain dry. Water in detail/model brushes remains rejected.
 retained origins and authored distances, and checks exact shared output with
 the rendered black boundary. Compiler cases cover unavailable/incompatible
 boundary assets without a replacement material.
+`--terrain` checks whole cage/grid suggestions, native mesh/collision counters,
+exact shared output and crossing-terrain publication guards. Compiler cases
+also cover detail terrain, outside omission and a displaced vertex crossing
+the boundary while its base remains inside. The dry native case checks prop
+contact above the raised sheet; combining `--terrain --water` checks buoyancy
+with both geometry types present.
 The cordon script separately checks invalid imports and retained prior output.
 Use fresh output directories. Neither script sends desktop input.
 

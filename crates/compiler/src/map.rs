@@ -30,7 +30,7 @@ mod cubemaps;
 pub(crate) mod occluders;
 
 #[path = "terrain.rs"]
-mod terrain;
+pub(crate) mod terrain;
 pub use terrain::Terrain;
 
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;

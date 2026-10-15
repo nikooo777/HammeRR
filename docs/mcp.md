@@ -532,14 +532,18 @@ Editing the region makes earlier output stale without changing a running job.
 `get_map_info.compile_region` is the lightweight current effective build scope;
 `get_compile_region` also includes the owned form, suggested bounds and shared
 human-facing `help` text.
+Suggested terrain bounds include its base cage as well as the displaced sheet;
+invalid cage geometry returns `suggested_bounds.error`.
 
 One finite axis-aligned box is supported, at least 16 units per axis and within
 ±16,368. Intersecting world/detail brushes and included brush models stay whole;
 point origins and resolved model pivots determine entity inclusion. References
 remain unchanged. Fully contained structural world water retains the normal
-native water/physics path. Crossing water, detail/model water, slime, visible
-terrain, overlays, areaportals/windows, occluders, instances and visclusters
+native water/physics path. World/detail terrain needs its complete cage and grid
+contained; wholly disjoint combined bounds are omitted. Crossing terrain/water,
+detail/model water, slime, overlays, areaportals/windows, occluders, instances and visclusters
 reject before publication.
+Runtime-model terrain remains unsupported by the normal compiler too.
 Sun and water LOD controllers retain original origins/settings even outside
 the region. Their editor positions do not seed region-only exterior leaks.
 The generated boundary requires mounted solid rendering `tools/toolsblack`;

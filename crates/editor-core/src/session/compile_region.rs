@@ -38,6 +38,49 @@ fn definition_json(value: Option<Definition>) -> Value {
 }
 
 impl Session {
+    fn compile_region_suggested_bounds(&self) -> Result<[glam::DVec3; 2], String> {
+        let [mut mins, mut maxs] = self.volume_selection_bounds();
+        let selected = if self.face_mode {
+            self.face_selection
+                .iter()
+                .map(|face| map_core::ObjectId::Solid(face.solid))
+                .collect()
+        } else {
+            self.selection.clone()
+        };
+        let vmf = self.document.vmf();
+        let solids = vmf.world.solids.iter().map(|solid| (None, solid)).chain(
+            vmf.entities
+                .iter()
+                .filter(|entity| !entity.hidden)
+                .flat_map(|entity| {
+                    entity
+                        .solids
+                        .iter()
+                        .map(move |solid| (Some(entity.id), solid))
+                }),
+        );
+        for (owner, solid) in solids {
+            if solid.hidden
+                || !solid.sides.iter().any(|side| side.displacement.is_some())
+                || (!selected.is_empty()
+                    && !selected.contains(&map_core::ObjectId::Solid(solid.id))
+                    && !owner.is_some_and(|id| selected.contains(&map_core::ObjectId::Entity(id))))
+            {
+                continue;
+            }
+            let geometry = map_core::BrushGeometry::from_solid(solid).map_err(|error| {
+                format!(
+                    "Cannot suggest compile bounds for terrain solid:{}: {error}",
+                    solid.id
+                )
+            })?;
+            mins = mins.min(geometry.mins);
+            maxs = maxs.max(geometry.maxs);
+        }
+        Ok([mins, maxs])
+    }
+
     pub fn compile_region_build_scope(&self) -> Value {
         build_configuration(self.document.vmf())
     }
@@ -60,14 +103,17 @@ impl Session {
     }
 
     pub fn compile_region_state(&self) -> Value {
-        let [mins, maxs] = self.volume_selection_bounds();
+        let suggested = match self.compile_region_suggested_bounds() {
+            Ok([mins, maxs]) => json!({"mins":mins.to_array(),"maxs":maxs.to_array()}),
+            Err(error) => json!({"error":error}),
+        };
         json!({
             "build_scope_label":self.compile_region_label(),"build_scope":self.compile_region_build_scope(),"snapshot":self.compile_region_stamp(), "committed":configuration(self.document.vmf()),
             "draft":self.compile_region.draft.as_ref().map(|draft| json!({"token":draft.token,"clear":draft.definition.is_none(),"region":definition_json(draft.definition),"valid":draft.generation==self.document_generation && draft.revision==self.document.revision()})),
-            "suggested_bounds":{"mins":mins.to_array(),"maxs":maxs.to_array()},
+            "suggested_bounds":suggested,
             "limits":{"minimum_extent":compile_region::MIN_EXTENT,"coordinate":compile_region::MAX_COORDINATE,"shell_thickness":compile_region::SHELL_THICKNESS},
-            "help":"Region builds add a black solid boundary and can hide full-map leaks. Water must fit completely inside the region and belong to the world. Terrain, slime, water in entities, overlays, areaportals and occluders require a full-map build.",
-            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals, sun and water LOD controls remain. Nonspatial sun/water controls preserve origins without seeding exterior region leaks. Water must be fully contained and structural world geometry. Terrain, slime, detail/model water and consumed region helpers are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
+            "help":"Region builds add a black solid boundary and can hide full-map leaks. Include the complete terrain base and grid or water volume. Water belongs to the world; terrain can also be detail geometry. Slime, entity water, overlays, areaportals and occluders need a full-map build.",
+            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals, sun and water LOD controls remain. Nonspatial sun/water controls preserve origins without seeding exterior region leaks. World/detail terrain must have its entire base cage and displaced grid contained; combined disjoint bounds are omitted. Water must be fully contained and structural world geometry. Slime, detail/model water, runtime-model terrain and consumed region helpers are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
         })
     }
 
@@ -190,6 +236,43 @@ mod tests {
                 maxs: DVec3::new(128.0, 128.0, 256.0),
             },
         })
+    }
+
+    #[test]
+    fn selected_terrain_suggestions_include_the_base_cage() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (_directory, game) = crate::test_assets::game();
+            let mut session = Session::new(Ok(game));
+            let map_core::ObjectId::Solid(id) = session
+                .create_block(
+                    actor,
+                    DVec3::new(32.0, 32.0, 0.0),
+                    DVec3::new(112.0, 112.0, 32.0),
+                    "test",
+                    false,
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document()
+                .solid(id)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let face = map_core::surface::FaceId { solid: id, side };
+            session
+                .select_faces(&[face], super::super::SelectMode::Replace)
+                .unwrap();
+            session.create_terrain(actor, &[face], 2, 0).unwrap();
+            let hint = session.compile_region_state()["suggested_bounds"].clone();
+            assert!(hint["mins"][2].as_f64().unwrap() <= 0.0);
+            assert!(hint["maxs"][2].as_f64().unwrap() >= 32.0);
+        }
     }
 
     #[test]

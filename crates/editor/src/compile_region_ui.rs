@@ -182,7 +182,12 @@ impl Controller {
             move || {
                 let window = window.unwrap();
                 let session = lock(&shared);
-                load(&window, &session.compile_region_state()["suggested_bounds"]);
+                let state = session.compile_region_state();
+                if let Some(error) = state["suggested_bounds"]["error"].as_str() {
+                    window.set_message(error.into());
+                    return;
+                }
+                load(&window, &state["suggested_bounds"]);
                 form.borrow_mut().reviewed = None;
                 refresh(&window, &session, &form);
             }
@@ -309,8 +314,12 @@ impl Controller {
             self.window.set_region_enabled(false);
         }
         self.form.borrow_mut().reviewed = None;
-        self.window
-            .set_message("Preview changes or explicitly review the current shared draft.".into());
+        self.window.set_message(
+            state["suggested_bounds"]["error"]
+                .as_str()
+                .unwrap_or("Preview changes or explicitly review the current shared draft.")
+                .into(),
+        );
         refresh(&self.window, session, &self.form);
         self.window.show()
     }

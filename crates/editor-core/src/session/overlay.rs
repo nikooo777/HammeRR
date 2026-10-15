@@ -389,6 +389,9 @@ impl Session {
         else {
             return;
         };
+        if !self.working_solid_visible(self.render_document(), draft.source.solid) {
+            return;
+        }
         let corners = draft.definition.corners();
         for index in 0..corners.len() {
             for point in [corners[index], corners[(index + 1) % corners.len()]] {

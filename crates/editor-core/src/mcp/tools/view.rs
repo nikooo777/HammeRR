@@ -286,7 +286,8 @@ impl EditorServer {
         );
         let material_reload = self.session().material_reload_report().cloned();
         let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
-        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "preview_issues":preview_issues, "material_reload":material_reload,
+        let working_region = self.session().working_region_summary();
+        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "preview_issues":preview_issues, "material_reload":material_reload,
             "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "fog":fog_parameters(view), "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,

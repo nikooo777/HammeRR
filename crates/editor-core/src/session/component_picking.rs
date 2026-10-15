@@ -167,6 +167,7 @@ impl Session {
             return true;
         };
         brush.hidden
+            || !self.working_solid_visible(document, solid)
             || tools.contains(&solid)
             || match owner {
                 ObjectId::Entity(id) => document.entity(id).is_none_or(|entity| entity.hidden),

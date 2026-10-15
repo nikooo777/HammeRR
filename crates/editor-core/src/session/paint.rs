@@ -331,11 +331,13 @@ impl Session {
         {
             return Err("Start a paint stroke inside the viewport".into());
         }
-        let hidden = self.hidden_tool_brushes();
-        let picker = Picker::new(
+        let hidden = self.hidden_brushes_for(false);
+        let evaluation = self.working_evaluation(&self.document);
+        let picker = Picker::with_entity_filter(
             &self.document,
             |solid| !hidden.contains(&solid.id),
             !spec.faces,
+            |entity| evaluation.objects.contains(&ObjectId::Entity(entity.id)),
         );
         let token = self.geometry.paint.serial + 1;
         let texture = if operation.texture_mode().is_some() {

@@ -31,6 +31,9 @@ struct Stroke {
 }
 
 impl Session {
+    pub(super) fn working_region_end_terrain_stroke(&mut self) {
+        self.terrain_strokes.stroke = None;
+    }
     pub fn check_terrain_stroke_token(&self, token: u64) -> Result<(), String> {
         self.checked_terrain_stroke(token).map(|_| ())
     }
@@ -245,6 +248,13 @@ impl Session {
         let Some(point) = stroke.path.cursor else {
             return;
         };
+        if stroke
+            .faces
+            .iter()
+            .any(|face| !self.working_solid_visible(self.render_document(), face.solid))
+        {
+            return;
+        }
         let normal = stroke.axis;
         let u = normal
             .cross(if normal.z.abs() > 0.9 {

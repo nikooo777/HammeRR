@@ -81,7 +81,10 @@ impl Session {
         let Some(hit) = query::pick_face_filtered(
             self.render_document(),
             &ray,
-            |solid| !hidden.contains(&solid.id),
+            |solid| {
+                !hidden.contains(&solid.id)
+                    && self.working_solid_visible(self.render_document(), solid.id)
+            },
             |solid, side, point| {
                 if let Some(part) = draft
                     .partitions

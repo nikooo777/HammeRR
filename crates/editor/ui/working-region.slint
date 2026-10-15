@@ -1,0 +1,63 @@
+import { Button, CheckBox, LineEdit } from "std-widgets.slint";
+
+export component WorkingRegionWindow inherits Window {
+    title: "Working region - HammeRR";
+    preferred-width: 680px;
+    preferred-height: 460px;
+    in-out property <string> min-x: "-64";
+    in-out property <string> min-y: "-64";
+    in-out property <string> min-z: "-64";
+    in-out property <string> max-x: "64";
+    in-out property <string> max-y: "64";
+    in-out property <string> max-z: "64";
+    in-out property <bool> region-enabled: true;
+    in property <string> summary;
+    in property <string> message;
+    callback use-bounds();
+    callback apply();
+    callback clear();
+    callback close();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.close(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 12px;
+            Text { text: "Working region visibility"; font-size: 24px; font-weight: 600; }
+            Text { text: root.summary; wrap: word-wrap; color: #bac2ce; }
+            CheckBox { text: "Enabled"; checked <=> root.region-enabled; }
+            Text { text: "Whole objects touching these bounds stay visible. Hidden objects stay hidden. This changes only the editor view; saved visibility and compilation are unaffected."; wrap: word-wrap; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 80px; text: ""; }
+                Text { horizontal-stretch: 1; text: "X"; }
+                Text { horizontal-stretch: 1; text: "Y"; }
+                Text { horizontal-stretch: 1; text: "Z"; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 80px; text: "Minimum"; vertical-alignment: center; }
+                LineEdit { text <=> root.min-x; input-type: decimal; accessible-label: "Working region minimum X"; }
+                LineEdit { text <=> root.min-y; input-type: decimal; accessible-label: "Working region minimum Y"; }
+                LineEdit { text <=> root.min-z; input-type: decimal; accessible-label: "Working region minimum Z"; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { width: 80px; text: "Maximum"; vertical-alignment: center; }
+                LineEdit { text <=> root.max-x; input-type: decimal; accessible-label: "Working region maximum X"; }
+                LineEdit { text <=> root.max-y; input-type: decimal; accessible-label: "Working region maximum Y"; }
+                LineEdit { text <=> root.max-z; input-type: decimal; accessible-label: "Working region maximum Z"; }
+            }
+            Button { text: "Use selection bounds"; clicked => { root.use-bounds(); } }
+            Text { text: root.message; wrap: word-wrap; color: #f2c487; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Clear working region"; clicked => { root.clear(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close(); } }
+                Button { text: "Apply"; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

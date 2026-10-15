@@ -83,6 +83,7 @@ struct Ui {
     layers: Option<layers_ui::Controller>,
     compile_region: Option<compile_region_ui::Controller>,
     fog: Option<fog_ui::Controller>,
+    working_region: Option<working_region_ui::Controller>,
     overlay: Option<overlay_ui::Controller>,
     prefabs: Option<prefabs_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
@@ -144,6 +145,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_can_redo(doc.redo_labels().next().is_some());
     app.set_compiling(session.compiling());
     app.set_compile_region_label(session.compile_region_label().into());
+    app.set_working_region_active(session.working_region_enabled());
     app.set_launching(session.launching());
     app.set_game_running(session.game_running());
     app.set_has_selection(!session.selection().is_empty());
@@ -315,6 +317,7 @@ pub(super) fn run(
         layers: None,
         compile_region: None,
         fog: None,
+        working_region: None,
         overlay: None,
         prefabs: None,
         color_target: None,
@@ -1240,6 +1243,31 @@ pub(super) fn run(
             }
         }
     });
+    app.on_working_region({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().working_region.is_none() {
+                match working_region_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().working_region = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui
+                .borrow()
+                .working_region
+                .as_ref()
+                .unwrap()
+                .show(&mut lock(&shared))
+            {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    working_region_ui::bind_clear(&app, session_of(&ui));
     app.on_compile_region({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -2396,6 +2424,7 @@ pub(super) fn run(
                             .unwrap()
                             .into(),
                     );
+                    app.set_working_region_active(session.working_region_enabled());
                     ui.viewport.options = session.view();
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
@@ -2640,6 +2669,11 @@ pub(super) fn run(
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.working_region
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&mut lock(&ui.session));
                 }
                 if let Some(controller) = &ui.compile_region
                     && controller.window.window().is_visible()

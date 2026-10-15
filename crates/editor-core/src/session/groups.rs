@@ -86,6 +86,9 @@ impl Session {
     }
 
     fn group_object_selectable(&self, id: ObjectId) -> bool {
+        if !self.working_object_visible(&self.document, id) {
+            return false;
+        }
         let visible = |solid: &source_formats::vmf::Solid| {
             !solid.hidden
                 && (self.view.tool_textures

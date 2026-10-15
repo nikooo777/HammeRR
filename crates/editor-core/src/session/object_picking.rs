@@ -63,7 +63,8 @@ impl Session {
         }
         let hidden = self.hidden_tool_brushes();
         let document = self.render_document();
-        let models = self.model_instances(document);
+        let evaluation = self.working_evaluation(document);
+        let models = &evaluation.models;
         let model_ids = models
             .instances
             .iter()
@@ -81,10 +82,17 @@ impl Session {
             document,
             ray,
             |solid| !hidden.contains(&solid.id),
-            |entity| !model_ids.contains(&ObjectId::Entity(entity.id)),
+            |entity| {
+                !model_ids.contains(&ObjectId::Entity(entity.id))
+                    && evaluation.objects.contains(&ObjectId::Entity(entity.id))
+            },
             &mut retain,
         );
-        for instance in &models.instances {
+        for instance in models
+            .instances
+            .iter()
+            .filter(|instance| evaluation.objects.contains(&instance.id))
+        {
             if let Some(hit) = instance.pick(ray) {
                 retain(hit);
             }

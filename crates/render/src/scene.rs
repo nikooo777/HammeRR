@@ -803,6 +803,27 @@ impl SceneMesh {
         overlays: &[FaceOverlay],
         models: &[crate::models::Instance],
     ) -> Self {
+        Self::build_with_models_filtered(
+            vmf,
+            fs,
+            library,
+            (selected, selected_faces),
+            overlays,
+            models,
+            |_| true,
+        )
+    }
+
+    pub fn build_with_models_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        models: &[crate::models::Instance],
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
+        let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
             models,
@@ -835,10 +856,19 @@ impl SceneMesh {
                 targets
             },
         };
-        for solid in vmf.world.solids.iter().filter(|s| !s.hidden) {
+        for solid in vmf
+            .world
+            .solids
+            .iter()
+            .filter(|s| !s.hidden && include(ObjectId::Solid(s.id)))
+        {
             builder.add_solid(solid, selected.contains(&ObjectId::Solid(solid.id)));
         }
-        for entity in vmf.entities.iter().filter(|e| !e.hidden) {
+        for entity in vmf
+            .entities
+            .iter()
+            .filter(|e| !e.hidden && include(ObjectId::Entity(e.id)))
+        {
             let is_selected = selected.contains(&ObjectId::Entity(entity.id));
             if entity.solids.is_empty() {
                 builder.add_point_entity(entity, is_selected);
@@ -941,6 +971,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn filtering_point_emission_preserves_external_light_targets_and_duplicate_resolution() {
+        let mut vmf = map_core::Document::empty().vmf().clone();
+        let mut light = Entity::new(10, "light_spot");
+        light.properties.set("origin", "0 0 0");
+        light.properties.set("target", "outside_target");
+        let mut target = Entity::new(11, "info_target");
+        target.properties.set("origin", "100 200 300");
+        target.properties.set("targetname", "outside_target");
+        vmf.entities.extend([light, target]);
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        for duplicate in [false, true] {
+            if duplicate {
+                let mut other = vmf.entities[1].clone();
+                other.id = 12;
+                other.properties.set("origin", "-200 100 50");
+                vmf.entities.push(other);
+            }
+            let selected = HashSet::from([ObjectId::Entity(10)]);
+            let mut materials = MaterialLibrary::default();
+            let complete = SceneMesh::build(&vmf, &fs, &mut materials, &selected);
+            let filtered = SceneMesh::build_with_models_filtered(
+                &vmf,
+                &fs,
+                &mut materials,
+                (&selected, &HashSet::new()),
+                &[],
+                &[],
+                |id| id == ObjectId::Entity(10),
+            );
+            assert_eq!(filtered.stats.point_entities, 1);
+            assert_eq!(filtered.lines, complete.lines);
+            assert_eq!(
+                filtered.vertices,
+                &complete.vertices[..filtered.vertices.len()]
+            );
+            let empty = SceneMesh::build_with_models_filtered(
+                &vmf,
+                &fs,
+                &mut materials,
+                (&selected, &HashSet::new()),
+                &[],
+                &[],
+                |_| false,
+            );
+            assert!(empty.vertices.is_empty());
+            assert!(empty.lines.is_empty());
+            assert!(empty.wire_lines.is_empty());
+        }
+    }
+
+    #[test]
     fn curved_world_neighbors_share_normals_and_hidden_patches_do_not_contribute() {
         let mut document = map_core::Document::empty();
         for x in [0.0, 128.0] {
@@ -1009,6 +1094,25 @@ mod tests {
         assert_eq!(seam.len(), 2);
         assert_eq!(seam[0].normal, [0.0, 0.0, 1.0]);
         assert_eq!(seam[0].normal, seam[1].normal);
+        let retained = SceneMesh::build_with_models_filtered(
+            &vmf,
+            &fs,
+            &mut materials,
+            (&HashSet::new(), &HashSet::new()),
+            &[],
+            &[],
+            |id| id == ObjectId::Solid(vmf.world.solids[0].id),
+        );
+        assert_eq!(retained.stats.displacements, 1);
+        assert_eq!(
+            retained
+                .vertices
+                .iter()
+                .find(|vertex| vertex.position == [128.0, 64.0, 16.0])
+                .unwrap()
+                .normal,
+            seam[0].normal
+        );
         vmf.world.solids[1].hidden = true;
         let mesh = SceneMesh::build(&vmf, &fs, &mut materials, &HashSet::new());
         let seam = mesh

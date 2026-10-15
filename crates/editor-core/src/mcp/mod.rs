@@ -560,5 +560,6 @@ impl EditorServer {
             + Self::selection_tools()
             + Self::terrain_tools()
             + Self::view_tools()
+            + Self::working_region_tools()
     }
 }

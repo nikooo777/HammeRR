@@ -247,17 +247,21 @@ impl Session {
                 solids.extend(entity.solids.iter().map(|solid| solid.id));
             }
         }
-        let hidden = self.hidden_tool_brushes();
+        let hidden = self.hidden_brushes_for(false);
         let ordinary = query::pick_surface(&self.document, &ray, |solid| {
             !solids.contains(&solid.id) && !hidden.contains(&solid.id)
         });
         ordinary
             .into_iter()
             .chain(
-                self.model_instances(&self.document)
+                self.working_evaluation(&self.document)
+                    .models
                     .instances
                     .iter()
-                    .filter(|instance| !excluded.contains(&instance.id))
+                    .filter(|instance| {
+                        !excluded.contains(&instance.id)
+                            && self.working_object_visible(&self.document, instance.id)
+                    })
                     .filter_map(|instance| instance.pick_surface(&ray)),
             )
             .min_by(|a, b| a.hit.distance.total_cmp(&b.hit.distance))
@@ -505,6 +509,9 @@ impl Session {
         let Some(plan) = &draft.plan else {
             return;
         };
+        if !self.working_object_visible(self.render_document(), plan.surface.hit.object) {
+            return;
+        }
         let point = plan.surface.hit.point;
         for end in [point, point + plan.surface.normal * 24.0] {
             mesh.lines.push(render::scene::LineVertex {

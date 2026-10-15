@@ -29,6 +29,7 @@ impl EditorServer {
         let mut session = self.session();
         session.poll_game();
         let skybox = skybox_state(&mut session);
+        let working_region = session.working_region_summary();
         let doc = session.document();
         let vmf = doc.vmf();
         let point_entities = vmf.entities.iter().filter(|e| e.solids.is_empty()).count();
@@ -40,6 +41,7 @@ impl EditorServer {
             .collect();
         let mut result = json!({
             "rendering": rendering,
+            "working_region": working_region,
             "material_reload": session.material_reload_report(),
             "compile_region": session.compile_region_build_scope(),
             "context": session.context_state(),

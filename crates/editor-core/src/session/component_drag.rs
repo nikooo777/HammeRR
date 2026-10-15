@@ -113,6 +113,13 @@ impl Session {
     }
 
     pub fn component_guide(&self) -> Option<Guide> {
+        if self
+            .component_selection()
+            .iter()
+            .any(|component| !self.working_solid_visible(self.render_document(), component.solid))
+        {
+            return None;
+        }
         if !self.geometry.components.options.enabled
             || self.component_topology_preview()
             || self

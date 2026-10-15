@@ -168,6 +168,9 @@ impl Session {
         let Some(guide) = &self.model_attachments.guide else {
             return;
         };
+        if !self.working_object_visible(self.render_document(), ObjectId::Entity(guide.entity)) {
+            return;
+        }
         let Ok(point) = self.checked_model_attachment_guide(guide) else {
             return;
         };

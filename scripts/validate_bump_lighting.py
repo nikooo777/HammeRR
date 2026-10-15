@@ -36,11 +36,7 @@ def texture(pixels, size=32, normal=False):
 
 
 def assets(args):
-    game = runtime.private_game(args.game_dir.resolve(), args.output / "source-game")
-    library = game.parent / "bin"
-    if not library.exists():
-        library.symlink_to(args.game_dir.resolve() / "bin", target_is_directory=True)
-    assert library.resolve() == args.game_dir.resolve() / "bin"
+    game = runtime.private_game(args.game_dir.resolve(), args.output / "source-game", engine_physics=True)
     folder = game / "materials/hammerr"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "white.vtf").write_bytes(texture(bytes([255] * 32 * 32 * 4)))

@@ -1,3 +1,5 @@
+[← Manual](README.md)
+
 # Particle effects
 
 Browse named particle systems from the mounted game's active particle manifest,
@@ -37,7 +39,8 @@ The equivalent MCP operations are `browse_particles`, `inspect_particle`,
   viewport rendering or validation of the visible effect in the game.
 - Discovery uses `particles/particles_manifest.txt` through the game's content
   mount order. Unlisted PCFs, map-specific manifests, BSP-packed overrides and
-  include/base directives are outside this workflow.
+  include/base directives are outside this workflow. Manifests require balanced
+  blocks and support `//` line comments; block comments are unsupported.
 - Supported files use DMX **binary 2**, format **pcf 1**, matching the installed
   CS:S active assets. Other encodings/versions, external element references and
   element-id attributes fail with an explicit error.

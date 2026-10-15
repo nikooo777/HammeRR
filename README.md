@@ -83,7 +83,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Repeated placement |
 | --- |
 | ![Repeated placement array preview and controls](docs/images/repeat-array.png) |
-| Repeat selections in world or source-local axes, then apply all copies in one Undo step. |
+| Repeat selections in world or source-local axes, with brush scale factors and one Undo step. |
 
 [Brushes and transforms →](docs/brushes.md) · [Hollow, carve and clip →](docs/brush-tools.md)
 
@@ -147,6 +147,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Wireframe view with a light helper](docs/images/wireframe-view.png) | ![Named camera views](docs/images/saved-views.png) |
 | Textured, flat, wireframe, lightmap density and smoothing groups, in every projection. | Name camera positions and jump back to them. They are saved in the map. |
 
+| Working region | Fog preview |
+| --- | --- |
+| ![Working-region bounds and visibility controls](docs/images/working-region.png) | ![Authored fog controller and preview settings](docs/images/fog-preview.png) |
+| Focus the editor on whole objects touching a temporary box, with shared visibility reasons. | Choose an authored controller to preview static linear fog in perspective Textured views. |
+
 | 2D sky preview |
 | --- |
 | ![The selected sky rendered through sky surfaces](docs/images/sky-preview.png) |
@@ -155,6 +160,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 [Editor basics →](docs/basics.md) · [Selecting →](docs/selection.md)
 
 ### Entities and logic
+
+| Particle effects |
+| --- |
+| ![Particle definitions and effect-name choices](docs/images/particle-browser.png) |
+| Search active particle systems, inspect their definitions and choose effects for entities. |
 
 | Connections | Safe renaming |
 | --- | --- |
@@ -219,7 +229,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Native compiler | Play in CS:S |
 | --- | --- |
 | ![Build settings, statistics and diagnostics](docs/images/build-status.png) | ![Soft sun shadows in Counter-Strike: Source](docs/images/soft-sun.png) |
-| Baked light from point lights, spotlights, sun and sky, with soft sun and opaque model shadows, plus CS:S engine physics with world, terrain and brush-model material surfaces, water, cubemaps, static props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
+| Compile playable maps with baked lighting, CS:S engine physics, water, props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
 
 | Named build recipes |
 | --- |
@@ -328,6 +338,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Four diffuse bounces beneath a shelf in Counter-Strike: Source](docs/images/four-bounce-on.png) |
 | Add up to four diffuse light bounces from world surfaces and terrain. |
 
+| Static-prop cutout shadows |
+| --- |
+| ![Baked light passing through a fence model's cutout texture](docs/images/prop-shadow-cutouts.png) |
+| Bake shadows through alpha-test cutouts on supported static props. |
+
 | Hint planes |
 | --- |
 | ![Hint face and skip bounds in the editor](docs/images/hint-planes.png) |
@@ -336,7 +351,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Overlays |
 | --- |
 | ![Fitted overlay controls with material preview and source corners](docs/images/overlay-authoring.png) |
-| Fit or refit surface markings on world/detail faces, preserving materials, order, fades and entity links. |
+| Fit, refit or explicitly rebind markings on world/detail faces while retaining settings and entity links. |
 
 [Overlays →](docs/overlays.md)
 

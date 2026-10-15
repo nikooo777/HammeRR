@@ -223,7 +223,7 @@ mod tests {
             "Use selection bounds",
             "Clear working region",
             "Apply",
-            "Close",
+            "Cancel",
         ] {
             crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
         }

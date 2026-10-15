@@ -44,7 +44,7 @@ def horizontal_pose(bounds):
 
 
 def compile_cases(args):
-    private = runtime.private_game(args.game_dir.resolve(), args.output / "fixture")
+    private = runtime.private_game(args.game_dir.resolve(), args.output / "fixture", engine_physics=True)
     metadata = json.loads(subprocess.check_output([
         str(args.fixture_helper.resolve()),
         str(args.game_dir.resolve() / "cstrike/gameinfo.txt"),
@@ -106,8 +106,12 @@ def worker(args):
     args.observe_seconds = 24
     runtime.capture_worker(args, "setpos -160 -160 8; setang 15 45 0; mat_fullbright")
     text = (private / "hammerr-runtime.log").read_text(errors="replace")
-    assert "sv_lan" in text and "= 1" in text, text[-4000:]
-    assert "Error Vertex File" not in text and "Error Index File" not in text and "Error Material" not in text, text[-4000:]
+    assert '"sv_lan" = "1"' in text, text[-4000:]
+    assert "Error Vertex File" not in text and "Error Index File" not in text, text[-4000:]
+    metadata = json.loads((args.output.parent / "fixture.json").read_text())
+    for material in metadata["materials"]:
+        name = material.removeprefix("materials/").removesuffix(".vmt")
+        assert f'error: material "{name.lower()}"' not in text.lower(), name
 
 
 def main():

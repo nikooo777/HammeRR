@@ -44,8 +44,16 @@ function HammeRRThink() {
 """
 
 
-def private_game(root, output, bsp=None):
+def private_game(root, output, bsp=None, *, engine_physics=False):
     game = output / "cstrike"
+    if engine_physics:
+        output.mkdir(parents=True, exist_ok=True)
+        library = output / "bin"
+        expected = (root / "bin").resolve(strict=True)
+        if not library.exists():
+            library.symlink_to(expected, target_is_directory=True)
+        if library.resolve(strict=True) != expected:
+            raise RuntimeError("Private physics fixture has an unexpected engine library path")
     for directory in [
         game / "maps",
         game / "cfg",

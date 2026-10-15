@@ -1,5 +1,8 @@
 use super::*;
-use crate::context::{Note, Scope};
+use crate::{
+    BrushGeometry,
+    context::{Note, Scope},
+};
 use source_formats::vmf::Connection;
 
 fn options(count: u32) -> Options {

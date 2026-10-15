@@ -505,7 +505,7 @@ mod tests {
                     !solid
                         .sides
                         .iter()
-                        .all(|side| side.material.starts_with("tools/"))
+                        .all(|side| side.material.to_ascii_lowercase().starts_with("tools/"))
                 })
                 .unwrap()
                 .hit

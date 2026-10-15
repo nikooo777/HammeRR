@@ -3,11 +3,10 @@ use std::io;
 
 use bytemuck::{Pod, Zeroable};
 
-use super::{Bsp, Face, TexInfo, invalid, lump};
+use super::{Bsp, Face, MAX_LIGHTING_FACES, TexInfo, invalid, lump};
 
 pub const MAX_OVERLAYS: usize = 1024;
 pub const MAX_OVERLAY_FACES: usize = 64;
-const MAX_FACES: usize = 65_536;
 const MAX_TEXINFOS: usize = 32_768;
 const RENDER_ORDER_MASK: u16 = 0xc000;
 
@@ -88,7 +87,7 @@ impl OverlayData {
         if !self.fades.is_empty() && self.fades.len() != self.overlays.len() {
             return Err(invalid("overlay fade count must match the overlay count"));
         }
-        if face_count > MAX_FACES || texinfo_count > MAX_TEXINFOS {
+        if face_count > MAX_LIGHTING_FACES || texinfo_count > MAX_TEXINFOS {
             return Err(invalid("overlay reference arrays exceed bounded limits"));
         }
         let mut ids = BTreeSet::new();
@@ -165,7 +164,7 @@ impl Bsp {
         if overlays.is_empty() && fades.is_empty() {
             return Ok(None);
         }
-        let faces = bounded_data::<Face>(self, lump::FACES, MAX_FACES)?;
+        let faces = bounded_data::<Face>(self, lump::FACES, MAX_LIGHTING_FACES)?;
         let texinfos = bounded_data::<TexInfo>(self, lump::TEXINFO, MAX_TEXINFOS)?;
         let data = OverlayData {
             overlays: bytemuck::pod_collect_to_vec(overlays),
@@ -179,7 +178,7 @@ impl Bsp {
     }
 
     pub fn set_overlay_data(&mut self, data: &OverlayData) -> io::Result<()> {
-        let faces = bounded_data::<Face>(self, lump::FACES, MAX_FACES)?;
+        let faces = bounded_data::<Face>(self, lump::FACES, MAX_LIGHTING_FACES)?;
         let texinfos = bounded_data::<TexInfo>(self, lump::TEXINFO, MAX_TEXINFOS)?;
         data.validate(
             faces.len() / size_of::<Face>(),

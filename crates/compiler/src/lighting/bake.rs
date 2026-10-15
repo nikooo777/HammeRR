@@ -563,7 +563,9 @@ pub(crate) fn bake(
         );
     }
     let world_hulls = occluders(map, 0, report, control)?;
-    let mut faces = bsp.records::<Face>().map_err(|error| error.to_string())?;
+    let mut faces = bsp
+        .lighting_faces(LightingKind::Ldr)
+        .map_err(|error| error.to_string())?;
     let mut infos = bsp
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;
@@ -805,7 +807,8 @@ pub(crate) fn bake(
         .map_err(|error| error.to_string())?;
     bsp.set_world_lights(LightingKind::Ldr, &world_lights)
         .map_err(|error| error.to_string())?;
-    bsp.set_records(&faces);
+    bsp.set_lighting_faces(LightingKind::Ldr, &faces)
+        .map_err(|error| error.to_string())?;
     bsp.set_records(&infos);
     let bounce_start = budget.work;
     let bounce = if options.bounces > 0 {
@@ -838,7 +841,8 @@ pub(crate) fn bake(
             rays += final_stats.rays;
             bsp.set_lighting(LightingKind::Ldr, &colors)
                 .map_err(|error| error.to_string())?;
-            bsp.set_records(&faces);
+            bsp.set_lighting_faces(LightingKind::Ldr, &faces)
+                .map_err(|error| error.to_string())?;
         }
         final_stats.rays = rays;
         used_styles.clear();

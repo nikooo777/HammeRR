@@ -1,5 +1,5 @@
 use glam::{DVec2, DVec3};
-use source_formats::bsp::{Bsp, Edge, Face, LightingKind, Model, RgbExp32, TexInfo, surf};
+use source_formats::bsp::{Bsp, Edge, LightingKind, Model, RgbExp32, TexInfo, surf};
 
 use super::Occluder;
 use super::bake::Budget;
@@ -157,7 +157,9 @@ fn build_with_styles(
         .first()
         .copied()
         .ok_or("Surface radiance needs a world model")?;
-    let faces = bsp.records::<Face>().map_err(|error| error.to_string())?;
+    let faces = bsp
+        .lighting_faces(LightingKind::Ldr)
+        .map_err(|error| error.to_string())?;
     let infos = bsp
         .records::<TexInfo>()
         .map_err(|error| error.to_string())?;

@@ -64,6 +64,7 @@ pub struct TransformPreview {
     pub transform: Transform,
     generation: u64,
     revision: u64,
+    surface_owner: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -432,15 +433,43 @@ impl Session {
         &mut self,
         actor: Actor,
         ids: &[ObjectId],
-        mut transform: Transform,
+        transform: Transform,
         pivot: Option<DVec3>,
     ) -> Result<DVec3, String> {
-        transform.pivot = pivot.unwrap_or(self.selection_pivot(ids)?);
-        if self
-            .transform_preview
+        self.preview_transform_owned(actor, ids, transform, pivot, None)
+    }
+
+    pub(super) fn preview_surface_transform(
+        &mut self,
+        actor: Actor,
+        ids: &[ObjectId],
+        transform: Transform,
+        pivot: DVec3,
+        owner: u64,
+    ) -> Result<DVec3, String> {
+        self.preview_transform_owned(actor, ids, transform, Some(pivot), Some(owner))
+    }
+
+    pub(super) fn surface_transform_owner(&self) -> Option<u64> {
+        self.transform_preview
             .as_ref()
-            .is_some_and(|previous| previous.ids == ids && previous.transform == transform)
-        {
+            .and_then(|preview| preview.surface_owner)
+    }
+
+    fn preview_transform_owned(
+        &mut self,
+        actor: Actor,
+        ids: &[ObjectId],
+        mut transform: Transform,
+        pivot: Option<DVec3>,
+        surface_owner: Option<u64>,
+    ) -> Result<DVec3, String> {
+        transform.pivot = pivot.unwrap_or(self.selection_pivot(ids)?);
+        if self.transform_preview.as_ref().is_some_and(|previous| {
+            previous.ids == ids
+                && previous.transform == transform
+                && previous.surface_owner == surface_owner
+        }) {
             if actor == Actor::Agent && self.transform_drag.take().is_some() {
                 self.interaction_epoch += 1;
                 self.view_serial += 1;
@@ -474,6 +503,7 @@ impl Session {
             transform,
             generation: self.document_generation,
             revision: self.document.revision(),
+            surface_owner,
         });
         self.scene_serial += 1;
         self.view_serial += 1;

@@ -93,6 +93,7 @@ To build the map, set the build options once, then compile:
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
+| Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
@@ -341,3 +342,12 @@ Audio helpers require FFmpeg/ffplay. Input files are limited to 16 MiB, output t
 `get_entity_inspector` exposes dynamic-model `rendercolor` as the common **Tint** color control. Use the existing `set_entity_color` with `id`, `key: "rendercolor"` and byte `color: [r,g,b]`; omit `intensity`. This RGB edit preserves an authored fourth component and commits in one Undo step. `set_entity_component` and `set_entity_properties` retain their existing generic access. `render_view` shows the same modulation as the viewport, and `inspect_entity_model.tint` reports RGB bytes for supported model instances (`null` when unavailable). `opacity_preview: false` distinguishes the current RGB-only support. Asset-only browser images keep their untinted source materials.
 
 Tint fields use three integer channels from 0 to 255 with an optional preserved fourth component. White/default static props are unchanged. The current static-prop writer has no color field, so nonwhite static tints return helper diagnostics and fail compilation without replacing an earlier BSP. Opacity/render modes and scaling remain separate gaps.
+
+### Surface placement
+
+1. Call `preview_surface_placement` with optional `ids` (selection by default), `method` (`floor`, `ceiling`, or `ray`), `align`, `offset` and `texture_lock`. Floor is the default; ray placement requires `ray_origin` and `ray_direction`. It creates the same preview as **Place on surface…** without changing the source or history.
+2. To share interactive picking, call `begin_surface_placement_pick` with the same options except method/ray. It returns an owned `token`. Call `pick_surface_placement` with that token, `origin` and `direction`, or let a person click a viewport surface. Misses preserve the pending pick.
+3. `get_surface_placement` reports the active or stale token, `valid`, `picking`, selected IDs, options and any error. Its `plan` includes method, target ID/face, hit point, geometric normal, pivot, translation, rotation, support-point count and achieved contact offset. An optional token checks ownership.
+4. Inspect with `render_view` or frame with `frame_selection`. Call `apply_surface_placement` with the token for one Undo step, or `cancel_surface_placement` to discard only that placement. No-op placements create no Undo entry. Foreign tokens fail without clearing replacements.
+
+Source, scene or selection changes invalidate the draft. Other geometry previews must be finished first. Opening the human window resumes a valid shared placement; replaced tokens require reopening for review. The whole selection moves rigidly, with actual brush/terrain/model vertices and helper-bound fallbacks. This operation does not simulate physics or resolve other contacts. See [Surface placement](placement.md) for target, alignment and resource limits.

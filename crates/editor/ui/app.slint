@@ -13,6 +13,7 @@ export { TerrainTrianglesWindow, TerrainTriangleRow } from "terrain-triangles.sl
 export {ModelWindow} from "models.slint";
 export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-browser.slint";
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
+export {PlacementWindow} from "placement.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
@@ -1786,6 +1787,7 @@ export component AppWindow inherits Window {
     in property <bool> terrain-triangle-picking;
     callback cancel-terrain-triangle-pick();
     in property <bool> terrain-center-picking;
+    in property <bool> surface-picking;
     callback cancel-terrain-center-pick();
     in property <bool> terrain-stroking;
     callback cancel-terrain-stroke();
@@ -1801,6 +1803,8 @@ export component AppWindow inherits Window {
     callback browse-material(key: string);
     callback browse-model();
     callback browse-sound(string);
+    callback place-on-surface();
+    callback cancel-surface-pick();
     callback material-changed();
     callback pick-color(key: string);
     callback property-component-edited(key: string, index: int, value: string);
@@ -2001,7 +2005,7 @@ export component AppWindow inherits Window {
                     }
 
                     touch := TouchArea {
-                        mouse-cursor: root.flying ? MouseCursor.move : (root.drawing-block || root.clipping) && root.projection-index != 0 ? MouseCursor.crosshair : MouseCursor.default;
+                        mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
                         pointer-event(event) => {
                             if (event.kind == PointerEventKind.down) {
                                 focus.focus();
@@ -2351,6 +2355,11 @@ export component AppWindow inherits Window {
                         text: "Transform selection";
                         checked <=> root.show-transform;
                         toggled => { if self.checked { root.handles-mode-index = root.transform-mode >= 3 ? 0 : root.transform-mode + 1; root.transform-tool-changed(); } }
+                    }
+                    if root.has-selection:Button {text:"Place on surface…";clicked=>{root.place-on-surface();}}
+                    if root.surface-picking:VerticalLayout {
+                        Text {text:"Click a visible surface. Escape cancels picking.";wrap:word-wrap;color:#91b9e9;}
+                        Button {text:"Cancel picking";clicked=>{root.cancel-surface-pick();}}
                     }
                     Button {
                         text: "Hollow brushes…";

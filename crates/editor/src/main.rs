@@ -17,6 +17,7 @@ mod mcp;
 mod model_browser_ui;
 mod model_preview;
 mod model_ui;
+mod placement_ui;
 mod pointfile_ui;
 mod primitive_ui;
 mod recovery;
@@ -176,6 +177,7 @@ struct Ui {
     model: Option<model_ui::Controller>,
     model_browser: Option<model_browser_ui::Controller>,
     sounds: Option<sounds_ui::Controller>,
+    placement: Option<placement_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -184,7 +186,7 @@ struct Ui {
     lighting: Option<lighting_ui::Controller>,
     terrain: Option<terrain_ui::Controller>,
     terrain_triangles: Option<terrain_triangles_ui::Controller>,
-    terrain_pick_release: bool,
+    pick_release: bool,
     material_replace: Option<material_replace_ui::Controller>,
     surface_group: Option<surface_group_ui::Controller>,
     volume: Option<volume_ui::Controller>,
@@ -2856,6 +2858,25 @@ fn single_selected_entity(session: &Session) -> Option<u32> {
     }
 }
 
+fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    let report = session.surface_placement();
+    if report["picking"] != true {
+        return false;
+    }
+    if let Some(controller) = &ui.borrow().placement {
+        controller.cancel_pick(&mut session);
+    } else {
+        let _ = session.cancel_surface_placement(report["token"].as_u64().unwrap());
+    }
+    if let Some(token) = session.surface_placement()["token"].as_u64() {
+        let _ = session.cancel_surface_placement(token);
+    }
+    app.set_surface_picking(false);
+    true
+}
+
 /// Keyboard commands; returns whether the key was handled.
 fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift: bool) -> bool {
     let key = text.to_lowercase();
@@ -2922,6 +2943,9 @@ fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, control: bool, shift:
         return true;
     }
     if key == key_text(Key::Escape) {
+        if cancel_surface_pick(app, ui) {
+            return true;
+        }
         if let Some(controller) = &ui.borrow().terrain
             && controller.is_handling()
         {
@@ -3157,6 +3181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         model: None,
         model_browser: None,
         sounds: None,
+        placement: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -3165,7 +3190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         lighting: None,
         terrain: None,
         terrain_triangles: None,
-        terrain_pick_release: false,
+        pick_release: false,
         material_replace: None,
         surface_group: None,
         volume: None,
@@ -3868,6 +3893,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, ui) = (app.as_weak(), ui.clone());
         move |key| show_material_window(&app.unwrap(), &ui, &key)
     });
+    app.on_cancel_surface_pick({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            cancel_surface_pick(&app.unwrap(), &ui);
+        }
+    });
+    app.on_place_on_surface({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().placement.is_none() {
+                match placement_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().placement = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.placement.as_ref().unwrap();
+            controller.window.set_aspect(
+                app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0),
+            );
+            let result = controller.initialize(&mut lock(&shared));
+            match result {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
+    });
     app.on_browse_sound({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |key| {
@@ -4104,8 +4162,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app = app.unwrap();
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
-            if button == 0 && !down && ui.terrain_pick_release {
-                ui.terrain_pick_release = false;
+            if button == 0 && !down && ui.pick_release {
+                ui.pick_release = false;
+                return;
+            }
+            let placement_picking = lock(&ui.session).surface_placement()["picking"] == true;
+            if button == 0 && placement_picking {
+                if down {
+                    ui.pick_release = true;
+                    if ui.placement.is_none() {
+                        match placement_ui::Controller::new(&ui.session) {
+                            Ok(controller) => ui.placement = Some(controller),
+                            Err(error) => {
+                                app.set_message(error.to_string().into());
+                                return;
+                            }
+                        }
+                    }
+                    let controller = ui.placement.as_ref().unwrap();
+                    let size = (viewport_size.0.max(1.0), viewport_size.1.max(1.0));
+                    controller.window.set_aspect(size.0 / size.1);
+                    let (origin, direction) = ui.viewport.camera.ray(
+                        2.0 * x / size.0 - 1.0,
+                        1.0 - 2.0 * y / size.1,
+                        size.0 / size.1,
+                    );
+                    let result = {
+                        let mut session = lock(&ui.session);
+                        controller.initialize(&mut session).and_then(|_| {
+                            controller.pick_at_ray(
+                                &mut session,
+                                Ray {
+                                    origin: origin.as_dvec3(),
+                                    direction: direction.as_dvec3(),
+                                },
+                            )
+                        })
+                    };
+                    match result {
+                        Ok(()) => {
+                            let _ = controller.window.show();
+                            app.set_message(
+                                "Review the surface placement, then Apply or Cancel.".into(),
+                            );
+                        }
+                        Err(error) => app.set_message(error.into()),
+                    }
+                }
                 return;
             }
             if button == 0
@@ -4186,7 +4289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .is_some_and(|controller| controller.is_picking())
             {
                 if down {
-                    ui.terrain_pick_release = true;
+                    ui.pick_release = true;
                     let controller = ui.terrain_triangles.as_ref().unwrap();
                     let size = (viewport_size.0.max(1.0), viewport_size.1.max(1.0));
                     let (origin, direction) = ui.viewport.camera.ray(
@@ -4219,7 +4322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .is_some_and(|controller| controller.is_picking())
             {
                 if down {
-                    ui.terrain_pick_release = true;
+                    ui.pick_release = true;
                     let controller = ui.terrain.as_ref().unwrap();
                     let size = (viewport_size.0.max(1.0), viewport_size.1.max(1.0));
                     let (origin, direction) = ui.viewport.camera.ray(
@@ -4696,6 +4799,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         controller.refresh(&mut session);
                     }
+                    if let Some(controller) = &ui.placement
+                        && (controller.window.window().is_visible() || controller.is_picking())
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.lighting
                         && controller.window.window().is_visible()
                     {
@@ -4740,6 +4848,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&mut session);
+                    }
+                    if let Some(controller) = &ui.placement
+                        && (controller.window.window().is_visible() || controller.is_picking())
+                    {
+                        controller.refresh(&session);
                     }
                     if let Some(controller) = &ui.volume
                         && controller.window.window().is_visible()
@@ -4941,6 +5054,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            app.set_surface_picking(lock(&ui.session).surface_placement()["picking"] == true);
             app.set_terrain_triangle_picking(
                 ui.terrain_triangles
                     .as_ref()

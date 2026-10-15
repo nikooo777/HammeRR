@@ -1,0 +1,103 @@
+import {Button, ComboBox, LineEdit, ListView, SpinBox} from "std-widgets.slint";
+
+export struct ModelChoiceRow { path:string, name:string, folder:string }
+
+export component ModelBrowserWindow inherits Window {
+    title:"Choose model — HammeRR";
+    preferred-width:960px;
+    preferred-height:690px;
+    min-width:800px;
+    min-height:630px;
+    in-out property <string> query;
+    in property <[string]> groups;
+    in-out property <int> group-index;
+    in property <[ModelChoiceRow]> rows;
+    in-out property <string> path;
+    in-out property <int> skin;
+    in property <int> skin-count:1;
+    in property <image> preview;
+    in property <bool> has-preview;
+    in property <bool> can-apply;
+    in property <bool> can-previous;
+    in property <bool> can-next;
+    in property <string> page-info;
+    in property <string> geometry;
+    in property <string> dimensions;
+    in property <string> materials;
+    in property <string> message;
+    callback search();
+    callback group-changed();
+    callback page(int);
+    callback choose(string);
+    callback preview-model();
+    callback invalidate();
+    callback apply();
+    callback cancel();
+    forward-focus:dialog-focus;
+    dialog-focus:=FocusScope {
+        key-pressed(event)=>{if event.text==Key.Escape {root.cancel();accept} else {reject}}
+        VerticalLayout {
+            padding:20px;spacing:12px;
+            Text {text:"Choose a model";font-size:24px;font-weight:600;}
+            HorizontalLayout {
+                spacing:10px;
+                LineEdit {text<=>root.query;placeholder-text:"Search model names or folders…";edited=>{root.search();}horizontal-stretch:1;}
+                ComboBox {width:300px;model:root.groups;current-index<=>root.group-index;selected=>{root.group-changed();}}
+            }
+            HorizontalLayout {
+                spacing:16px;vertical-stretch:1;
+                VerticalLayout {
+                    spacing:8px;horizontal-stretch:1;
+                    ListView {
+                        for row in root.rows:Rectangle {
+                            height:54px;border-radius:5px;
+                            background:root.path==row.path ? #343b49 : touch.has-hover ? #252b34 : #1d222a;
+                            VerticalLayout {
+                                padding:8px;spacing:3px;
+                                Text {text:row.name;color:#e1e4eb;overflow:elide;}
+                                Text {text:row.folder;color:#9aa5b5;font-size:11px;overflow:elide;}
+                            }
+                            touch:=TouchArea {clicked=>{root.choose(row.path);}}
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing:8px;
+                        Button {text:"Previous";enabled:root.can-previous;clicked=>{root.page(-1);}}
+                        Text {text:root.page-info;horizontal-alignment:center;vertical-alignment:center;horizontal-stretch:1;color:#aab2bf;}
+                        Button {text:"Next";enabled:root.can-next;clicked=>{root.page(1);}}
+                    }
+                }
+                VerticalLayout {
+                    width:460px;spacing:10px;
+                    Rectangle {
+                        min-height:250px;vertical-stretch:1;background:#151922;border-radius:8px;clip:true;
+                        if root.has-preview:Image {width:parent.width;height:parent.height;source:root.preview;image-fit:contain;}
+                        if !root.has-preview:Text {width:parent.width;height:parent.height;text:"Select a model to preview it";horizontal-alignment:center;vertical-alignment:center;color:#aab2bf;}
+                    }
+                    HorizontalLayout {
+                        spacing:8px;
+                        Text {text:"Skin";vertical-alignment:center;}
+                        SpinBox {value<=>root.skin;minimum:0;maximum:max(0,root.skin-count - 1);edited=>{root.preview-model();}}
+                        Text {text:"\{root.skin-count} available · starts at 0";vertical-alignment:center;color:#aab2bf;horizontal-stretch:1;}
+                    }
+                    Text {text:root.geometry;wrap:word-wrap;}
+                    Text {text:root.dimensions;wrap:word-wrap;color:#b6c0ce;}
+                    Text {text:root.materials;wrap:word-wrap;color:#9aa5b5;font-size:12px;max-height:60px;overflow:elide;}
+                }
+            }
+            HorizontalLayout {
+                spacing:8px;
+                LineEdit {text<=>root.path;placeholder-text:"models/...mdl";horizontal-stretch:1;edited=>{root.invalidate();}accepted=>{root.preview-model();}}
+                Button {text:"Preview model";clicked=>{root.preview-model();}}
+            }
+            Text {text:root.message;wrap:word-wrap;color:#b6c0ce;min-height:32px;}
+            HorizontalLayout {
+                spacing:8px;
+                Button {text:"Cancel";clicked=>{root.cancel();}}
+                Rectangle {horizontal-stretch:1;}
+                Text {text:"Static models · body 0 · scale 1";vertical-alignment:center;color:#8e99aa;font-size:12px;}
+                Button {text:"Use model";enabled:root.can-apply;clicked=>{root.apply();}}
+            }
+        }
+    }
+}

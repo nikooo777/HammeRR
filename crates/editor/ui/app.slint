@@ -11,6 +11,7 @@ export { LightingWindow, LightingGroup } from "lighting.slint";
 export { ContextWindow, ContextRow } from "context.slint";
 export { TerrainTrianglesWindow, TerrainTriangleRow } from "terrain-triangles.slint";
 export {ModelWindow} from "models.slint";
+export {ModelBrowserWindow, ModelChoiceRow} from "model-browser.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
@@ -972,6 +973,7 @@ export component SurfaceWindow inherits Window {
 component PropertyField inherits VerticalLayout {
     in property <KeyValue> field;
     in property <bool> advanced;
+    in property <bool> model-browsing;
     property <bool> show-help;
     callback edited(string);
     callback component-edited(int, string);
@@ -979,6 +981,7 @@ component PropertyField inherits VerticalLayout {
     callback flag-toggled(string, bool);
     callback pick-color();
     callback pick-material();
+    callback pick-model();
     spacing: 5px;
     padding-bottom: 12px;
     HorizontalLayout {
@@ -1040,7 +1043,7 @@ component PropertyField inherits VerticalLayout {
         enabled: !root.field.read-only;
         released(value) => { root.edited(root.field.type-name == "integer" ? "\{round(value)}" : "\{value}"); }
     }
-    if root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "material": HorizontalLayout {
+    if root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "material" || root.field.control == "model": HorizontalLayout {
         spacing: 6px;
         LineEdit {
             horizontal-stretch: 1;
@@ -1050,6 +1053,7 @@ component PropertyField inherits VerticalLayout {
             accepted(value) => { root.edited(value); }
         }
         if root.field.control == "material": Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-material(); } }
+        if root.field.control == "model" && root.model-browsing: Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-model(); } }
     }
     if root.show-help: Text { text: root.field.description; wrap: word-wrap; color: #8a909c; font-size: 12px; }
     if root.advanced && (root.field.control == "color" || root.field.control == "vector" || root.field.control == "flags"): LineEdit {
@@ -1792,6 +1796,7 @@ export component AppWindow inherits Window {
     callback surface-view-changed();
     callback sample-face-texture();
     callback browse-material(key: string);
+    callback browse-model();
     callback material-changed();
     callback pick-color(key: string);
     callback property-component-edited(key: string, index: int, value: string);
@@ -2492,12 +2497,14 @@ export component AppWindow inherits Window {
                             if !row.advanced || root.advanced-properties: PropertyField {
                                 field: row;
                                 advanced: root.advanced-properties;
+                                model-browsing: true;
                                 edited(value) => { root.property-edited(row.key, value); }
                                 component-edited(index, value) => { root.property-component-edited(row.key, index, value); }
                                 removed => { root.property-removed(row.key); }
                                 flag-toggled(flag, checked) => { root.flag-toggled(row.key, flag, checked); }
                                 pick-color => { root.pick-color(row.key); }
                                 pick-material => { root.browse-material(row.key); }
+                                pick-model => { root.browse-model(); }
                             }
                         }
                     }

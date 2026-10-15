@@ -273,6 +273,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Material IDs are local to a library; clear bindings when replacing it.
+    pub fn clear_materials(&mut self) {
+        self.materials.clear();
+    }
+
     pub fn new(ctx: &GpuContext) -> Self {
         let device = &ctx.device;
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));

@@ -49,6 +49,8 @@ struct Body {
     #[serde(default)]
     surface: Option<f32>,
     #[serde(default)]
+    surface_property: Option<String>,
+    #[serde(default)]
     mesh: Option<Mesh>,
 }
 
@@ -100,20 +102,25 @@ fn valid_surface_property(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
 }
 
-fn material_index(map: &Map, material: usize, names: &mut Vec<String>) -> Result<u8, String> {
+fn material_name<'a>(map: &'a Map<'_>, material: usize) -> Result<&'a str, String> {
     let name = &map.materials.get(material).surface_prop;
     if !valid_surface_property(name) {
         return Err(format!(
             "Physics surface property {name:?} must use 1–127 ASCII letters, digits, underscores, dots or dashes"
         ));
     }
+    Ok(name)
+}
+
+fn material_index(map: &Map, material: usize, names: &mut Vec<String>) -> Result<u8, String> {
+    let name = material_name(map, material)?;
     if let Some(index) = names.iter().position(|value| value == name) {
         return Ok((index + 1) as u8);
     }
     if names.len() == MAX_SURFACE_PROPERTIES {
         return Err("World physics exceeds 127 surface properties including default".into());
     }
-    names.push(name.clone());
+    names.push(name.to_owned());
     Ok(names.len() as u8)
 }
 
@@ -187,6 +194,7 @@ fn plan(
     for (model_index, model) in models.iter().enumerate() {
         control.checkpoint()?;
         let mut groups: BTreeMap<i32, Vec<Shape>> = BTreeMap::new();
+        let mut model_properties = BTreeSet::new();
         for &index in &map.entities[model.entity].brushes {
             control.checkpoint()?;
             let brush = &map.brushes[index];
@@ -209,12 +217,32 @@ fn plan(
             } else if brush.contents & (MASK_SOLID | contents::PLAYERCLIP | contents::MONSTERCLIP)
                 != 0
             {
-                groups
-                    .entry(MASK_SOLID)
-                    .or_default()
-                    .push(shape(map, index, None)?);
+                for side in brush.sides.iter().filter(|side| !side.bevel) {
+                    model_properties.insert(material_name(map, side.material)?.to_owned());
+                }
+                groups.entry(MASK_SOLID).or_default().push(shape(
+                    map,
+                    index,
+                    Some(&mut request.materials),
+                )?);
             }
         }
+        let default_model =
+            model_index > 0 && model_properties.len() == 1 && model_properties.contains("default");
+        if default_model {
+            for shapes in groups.values_mut() {
+                for shape in shapes {
+                    shape.materials.clear();
+                }
+            }
+        }
+        let model_property = if model_properties.len() == 1 {
+            model_properties
+                .pop_first()
+                .filter(|name| name != "default")
+        } else {
+            None
+        };
         let mut bodies: Vec<_> = WORLD_MASKS
             .into_iter()
             .filter_map(|contents| {
@@ -222,6 +250,7 @@ fn plan(
                     contents,
                     shapes,
                     surface: None,
+                    surface_property: model_property.clone(),
                     mesh: None,
                 })
             })
@@ -265,6 +294,7 @@ fn plan(
                     contents: MASK_SOLID,
                     shapes: Vec::new(),
                     surface: None,
+                    surface_property: None,
                     mesh: Some(mesh),
                 });
             }
@@ -296,6 +326,7 @@ fn plan(
                     contents,
                     shapes,
                     surface: Some(record.surface_z),
+                    surface_property: None,
                     mesh: None,
                 });
             }
@@ -358,6 +389,14 @@ fn validate(request: &Request) -> Result<(), String> {
         let mut seen_masks = BTreeSet::new();
         let mut seen_mesh = false;
         for body in &model.bodies {
+            if let Some(name) = &body.surface_property
+                && (model.index == 0
+                    || body.surface.is_some()
+                    || body.mesh.is_some()
+                    || !valid_surface_property(name))
+            {
+                return Err("Uniform surface properties require a non-fluid brush-model body and a safe 1–127-character property name".into());
+            }
             if let Some(mesh) = &body.mesh {
                 validate_materials(
                     &mesh.materials,
@@ -426,8 +465,8 @@ fn validate(request: &Request) -> Result<(), String> {
                     shape.planes.len(),
                     request.materials.len(),
                 )?;
-                if !shape.materials.is_empty() && (model.index != 0 || fluid) {
-                    return Err("Plane surface mappings require a non-fluid world body".into());
+                if !shape.materials.is_empty() && fluid {
+                    return Err("Plane surface mappings require a non-fluid body".into());
                 }
                 convexes += 1;
                 vertices += shape.corners.len();
@@ -671,18 +710,27 @@ pub(crate) fn bake(
             .filter_map(|body| body.mesh.as_ref())
             .map(|mesh| mesh.triangles.len())
             .sum(),
-        surface_properties: if request.models.iter().any(|model| model.index == 0) {
-            request.materials.len()
-        } else {
-            0
-        },
+        surface_properties: request
+            .materials
+            .iter()
+            .map(String::as_str)
+            .filter(|_| request.models.iter().any(|model| model.index == 0))
+            .chain(
+                request
+                    .models
+                    .iter()
+                    .flat_map(|model| &model.bodies)
+                    .filter_map(|body| body.surface_property.as_deref()),
+            )
+            .collect::<BTreeSet<_>>()
+            .len(),
     };
     bsp.set_physics(&physics)
         .map_err(|error| error.to_string())?;
     if models.len() > 1 {
-        report.diagnostics.push(Diagnostic::warning("Engine physics uses authored world/terrain surface properties; brush models retain default surfaces and a one-kilogram mass. Material density and authored mass controls are unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Engine physics uses authored world/terrain and brush-model triangle surface mappings; generated brush-model masses remain one kilogram. Blended model surfaces, material density and authored mass controls are unfinished", None, None));
     } else {
-        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with authored world/terrain surface properties; model surfaces/masses, density and broader collision validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with authored world/terrain surface properties; blended model surfaces, generated model masses, density and broader collision validation remain unfinished", None, None));
     }
     Ok(stats)
 }
@@ -726,6 +774,7 @@ mod tests {
                     contents: MASK_SOLID,
                     shapes: Vec::new(),
                     surface: None,
+                    surface_property: None,
                     mesh: Some(mesh),
                 }],
             }],
@@ -763,6 +812,72 @@ mod tests {
             .extend((1..127).map(|index| format!("surface_{index}")));
         largest.models[0].bodies[0].mesh.as_mut().unwrap().materials = vec![127];
         validate(&largest).unwrap();
+    }
+
+    #[test]
+    fn uniform_model_properties_validate_names_and_body_roles_before_native_work() {
+        let shape = Shape {
+            brush: 0,
+            corners: (0..8)
+                .map(|bits| {
+                    [
+                        (bits & 1) as f32 * 32.0,
+                        ((bits >> 1) & 1) as f32 * 32.0,
+                        ((bits >> 2) & 1) as f32 * 32.0,
+                    ]
+                })
+                .collect(),
+            planes: vec![
+                [1.0, 0.0, 0.0, 32.0],
+                [-1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 32.0],
+                [0.0, -1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 32.0],
+                [0.0, 0.0, -1.0, 0.0],
+            ],
+            materials: Vec::new(),
+        };
+        let request = Request {
+            model_count: 2,
+            materials: default_materials(),
+            models: vec![Model {
+                index: 1,
+                bodies: vec![Body {
+                    contents: MASK_SOLID,
+                    shapes: vec![shape],
+                    surface: None,
+                    surface_property: Some("ice".into()),
+                    mesh: None,
+                }],
+            }],
+        };
+        validate(&request).unwrap();
+        for case in 0..6 {
+            let mut invalid = request.clone();
+            match case {
+                0 => invalid.models[0].index = 0,
+                1 => invalid.models[0].bodies[0].surface_property = Some(String::new()),
+                2 => invalid.models[0].bodies[0].surface_property = Some("bad/name".into()),
+                3 => invalid.models[0].bodies[0].surface_property = Some("a".repeat(128)),
+                4 => invalid.models[0].bodies[0].surface = Some(32.0),
+                5 => {
+                    invalid.models[0].bodies[0].mesh = Some(Mesh {
+                        vertices: vec![],
+                        triangles: vec![],
+                        materials: vec![],
+                    })
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                validate(&invalid)
+                    .unwrap_err()
+                    .contains("Uniform surface properties")
+            );
+        }
+        let mut boundary = request;
+        boundary.models[0].bodies[0].surface_property = Some("a".repeat(127));
+        validate(&boundary).unwrap();
     }
 
     fn sleeping_worker(pid: &Path) -> Command {

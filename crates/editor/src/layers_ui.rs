@@ -118,6 +118,7 @@ fn refresh(window: &LayersWindow, session: &Session, state: &RefCell<Form>, forc
     );
     let draft = &report["draft"];
     let current = draft["token"].as_u64().zip(draft["version"].as_u64());
+    window.set_pending(current.is_some());
     if form.token.is_some() && form.token != current {
         form.token = None;
         form.reviewed = None;
@@ -190,44 +191,50 @@ fn begin(window: &LayersWindow, session: &mut Session, state: &RefCell<Form>, ac
     }
     match session.begin_layer_edit(id, action == 2, &session.layer_stamp()) {
         Err(error) => window.set_message(error.into()),
-        Ok(report) => {
-            let draft = &report["draft"];
-            let mut form = state.borrow_mut();
-            form.token = draft["token"].as_u64().zip(draft["version"].as_u64());
-            form.member_offset = 0;
-            form.members = draft["members"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|id| crate::mcp::parse_id(text(id)).unwrap())
-                .collect();
-            let mut parents = vec!["Root (no parent)".into()];
-            form.parents = vec![None];
-            for parent in report["parent_choices"].as_array().unwrap() {
-                form.parents
-                    .push(Some(parent["id"].as_u64().unwrap() as u32));
-                parents.push(format!("{} · {}", text(&parent["name"]), parent["id"]).into());
-            }
-            window.set_parents(Rc::new(VecModel::from(parents)).into());
-            let parent = draft["parent"].as_u64().map(|id| id as u32);
-            window.set_parent_index(
-                form.parents
-                    .iter()
-                    .position(|id| *id == parent)
-                    .unwrap_or(0) as i32,
-            );
-            window.set_layer_name(text(&draft["name"]).into());
-            window.set_red(draft["color"][0].as_i64().unwrap() as i32);
-            window.set_green(draft["color"][1].as_i64().unwrap() as i32);
-            window.set_blue(draft["color"][2].as_i64().unwrap() as i32);
-            form.reviewed = Some(fields(window, &form));
-            drop(form);
-            window.set_message(
-                "Changes stay in this draft until Apply. Cancel discards them.".into(),
-            );
-            refresh(window, session, state, true);
-        }
+        Ok(report) => load_draft(window, session, state, &report),
     }
+}
+fn load_draft(window: &LayersWindow, session: &Session, state: &RefCell<Form>, report: &Value) {
+    if !report["draft"].is_object() || !report["parent_choices"].is_array() {
+        window
+            .set_message("No readable pending layer edit. Choose New layer or Edit layer.".into());
+        return;
+    }
+    let draft = &report["draft"];
+    let mut form = state.borrow_mut();
+    form.token = draft["token"].as_u64().zip(draft["version"].as_u64());
+    form.generation = Some(session.document_generation());
+    form.selected = draft["id"].as_u64().map(|id| id as u32);
+    form.member_offset = 0;
+    form.members = draft["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| crate::mcp::parse_id(text(id)).unwrap())
+        .collect();
+    let mut parents = vec!["Root (no parent)".into()];
+    form.parents = vec![None];
+    for parent in report["parent_choices"].as_array().unwrap() {
+        form.parents
+            .push(Some(parent["id"].as_u64().unwrap() as u32));
+        parents.push(format!("{} · {}", text(&parent["name"]), parent["id"]).into());
+    }
+    window.set_parents(Rc::new(VecModel::from(parents)).into());
+    let parent = draft["parent"].as_u64().map(|id| id as u32);
+    window.set_parent_index(
+        form.parents
+            .iter()
+            .position(|id| *id == parent)
+            .unwrap_or(0) as i32,
+    );
+    window.set_layer_name(text(&draft["name"]).into());
+    window.set_red(draft["color"][0].as_i64().unwrap() as i32);
+    window.set_green(draft["color"][1].as_i64().unwrap() as i32);
+    window.set_blue(draft["color"][2].as_i64().unwrap() as i32);
+    form.reviewed = Some(fields(window, &form));
+    drop(form);
+    window.set_message("Changes stay in this draft until Apply. Cancel discards them.".into());
+    refresh(window, session, state, true);
 }
 fn review(window: &LayersWindow, session: &mut Session, state: &RefCell<Form>) {
     let (token, values) = {
@@ -301,6 +308,14 @@ impl Controller {
         window.on_begin({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move |action| begin(&window.unwrap(), &mut lock(&shared), &form, action)
+        });
+        window.on_review_pending({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                let session = lock(&shared);
+                let report = session.layer_report("", 0, PAGE, None, 0);
+                load_draft(&window.unwrap(), &session, &form, &report);
+            }
         });
         window.on_review({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
@@ -559,10 +574,16 @@ mod tests {
             lock(&shared).layer_report("", 0, 64, Some(child), 0)["draft"]["name"],
             "Agent's newer edit"
         );
-        lock(&shared)
-            .cancel_layer_edit(identity.0, identity.1 + 1)
-            .unwrap();
         controller.show(&lock(&shared)).unwrap();
+        assert!(controller.window.get_pending());
+        controller.window.invoke_review_pending();
+        assert_eq!(controller.window.get_layer_name(), "Agent's newer edit");
+        assert_eq!(
+            controller.form.borrow().token,
+            Some((identity.0, identity.1 + 1))
+        );
+        controller.window.invoke_cancel();
+        assert!(lock(&shared).layer_report("", 0, 64, None, 0)["draft"].is_null());
         controller.window.invoke_begin(2);
         controller.window.invoke_cancel();
         assert_eq!(

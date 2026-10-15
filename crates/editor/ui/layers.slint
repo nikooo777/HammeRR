@@ -17,6 +17,7 @@ export component LayersWindow inherits Window {
     in property <bool> member-previous;
     in property <bool> member-next;
     in property <bool> editing;
+    in property <bool> pending;
     in property <bool> deleting;
     in-out property <bool> ready;
     in-out property <string> query;
@@ -36,6 +37,7 @@ export component LayersWindow inherits Window {
     callback selection(int);
     callback remove(string);
     callback review();
+    callback review-pending();
     callback apply();
     callback cancel();
     callback close-dialog();
@@ -54,6 +56,7 @@ export component LayersWindow inherits Window {
                 Button {text:"New layer";enabled:!root.editing;clicked=>{root.begin(0);}}
                 Button {text:"Edit layer";enabled:!root.editing&&root.selected!="";clicked=>{root.begin(1);}}
                 Button {text:"Delete layer…";enabled:!root.editing&&root.selected!="";clicked=>{root.begin(2);}}
+                Button {text:"Review pending edit";enabled:root.pending&&!root.editing;clicked=>{root.review-pending();}}
             }
             HorizontalLayout {
                 spacing:20px;

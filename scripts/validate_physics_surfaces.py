@@ -1,10 +1,8 @@
 import argparse
 import json
-import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import validate_native_runtime as runtime
 from validate_compile_jobs import wait_job
@@ -30,7 +28,8 @@ def assets(args):
 def fixture(args, game, name):
     output = args.output / name
     output.mkdir(exist_ok=True)
-    client = Client(None, args.binary, output, game / "gameinfo.txt")
+    with patch.dict("os.environ", {"HAMMERR_RECENT_MAPS_DIR": str(args.output / "recent-maps"), "HAMMERR_BUILD_RECIPES": str(args.output / "recipes.json")}):
+        client = Client(None, args.binary, output, game / "gameinfo.txt")
     try:
         ids = [
             client.call(
@@ -44,7 +43,7 @@ def fixture(args, game, name):
             {
                 "mins": [-192, -96, 32],
                 "maxs": [192, 96, 48],
-                "material": "hammerr/surface_default",
+                "material": f"hammerr/surface_{name}" if args.brush_model and not args.mixed_model else "hammerr/surface_default",
             },
         )["id"]
         ids.append(ramp)
@@ -58,6 +57,9 @@ def fixture(args, game, name):
             "transform_objects",
             {"ids": [ramp], "rotation": [0, 12, 0], "pivot": [0, 0, 40]},
         )
+        if args.brush_model:
+            model = client.call("tie_to_entity", {"ids": [ramp], "classname": "func_brush", "properties": {"origin": "0 0 40"}})["id"]
+            ids[-1] = model
         for classname, origin, props in [
             ("info_player_terrorist", [-224, -176, 8], {}),
             ("info_player_counterterrorist", [224, 176, 8], {}),
@@ -104,10 +106,14 @@ def fixture(args, game, name):
         data = bsp.read_bytes()
         models = physics_records(data)
         keys = models[0][2].decode()
-        assert (
-            f'"{name}" "2"' in keys
-            and result["stats"]["physics_surface_properties"] == 2
-        )
+        if args.brush_model:
+            assert len(models) == result["stats"]["physics_models"] == 2
+            model_keys = models[1][2].decode()
+            assert f'"surfaceprop" "{("default" if args.mixed_model else name)}"' in model_keys and f'"{name}" "2"' in keys
+            keys += "\n" + model_keys
+        else:
+            assert f'"{name}" "2"' in keys
+        assert result["stats"]["physics_surface_properties"] == 2
         background = output / "background.bsp"
         client.call("start_compile", {"path": str(background)})
         assert (
@@ -157,10 +163,16 @@ def main():
         / ".local/share/Steam/steamapps/common/Counter-Strike Source",
     )
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--mixed-model", action="store_true", help="Use a brush model with only its top face using the named surface")
+    parser.add_argument("--brush-model", action="store_true", help="Use a uniform-surface brush model instead of a world platform")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--assets", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    args.brush_model=args.brush_model or args.mixed_model
+    args.output=args.output.resolve()
+    args.binary=args.binary.resolve()
+    args.game_dir=args.game_dir.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.worker:
         worker(args)
@@ -169,39 +181,14 @@ def main():
     for name in ["ice", "rubber"]:
         bsp = fixture(args, game, name)
         if args.runtime:
-            output = args.output / name / "runtime"
-            output.mkdir(exist_ok=True)
-            env = {
-                **os.environ,
-                "WLR_BACKENDS": "headless",
-                "WLR_HEADLESS_OUTPUTS": "1",
-                "WLR_RENDERER": "pixman",
-            }
-            with (output / "compositor.log").open("w") as log:
-                subprocess.run(
-                    [
-                        "cage",
-                        "--",
-                        sys.executable,
-                        "-B",
-                        str(Path(__file__).resolve()),
-                        "--worker",
-                        "--bsp",
-                        str(bsp),
-                        "--assets",
-                        str(game / "materials"),
-                        "--output",
-                        str(output),
-                        "--game-dir",
-                        str(args.game_dir),
-                    ],
-                    cwd=ROOT,
-                    env=env,
-                    stdout=log,
-                    stderr=log,
-                    check=True,
-                    timeout=55,
-                )
+            case_args=argparse.Namespace(**vars(args))
+            case_args.output=args.output/name
+            flags=["--assets",str(game / "materials")]
+            if args.brush_model:
+                flags.append("--brush-model")
+            if args.mixed_model:
+                flags.append("--mixed-model")
+            runtime.private_display(Path(__file__),case_args,bsp,flags)
     if args.runtime:
         positions = {
             name: json.loads((args.output / name / "runtime/runtime.json").read_text())[

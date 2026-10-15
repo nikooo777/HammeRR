@@ -223,7 +223,7 @@ impl PhysicsMode {
                 "Keeps BSP brush hulls and static-prop asset collisions; omits compiled brush/fluid bodies."
             }
             Self::Engine => {
-                "Adds world, clip, brush-model, water and terrain collision with world/terrain material surfaces. Static props use model assets. Model surfaces, density and compiler-derived masses remain unfinished."
+                "Adds world, clip, brush-model, water and terrain collision with world, terrain and brush-model material surfaces. Static props use model assets. Blended surfaces, density and compiler-derived masses remain unfinished."
             }
         }
     }

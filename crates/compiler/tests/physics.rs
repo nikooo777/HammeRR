@@ -139,6 +139,59 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
         repeated.lump(lump::PHYSCOLLIDE).data,
         bsp.lump(lump::PHYSCOLLIDE).data
     );
+    let mut uniform = document.vmf().clone();
+    let body = uniform
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("func_brush"))
+        .unwrap();
+    let model_id = body.id;
+    for side in &mut body.solids[0].sides {
+        side.material = "ice".into();
+    }
+    let uniform_output = compiler::compile_with_options(&uniform, &fs, options);
+    assert!(
+        !uniform_output.report.has_errors(),
+        "{:?}",
+        uniform_output.report
+    );
+    let uniform_bsp = uniform_output.bsp.unwrap();
+    let uniform_physics = uniform_bsp.physics().unwrap().unwrap();
+    assert!(
+        std::str::from_utf8(uniform_physics.models[1].key_data)
+            .unwrap()
+            .contains("\"surfaceprop\" \"ice\"")
+    );
+    assert_ne!(uniform_physics.models[1].solids, physics.models[1].solids);
+    assert_eq!(uniform_output.stats.physics_surface_properties, 3);
+    uniform
+        .entities
+        .iter_mut()
+        .find(|entity| entity.id == model_id)
+        .unwrap()
+        .solids[0]
+        .sides[0]
+        .material = "dev/dev_measuregeneric01".into();
+    let mixed = compiler::compile_with_options(&uniform, &fs, options);
+    assert!(!mixed.report.has_errors(), "{:?}", mixed.report);
+    assert!(
+        !mixed
+            .report
+            .diagnostics
+            .iter()
+            .any(
+                |diagnostic| diagnostic.object.as_deref() == Some(&format!("entity:{model_id}"))
+                    && diagnostic.message.contains("using default")
+            )
+    );
+    let mixed_bsp = mixed.bsp.unwrap();
+    let mixed_physics = mixed_bsp.physics().unwrap().unwrap();
+    assert_eq!(mixed_physics.models[1].key_data, physics.models[1].key_data);
+    assert_ne!(mixed_physics.models[1].solids, physics.models[1].solids);
+    assert_ne!(
+        mixed_physics.models[1].solids,
+        uniform_physics.models[1].solids
+    );
     std::fs::write(
         materials.join("ice.vmt"),
         "LightmappedGeneric { $surfaceprop \"bad/name\" }",

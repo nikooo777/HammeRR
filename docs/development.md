@@ -428,3 +428,23 @@ with -insecure and sv_lan 1. It checks three stationary samples in five phases,
 vertical contact through Open/Close and changed-speed SetPosition cycles, endpoint
 outputs and the grounded player. Use a fresh output directory; the probe uses no
 desktop input or focus changes.
+
+
+### Brush-model physics surfaces
+
+```sh
+cargo test -p compiler --lib physics::tests
+cargo test -p compiler --test physics
+python3 -B scripts/validate_physics_surfaces.py --binary target/debug/editor --output /tmp/hammerr-model-surfaces-check --brush-model
+python3 -B scripts/validate_physics_surfaces.py --binary target/debug/editor --output /tmp/hammerr-model-surfaces-client --brush-model --runtime
+python3 -B scripts/validate_physics_surfaces.py --binary target/debug/editor --output /tmp/hammerr-mixed-model-surfaces-client --mixed-model --runtime
+```
+
+The model variants assign one VMT property across a tilted `func_brush` or only
+to its top face (`--mixed-model`), check
+native body key data and distinct property counts, and compare exact shared
+builds while preserving source/history. Native mode uses a private Cage display,
+`-insecure` and `sv_lan 1` to compare ice/rubber crate motion. The ordinary world
+variant retains per-face mappings. Compiler regressions cover default collision
+bytes, uniform keys, mixed triangle mappings, safe name bounds, invalid body
+roles and native serialization/reload. Use a fresh output directory per run.

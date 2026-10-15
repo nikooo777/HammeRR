@@ -17,6 +17,7 @@ use crate::{Control, Diagnostic, Report};
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod native;
+mod surface_data;
 
 const MAX_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CONVEXES: usize = 8192;
@@ -51,6 +52,8 @@ struct Body {
     #[serde(default)]
     surface_property: Option<String>,
     #[serde(default)]
+    mass_area: Option<f32>,
+    #[serde(default)]
     mesh: Option<Mesh>,
 }
 
@@ -77,6 +80,15 @@ struct Request {
     models: Vec<Model>,
     #[serde(default = "default_materials")]
     materials: Vec<String>,
+    #[serde(default)]
+    surface_data: Vec<SurfaceData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SurfaceData {
+    name: String,
+    text: String,
 }
 
 #[derive(Debug, Default)]
@@ -185,12 +197,23 @@ fn plan(
     bsp: &Bsp,
     report: &mut Report,
     control: &Control,
+    fs: &source_formats::gamefs::GameFs,
 ) -> Result<Request, String> {
     let mut request = Request {
         model_count: models.len(),
         models: Vec::new(),
         materials: default_materials(),
+        surface_data: Vec::new(),
     };
+    let emitted_models = bsp
+        .records::<source_formats::bsp::Model>()
+        .map_err(|error| error.to_string())?;
+    let emitted_faces = bsp
+        .records::<source_formats::bsp::Face>()
+        .map_err(|error| error.to_string())?;
+    if emitted_models.len() != models.len() {
+        return Err("Physics model mass requires matching emitted BSP models".into());
+    }
     for (model_index, model) in models.iter().enumerate() {
         control.checkpoint()?;
         let mut groups: BTreeMap<i32, Vec<Shape>> = BTreeMap::new();
@@ -218,6 +241,13 @@ fn plan(
                 != 0
             {
                 for side in brush.sides.iter().filter(|side| !side.bevel) {
+                    let material = map.materials.get(side.material);
+                    if !material.found {
+                        return Err(format!(
+                            "Brush-model mass requires the missing material {:?}; restore the mounted VMT or assign a valid material to solid {}",
+                            material.name, brush.id
+                        ));
+                    }
                     model_properties.insert(material_name(map, side.material)?.to_owned());
                 }
                 groups.entry(MASK_SOLID).or_default().push(shape(
@@ -236,10 +266,21 @@ fn plan(
                 }
             }
         }
-        let model_property = if model_properties.len() == 1 {
-            model_properties
-                .pop_first()
-                .filter(|name| name != "default")
+        let mass = if model_index > 0 && !groups.is_empty() {
+            let emitted = &emitted_models[model_index];
+            let first = usize::try_from(emitted.first_face)
+                .map_err(|_| "Negative model mass face offset")?;
+            let count = usize::try_from(emitted.face_count)
+                .map_err(|_| "Negative model mass face count")?;
+            let faces = emitted_faces
+                .get(
+                    first
+                        ..first
+                            .checked_add(count)
+                            .ok_or("Model mass face count overflow")?,
+                )
+                .ok_or("Model mass faces escape the emitted BSP array")?;
+            Some(model_mass_material(map, model, faces)?)
         } else {
             None
         };
@@ -250,7 +291,8 @@ fn plan(
                     contents,
                     shapes,
                     surface: None,
-                    surface_property: model_property.clone(),
+                    surface_property: mass.as_ref().map(|(name, _)| name.clone()),
+                    mass_area: mass.as_ref().map(|(_, area)| *area),
                     mesh: None,
                 })
             })
@@ -295,6 +337,7 @@ fn plan(
                     shapes: Vec::new(),
                     surface: None,
                     surface_property: None,
+                    mass_area: None,
                     mesh: Some(mesh),
                 });
             }
@@ -327,6 +370,7 @@ fn plan(
                     shapes,
                     surface: Some(record.surface_z),
                     surface_property: None,
+                    mass_area: None,
                     mesh: None,
                 });
             }
@@ -338,8 +382,37 @@ fn plan(
             });
         }
     }
+    if request.models.iter().any(|model| model.index > 0) {
+        request.surface_data = surface_data::load(fs, control)?;
+    }
     validate(&request)?;
     Ok(request)
+}
+
+fn model_mass_material(
+    map: &Map,
+    model: &emit::Model,
+    faces: &[source_formats::bsp::Face],
+) -> Result<(String, f32), String> {
+    let mut areas = Vec::with_capacity(faces.len());
+    for face in faces {
+        let texinfo =
+            usize::try_from(face.texinfo).map_err(|_| "Model mass face needs material mapping")?;
+        let material = map.texdata[map.texinfos.infos[texinfo].texdata as usize];
+        areas.push((material_name(map, material)?.to_owned(), face.area));
+    }
+    let hidden = if areas.is_empty() {
+        let side = map.entities[model.entity]
+            .brushes
+            .iter()
+            .flat_map(|&index| &map.brushes[index].sides)
+            .find(|side| !side.bevel)
+            .ok_or("Brush-model mass needs a source brush side")?;
+        Some(material_name(map, side.material)?.to_owned())
+    } else {
+        None
+    };
+    surface_data::dominant(&areas, hidden.as_deref())
 }
 
 fn validate_materials(materials: &[u8], count: usize, names: usize) -> Result<(), String> {
@@ -355,6 +428,16 @@ fn validate_materials(materials: &[u8], count: usize, names: usize) -> Result<()
 }
 
 fn validate(request: &Request) -> Result<(), String> {
+    let properties = surface_data::resolve(&request.surface_data)?;
+    if request.models.iter().any(|model| model.index > 0) {
+        for name in &request.materials {
+            if !properties.contains_key(&name.to_ascii_lowercase()) {
+                return Err(format!(
+                    "Physics surface property {name:?} is not defined by the mounted surface manifest"
+                ));
+            }
+        }
+    }
     if request.materials.is_empty()
         || request.materials.len() > MAX_SURFACE_PROPERTIES
         || request.materials[0] != "default"
@@ -395,7 +478,27 @@ fn validate(request: &Request) -> Result<(), String> {
                     || body.mesh.is_some()
                     || !valid_surface_property(name))
             {
-                return Err("Uniform surface properties require a non-fluid brush-model body and a safe 1–127-character property name".into());
+                return Err("Brush-model mass surface properties require a non-fluid body and a safe 1–127-character property name".into());
+            }
+            if model.index > 0 {
+                let property = body
+                    .surface_property
+                    .as_deref()
+                    .ok_or("Brush-model mass requires its dominant surface property")?;
+                let values = properties.get(&property.to_ascii_lowercase()).ok_or_else(|| {
+                    format!("Brush-model mass surface property {property:?} is not defined by the mounted surface manifest")
+                })?;
+                values.validate(property)?;
+                if !body
+                    .mass_area
+                    .is_some_and(|area| area.is_finite() && area > 0.0)
+                {
+                    return Err(
+                        "Brush-model mass requires finite positive emitted surface area".into(),
+                    );
+                }
+            } else if body.mass_area.is_some() {
+                return Err("Mass surface area requires a brush-model body".into());
             }
             if let Some(mesh) = &body.mesh {
                 validate_materials(
@@ -627,7 +730,7 @@ pub(crate) fn bake(
     report: &mut Report,
     control: &Control,
 ) -> Result<Stats, String> {
-    let request = plan(map, models, water, bsp, report, control)?;
+    let request = plan(map, models, water, bsp, report, control, fs)?;
     let directory = fs.base_dir.join("bin/linux64");
     if !directory.join("vphysics.so").is_file() {
         return Err(
@@ -725,12 +828,67 @@ pub(crate) fn bake(
             .collect::<BTreeSet<_>>()
             .len(),
     };
+    let properties = surface_data::resolve(&request.surface_data)?;
+    for (actual, expected) in physics.models.iter().zip(&request.models) {
+        if actual.index == 0 {
+            continue;
+        }
+        let text = std::str::from_utf8(actual.key_data)
+            .map_err(|_| "Physics worker model keys are not UTF-8")?
+            .strip_suffix('\0')
+            .ok_or("Physics worker model keys need a terminator")?;
+        let nodes = source_formats::keyvalues::parse_bounded(text, 2, 64)
+            .map_err(|error| error.to_string())?;
+        if nodes.len() != expected.bodies.len() {
+            return Err("Physics worker mass keys do not match its brush-model bodies".into());
+        }
+        for (solid, body) in nodes.iter().zip(&expected.bodies) {
+            if solid.key != "solid" {
+                return Err("Physics worker mass keys require solid blocks".into());
+            }
+            let fields = solid
+                .children()
+                .ok_or("Physics worker solid keys require a block")?;
+            let field = |key: &str| {
+                fields
+                    .iter()
+                    .find(|field| field.key == key)
+                    .and_then(source_formats::keyvalues::Node::as_str)
+                    .ok_or_else(|| format!("Physics worker solid is missing {key}"))
+            };
+            let property = field("surfaceprop")?;
+            let mass = field("mass")?
+                .parse::<f32>()
+                .map_err(|_| "Invalid physics worker mass")?;
+            let volume = field("volume")?
+                .parse::<f32>()
+                .map_err(|_| "Invalid physics worker volume")?;
+            let expected_mass = properties
+                .get(property)
+                .ok_or("Physics worker used an undefined mass surface property")?
+                .mass(
+                    volume,
+                    body.mass_area
+                        .ok_or("Brush-model mass is missing its area")?,
+                )?;
+            if body.surface_property.as_deref() != Some(property) || mass != expected_mass {
+                return Err(
+                    "Physics worker model mass disagrees with the requested material and geometry"
+                        .into(),
+                );
+            }
+            let entity = &map.entities[models[actual.index].entity];
+            report.diagnostics.push(Diagnostic::info(
+                format!("Brush-model base mass is {mass} kg from {property} density/thickness; runtime massScale and overrides can change it"),
+                Some(format!("entity:{}", entity.id)), entity.origin));
+        }
+    }
     bsp.set_physics(&physics)
         .map_err(|error| error.to_string())?;
     if models.len() > 1 {
-        report.diagnostics.push(Diagnostic::warning("Engine physics uses authored world/terrain and brush-model triangle surface mappings; generated brush-model masses remain one kilogram. Blended model surfaces, material density and authored mass controls are unfinished", None, None));
+        report.diagnostics.push(Diagnostic::info("Engine physics derives brush-model base masses from native material density and thickness using the dominant emitted surface area; runtime massScale and override scripts remain effective. Per-face contact surfaces remain independent", None, None));
     } else {
-        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with authored world/terrain surface properties; blended model surfaces, generated model masses, density and broader collision validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with authored world/terrain surface properties; blended secondary surfaces and broader collision validation remain unfinished", None, None));
     }
     Ok(stats)
 }
@@ -768,6 +926,7 @@ mod tests {
         let request = Request {
             model_count: 1,
             materials: default_materials(),
+            surface_data: Vec::new(),
             models: vec![Model {
                 index: 0,
                 bodies: vec![Body {
@@ -775,6 +934,7 @@ mod tests {
                     shapes: Vec::new(),
                     surface: None,
                     surface_property: None,
+                    mass_area: None,
                     mesh: Some(mesh),
                 }],
             }],
@@ -840,6 +1000,10 @@ mod tests {
         let request = Request {
             model_count: 2,
             materials: default_materials(),
+            surface_data: vec![SurfaceData {
+                name: "surface.txt".into(),
+                text: "default { density 2000 } ice { density 917 }".into(),
+            }],
             models: vec![Model {
                 index: 1,
                 bodies: vec![Body {
@@ -847,6 +1011,7 @@ mod tests {
                     shapes: vec![shape],
                     surface: None,
                     surface_property: Some("ice".into()),
+                    mass_area: Some(6145.0),
                     mesh: None,
                 }],
             }],
@@ -872,11 +1037,14 @@ mod tests {
             assert!(
                 validate(&invalid)
                     .unwrap_err()
-                    .contains("Uniform surface properties")
+                    .contains("Brush-model mass surface properties")
             );
         }
         let mut boundary = request;
         boundary.models[0].bodies[0].surface_property = Some("a".repeat(127));
+        boundary.surface_data[0]
+            .text
+            .push_str(&format!(" \"{}\" {{ density 1000 }}", "a".repeat(127)));
         validate(&boundary).unwrap();
     }
 

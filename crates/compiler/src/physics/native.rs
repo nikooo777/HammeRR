@@ -12,6 +12,8 @@ use source_formats::bsp::{
 
 use super::{Body, Request, Shape, read_bounded};
 
+#[path = "native_mass.rs"]
+mod mass;
 #[path = "native_soup.rs"]
 mod soup;
 
@@ -443,6 +445,7 @@ pub(super) fn limits() -> io::Result<()> {
 pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Result<(), String> {
     limits().map_err(|error| error.to_string())?;
     let api = Api::load(directory)?;
+    let mut mass_api = None;
     let mut records = Vec::new();
     let mut work = 0;
     let mut bytes = 16;
@@ -454,6 +457,9 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
             let material = if model.index == 0 && body.surface.is_none() {
                 1
             } else {
+                if mass_api.is_none() {
+                    mass_api = Some(mass::MassApi::load(&api, &request.surface_data)?);
+                }
                 0
             };
             let volume = collide.verify(body, material, true, &mut work)?;
@@ -489,8 +495,18 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
                     body.contents
                 ));
             } else {
-                let property = body.surface_property.as_deref().unwrap_or("default");
-                keys.push_str(&format!("solid {{\n\"index\" \"{index}\"\n\"mass\" \"1\"\n\"surfaceprop\" \"{property}\"\n\"volume\" \"{volume}\"\n}}\n"));
+                let property = body
+                    .surface_property
+                    .as_deref()
+                    .ok_or("Brush-model mass is missing its dominant surface property")?;
+                let area = body
+                    .mass_area
+                    .ok_or("Brush-model mass is missing its emitted area")?;
+                let mass = mass_api
+                    .as_ref()
+                    .ok_or("Brush-model mass surface database is unavailable")?
+                    .mass(property, volume, area)?;
+                keys.push_str(&format!("solid {{\n\"index\" \"{index}\"\n\"mass\" \"{mass}\"\n\"surfaceprop\" \"{property}\"\n\"volume\" \"{volume}\"\n}}\n"));
             }
             solids.push(solid);
         }

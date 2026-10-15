@@ -49,16 +49,22 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
         if inputs.is_empty() {
             expected_owner = owner_key(owner);
         } else if expected_owner != owner_key(owner) {
-            return Err(invalid("Merge world brushes together or brushes belonging to one entity; mixed owners are unsupported"));
+            return Err(invalid(
+                "Merge world brushes together or brushes belonging to one entity; mixed owners are unsupported",
+            ));
         }
         if solid.sides.iter().any(|side| side.displacement.is_some()) {
-            return Err(invalid(format!("Brush {id}: merging displacements is unsupported")));
+            return Err(invalid(format!(
+                "Brush {id}: merging displacements is unsupported"
+            )));
         }
         let shape = subobject::topology(solid)?;
         vertices.extend(shape.vertices.into_iter().map(|vertex| vertex.position));
         for side in &solid.sides {
             if !source_side_ids.insert(side.id) {
-                return Err(invalid("Source brushes have duplicate face IDs; repair them before merging"));
+                return Err(invalid(
+                    "Source brushes have duplicate face IDs; repair them before merging",
+                ));
             }
         }
         inputs.push((owner, solid));
@@ -73,7 +79,9 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
         sides.sort_by_key(|side| side.id);
         for side in sides {
             let plane = Plane::from_points(side.plane.0).unwrap();
-            if vertices.iter().any(|vertex| plane.distance_to(*vertex) > SUPPORT_EPSILON)
+            if vertices
+                .iter()
+                .any(|vertex| plane.distance_to(*vertex) > SUPPORT_EPSILON)
                 || planes.iter().any(|existing| existing.approx_eq(&plane))
             {
                 continue;
@@ -87,9 +95,11 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
             });
         }
     }
-    subobject::topology(&merged).map_err(|error| invalid(format!(
-        "The brush union is not a supported convex solid: {error}"
-    )))?;
+    subobject::topology(&merged).map_err(|error| {
+        invalid(format!(
+            "The brush union is not a supported convex solid: {error}"
+        ))
+    })?;
     let mut remainder = vec![merged.clone()];
     for (_, source) in &inputs {
         let mut next = Vec::new();
@@ -100,7 +110,9 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
                 next.push(part);
             }
             if next.len() > MAX_PROOF_FRAGMENTS {
-                return Err(invalid("Merge coverage proof exceeds 256 fragments; reduce the selection"));
+                return Err(invalid(
+                    "Merge coverage proof exceeds 256 fragments; reduce the selection",
+                ));
             }
         }
         remainder = next;
@@ -109,7 +121,9 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
         }
     }
     if !remainder.is_empty() {
-        return Err(invalid("The brush union is nonconvex or contains gaps; merging would add uncovered volume"));
+        return Err(invalid(
+            "The brush union is nonconvex or contains gaps; merging would add uncovered volume",
+        ));
     }
     let sources = ids.into_iter().collect::<Vec<_>>();
     let removed = sources[1..].to_vec();
@@ -134,9 +148,15 @@ pub fn merge(tx: &mut Transaction, sources: &[u32]) -> std::result::Result<Resul
         }
         ObjectId::Entity(id) => {
             let entity = tx.entity_mut(id)?;
-            let index = entity.solids.iter().position(|solid| solid.id == result.solid).unwrap();
+            let index = entity
+                .solids
+                .iter()
+                .position(|solid| solid.id == result.solid)
+                .unwrap();
             entity.solids[index] = merged;
-            entity.solids.retain(|solid| !result.removed.contains(&solid.id));
+            entity
+                .solids
+                .retain(|solid| !result.removed.contains(&solid.id));
         }
     }
     Ok(result)

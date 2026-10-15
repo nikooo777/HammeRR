@@ -29,7 +29,14 @@ fn id_string(id: ObjectId) -> String {
 
 impl Session {
     pub fn repeat_stamp(&self) -> String {
-        format!("{}:{}:{}:{}:{}", self.document_generation, self.document.revision(), self.definitions_serial, self.scene_serial, self.repeat.serial)
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.document_generation,
+            self.document.revision(),
+            self.definitions_serial,
+            self.scene_serial,
+            self.repeat.serial
+        )
     }
 
     pub fn repeat_array(&self) -> Value {
@@ -78,20 +85,37 @@ impl Session {
     }
 
     fn checked_repeat(&self, token: u64) -> Result<&Preview, String> {
-        let preview = self.repeat.preview.as_ref().filter(|preview| preview.token == token).ok_or("Repeat array was closed or replaced")?;
-        if preview.generation != self.document_generation || preview.revision != self.document.revision() || preview.definitions != self.definitions_serial {
+        let preview = self
+            .repeat
+            .preview
+            .as_ref()
+            .filter(|preview| preview.token == token)
+            .ok_or("Repeat array was closed or replaced")?;
+        if preview.generation != self.document_generation
+            || preview.revision != self.document.revision()
+            || preview.definitions != self.definitions_serial
+        {
             return Err("Map or entity definitions changed; preview the array again".into());
         }
         Ok(preview)
     }
 
-    pub fn preview_repeat_array(&mut self, sources: &[ObjectId], options: repeat::Options, snapshot: &str) -> Result<Value, String> {
+    pub fn preview_repeat_array(
+        &mut self,
+        sources: &[ObjectId],
+        options: repeat::Options,
+        snapshot: &str,
+    ) -> Result<Value, String> {
         if snapshot != self.repeat_stamp() {
             return Err("Map, selection or preview changed; inspect the repeat array again".into());
         }
         self.ensure_partitions_resolved()?;
         let mut document = self.document.preview_snapshot();
-        let result = document.edit("preview repeat array", |tx| repeat::create(tx, sources, options, &self.definitions)).map_err(|error| error.to_string())?;
+        let result = document
+            .edit("preview repeat array", |tx| {
+                repeat::create(tx, sources, options, &self.definitions)
+            })
+            .map_err(|error| error.to_string())?;
         self.select(sources, SelectMode::Replace)?;
         self.cancel_block_preview();
         self.cancel_clip_preview();
@@ -110,7 +134,16 @@ impl Session {
         self.paint.enabled = false;
         self.spatial.draw_block = false;
         self.repeat.serial += 1;
-        self.repeat.preview = Some(Preview { document, result, token:self.repeat.serial, sources:sources.to_vec(), options, generation:self.document_generation, revision:self.document.revision(), definitions:self.definitions_serial });
+        self.repeat.preview = Some(Preview {
+            document,
+            result,
+            token: self.repeat.serial,
+            sources: sources.to_vec(),
+            options,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+            definitions: self.definitions_serial,
+        });
         self.scene_serial += 1;
         self.view_serial += 1;
         Ok(self.repeat_array())
@@ -126,17 +159,25 @@ impl Session {
         let result = self.edit(actor, "repeat array", |tx| {
             let result = repeat::create(tx, &sources, options, &definitions)?;
             if result != expected_result || tx.document().vmf() != &expected {
-                return Err(EditError::Invalid("Array differs from its preview; preview the array again".into()));
+                return Err(EditError::Invalid(
+                    "Array differs from its preview; preview the array again".into(),
+                ));
             }
             Ok(result)
         })?;
         let copies = result.objects();
         self.select(&copies, SelectMode::Replace)?;
-        Ok(json!({"objects":copies.iter().copied().map(id_string).collect::<Vec<_>>(), "count":result.copies.len(),"state":self.repeat_array()}))
+        Ok(
+            json!({"objects":copies.iter().copied().map(id_string).collect::<Vec<_>>(), "count":result.copies.len(),"state":self.repeat_array()}),
+        )
     }
 
     pub fn cancel_repeat_array(&mut self, token: u64) -> Result<(), String> {
-        self.repeat.preview.as_ref().filter(|preview| preview.token == token).ok_or("Repeat array was closed or replaced")?;
+        self.repeat
+            .preview
+            .as_ref()
+            .filter(|preview| preview.token == token)
+            .ok_or("Repeat array was closed or replaced")?;
         self.clear_repeat_preview();
         Ok(())
     }
@@ -150,17 +191,35 @@ pub(crate) mod tests {
 
     pub(crate) fn fixture() -> (Session, ObjectId) {
         let mut session = Session::new(Err("No game".into()));
-        let source = session.edit(Actor::User, "source", |tx| edit::create_entity(tx, "info_target", Some(DVec3::new(16.0, 0.0, 0.0)), &[("targetname".into(),"array_part".into())], Vec::new())).unwrap();
+        let source = session
+            .edit(Actor::User, "source", |tx| {
+                edit::create_entity(
+                    tx,
+                    "info_target",
+                    Some(DVec3::new(16.0, 0.0, 0.0)),
+                    &[("targetname".into(), "array_part".into())],
+                    Vec::new(),
+                )
+            })
+            .unwrap();
         session.select(&[source], SelectMode::Replace).unwrap();
         (session, source)
     }
 
     pub(crate) fn options() -> repeat::Options {
-        repeat::Options { count:3, translation:DVec3::X * 32.0, rotation:DVec3::Z * 15.0, pivot:DVec3::ZERO, texture_lock:true }
+        repeat::Options {
+            count: 3,
+            translation: DVec3::X * 32.0,
+            rotation: DVec3::Z * 15.0,
+            pivot: DVec3::ZERO,
+            texture_lock: true,
+        }
     }
 
     fn preview(session: &mut Session, source: ObjectId) -> u64 {
-        let report = session.preview_repeat_array(&[source], options(), &session.repeat_stamp()).unwrap();
+        let report = session
+            .preview_repeat_array(&[source], options(), &session.repeat_stamp())
+            .unwrap();
         report["preview"]["token"].as_u64().unwrap()
     }
 
@@ -194,8 +253,21 @@ pub(crate) mod tests {
         let (mut session, source) = fixture();
         let token = preview(&mut session, source);
         let valid = session.repeat_array();
-        for (options, snapshot) in [(repeat::Options{count:0,..options()}, session.repeat_stamp()), (options(), "stale".into())] {
-            assert!(session.preview_repeat_array(&[source], options, &snapshot).is_err());
+        for (options, snapshot) in [
+            (
+                repeat::Options {
+                    count: 0,
+                    ..options()
+                },
+                session.repeat_stamp(),
+            ),
+            (options(), "stale".into()),
+        ] {
+            assert!(
+                session
+                    .preview_repeat_array(&[source], options, &snapshot)
+                    .is_err()
+            );
             assert_eq!(session.repeat_array(), valid);
         }
         let replacement = preview(&mut session, source);
@@ -209,14 +281,28 @@ pub(crate) mod tests {
     fn numeric_and_primitive_replacements_survive_old_array_cancel() {
         let (mut session, source) = fixture();
         let token = preview(&mut session, source);
-        session.preview_transform(Actor::Agent, &[source], edit::Transform { translation:DVec3::Y * 20.0,..edit::Transform::default() }, None).unwrap();
+        session
+            .preview_transform(
+                Actor::Agent,
+                &[source],
+                edit::Transform {
+                    translation: DVec3::Y * 20.0,
+                    ..edit::Transform::default()
+                },
+                None,
+            )
+            .unwrap();
         let expected = session.render_document().vmf().clone();
         assert!(session.repeat.preview.is_none());
         assert!(session.cancel_repeat_array(token).is_err());
         assert_eq!(session.render_document().vmf(), &expected);
         session.cancel_transform_preview();
         let token = preview(&mut session, source);
-        let spec = primitive::Spec { mins:DVec3::ZERO, maxs:DVec3::splat(32.0), ..primitive::Spec::default() };
+        let spec = primitive::Spec {
+            mins: DVec3::ZERO,
+            maxs: DVec3::splat(32.0),
+            ..primitive::Spec::default()
+        };
         session.create_primitive(Actor::Agent, spec, true).unwrap();
         let expected = session.render_document().vmf().clone();
         assert!(session.repeat.preview.is_none());
@@ -240,18 +326,36 @@ pub(crate) mod tests {
     #[test]
     fn hollow_replaces_repeat_only_after_validation_and_survives_old_array_cancel() {
         let mut session = Session::new(Err("No game".into()));
-        let source = session.edit(Actor::User, "source", |tx| edit::create_block(tx, DVec3::ZERO, DVec3::splat(128.0), "brick/wall")).unwrap();
+        let source = session
+            .edit(Actor::User, "source", |tx| {
+                edit::create_block(tx, DVec3::ZERO, DVec3::splat(128.0), "brick/wall")
+            })
+            .unwrap();
         session.select(&[source], SelectMode::Replace).unwrap();
         let before = session.document.vmf().clone();
         let history = session.document.undo_labels().count();
         let token = preview(&mut session, source);
         let array = session.render_document().vmf().clone();
-        let invalid = map_core::hollow::Spec { thickness: 0.0, outward: false, open_faces: Default::default() };
-        assert!(session.preview_hollow(&[source], invalid, &session.hollow_stamp()).is_err());
+        let invalid = map_core::hollow::Spec {
+            thickness: 0.0,
+            outward: false,
+            open_faces: Default::default(),
+        };
+        assert!(
+            session
+                .preview_hollow(&[source], invalid, &session.hollow_stamp())
+                .is_err()
+        );
         assert_eq!(session.repeat_array()["preview"]["token"], token);
         assert_eq!(session.render_document().vmf(), &array);
-        let valid = map_core::hollow::Spec { thickness: 16.0, outward: false, open_faces: Default::default() };
-        session.preview_hollow(&[source], valid, &session.hollow_stamp()).unwrap();
+        let valid = map_core::hollow::Spec {
+            thickness: 16.0,
+            outward: false,
+            open_faces: Default::default(),
+        };
+        session
+            .preview_hollow(&[source], valid, &session.hollow_stamp())
+            .unwrap();
         let hollow = session.render_document().vmf().clone();
         assert_ne!(hollow, array);
         assert!(session.repeat.preview.is_none());

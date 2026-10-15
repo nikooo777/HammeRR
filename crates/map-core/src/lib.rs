@@ -2,7 +2,6 @@
 
 pub mod brush;
 pub mod carve;
-pub mod merge;
 pub mod checks;
 pub mod clip;
 pub mod connections;
@@ -10,9 +9,10 @@ pub mod context;
 pub mod displacement;
 pub mod document;
 pub mod edit;
-pub mod hollow;
 pub mod groups;
+pub mod hollow;
 pub mod light;
+pub mod merge;
 pub mod partition_metadata;
 pub mod picking;
 pub mod plane;

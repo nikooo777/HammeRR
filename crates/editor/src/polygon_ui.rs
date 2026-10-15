@@ -413,7 +413,7 @@ impl Controller {
             self.window.set_center_v(center.y.to_string().into());
             self.window.set_span(
                 ((high - low).max_element() * 1.5)
-                    .clamp(32.0,131072.0)
+                    .clamp(32.0, 131072.0)
                     .to_string()
                     .into(),
             );

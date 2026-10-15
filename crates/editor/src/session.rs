@@ -21,7 +21,6 @@ use crate::inspector;
 use crate::spatial;
 
 pub mod carving;
-pub mod merging;
 pub mod checks;
 pub mod clip_drag;
 pub mod clip_points;
@@ -31,11 +30,12 @@ pub mod component_drag;
 pub mod component_picking;
 pub mod components;
 pub mod context;
-pub mod groups;
 mod favorites;
+pub mod groups;
 pub mod hollowing;
 mod management;
 pub mod material_search;
+pub mod merging;
 mod model_attachments;
 pub mod model_browser;
 pub mod models;
@@ -43,9 +43,9 @@ pub mod paint;
 pub mod placement;
 pub mod pointfiles;
 pub mod primitives;
-pub mod repeat;
-mod recovery;
 mod recent;
+mod recovery;
+pub mod repeat;
 pub mod saved_views;
 pub mod sounds;
 pub mod statistics;
@@ -1277,7 +1277,11 @@ impl Session {
         self.select_object_units(&[ids.to_vec()], mode)
     }
 
-    fn select_object_units(&mut self, units: &[Vec<ObjectId>], mode: SelectMode) -> Result<(), String> {
+    fn select_object_units(
+        &mut self,
+        units: &[Vec<ObjectId>],
+        mode: SelectMode,
+    ) -> Result<(), String> {
         let ids: BTreeSet<_> = units.iter().flatten().copied().collect();
         if let Some(missing) = ids.iter().find(|&&id| !self.document.contains(id)) {
             return Err(format!("{missing} does not exist"));
@@ -1295,7 +1299,9 @@ impl Session {
             }),
             SelectMode::Toggle => units.iter().for_each(|unit| {
                 if unit.iter().all(|id| self.selection.contains(id)) {
-                    for id in unit { self.selection.remove(id); }
+                    for id in unit {
+                        self.selection.remove(id);
+                    }
                 } else {
                     self.selection.extend(unit);
                 }
@@ -1788,7 +1794,12 @@ impl Session {
             .preview
             .as_ref()
             .map(|preview| &preview.document)
-            .or_else(|| self.repeat.preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.repeat
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.transform_preview
                     .as_ref()
@@ -1800,7 +1811,12 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
-            .or_else(|| self.merging.preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.merging
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.carving
                     .preview
@@ -1844,7 +1860,12 @@ impl Session {
             .preview
             .as_ref()
             .map(|preview| &preview.document)
-            .or_else(|| self.repeat.preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.repeat
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.transform_preview
                     .as_ref()
@@ -1856,7 +1877,12 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
-            .or_else(|| self.merging.preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.merging
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.carving
                     .preview
@@ -1891,7 +1917,9 @@ impl Session {
             .preview
             .as_ref()
             .map_or(selected, |preview| preview.ids.iter().copied().collect());
-        let selected = self.repeat.preview.as_ref().map_or(selected, |preview| preview.result.objects().into_iter().collect());
+        let selected = self.repeat.preview.as_ref().map_or(selected, |preview| {
+            preview.result.objects().into_iter().collect()
+        });
         let selected = self
             .area_preview
             .as_ref()
@@ -1975,7 +2003,12 @@ impl Session {
             .preview
             .as_ref()
             .map(|preview| &preview.document)
-            .or_else(|| self.repeat.preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.repeat
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.transform_preview
                     .as_ref()
@@ -1987,7 +2020,12 @@ impl Session {
                     .as_ref()
                     .map(|preview| &preview.document)
             })
-            .or_else(|| self.merging.preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.merging
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.carving
                     .preview
@@ -2070,14 +2108,25 @@ mod tests {
         let original = session.skybox_preview().unwrap();
         assert!(!original.ready());
         let serial = session.view_serial();
-        session.set_view(ViewOptions { sky_preview: true, ..session.view() });
+        session.set_view(ViewOptions {
+            sky_preview: true,
+            ..session.view()
+        });
         assert!(session.view().sky_preview);
         assert!(session.view_serial() > serial);
         assert_eq!(&before, session.document.vmf());
         assert_eq!(session.document.undo_labels().count(), 0);
         session.begin_property_edit(PropertyTarget::World).unwrap();
         let token = session.property_draft().unwrap().token;
-        session.update_property_edit(token, vec![PropertyChange::Set { key: "skyname".into(), value: "other_sky".into() }]).unwrap();
+        session
+            .update_property_edit(
+                token,
+                vec![PropertyChange::Set {
+                    key: "skyname".into(),
+                    value: "other_sky".into(),
+                }],
+            )
+            .unwrap();
         session.commit_property_edit(Actor::Agent, token).unwrap();
         assert_eq!(session.skybox_preview().unwrap().name, "other_sky");
         session.undo(Actor::Agent).unwrap();

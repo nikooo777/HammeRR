@@ -89,7 +89,9 @@ pub fn directory(recovery_directory: Result<PathBuf, String>) -> Result<PathBuf,
 }
 
 fn validate_path(path: &Path) -> Result<(), String> {
-    let text = path.to_str().ok_or("Recent map paths must be valid UTF-8")?;
+    let text = path
+        .to_str()
+        .ok_or("Recent map paths must be valid UTF-8")?;
     if !path.is_absolute() || text.len() > MAX_PATH_BYTES || text.chars().any(char::is_control) {
         return Err(format!(
             "Recent map paths must be absolute, contain no control characters and fit in {MAX_PATH_BYTES} bytes"
@@ -131,7 +133,8 @@ impl Store {
         if preferences.version != FORMAT_VERSION {
             return Err(format!(
                 "{}: unsupported recent maps version {}",
-                path.display(), preferences.version
+                path.display(),
+                preferences.version
             ));
         }
         validate_entries(&preferences.entries)
@@ -193,10 +196,15 @@ mod tests {
     #[test]
     fn storage_roundtrips_order_without_requiring_maps_to_exist() {
         let directory = tempfile::tempdir().unwrap();
-        let store = Store { directory: directory.path().join("state") };
+        let store = Store {
+            directory: directory.path().join("state"),
+        };
         assert!(store.load().unwrap().is_empty());
         assert!(!store.directory.exists());
-        let entries = vec![entry(directory.path().join("z.vmf")), entry(directory.path().join("a.vmf"))];
+        let entries = vec![
+            entry(directory.path().join("z.vmf")),
+            entry(directory.path().join("a.vmf")),
+        ];
         store.save(&entries).unwrap();
         assert_eq!(store.load().unwrap(), entries);
     }
@@ -204,19 +212,36 @@ mod tests {
     #[test]
     fn invalid_or_oversized_preferences_are_rejected_without_rewriting() {
         let directory = tempfile::tempdir().unwrap();
-        let store = Store { directory: directory.path().to_owned() };
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
         let path = directory.path().join(FILE_NAME);
         let valid = entry(directory.path().join("map.vmf"));
         store.save(std::slice::from_ref(&valid)).unwrap();
         let original = fs::read(&path).unwrap();
-        assert!(store.save(&vec![valid.clone(); MAX_RECENT_MAPS + 1]).is_err());
+        assert!(
+            store
+                .save(&vec![valid.clone(); MAX_RECENT_MAPS + 1])
+                .is_err()
+        );
         assert!(store.save(&[valid.clone(), valid.clone()]).is_err());
         let mut invalid = valid;
         invalid.build_settings.smoothing_angle = 91;
         assert!(store.save(&[invalid]).is_err());
         assert!(store.save(&[entry(PathBuf::from("relative.vmf"))]).is_err());
-        assert!(store.save(&[entry(PathBuf::from(format!("/{}", "x".repeat(MAX_PATH_BYTES))))]).is_err());
-        assert!(store.save(&[entry(directory.path().join("bad\n.vmf"))]).is_err());
+        assert!(
+            store
+                .save(&[entry(PathBuf::from(format!(
+                    "/{}",
+                    "x".repeat(MAX_PATH_BYTES)
+                )))])
+                .is_err()
+        );
+        assert!(
+            store
+                .save(&[entry(directory.path().join("bad\n.vmf"))])
+                .is_err()
+        );
         assert_eq!(fs::read(&path).unwrap(), original);
         for bytes in [b"broken".to_vec(), vec![b' '; MAX_FILE_BYTES as usize + 1]] {
             fs::write(&path, &bytes).unwrap();
@@ -229,7 +254,9 @@ mod tests {
     #[test]
     fn storage_rejects_symlinks_without_reading_or_replacing_the_target() {
         let directory = tempfile::tempdir().unwrap();
-        let store = Store { directory: directory.path().join("state") };
+        let store = Store {
+            directory: directory.path().join("state"),
+        };
         fs::create_dir(&store.directory).unwrap();
         let target = directory.path().join("target.json");
         let original = b"unrelated target data";

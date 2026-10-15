@@ -240,7 +240,9 @@ impl Session {
                     .or_else(|| map_core::query::entity_bounds(entity))
             },
         );
-        if !faces { matches.objects = self.group_region_matches(&matches.objects, rule); }
+        if !faces {
+            matches.objects = self.group_region_matches(&matches.objects, rule);
+        }
         matches
     }
 }

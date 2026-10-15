@@ -3760,7 +3760,10 @@ impl EditorServer {
     )]
     fn commit_merge(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
         run(|| {
-            let result = self.session().commit_merge(Actor::Agent, args.token.parse().map_err(|_| "Invalid merge token")?)?;
+            let result = self.session().commit_merge(
+                Actor::Agent,
+                args.token.parse().map_err(|_| "Invalid merge token")?,
+            )?;
             Ok(crate::session::merging::result_json(&result))
         })
     }
@@ -4633,21 +4636,34 @@ impl EditorServer {
         })
     }
 
-    #[tool(description = "List up to 20 recent maps, most recent first, with file availability, retained game directory and build settings, context compatibility, persistence status and storage errors. Read only; missing files remain in the list until explicitly removed.", annotations(read_only_hint = true))]
+    #[tool(
+        description = "List up to 20 recent maps, most recent first, with file availability, retained game directory and build settings, context compatibility, persistence status and storage errors. Read only; missing files remain in the list until explicitly removed.",
+        annotations(read_only_hint = true)
+    )]
     fn get_recent_maps(&self) -> ToolResult {
         ok(self.session().recent_maps())
     }
 
-    #[tool(description = "Reopen an exact path from get_recent_maps through the normal map validation and dirty/discard guards. Restores retained build settings only for matching mounted game content and while no compile is active. Does not switch game content. Failed opens preserve the map, history and recent list.")]
+    #[tool(
+        description = "Reopen an exact path from get_recent_maps through the normal map validation and dirty/discard guards. Restores retained build settings only for matching mounted game content and while no compile is active. Does not switch game content. Failed opens preserve the map, history and recent list."
+    )]
     fn open_recent_map(&self, Parameters(args): Parameters<OpenMapArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let message = session.open_recent_map(Actor::Agent, Path::new(&args.path), args.discard_changes)?;
-            Ok(json!({"message": message, "recent_maps": session.recent_maps(), "build_settings": session.compile_settings()}))
+            let message = session.open_recent_map(
+                Actor::Agent,
+                Path::new(&args.path),
+                args.discard_changes,
+            )?;
+            Ok(
+                json!({"message": message, "recent_maps": session.recent_maps(), "build_settings": session.compile_settings()}),
+            )
         })
     }
 
-    #[tool(description = "Remove one exact path returned by get_recent_maps from the retained list. Does not delete or edit the map file, current map or undo history. Failed storage writes preserve the list.")]
+    #[tool(
+        description = "Remove one exact path returned by get_recent_maps from the retained list. Does not delete or edit the map file, current map or undo history. Failed storage writes preserve the list."
+    )]
     fn remove_recent_map(&self, Parameters(args): Parameters<RecentMapPathArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
@@ -4656,7 +4672,9 @@ impl EditorServer {
         })
     }
 
-    #[tool(description = "Clear the retained recent-map list and its saved per-map build context. Does not delete map files or edit the current map. Failed storage writes preserve the previous list.")]
+    #[tool(
+        description = "Clear the retained recent-map list and its saved per-map build context. Does not delete map files or edit the current map. Failed storage writes preserve the previous list."
+    )]
     fn clear_recent_maps(&self) -> ToolResult {
         run(|| {
             let mut session = self.session();
@@ -4915,60 +4933,140 @@ impl EditorServer {
         })
     }
 
-    #[tool(description = "Inspect native VMF object groups, nested parents, direct membership and shared edit draft. Default page 100, maximum 200. group adds a paginated direct-member detail; counts include hidden members. Malformed imported group graphs remain preserved and reject grouping authoring.", annotations(read_only_hint = true))]
+    #[tool(
+        description = "Inspect native VMF object groups, nested parents, direct membership and shared edit draft. Default page 100, maximum 200. group adds a paginated direct-member detail; counts include hidden members. Malformed imported group graphs remain preserved and reject grouping authoring.",
+        annotations(read_only_hint = true)
+    )]
     fn get_object_groups(&self, Parameters(args): Parameters<ObjectGroupsArgs>) -> ToolResult {
-        run(|| self.session().object_groups(args.group, args.offset.unwrap_or(0), args.limit.unwrap_or(100)))
+        run(|| {
+            self.session().object_groups(
+                args.group,
+                args.offset.unwrap_or(0),
+                args.limit.unwrap_or(100),
+            )
+        })
     }
 
-    #[tool(description = "Begin a shared cancellable native object-group draft. Omit group to create from the selection; completely selected existing groups become nested members. group edits its direct membership/name/parent; ungroup=true previews deletion of that group and promotion of direct members to its parent. Source and Undo history stay unchanged. UI: Object groups… → New from selection / Edit group / Ungroup….")]
-    fn begin_object_group_edit(&self, Parameters(args): Parameters<BeginObjectGroupArgs>) -> ToolResult {
+    #[tool(
+        description = "Begin a shared cancellable native object-group draft. Omit group to create from the selection; completely selected existing groups become nested members. group edits its direct membership/name/parent; ungroup=true previews deletion of that group and promotion of direct members to its parent. Source and Undo history stay unchanged. UI: Object groups… → New from selection / Edit group / Ungroup…."
+    )]
+    fn begin_object_group_edit(
+        &self,
+        Parameters(args): Parameters<BeginObjectGroupArgs>,
+    ) -> ToolResult {
         run(|| self.session().begin_group_edit(args.group, args.ungroup))
     }
 
-    #[tool(description = "Update the captured object-group draft with a name, parent or full direct-member list. clear_parent=true moves the group to the root. Removed members return to the group's previous parent; added members leave their previous direct group. Nested groups stay intact. Cycles/missing IDs are inspectable invalid drafts and cannot apply. UI: Group name / Parent group / Remove / Add group.")]
-    fn update_object_group_edit(&self, Parameters(args): Parameters<UpdateObjectGroupArgs>) -> ToolResult {
+    #[tool(
+        description = "Update the captured object-group draft with a name, parent or full direct-member list. clear_parent=true moves the group to the root. Removed members return to the group's previous parent; added members leave their previous direct group. Nested groups stay intact. Cycles/missing IDs are inspectable invalid drafts and cannot apply. UI: Group name / Parent group / Remove / Add group."
+    )]
+    fn update_object_group_edit(
+        &self,
+        Parameters(args): Parameters<UpdateObjectGroupArgs>,
+    ) -> ToolResult {
         run(|| {
-            if args.clear_parent && args.parent.is_some() { return Err("Choose parent or clear_parent, not both".into()); }
-            let parent = if args.clear_parent { Some(None) } else { args.parent.map(Some) };
-            let members = args.members.as_ref().map(|members| members.iter().map(|member| crate::session::groups::parse_member(member)).collect::<Result<Vec<_>, _>>()).transpose()?;
-            self.session().update_group_edit(args.token, args.name, parent, members)
+            if args.clear_parent && args.parent.is_some() {
+                return Err("Choose parent or clear_parent, not both".into());
+            }
+            let parent = if args.clear_parent {
+                Some(None)
+            } else {
+                args.parent.map(Some)
+            };
+            let members = args
+                .members
+                .as_ref()
+                .map(|members| {
+                    members
+                        .iter()
+                        .map(|member| crate::session::groups::parse_member(member))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+            self.session()
+                .update_group_edit(args.token, args.name, parent, members)
         })
     }
 
-    #[tool(description = "Add the current object selection to the captured shared group draft. Completely selected existing groups become nested members; group bypass permits selecting individual members. Does not edit source/history. UI: Add current selection.")]
-    fn add_object_group_selection(&self, Parameters(args): Parameters<ObjectGroupTokenArgs>) -> ToolResult {
+    #[tool(
+        description = "Add the current object selection to the captured shared group draft. Completely selected existing groups become nested members; group bypass permits selecting individual members. Does not edit source/history. UI: Add current selection."
+    )]
+    fn add_object_group_selection(
+        &self,
+        Parameters(args): Parameters<ObjectGroupTokenArgs>,
+    ) -> ToolResult {
         run(|| self.session().add_selection_to_group_edit(args.token))
     }
 
-    #[tool(description = "Apply the captured valid object-group draft as one undoable edit, preserving unknown native metadata and nested membership. Rejects replaced tokens, changed map revisions and map replacement. UI: Apply group / Ungroup.")]
-    fn apply_object_group_edit(&self, Parameters(args): Parameters<ObjectGroupTokenArgs>) -> ToolResult {
+    #[tool(
+        description = "Apply the captured valid object-group draft as one undoable edit, preserving unknown native metadata and nested membership. Rejects replaced tokens, changed map revisions and map replacement. UI: Apply group / Ungroup."
+    )]
+    fn apply_object_group_edit(
+        &self,
+        Parameters(args): Parameters<ObjectGroupTokenArgs>,
+    ) -> ToolResult {
         run(|| self.session().apply_group_edit(Actor::Agent, args.token))
     }
 
-    #[tool(description = "Cancel only the captured object-group draft, including a stale draft. Foreign or replaced tokens reject cancellation; source and Undo history stay unchanged. UI: Cancel / Escape / close.")]
-    fn cancel_object_group_edit(&self, Parameters(args): Parameters<ObjectGroupTokenArgs>) -> ToolResult {
-        run(|| { self.session().cancel_group_edit(args.token)?; Ok(json!({"cancelled":true})) })
+    #[tool(
+        description = "Cancel only the captured object-group draft, including a stale draft. Foreign or replaced tokens reject cancellation; source and Undo history stay unchanged. UI: Cancel / Escape / close."
+    )]
+    fn cancel_object_group_edit(
+        &self,
+        Parameters(args): Parameters<ObjectGroupTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().cancel_group_edit(args.token)?;
+            Ok(json!({"cancelled":true}))
+        })
     }
 
-    #[tool(description = "Explicitly select the descendant objects of a native object group, including an inner group without selecting its ancestors. mode=replace/add/remove/toggle; include_hidden defaults false. Selection changes no source/history. UI: Object groups… → Select group.")]
-    fn select_object_group(&self, Parameters(args): Parameters<SelectObjectGroupArgs>) -> ToolResult {
+    #[tool(
+        description = "Explicitly select the descendant objects of a native object group, including an inner group without selecting its ancestors. mode=replace/add/remove/toggle; include_hidden defaults false. Selection changes no source/history. UI: Object groups… → Select group."
+    )]
+    fn select_object_group(
+        &self,
+        Parameters(args): Parameters<SelectObjectGroupArgs>,
+    ) -> ToolResult {
         run(|| {
-            let ids = self.session().select_object_group(args.group, parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?, args.include_hidden)?;
+            let ids = self.session().select_object_group(
+                args.group,
+                parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?,
+                args.include_hidden,
+            )?;
             Ok(json!({"members":ids.into_iter().map(id_string).collect::<Vec<_>>()}))
         })
     }
 
-    #[tool(description = "Select one direct object or nested group explicitly, bypassing ancestor expansion. member is solid:<id>, entity:<id> or group:<id>. mode=replace/add/remove/toggle; include_hidden defaults false. UI: member row → Select.")]
-    fn select_object_group_member(&self, Parameters(args): Parameters<SelectObjectGroupMemberArgs>) -> ToolResult {
+    #[tool(
+        description = "Select one direct object or nested group explicitly, bypassing ancestor expansion. member is solid:<id>, entity:<id> or group:<id>. mode=replace/add/remove/toggle; include_hidden defaults false. UI: member row → Select."
+    )]
+    fn select_object_group_member(
+        &self,
+        Parameters(args): Parameters<SelectObjectGroupMemberArgs>,
+    ) -> ToolResult {
         run(|| {
-            let ids = self.session().select_group_member(crate::session::groups::parse_member(&args.member)?, parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?, args.include_hidden)?;
+            let ids = self.session().select_group_member(
+                crate::session::groups::parse_member(&args.member)?,
+                parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?,
+                args.include_hidden,
+            )?;
             Ok(json!({"members":ids.into_iter().map(id_string).collect::<Vec<_>>()}))
         })
     }
 
-    #[tool(description = "Temporarily bypass native object groups for ordinary object selection. false restores outermost-group selection. Shared session setting only; map source/history and current selection are preserved. Explicit group/member selection works in either setting. UI: Object groups… → Bypass groups.")]
-    fn set_group_selection_bypass(&self, Parameters(args): Parameters<GroupSelectionBypassArgs>) -> ToolResult {
-        run(|| { self.session().set_group_selection_bypass(Actor::Agent, args.bypass); Ok(json!({"bypass":args.bypass})) })
+    #[tool(
+        description = "Temporarily bypass native object groups for ordinary object selection. false restores outermost-group selection. Shared session setting only; map source/history and current selection are preserved. Explicit group/member selection works in either setting. UI: Object groups… → Bypass groups."
+    )]
+    fn set_group_selection_bypass(
+        &self,
+        Parameters(args): Parameters<GroupSelectionBypassArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .set_group_selection_bypass(Actor::Agent, args.bypass);
+            Ok(json!({"bypass":args.bypass}))
+        })
     }
 
     #[tool(
@@ -6028,29 +6126,57 @@ impl EditorServer {
         })
     }
 
-    #[tool(description = "Inspect the shared repeat-array preview, snapshot, generated names, copied entity fields, remapped-link counts, bounds and limits. Count excludes originals. render_view shows this draft without changing source geometry/history. New targetnames and certain exact internal FGD/I/O/parent links are remapped per copy; external links remain unchanged. Shared names, ambiguous internal references, wildcard captures of generated names and overlay face-ID references reject. Context notes retain authorship/observations and full budgets; saved partitions stay on originals. Custom scripts/opaque reference semantics are preserved verbatim and are outside the supported remapping policy.")]
+    #[tool(
+        description = "Inspect the shared repeat-array preview, snapshot, generated names, copied entity fields, remapped-link counts, bounds and limits. Count excludes originals. render_view shows this draft without changing source geometry/history. New targetnames and certain exact internal FGD/I/O/parent links are remapped per copy; external links remain unchanged. Shared names, ambiguous internal references, wildcard captures of generated names and overlay face-ID references reject. Context notes retain authorship/observations and full budgets; saved partitions stay on originals. Custom scripts/opaque reference semantics are preserved verbatim and are outside the supported remapping policy."
+    )]
     fn get_repeat_array(&self) -> ToolResult {
         run(|| Ok(self.session().repeat_array()))
     }
 
-    #[tool(description = "Preview bounded repeated placement using the latest get_repeat_array.snapshot. Copy n uses the committed originals, n × XYZ world rotation about one fixed pivot, then n × world translation; defaults to source center pivot and attached textures. Count is 1–64 additional copies, at most 16 sources, 256 generated objects including owned brushes and 8192 sides, within ±65536. Names become unique name_copyN values, exact internal links follow each copy, external links remain. Ambiguous source names/links and new-name reference acquisitions reject atomically. Invalid updates retain the last valid preview. UI: Repeat array… → Preview array. Inspect get_repeat_array and render_view, then apply_repeat_array or cancel_repeat_array with the returned token.")]
+    #[tool(
+        description = "Preview bounded repeated placement using the latest get_repeat_array.snapshot. Copy n uses the committed originals, n × XYZ world rotation about one fixed pivot, then n × world translation; defaults to source center pivot and attached textures. Count is 1–64 additional copies, at most 16 sources, 256 generated objects including owned brushes and 8192 sides, within ±65536. Names become unique name_copyN values, exact internal links follow each copy, external links remain. Ambiguous source names/links and new-name reference acquisitions reject atomically. Invalid updates retain the last valid preview. UI: Repeat array… → Preview array. Inspect get_repeat_array and render_view, then apply_repeat_array or cancel_repeat_array with the returned token."
+    )]
     fn preview_repeat_array(&self, Parameters(args): Parameters<RepeatArrayArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
-            let pivot = match args.pivot { Some(pivot) => vec3(pivot), None => session.selection_pivot(&ids)? };
-            session.preview_repeat_array(&ids, map_core::repeat::Options { count:args.count, translation:args.translation.map(vec3).unwrap_or(DVec3::ZERO), rotation:args.rotation.map(vec3).unwrap_or(DVec3::ZERO), pivot, texture_lock:args.texture_lock.unwrap_or(true) }, &args.snapshot)
+            let pivot = match args.pivot {
+                Some(pivot) => vec3(pivot),
+                None => session.selection_pivot(&ids)?,
+            };
+            session.preview_repeat_array(
+                &ids,
+                map_core::repeat::Options {
+                    count: args.count,
+                    translation: args.translation.map(vec3).unwrap_or(DVec3::ZERO),
+                    rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
+                    pivot,
+                    texture_lock: args.texture_lock.unwrap_or(true),
+                },
+                &args.snapshot,
+            )
         })
     }
 
-    #[tool(description = "Apply the exact repeat-array token in one atomic Undo step, verifying generated geometry, IDs, names, links and metadata against the preview. Selects all new top-level objects. Stale/replaced tokens, changed maps or reloaded entity definitions reject without modifying the map.")]
+    #[tool(
+        description = "Apply the exact repeat-array token in one atomic Undo step, verifying generated geometry, IDs, names, links and metadata against the preview. Selects all new top-level objects. Stale/replaced tokens, changed maps or reloaded entity definitions reject without modifying the map."
+    )]
     fn apply_repeat_array(&self, Parameters(args): Parameters<RepeatArrayTokenArgs>) -> ToolResult {
         run(|| self.session().apply_repeat_array(Actor::Agent, args.token))
     }
 
-    #[tool(description = "Discard the exact repeat-array token without changing source geometry or Undo history. A token for an old array cannot discard another array, numeric transform or primitive preview. UI: Repeat array… → Cancel, Escape or close.")]
-    fn cancel_repeat_array(&self, Parameters(args): Parameters<RepeatArrayTokenArgs>) -> ToolResult {
-        run(|| { let mut session = self.session(); session.cancel_repeat_array(args.token)?; Ok(session.repeat_array()) })
+    #[tool(
+        description = "Discard the exact repeat-array token without changing source geometry or Undo history. A token for an old array cannot discard another array, numeric transform or primitive preview. UI: Repeat array… → Cancel, Escape or close."
+    )]
+    fn cancel_repeat_array(
+        &self,
+        Parameters(args): Parameters<RepeatArrayTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_repeat_array(args.token)?;
+            Ok(session.repeat_array())
+        })
     }
 
     #[tool(

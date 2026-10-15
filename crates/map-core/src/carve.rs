@@ -93,7 +93,10 @@ pub(crate) fn intersects(source: &Solid, cutter: &Solid) -> std::result::Result<
     Ok(true)
 }
 
-pub(crate) fn subtract(source: &Solid, cutter: &Solid) -> std::result::Result<Vec<Solid>, EditError> {
+pub(crate) fn subtract(
+    source: &Solid,
+    cutter: &Solid,
+) -> std::result::Result<Vec<Solid>, EditError> {
     let mut inside = source.clone();
     let mut parts = Vec::new();
     for side in &cutter.sides {

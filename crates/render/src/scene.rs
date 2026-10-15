@@ -908,7 +908,12 @@ impl SceneMesh {
             indices.extend(list);
         }
         Self {
-            skybox: vmf.world.properties.get("skyname").filter(|name| !name.trim().is_empty()).map(|name| builder.library.skybox(fs, name)),
+            skybox: vmf
+                .world
+                .properties
+                .get("skyname")
+                .filter(|name| !name.trim().is_empty())
+                .map(|name| builder.library.skybox(fs, name)),
             vertices: builder.vertices,
             indices,
             batches,

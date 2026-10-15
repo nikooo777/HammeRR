@@ -122,6 +122,7 @@ impl Session {
         self.clear_primitive_preview();
         self.clear_paint_stroke();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clip_tool = false;
         self.paint.enabled = false;
         self.spatial.draw_block = false;

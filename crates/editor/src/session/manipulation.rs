@@ -355,6 +355,7 @@ impl Session {
             self.cancel_clip_preview();
             self.clear_hollow_preview();
             self.clear_carve_preview();
+            self.clear_merge_preview();
             self.clear_primitive_preview();
             self.clear_volume_selection();
             self.spatial.draw_block = false;
@@ -392,6 +393,7 @@ impl Session {
             || self.component_picking().is_some()
             || self.hollowing.preview.is_some()
             || self.carving.preview.is_some()
+            || self.merging.preview.is_some()
         {
             return None;
         }
@@ -489,6 +491,7 @@ impl Session {
         self.cancel_clip_preview();
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();
@@ -790,6 +793,7 @@ impl Session {
         self.cancel_clip_preview();
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_merge_preview();
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_volume_selection();

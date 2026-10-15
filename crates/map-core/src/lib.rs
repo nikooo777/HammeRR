@@ -2,6 +2,7 @@
 
 pub mod brush;
 pub mod carve;
+pub mod merge;
 pub mod checks;
 pub mod clip;
 pub mod connections;

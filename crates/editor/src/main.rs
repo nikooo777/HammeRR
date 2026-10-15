@@ -1,4 +1,5 @@
 mod carve_ui;
+mod merge_ui;
 mod checks_ui;
 mod compile_ui;
 mod components_ui;
@@ -163,6 +164,7 @@ struct Ui {
     components_window: Option<ComponentsWindow>,
     hollow_window: Option<HollowWindow>,
     carve_window: Option<CarveWindow>,
+    merge_window: Option<MergeWindow>,
     recovery_window: Option<RecoveryWindow>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
@@ -3189,6 +3191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         components_window: None,
         hollow_window: None,
         carve_window: None,
+        merge_window: None,
         recovery_window: None,
         checks_window: None,
         context_window: None,
@@ -3458,6 +3461,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let window = ui.borrow().carve_window.as_ref().unwrap().clone_strong();
             carve_ui::refresh(&window, &lock(&session_of(&ui)));
+            if let Err(error) = window.show() {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_merge_brushes({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            if ui.borrow().merge_window.is_none() {
+                match MergeWindow::new() {
+                    Ok(window) => {
+                        merge_ui::bind(&window, &session_of(&ui));
+                        ui.borrow_mut().merge_window = Some(window);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let window = ui.borrow().merge_window.as_ref().unwrap().clone_strong();
+            merge_ui::refresh(&window, &lock(&session_of(&ui)));
             if let Err(error) = window.show() {
                 app.unwrap().set_message(error.to_string().into());
             }
@@ -5071,6 +5096,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     && window.window().is_visible()
                 {
                     carve_ui::refresh_changed(window, &lock(&ui.session));
+                }
+                if let Some(window) = &ui.merge_window
+                    && window.window().is_visible()
+                {
+                    merge_ui::refresh_changed(window, &lock(&ui.session));
                 }
                 if let Some(window) = &ui.components_window
                     && window.window().is_visible()
@@ -7776,6 +7806,65 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &original);
         window.invoke_refresh();
         window.invoke_cancel();
+    }
+
+    #[test]
+    fn merge_controls_keep_sources_and_share_preview_discard_cancel_apply() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                renderer_name: Some("software".into()),
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let mut state = Session::new(Err("no assets needed".into()));
+        let mut ids = Vec::new();
+        for (mins,maxs) in [
+            (DVec3::ZERO,DVec3::splat(64.0)),
+            (DVec3::new(64.0,0.0,0.0),DVec3::new(128.0,64.0,64.0)),
+            (DVec3::splat(256.0),DVec3::splat(288.0)),
+        ] {
+            ids.push(state.create_block(Actor::Agent,mins,maxs,"brick/test",false).unwrap());
+        }
+        state.select(&ids,SelectMode::Replace).unwrap();
+        let original = state.document().vmf().clone();
+        let shared = Arc::new(Mutex::new(state));
+        let window = MergeWindow::new().unwrap();
+        merge_ui::bind(&window,&shared);
+        merge_ui::refresh(&window,&lock(&shared));
+        assert_eq!(window.get_sources().row_count(),3);
+        let excluded = window.get_sources().row_data(2).unwrap().solid;
+        window.invoke_choose_source(excluded.clone());
+        window.invoke_preview_edit();
+        assert!(window.get_ready());
+        assert_eq!(window.get_sources().row_count(),3);
+        assert!(!window.get_sources().row_data(2).unwrap().selected);
+        assert!(window.get_summary().contains("2 brushes"));
+        assert_eq!(lock(&shared).document().vmf(),&original);
+        let draft = lock(&shared).render_document().vmf().clone();
+        window.show().unwrap();
+        save_ui_snapshot(window.window(),"brush-merging");
+        for label in ["Cancel","Discard preview","Preview merge","Apply merge"] {
+            assert_dialog_button_visible(&window,label);
+        }
+        window.invoke_choose_source(excluded.clone());
+        assert!(!window.get_ready());
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(),&original);
+        window.invoke_choose_source(excluded);
+        window.invoke_discard();
+        assert!(window.get_token().is_empty());
+        assert_eq!(lock(&shared).render_document().vmf(),&original);
+        window.invoke_preview_edit();
+        window.invoke_cancel();
+        assert!(lock(&shared).merge_report()["preview"].is_null());
+        merge_ui::refresh(&window,&lock(&shared));
+        window.invoke_preview_edit();
+        window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(),&draft);
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(),&original);
     }
 
     #[test]

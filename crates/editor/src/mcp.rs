@@ -550,6 +550,13 @@ struct ComponentWeldArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct MergeArgs {
+    /// Explicit numeric brush IDs, including children of one brush entity.
+    sources: Vec<u32>,
+    /// Latest stamp from get_merge_preview.
+    stamp: String,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct CarveArgs {
     cutter: u32,
     targets: Vec<u32>,
@@ -3549,6 +3556,46 @@ impl EditorServer {
             Ok(Err(error)) => fail(error),
             Err(error) => fail(error.to_string()),
         }
+    }
+
+    #[tool(
+        description = "Inspect merge brush candidates, owners, bounds and materials, the shared preview token and snapshot stamp, resulting brush ID and per-face inheritance. 2–16 sources must form a convex gap-free union and share world ownership or one brush entity. Displacements reject. Read-only.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_merge_preview(&self) -> ToolResult {
+        ok(self.session().merge_report())
+    }
+
+    #[tool(
+        description = "Preview merging 2–16 explicit convex brush IDs into one brush. Requires latest get_merge_preview.stamp. Validates complete union coverage, rejecting gaps and concavities instead of silently filling a hull. World brushes may merge together; entity children must belong to one owner. Mixed owners and displacements reject. Lowest brush ID retains brush/editor metadata. Outer faces retain original IDs, material, world UV projection, lighting and unknown fields; lowest brush ID then side ID wins on coplanar faces. Internal faces disappear. Up to 64 outer sides and 256 proof fragments. Invalid requests preserve a valid draft. render_view and get_brush_components show the shared draft. Apply or cancel require its exact token."
+    )]
+    fn preview_merge(&self, Parameters(args): Parameters<MergeArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.preview_merge(&args.sources, &args.stamp)?;
+            Ok(session.merge_report())
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact merge preview as one Undo step after rechecking full geometry and face inheritance. Preserves world/entity ownership and unrelated objects; selects the resulting brush or owning entity. Source edits, selection changes and competing geometry previews invalidate the token."
+    )]
+    fn commit_merge(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let result = self.session().commit_merge(Actor::Agent, args.token.parse().map_err(|_| "Invalid merge token")?)?;
+            Ok(crate::session::merging::result_json(&result))
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact merge preview without changing map geometry, IDs or Undo history. Stale tokens cannot discard a replacement draft. Shares Discard preview and Cancel in Merge brushes."
+    )]
+    fn cancel_merge(&self, Parameters(args): Parameters<VolumeTokenArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_merge(args.token.parse().map_err(|_| "Invalid merge token")?)?;
+            Ok(session.merge_report())
+        })
     }
 
     #[tool(

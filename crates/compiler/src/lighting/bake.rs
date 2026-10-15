@@ -14,7 +14,7 @@ use crate::tree::Tree;
 use crate::visibility::Visibility;
 use crate::{Control, Diagnostic, Report};
 
-const MAX_LIGHTING_LIVE_BYTES: usize = 512 * 1024 * 1024;
+pub(super) const MAX_LIGHTING_LIVE_BYTES: usize = 512 * 1024 * 1024;
 const MAX_TOTAL_LIGHTING_BYTES: usize = 2 * MAX_LIGHTING_BYTES;
 const MAX_CHANNEL_AMBIENT_BYTES: usize =
     65_536 * (size_of::<bsp::LeafAmbientIndex>() + size_of::<bsp::LeafAmbientSample>());
@@ -191,6 +191,11 @@ impl Budget<'_> {
             bytes,
             live_bytes: self.live_bytes.clone(),
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn live_bytes(&self) -> usize {
+        self.live_bytes.get()
     }
 
     pub(super) fn work(&self) -> usize {
@@ -731,16 +736,12 @@ pub(crate) fn bake(
     report.diagnostics.push(Diagnostic::info("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with isolated self shadows; reflected model sources and prop lightmaps remain unfinished", None, None));
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
-    let (prop_shadows, prop_bounds, prop_stats) =
-        super::props::build(bsp, settings.vmf, settings.fs, report, &mut budget)?;
-    let prop_bytes =
-        ShadowIndex::<super::props::PropTriangle>::allocation_bytes(prop_stats.triangles)?
-            .checked_add(ShadowIndex::<super::props::ProbeBounds>::allocation_bytes(
-                prop_stats.props,
-            )?)
-            .and_then(|bytes| bytes.checked_add(prop_stats.alpha_bytes))
-            .ok_or("Lighting prop shadow allocation size overflow")?;
-    let _prop_allocation = budget.reserve_bytes(prop_bytes)?;
+    let super::props::Prepared {
+        shadows: prop_shadows,
+        bounds: prop_bounds,
+        stats: prop_stats,
+        allocations: _prop_allocations,
+    } = super::props::build(bsp, settings.vmf, settings.fs, report, &mut budget)?;
     if !map.terrains.is_empty() {
         let mut data = bsp
             .displacements()

@@ -446,6 +446,11 @@ mod tests {
         let control = crate::Control::default();
         let mut budget = Budget::new(&control);
         let color = DVec3::new(0.5, 0.25, 0.125);
+        let allocation = budget
+            .reserve_bytes(
+                ShadowIndex::<Surface>::allocation_bytes(1).unwrap() + size_of::<Radiance>(),
+            )
+            .unwrap();
         let surfaces = SurfaceIndex {
             geometry: ShadowIndex::new(
                 vec![Surface {
@@ -472,6 +477,7 @@ mod tests {
                 sky: false,
                 extras: Vec::new(),
             }],
+            _allocation: allocation,
         };
         let shadows =
             ShadowIndex::new(Vec::<Occluder>::new(), &mut |work| budget.consume(work)).unwrap();

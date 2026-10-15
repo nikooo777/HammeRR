@@ -8,7 +8,7 @@ use slint::ComponentHandle;
 
 use crate::{
     PlacementWindow,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{
         Actor, Session,
         placement::{Method, Options},
@@ -243,7 +243,7 @@ impl Controller {
         let expected = serde_json::json!(
             ids.iter()
                 .copied()
-                .map(crate::mcp::id_string)
+                .map(crate::identity::id_string)
                 .collect::<Vec<_>>()
         );
         let resume = report["valid"] == true && report["ids"] == expected;
@@ -404,7 +404,7 @@ mod tests {
         assert!(!controller.is_picking());
         assert!(controller.window.get_ready());
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "surface-placement");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "surface-placement");
         assert_eq!(lock(&shared).document().vmf(), &source);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
         controller.window.set_offset("8".into());

@@ -1,0 +1,212 @@
+use super::super::*;
+
+#[tool_router(router = build_tools, vis = "pub(in crate::mcp)")]
+impl EditorServer {
+    #[tool(
+        description = "Check applied map data for geometry/ID problems, invalid UVs, entity properties/connections, missing material/model paths, visible team spawns and standing-hull clearance against visible world/func_detail brushes and terrain sheets with known player-blocking materials, plus native-compiler gaps. Does not change map data; replaces the shared issue report and repair preview. Hidden content is diagnosed but excluded from spawn collision. Reports explain unchecked collision and runtime limits. This is not a leak or playability test."
+    )]
+    pub(in crate::mcp) fn run_map_checks(&self) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.run_map_checks(Actor::Agent);
+            session.map_checks_json(None, "", 0, 50)
+        })
+    }
+
+    #[tool(
+        description = "Inspect shared build lighting/physics settings and limitations. Defaults are fullbright and no physics bodies. direct_ldr bakes static/switchable/animated point/spot and static direct-sky and sampled sky ambient on world/brush-entity faces and power-2/3/4 terrain, including legacy/percentage falloff, shadows and smoothed terrain normals. Engine physics builds checked brush/fluid/terrain bodies using an isolated verified CS:S Linux64 worker. Settings leave VMF/undo unchanged."
+    )]
+    pub(in crate::mcp) fn get_compile_settings(&self) -> ToolResult {
+        ok(self.session().compile_settings())
+    }
+
+    #[tool(
+        description = "Inspect built-in Fast preview/Final lighting and up to 32 custom build recipes, their exact supported compiler settings, active recipe identity, registry revision, storage errors and frozen-job rules. Does not build or change the map."
+    )]
+    pub(in crate::mcp) fn get_build_recipes(&self) -> ToolResult {
+        ok(self.session().build_recipes())
+    }
+
+    #[tool(
+        description = "Save current shared compiler settings as a named custom recipe, or replace an existing custom recipe with replace_id. Names are unique ignoring case and at most 80 UTF-8 bytes. Built-ins are immutable. Atomic bounded persistence leaves preferences unchanged on failure. Active builds block edits; VMF and undo remain unchanged."
+    )]
+    pub(in crate::mcp) fn save_build_recipe(
+        &self,
+        Parameters(args): Parameters<SaveBuildRecipeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().save_build_recipe(
+                Actor::Agent,
+                &args.name,
+                args.replace_id.as_deref(),
+                args.revision,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Rename an existing custom build recipe without changing its settings. Built-ins are immutable; active builds block edits. Existing jobs retain their captured name. Optional revision rejects stale edits; VMF and undo remain unchanged."
+    )]
+    pub(in crate::mcp) fn rename_build_recipe(
+        &self,
+        Parameters(args): Parameters<RenameBuildRecipeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .rename_build_recipe(Actor::Agent, &args.id, &args.name, args.revision)
+        })
+    }
+
+    #[tool(
+        description = "Delete an existing custom build recipe. Current compiler settings and completed job provenance remain unchanged; deleting the active recipe clears its current label. Built-ins cannot be deleted; active builds block edits. Optional revision rejects stale edits; VMF and undo remain unchanged."
+    )]
+    pub(in crate::mcp) fn delete_build_recipe(
+        &self,
+        Parameters(args): Parameters<BuildRecipeIdArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .delete_build_recipe(Actor::Agent, &args.id, args.revision)
+        })
+    }
+
+    #[tool(
+        description = "Apply all settings from a built-in or custom recipe through shared Session build settings. Does not start a build. Active builds block applying; different values stale prior output. Final lighting selects Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45-degree smoothing; it retains the experimental compiler's limits. Optional revision rejects stale edits; VMF and undo remain unchanged."
+    )]
+    pub(in crate::mcp) fn apply_build_recipe(
+        &self,
+        Parameters(args): Parameters<BuildRecipeIdArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .apply_build_recipe(Actor::Agent, &args.id, args.revision)
+        })
+    }
+
+    #[tool(
+        description = "Update shared build lighting (fullbright/direct_ldr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 sky/model ambient and bounce directions) visibility (fast/detailed: conservative flood/portal clipping) bounces (0..4: direct only/up to four diffuse world-terrain-source bounces into world/model receivers) or smoothing_angle (whole degrees 0–90; zero disables automatic unassigned brush smoothing); omitted fields retain their values and all fields validate first. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. World/terrain triangles retain VMT surface properties through a checked 127-entry native table; detail/model fluids, brush-model surfaces, density and compiler-derived masses remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
+    )]
+    pub(in crate::mcp) fn set_compile_settings(
+        &self,
+        Parameters(args): Parameters<CompileSettingsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().update_build_settings(
+                Actor::Agent,
+                crate::session::compilation::BuildSettingsUpdate {
+                    lighting: args.lighting.as_deref(),
+                    physics: args.physics.as_deref(),
+                    sky_quality: args.sky_quality.as_deref(),
+                    visibility: args.visibility.as_deref(),
+                    bounces: args.bounces,
+                    smoothing_angle: args.smoothing_angle,
+                },
+            )
+        })
+    }
+
+    #[tool(
+        description = "Start a background compile of the current map snapshot and return its job token immediately. Poll get_compile_status, or cancel_compile with that token. Does not launch the game or save the VMF. Completed output is published atomically; cancelled builds preserve previous output."
+    )]
+    pub(in crate::mcp) fn start_compile(
+        &self,
+        Parameters(args): Parameters<CompileArgs>,
+    ) -> ToolResult {
+        run(|| {
+            start_compile(
+                &self.session,
+                Actor::Agent,
+                args.path.as_deref().map(std::path::Path::new),
+                false,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Inspect the latest compile job: token, state, current stage, elapsed time, output path, snapshot freshness and terminal diagnostics/statistics. Job diagnostics include the first 100 messages and the total count. Shared with the editor's build status."
+    )]
+    pub(in crate::mcp) fn get_compile_status(&self) -> ToolResult {
+        ok(self.session().compile_status())
+    }
+
+    #[tool(
+        description = "Request cancellation of the exact active compile job. Poll get_compile_status until cancelled; another build remains blocked until the worker stops. Cancellation is rejected once output publication has completed. Previous BSP and pointfile remain unchanged when cancellation is accepted."
+    )]
+    pub(in crate::mcp) fn cancel_compile(
+        &self,
+        Parameters(args): Parameters<CompileTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let token = args
+                .token
+                .parse()
+                .map_err(|_| "Invalid compile job token")?;
+            let mut session = self.session();
+            session.cancel_compile(Actor::Agent, token)?;
+            Ok(session.compile_status())
+        })
+    }
+
+    #[tool(
+        description = "Compile the current snapshot using shared lighting/physics settings. direct_ldr bakes static/switchable/animated point/spot lights with legacy/percentage falloff and directional sun and sampled sky ambient through verified sky surfaces, with material-driven normal-map channels, world/terrain shadows and model-local self shadows. Brush entities receive pivot-aware direct and optional style-preserving bounced maps (up to four bounces) that move with the model; reflected model sources, dynamic relighting, persistent model world shadows and prop lightmaps remain unfinished. SunSpreadAngle supports 0–90 degrees with deterministic soft shadows; sky quality selects 32/128/512 directions for sun and ambient. Model ambient gathers distance-filtered local world/terrain lightmaps and sky into up to 1/4/8 separated cubes per open world leaf at Fast/Balanced/Detailed quality, with shared work bounds and counters. Adaptive refinement and baked prop lighting remain unfinished. World power-2/3/4 terrain supports smooth normals sewn across matching equal-power full-edge neighbors; diagnostics and statistics describe limits and deferred edges. Convex func_areaportal volumes now separate visibility areas with checked reciprocal clip geometry and runtime portalnumber keys; leaked, overlapping or multi-area boundaries fail. func_areaportalwindow shares those boundaries with checked visible brush-model references and finite fade settings. Window portals emit version-1 bindings and retain distance/input controls; missing, ambiguous or undersized rendered models fail before publication. Fullbright is default. Returns structured diagnostics/leak paths and preserves previous output on failure. Does not save the VMF; leaks write a .lin file. Brush entities use explicit origins or one visible origin volume, with checked local geometry and compensated UVs."
+    )]
+    pub(in crate::mcp) async fn compile_map(
+        &self,
+        Parameters(args): Parameters<CompileArgs>,
+    ) -> ToolResult {
+        self.compile_snapshot(args, false).await
+    }
+
+    #[tool(
+        description = "Compile the current unsaved map snapshot and launch it in the installed Linux CS:S client. Returns compile diagnostics, leak paths, and game process details. Does not save the VMF."
+    )]
+    pub(in crate::mcp) async fn run_map(
+        &self,
+        Parameters(args): Parameters<CompileArgs>,
+    ) -> ToolResult {
+        self.compile_snapshot(args, true).await
+    }
+
+    #[tool(
+        description = "Launch the latest successful compile of the current map in Linux CS:S. Rejects outdated compiles and duplicate launches. Use run_map to compile and launch in one call."
+    )]
+    pub(in crate::mcp) async fn launch_game(&self) -> ToolResult {
+        let session = self.session.clone();
+        let result = tokio::task::spawn_blocking(move || launch(&session, Actor::Agent)).await;
+        match result {
+            Ok(Ok(log)) => ok(game_log_json(&log)),
+            Ok(Err(error)) => fail(error),
+            Err(error) => {
+                let error = error.to_string();
+                let _ = self
+                    .session()
+                    .finish_launch(Actor::Agent, Err(error.clone()));
+                fail(error)
+            }
+        }
+    }
+
+    #[tool(
+        description = "Read bounded tails of the most recent CS:S run's engine console and launcher output, including process status and exit code. Logs remain available after the game exits.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn game_log(&self, Parameters(args): Parameters<GameLogArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .game_log(args.lines.unwrap_or(game::DEFAULT_LOG_LINES))
+                .map(|log| game_log_json(&log))
+        })
+    }
+
+    #[tool(
+        description = "Stop only the CS:S process launched by this HammeRR session. The game log remains readable afterward."
+    )]
+    pub(in crate::mcp) async fn stop_game(&self) -> ToolResult {
+        let session = self.session.clone();
+        match tokio::task::spawn_blocking(move || lock(&session).stop_game(Actor::Agent)).await {
+            Ok(Ok(())) => ok(json!({"stopped": true})),
+            Ok(Err(error)) => fail(error),
+            Err(error) => fail(error.to_string()),
+        }
+    }
+}

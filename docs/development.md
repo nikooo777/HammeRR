@@ -16,6 +16,8 @@
 
 The editor UI and the MCP server call the same session operations, so every feature behaves identically for people and agents. New features need both a UI control and an MCP tool.
 
+Shared session locking and compile/game workers live in `editor/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. UI controllers and MCP call these application helpers directly. MCP tool groups and parameters live under `editor/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/`.
+
 ## Build and test
 
 ```sh

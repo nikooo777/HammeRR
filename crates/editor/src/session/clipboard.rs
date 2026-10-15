@@ -81,13 +81,16 @@ impl Default for State {
 }
 
 fn ids(ids: &[ObjectId]) -> Vec<String> {
-    ids.iter().copied().map(crate::mcp::id_string).collect()
+    ids.iter()
+        .copied()
+        .map(crate::identity::id_string)
+        .collect()
 }
 
 fn result_json(result: &transfer::Result) -> Value {
     json!({
         "objects":ids(&result.objects),
-        "object_ids":result.mapping.iter().map(|(old,new)|json!({"source":crate::mcp::id_string(*old),"copy":crate::mcp::id_string(*new)})).collect::<Vec<_>>(),
+        "object_ids":result.mapping.iter().map(|(old,new)|json!({"source":crate::identity::id_string(*old),"copy":crate::identity::id_string(*new)})).collect::<Vec<_>>(),
         "side_ids":result.sides,
         "visgroup_ids":result.visgroups,
         "group_ids":result.groups,

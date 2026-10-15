@@ -1,6 +1,6 @@
 use crate::{
     PrefabRow, PrefabsWindow, clipboard_ui,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
 use slint::{ComponentHandle, VecModel};
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf().world.solids.len(), 2);
         assert_eq!(lock(&shared).document().vmf().entities.len(), 4);
         controller.refresh(&lock(&shared));
-        crate::tests::save_ui_snapshot(controller.window.window(), "prefab-library");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-library");
         controller.window.invoke_begin_delete();
         controller.window.invoke_cancel();
         assert!(directory.path().join("Corridor light cluster.vmf").exists());

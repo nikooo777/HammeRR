@@ -1,7 +1,7 @@
 use slint::ComponentHandle;
 
 use crate::PointfileWindow;
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 
 pub fn refresh(window: &PointfileWindow, session: &Session) {

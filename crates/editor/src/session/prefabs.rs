@@ -49,7 +49,7 @@ impl Session {
         limit: usize,
         selected: Option<&str>,
     ) -> Value {
-        let mut result = json!({"limits":{"entries":prefabs::MAX_ENTRIES,"file_bytes":transfer::MAX_BYTES,"library_bytes":prefabs::MAX_TOTAL_BYTES,"scanned_directory_entries":prefabs::MAX_SCAN,"name_bytes":prefabs::MAX_NAME_BYTES},"selected_objects":self.selected_ids().iter().copied().map(crate::mcp::id_string).collect::<Vec<_>>(),"directory":self.prefabs.store.as_ref().ok().map(|store|store.directory.to_string_lossy())});
+        let mut result = json!({"limits":{"entries":prefabs::MAX_ENTRIES,"file_bytes":transfer::MAX_BYTES,"library_bytes":prefabs::MAX_TOTAL_BYTES,"scanned_directory_entries":prefabs::MAX_SCAN,"name_bytes":prefabs::MAX_NAME_BYTES},"selected_objects":self.selected_ids().iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"directory":self.prefabs.store.as_ref().ok().map(|store|store.directory.to_string_lossy())});
         match self.prefab_snapshot() {
             Err(error) => {
                 result["error"] = json!(error);

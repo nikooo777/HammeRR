@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::Session;
 use crate::session::statistics::{PAGE_SIZE, Section};
 use crate::{StatisticRow, StatisticsWindow};

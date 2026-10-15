@@ -1,0 +1,121 @@
+use super::super::*;
+
+#[tool_router(router = recovery_tools, vis = "pub(in crate::mcp)")]
+impl EditorServer {
+    #[tool(
+        description = "Inspect autosave settings, pending changes, errors, storage location and retained recovery snapshots (newest first). Snapshots contain committed map data, not editor previews. Default page 50, maximum 200; current_map_only filters by the current document key.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_recovery(
+        &self,
+        Parameters(args): Parameters<RecoveryListArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let status = session.recovery_status();
+            let listing =
+                session
+                    .recovery_entries()
+                    .unwrap_or_else(|error| crate::recovery::Listing {
+                        entries: Vec::new(),
+                        warnings: vec![error],
+                    });
+            let entries: Vec<_> = listing
+                .entries
+                .into_iter()
+                .filter(|entry| {
+                    !args.current_map_only
+                        || Some(entry.document_key.as_str()) == status["document_key"].as_str()
+                })
+                .collect();
+            let offset = args.offset.unwrap_or(0);
+            Ok(
+                json!({"status": status, "total": entries.len(), "offset": offset, "snapshots": entries.into_iter().skip(offset).take(args.limit.unwrap_or(50).min(200)).collect::<Vec<_>>(), "warnings": listing.warnings}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Configure persistent autosave settings through the same operation as Recovery settings. enabled controls periodic/exit autosaves; manual snapshots and previous-file backups remain available. Interval is 30–3600 seconds, retention 1–50 snapshots per map. Omitted values keep the current setting. Changes do not edit the map."
+    )]
+    pub(in crate::mcp) fn set_recovery_settings(
+        &self,
+        Parameters(args): Parameters<RecoverySettingsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let mut settings = session.recovery_settings().clone();
+            if let Some(value) = args.enabled {
+                settings.enabled = value;
+            }
+            if let Some(value) = args.interval_seconds {
+                settings.interval_seconds = value;
+            }
+            if let Some(value) = args.keep_per_map {
+                settings.keep_per_map = value;
+            }
+            session.set_recovery_settings(Actor::Agent, settings, args.expected_revision)?;
+            Ok(session.recovery_status())
+        })
+    }
+
+    #[tool(
+        description = "Write a manual recovery snapshot without saving over the map, bumping mapversion, changing dirty state or adding undo history. Uses committed content and excludes active previews. Does not hold the Session lock during serialization/file writing; edits made while it writes remain pending for the next snapshot."
+    )]
+    pub(in crate::mcp) async fn create_recovery_snapshot(&self) -> ToolResult {
+        let session = self.session.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::recovery::capture(&session, Actor::Agent, crate::recovery::Kind::Manual)
+        })
+        .await
+        {
+            Ok(Ok(entry)) => ok(json!({"snapshot": entry})),
+            Ok(Err(error)) => fail(error),
+            Err(error) => fail(format!("Recovery worker failed: {error}")),
+        }
+    }
+
+    #[tool(
+        description = "Open a retained recovery snapshot as a dirty, unnamed copy. It leaves the source file untouched and clears selection/history/previews like opening a map. Save with an explicit path to keep the recovered copy. Refuses to replace unsaved edits unless discard_changes is explicitly true. Invalid snapshots leave the current map unchanged."
+    )]
+    pub(in crate::mcp) fn restore_recovery_snapshot(
+        &self,
+        Parameters(args): Parameters<RestoreRecoveryArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let expected = match (args.generation, args.revision) {
+                (None, None) => None,
+                (Some(generation), Some(revision)) => Some((generation, revision)),
+                _ => {
+                    return Err(
+                        "Supply both generation and revision for the stale-map guard".into(),
+                    );
+                }
+            };
+            session.restore_recovery_snapshot(
+                Actor::Agent,
+                &args.id,
+                args.discard_changes,
+                expected,
+            )?;
+            Ok(
+                json!({"restored": args.id, "path": session.path(), "unsaved_changes": session.document().is_dirty(), "status": session.recovery_status()}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Permanently delete one recovery snapshot by its listed ID. Does not delete or edit the original map. Refuses during a snapshot write. Retention also prunes the oldest snapshots automatically when new ones are created."
+    )]
+    pub(in crate::mcp) fn delete_recovery_snapshot(
+        &self,
+        Parameters(args): Parameters<RecoveryIdArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .delete_recovery_snapshot(Actor::Agent, &args.id)?;
+            Ok(json!({"deleted": args.id}))
+        })
+    }
+}

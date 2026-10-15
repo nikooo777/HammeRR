@@ -3,10 +3,10 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::material_search::{Query, Scope};
 use crate::session::{Actor, SelectMode, Session};
-use crate::{MaterialReplaceWindow, preview_image};
+use crate::{MaterialReplaceWindow, ui::preview_image};
 
 #[derive(Default)]
 struct Target {

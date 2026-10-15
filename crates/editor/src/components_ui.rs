@@ -4,7 +4,7 @@ use glam::DVec3;
 use map_core::subobject::{Component, ComponentTransform, WeldTarget};
 use slint::{ComponentHandle, Model, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::component_picking::Kind;
 use crate::session::{Actor, SelectMode, Session};
 use crate::{ComponentCreaseRow, ComponentRow, ComponentsWindow};
@@ -529,7 +529,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             session
                 .material_preview(material)
                 .ok()
-                .map(|preview| crate::preview_image(&preview))
+                .map(|preview| crate::ui::preview_image(&preview))
                 .unwrap_or_default(),
         );
         window.set_top_material_summary(if highlighted.is_empty() {
@@ -1181,7 +1181,7 @@ pub fn choose_extrusion_material(
         session
             .material_preview(material)
             .ok()
-            .map(|preview| crate::preview_image(&preview))
+            .map(|preview| crate::ui::preview_image(&preview))
             .unwrap_or_default(),
     );
     window.set_ready(false);
@@ -1565,7 +1565,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                     lock(&shared)
                         .material_preview(window.get_wall_material().as_str())
                         .ok()
-                        .map(|preview| crate::preview_image(&preview))
+                        .map(|preview| crate::ui::preview_image(&preview))
                         .unwrap_or_default(),
                 );
             }

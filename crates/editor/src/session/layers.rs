@@ -26,7 +26,10 @@ struct Draft {
 }
 
 fn objects(ids: &[ObjectId]) -> Vec<String> {
-    ids.iter().copied().map(crate::mcp::id_string).collect()
+    ids.iter()
+        .copied()
+        .map(crate::identity::id_string)
+        .collect()
 }
 
 impl Session {
@@ -112,7 +115,7 @@ impl Session {
                         .iter()
                         .filter(|(_, member)| member.layers.contains(&id))
                         .collect::<Vec<_>>();
-                    result["selected"] = json!({"id":id,"name":record.name,"parent":record.parent,"color":record.color,"member_total":members.len(),"members":members.iter().skip(member_offset).take(128).map(|(id,member)|json!({"id":crate::mcp::id_string(**id),"owner":crate::mcp::id_string(member.owner),"hidden":member.hidden})).collect::<Vec<_>>(),"next_member_offset":(member_offset.saturating_add(128)<members.len()).then_some(member_offset.saturating_add(128))});
+                    result["selected"] = json!({"id":id,"name":record.name,"parent":record.parent,"color":record.color,"member_total":members.len(),"members":members.iter().skip(member_offset).take(128).map(|(id,member)|json!({"id":crate::identity::id_string(**id),"owner":crate::identity::id_string(member.owner),"hidden":member.hidden})).collect::<Vec<_>>(),"next_member_offset":(member_offset.saturating_add(128)<members.len()).then_some(member_offset.saturating_add(128))});
                 }
             }
         }

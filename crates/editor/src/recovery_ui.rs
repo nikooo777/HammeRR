@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::mcp::{SharedSession, lock};
 use crate::recovery::{Kind, Settings};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{RecoveryRow, RecoveryWindow};
 

@@ -1,6 +1,6 @@
 use crate::{
     LayerRow, LayersWindow,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{Actor, SelectMode, Session},
 };
 use map_core::ObjectId;
@@ -138,7 +138,7 @@ fn refresh(window: &LayersWindow, session: &Session, state: &RefCell<Form>, forc
             .iter()
             .skip(form.member_offset)
             .take(MEMBERS)
-            .map(|id| crate::mcp::id_string(*id).into())
+            .map(|id| crate::identity::id_string(*id).into())
             .collect::<Vec<_>>();
         window.set_members(Rc::new(VecModel::from(members)).into());
         window.set_member_label(format!("Direct members: {}", form.members.len()).into());
@@ -210,7 +210,7 @@ fn load_draft(window: &LayersWindow, session: &Session, state: &RefCell<Form>, r
         .as_array()
         .unwrap()
         .iter()
-        .map(|id| crate::mcp::parse_id(text(id)).unwrap())
+        .map(|id| crate::identity::parse_id(text(id)).unwrap())
         .collect();
     let mut parents = vec!["Root (no parent)".into()];
     form.parents = vec![None];
@@ -404,7 +404,7 @@ impl Controller {
         window.on_remove({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move |id| {
-                if let Ok(id) = crate::mcp::parse_id(&id) {
+                if let Ok(id) = crate::identity::parse_id(&id) {
                     let mut state = form.borrow_mut();
                     if state.token.is_none() {
                         return;
@@ -557,7 +557,7 @@ mod tests {
             .window
             .set_layer_name("Lights and helpers".into());
         controller.window.invoke_review();
-        crate::tests::save_ui_snapshot(controller.window.window(), "layers");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "layers");
         let identity = controller.form.borrow().token.unwrap();
         lock(&shared)
             .update_layer_edit(

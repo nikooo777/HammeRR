@@ -7,7 +7,7 @@ use slint::ComponentHandle;
 
 use crate::{
     SoundBrowserWindow, SoundChoiceRow,
-    mcp::{SharedSession, lock},
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -512,7 +512,7 @@ mod tests {
         controller.window.invoke_search();
         assert_eq!(controller.window.get_rows().row_count(), 1);
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "sound-browser");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "sound-browser");
         lock(&shared)
             .choose_sound(token, "ambient/one.wav", 0)
             .unwrap();
@@ -573,7 +573,7 @@ mod tests {
                 controller.window.get_message()
             );
             controller.window.show().unwrap();
-            crate::tests::save_ui_snapshot(controller.window.window(), "sound-browser");
+            crate::ui::tests::save_ui_snapshot(controller.window.window(), "sound-browser");
             controller.window.invoke_cancel();
         }
     }

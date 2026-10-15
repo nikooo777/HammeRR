@@ -4,7 +4,7 @@ use map_core::groups::Member;
 use serde_json::Value;
 use slint::{ComponentHandle, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, SelectMode, Session, groups::parse_member};
 use crate::{ObjectGroupMemberRow, ObjectGroupRow, ObjectGroupsWindow};
 
@@ -541,7 +541,7 @@ mod tests {
         controller.window.invoke_choose(inner.to_string().into());
         controller.window.invoke_begin_ungroup();
         assert!(controller.window.get_ready());
-        crate::tests::save_ui_snapshot(controller.window.window(), "object-groups");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "object-groups");
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().vmf().world.groups.len(), 1);
         lock(&shared).undo(Actor::Agent).unwrap();

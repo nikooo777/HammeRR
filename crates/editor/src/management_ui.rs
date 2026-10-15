@@ -3,7 +3,8 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::mcp::{SharedSession, lock, parse_id};
+use crate::identity::parse_id;
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, ObjectFilter, PropertyChange, PropertyTarget, SelectMode, Session};
 use crate::{
     ColorWindow, ManagedFieldRow, MaterialWindow, ObjectReportRow, PropertiesWindow, ReportWindow,
@@ -102,7 +103,7 @@ pub fn refresh_properties(window: &PropertiesWindow, session: &Session) {
                 }
             }
             ManagedFieldRow {
-                field: crate::property_row(property.field),
+                field: crate::ui::property_row(property.field),
                 status: status.into(),
                 can_reset: property.can_reset,
             }
@@ -346,8 +347,8 @@ fn bind_material(
                 window.set_filter("".into());
                 window.set_group("all".into());
                 window.set_offset(0);
-                crate::refresh_material_catalog(&window, &mut session);
-                crate::refresh_material_window(&window, &mut session);
+                crate::ui::refresh_material_catalog(&window, &mut session);
+                crate::ui::refresh_material_window(&window, &mut session);
                 window.show().map_err(|error| error.to_string())
             });
             if let Err(error) = result {
@@ -357,11 +358,11 @@ fn bind_material(
     });
     window.on_search({
         let (window, shared) = (window.as_weak(), shared.clone());
-        move || crate::refresh_material_catalog(&window.unwrap(), &mut lock(&shared))
+        move || crate::ui::refresh_material_catalog(&window.unwrap(), &mut lock(&shared))
     });
     window.on_preview_material({
         let (window, shared) = (window.as_weak(), shared.clone());
-        move || crate::refresh_material_window(&window.unwrap(), &mut lock(&shared))
+        move || crate::ui::refresh_material_window(&window.unwrap(), &mut lock(&shared))
     });
     window.on_toggle_favorite({
         let (window, shared) = (window.as_weak(), shared.clone());
@@ -373,7 +374,7 @@ fn bind_material(
             {
                 window.set_detail(error.into());
             }
-            crate::refresh_material_catalog(&window, &mut session);
+            crate::ui::refresh_material_catalog(&window, &mut session);
         }
     });
     window.on_use_material({

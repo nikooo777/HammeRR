@@ -1,7 +1,8 @@
 use map_core::ObjectId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::mcp::{SharedSession, id_string, lock, parse_id};
+use crate::identity::{id_string, parse_id};
+use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, ConnectionFields, ConnectionRecord, Session};
 use crate::{ConnectionRow, ConnectionWindow};
 

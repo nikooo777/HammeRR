@@ -7,7 +7,7 @@ use slint::ComponentHandle;
 use source_formats::vmf::format_number;
 
 use crate::VolumeWindow;
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::volume::Spec;
 use crate::session::{Actor, SelectMode, Session};
 

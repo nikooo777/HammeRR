@@ -5,8 +5,8 @@ use slint::{ComponentHandle, Model};
 
 use crate::{
     ModelBodygroupRow, ModelBrowserWindow, ModelChoiceRow,
-    mcp::{SharedSession, lock},
     model_preview::PreviewRenderer,
+    runtime::{SharedSession, lock},
     session::{Actor, Session},
 };
 
@@ -569,7 +569,7 @@ mod tests {
         assert_eq!(controller.window.get_skin_count(), 6);
         assert_eq!(lock(&shared).document().vmf(), &source);
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "model-browser");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-browser");
         controller.window.invoke_apply();
         assert!(!controller.window.window().is_visible());
         assert_eq!(
@@ -630,7 +630,7 @@ mod tests {
         assert!(controller.window.get_has_preview());
         assert!(controller.window.get_message().contains("Reference pose"));
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "reference-model-browser");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "reference-model-browser");
         controller.window.invoke_cancel();
         assert_eq!(lock(&shared).document().vmf(), &before);
         let token = lock(&shared).begin_model_choice(dynamic).unwrap()["token"]
@@ -674,7 +674,7 @@ mod tests {
         controller.window.set_group_index(0);
         controller.window.invoke_search();
         controller.window.show().unwrap();
-        crate::tests::save_ui_snapshot(controller.window.window(), "bodygroup-model-browser");
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "bodygroup-model-browser");
         lock(&shared)
             .choose_model_bodygroup(token, group as usize, 0)
             .unwrap();

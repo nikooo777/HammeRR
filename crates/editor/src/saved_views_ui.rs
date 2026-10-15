@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, VecModel};
 
-use crate::mcp::{SharedSession, lock};
+use crate::runtime::{SharedSession, lock};
 use crate::session::saved_views::Guard;
 use crate::session::{Actor, Session};
 use crate::{SavedViewRow, SavedViewsWindow};

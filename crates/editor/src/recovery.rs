@@ -314,21 +314,21 @@ pub fn default_directory() -> Result<PathBuf, String> {
 }
 
 pub fn capture(
-    session: &crate::mcp::SharedSession,
+    session: &crate::runtime::SharedSession,
     actor: crate::session::Actor,
     kind: Kind,
 ) -> Result<Entry, String> {
-    let request = crate::mcp::lock(session).begin_recovery_snapshot(kind)?;
+    let request = crate::runtime::lock(session).begin_recovery_snapshot(kind)?;
     complete_capture(session, actor, request)
 }
 
 fn complete_capture(
-    session: &crate::mcp::SharedSession,
+    session: &crate::runtime::SharedSession,
     actor: crate::session::Actor,
     request: crate::session::RecoveryRequest,
 ) -> Result<Entry, String> {
     let result = request.run();
-    crate::mcp::lock(session).finish_recovery_snapshot(actor, &request, result)
+    crate::runtime::lock(session).finish_recovery_snapshot(actor, &request, result)
 }
 
 type StopSignal = std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>;
@@ -340,7 +340,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn start(session: &crate::mcp::SharedSession) -> Result<Self, String> {
+    pub fn start(session: &crate::runtime::SharedSession) -> Result<Self, String> {
         let stop = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let signal = stop.clone();
         let weak = std::sync::Arc::downgrade(session);
@@ -370,7 +370,7 @@ impl Drop for Worker {
         }
         if let Some(session) = self.session.upgrade() {
             let should_save = {
-                let state = crate::mcp::lock(&session);
+                let state = crate::runtime::lock(&session);
                 state.recovery_settings().enabled
                     && state.recovery_status()["pending_changes"] == true
                     && state.recovery_status()["available"] == true
@@ -405,7 +405,7 @@ fn autosave_loop(
             return;
         };
         let request = {
-            let mut state = crate::mcp::lock(&session);
+            let mut state = crate::runtime::lock(&session);
             if state.autosave_due() {
                 state.begin_recovery_snapshot(Kind::Autosave).ok()
             } else {

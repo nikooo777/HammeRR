@@ -3,7 +3,7 @@ use std::{
     rc::Rc,
 };
 
-use map_core::{ObjectId, query::Ray};
+use map_core::{ObjectId, query::Ray, subobject::Component};
 use slint::ComponentHandle;
 
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
 struct Context {
     ids: Vec<ObjectId>,
     generation: u64,
+    source_corner: Option<Component>,
 }
 
 pub struct Controller {
@@ -46,12 +47,19 @@ fn validate(
     Ok(context.ids.clone())
 }
 
-fn options(window: &PlacementWindow) -> Result<Options, String> {
+fn options(window: &PlacementWindow, source: Option<Component>) -> Result<Options, String> {
     let offset = window
         .get_offset()
         .parse::<f64>()
         .map_err(|_| "Enter a finite surface offset")?;
     Ok(Options {
+        source_corner: if window.get_method() == 3 {
+            Some(source.ok_or(
+                "Select one real corner in Reshape brushes… → Vertices before opening placement",
+            )?)
+        } else {
+            None
+        },
         align: window.get_align(),
         offset,
         texture_lock: window.get_texture_lock(),
@@ -68,6 +76,15 @@ fn present(window: &PlacementWindow, report: &serde_json::Value) {
     let plan = &report["plan"];
     window.set_summary(if plan.is_null() {
         "".into()
+    } else if !plan["corner"].is_null() {
+        let source = &plan["corner"]["source"];
+        let target = &plan["corner"]["position"];
+        let delta = &plan["translation"];
+        format!("Source corner · {:.3}, {:.3}, {:.3}\nTarget corner · {:.3}, {:.3}, {:.3}\nTarget brush {} · faces {}\nMove · {:.3}, {:.3}, {:.3}",
+            source[0].as_f64().unwrap(),source[1].as_f64().unwrap(),source[2].as_f64().unwrap(),
+            target[0].as_f64().unwrap(),target[1].as_f64().unwrap(),target[2].as_f64().unwrap(),
+            plan["corner"]["target"]["solid"],plan["corner"]["target"]["sides"],
+            delta[0].as_f64().unwrap(),delta[1].as_f64().unwrap(),delta[2].as_f64().unwrap()).into()
     } else {
         let move_by = &plan["translation"];
         format!(
@@ -80,7 +97,8 @@ fn present(window: &PlacementWindow, report: &serde_json::Value) {
         .into()
     });
     window.set_message(if report["picking"] == true {
-        "Click a visible surface in the viewport. Escape cancels picking.".into()
+        if report["method"] == "brush_corner" { "Click a visible flat brush face; its nearest corner is the target. Escape cancels picking.".into() }
+        else { "Click a visible surface in the viewport. Escape cancels picking.".into() }
     } else {
         "Review the placement. Apply placement changes the map in one Undo step.".into()
     });
@@ -91,7 +109,7 @@ impl Controller {
         let window = PlacementWindow::new()?;
         window
             .window()
-            .set_size(slint::LogicalSize::new(560.0, 520.0));
+            .set_size(slint::LogicalSize::new(560.0, 640.0));
         let context = Rc::new(RefCell::new(None));
         let token = Rc::new(Cell::new(None));
         let picking = Rc::new(Cell::new(false));
@@ -119,8 +137,14 @@ impl Controller {
                 let result = (|| {
                     let mut session = lock(&shared);
                     let ids = validate(&session, &context, token.get())?;
-                    let options = options(&window)?;
-                    if window.get_method() == 2 {
+                    let options = options(
+                        &window,
+                        context
+                            .borrow()
+                            .as_ref()
+                            .and_then(|context| context.source_corner.clone()),
+                    )?;
+                    if window.get_method() >= 2 {
                         session.begin_surface_placement_pick(&ids, options)
                     } else {
                         session.preview_surface_placement(
@@ -257,9 +281,58 @@ impl Controller {
                 let _ = session.cancel_surface_placement(token);
             }
         }
+        let source_corner = if resume {
+            report["source_corner"]["solid"]
+                .as_u64()
+                .map(|solid| Component {
+                    solid: solid as u32,
+                    sides: report["source_corner"]["sides"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|side| side.as_u64().unwrap() as u32)
+                        .collect(),
+                })
+        } else if session.component_selection().len() == 1 {
+            session.component_selection().iter().next().cloned()
+        } else {
+            None
+        };
+        self.window
+            .set_source_corner(source_corner.as_ref().map_or_else(
+                || "Choose one corner in Reshape brushes… → Vertices.".into(),
+                |corner| {
+                    let position = if resume {
+                        serde_json::from_value::<[f64; 3]>(report["source_position"].clone())
+                            .ok()
+                            .map(glam::DVec3::from_array)
+                    } else {
+                        session
+                            .component_topology(&[corner.solid])
+                            .ok()
+                            .and_then(|shapes| {
+                                let shape = shapes.first()?;
+                                let indices = shape.resolve(&corner.sides).ok()?;
+                                (indices.len() == 1 && corner.sides.len() >= 3)
+                                    .then(|| shape.vertices[indices[0]].position)
+                            })
+                    };
+                    format!(
+                        "Brush {} · incident faces {:?}{}",
+                        corner.solid,
+                        corner.sides,
+                        position.map_or_else(String::new, |point| format!(
+                            " · {:.3}, {:.3}, {:.3}",
+                            point.x, point.y, point.z
+                        ))
+                    )
+                    .into()
+                },
+            ));
         *self.context.borrow_mut() = Some(Context {
             ids: ids.clone(),
             generation: session.document_generation(),
+            source_corner,
         });
         self.token.set(if resume {
             report["token"].as_u64()
@@ -287,12 +360,11 @@ impl Controller {
         } else {
             session.transform_tool().texture_lock
         });
-        self.window.set_method(if self.picking.get() {
-            2
-        } else {
-            match report["plan"]["method"].as_str() {
+        self.window.set_method({
+            match report["method"].as_str() {
                 Some("ceiling") => 1,
                 Some("ray") => 2,
+                Some("brush_corner") => 3,
                 _ => 0,
             }
         });
@@ -430,5 +502,65 @@ mod tests {
         controller.window.invoke_cancel();
         assert_eq!(lock(&shared).render_document().vmf(), &foreign);
         lock(&shared).cancel_transform_preview();
+
+        let ObjectId::Solid(solid) = id else {
+            unreachable!()
+        };
+        {
+            let mut session = lock(&shared);
+            let shape = session.component_topology(&[solid]).unwrap().remove(0);
+            let component = Component {
+                solid,
+                sides: shape.vertices[0].sides.clone(),
+            };
+            let stamp = session.component_stamp();
+            session
+                .select_components(&[component], crate::session::SelectMode::Replace, &stamp)
+                .unwrap();
+        }
+        controller.initialize(&mut lock(&shared)).unwrap();
+        controller.window.set_method(3);
+        controller.window.set_align(false);
+        controller.window.set_offset("0".into());
+        controller.window.invoke_preview();
+        assert!(controller.is_picking());
+        controller.initialize(&mut lock(&shared)).unwrap();
+        assert_eq!(controller.window.get_method(), 3);
+        controller
+            .pick_at_ray(
+                &mut lock(&shared),
+                Ray {
+                    origin: DVec3::new(-200.0, -200.0, 100.0),
+                    direction: DVec3::NEG_Z,
+                },
+            )
+            .unwrap();
+        assert!(controller.window.get_ready());
+        assert!(controller.window.get_summary().contains("Target corner"));
+        assert!(lock(&shared).component_selection().is_empty());
+        let reviewed = lock(&shared).surface_placement();
+        controller.window.set_offset("1".into());
+        controller.window.invoke_invalidate();
+        controller.window.invoke_preview();
+        assert_eq!(lock(&shared).surface_placement(), reviewed);
+        assert!(!controller.window.get_ready());
+        controller.window.set_offset("0".into());
+        controller.window.invoke_preview();
+        controller
+            .pick_at_ray(
+                &mut lock(&shared),
+                Ray {
+                    origin: DVec3::new(-200.0, -200.0, 100.0),
+                    direction: DVec3::NEG_Z,
+                },
+            )
+            .unwrap();
+        controller.window.show().unwrap();
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "vertex-snap");
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &source);
     }
 }

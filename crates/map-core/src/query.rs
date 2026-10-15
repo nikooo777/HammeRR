@@ -41,6 +41,37 @@ pub struct SurfaceHit {
     pub normal: DVec3,
 }
 
+pub fn face_corner(doc: &Document, hit: &Hit) -> Option<(crate::subobject::Component, DVec3)> {
+    let (owner, solid) = crate::subobject::solid(doc, hit.solid?).ok()?;
+    if owner != hit.object || !hit.point.is_finite() {
+        return None;
+    }
+    let side = hit.side?;
+    let source = solid.sides.iter().find(|face| face.id == side)?;
+    if source.displacement.is_some() {
+        return None;
+    }
+    let topology = crate::subobject::topology(solid).ok()?;
+    let face = topology.faces.iter().find(|face| face.side == side)?;
+    let vertex = face
+        .vertices
+        .iter()
+        .map(|&index| &topology.vertices[index])
+        .min_by(|a, b| {
+            a.position
+                .distance_squared(hit.point)
+                .total_cmp(&b.position.distance_squared(hit.point))
+                .then_with(|| a.sides.cmp(&b.sides))
+        })?;
+    Some((
+        crate::subobject::Component {
+            solid: solid.id,
+            sides: vertex.sides.clone(),
+        },
+        vertex.position,
+    ))
+}
+
 pub fn pick_surface(
     doc: &Document,
     ray: &Ray,
@@ -483,6 +514,59 @@ mod tests {
             })
             .unwrap();
         (document, far, near, solid)
+    }
+
+    #[test]
+    fn face_corner_resolves_owned_real_vertices_and_breaks_distance_ties_by_identity() {
+        for owned in [false, true] {
+            let (document, _, _, _) = surface_targets(owned);
+            let ray = Ray {
+                origin: DVec3::ZERO,
+                direction: DVec3::X,
+            };
+            let hit = pick_face(&document, &ray, |_| true).unwrap();
+            let (corner, point) = face_corner(&document, &hit).unwrap();
+            let (_, solid) = crate::subobject::solid(&document, corner.solid).unwrap();
+            let shape = crate::subobject::topology(solid).unwrap();
+            let face = shape
+                .faces
+                .iter()
+                .find(|face| Some(face.side) == hit.side)
+                .unwrap();
+            let expected = face
+                .vertices
+                .iter()
+                .map(|&index| &shape.vertices[index])
+                .min_by(|a, b| a.sides.cmp(&b.sides))
+                .unwrap();
+            assert_eq!(corner.sides, expected.sides);
+            assert_eq!(point, expected.position);
+            assert_eq!(shape.resolve(&corner.sides).unwrap().len(), 1);
+            let near = pick_face(
+                &document,
+                &Ray {
+                    origin: DVec3::new(0.0, 7.5, -7.75),
+                    ..ray
+                },
+                |_| true,
+            )
+            .unwrap();
+            assert_eq!(
+                face_corner(&document, &near).unwrap().1,
+                DVec3::new(32.0, 8.0, -8.0)
+            );
+        }
+        let (document, _) = raised_terrain();
+        let hit = pick_face(
+            &document,
+            &Ray {
+                origin: DVec3::new(8.0, 8.0, 200.0),
+                direction: DVec3::NEG_Z,
+            },
+            |_| true,
+        )
+        .unwrap();
+        assert!(face_corner(&document, &hit).is_none());
     }
 
     #[test]

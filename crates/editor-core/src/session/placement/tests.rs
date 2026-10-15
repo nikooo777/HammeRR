@@ -7,6 +7,498 @@ fn options() -> Options {
         align: false,
         offset: 0.0,
         texture_lock: true,
+        source_corner: None,
+    }
+}
+
+fn corner_options(session: &Session, solid: u32) -> Options {
+    let (_, brush) = subobject::solid(session.document(), solid).unwrap();
+    let shape = subobject::topology(brush).unwrap();
+    Options {
+        source_corner: Some(Component {
+            solid,
+            sides: shape.vertices[0].sides.clone(),
+        }),
+        ..options()
+    }
+}
+
+#[test]
+fn corner_snap_moves_real_oblique_corners_and_whole_owners_for_both_actors() {
+    for actor in [Actor::User, Actor::Agent] {
+        for (owned, texture_lock) in [(false, false), (false, true), (true, false), (true, true)] {
+            let (mut session, selected) = fixture();
+            let ObjectId::Solid(solid) = selected else {
+                unreachable!()
+            };
+            let mut moving = selected;
+            if owned {
+                let extra = session
+                    .create_block(
+                        actor,
+                        DVec3::new(20.0, 20.0, 40.0),
+                        DVec3::new(28.0, 28.0, 48.0),
+                        "brick/test",
+                        false,
+                    )
+                    .unwrap();
+                let ObjectId::Solid(extra) = extra else {
+                    unreachable!()
+                };
+                moving = session
+                    .edit(actor, "tie source children", |tx| {
+                        map_core::edit::tie_to_entity(tx, &[solid, extra], "func_detail", &[])
+                    })
+                    .unwrap();
+            }
+            session
+                .transform_objects(
+                    actor,
+                    &[moving],
+                    Transform {
+                        rotation: DVec3::new(0.0, 0.0, 17.0),
+                        translation: DVec3::new(-3.25, 2.75, 0.3),
+                        ..Transform::default()
+                    },
+                    None,
+                )
+                .unwrap();
+            session
+                .select(&[moving], super::super::SelectMode::Replace)
+                .unwrap();
+            let mut options = corner_options(&session, solid);
+            options.texture_lock = texture_lock;
+            let component = options.source_corner.clone().unwrap();
+            let (_, brush) = subobject::solid(session.document(), solid).unwrap();
+            let shape = subobject::topology(brush).unwrap();
+            let source_position =
+                shape.vertices[shape.resolve(&component.sides).unwrap()[0]].position;
+            let originals = session
+                .document()
+                .vmf()
+                .solids()
+                .filter(|brush| session.document().owner_of_solid(brush.id) == Some(moving))
+                .map(|brush| (brush.id, subobject::topology(brush).unwrap()))
+                .collect::<Vec<_>>();
+            let source = session.document().vmf().clone();
+            let history = session.document().undo_labels().count();
+            let ray = Ray {
+                origin: DVec3::new(-200.0, -200.0, 100.0),
+                direction: DVec3::NEG_Z,
+            };
+            let report = session
+                .preview_surface_placement(
+                    actor,
+                    &[moving],
+                    Method::BrushCorner,
+                    Some(ray),
+                    options.clone(),
+                )
+                .unwrap();
+            assert_eq!(
+                report["source_corner"],
+                super::super::components::component_json(&component)
+            );
+            assert!(report["plan"]["contact_offset"].is_null());
+            let target = DVec3::from_array(
+                serde_json::from_value(report["plan"]["corner"]["position"].clone()).unwrap(),
+            );
+            assert_eq!(target, DVec3::new(-256.0, -256.0, 0.0));
+            let delta = target - source_position;
+            for (id, original) in originals {
+                let (_, brush) = subobject::solid(session.render_document(), id).unwrap();
+                let moved = subobject::topology(brush).unwrap();
+                for vertex in original.vertices {
+                    let point = moved.vertices[moved.resolve(&vertex.sides).unwrap()[0]].position;
+                    assert!(point.abs_diff_eq(vertex.position + delta, 1e-8));
+                }
+            }
+            assert_eq!(session.document().vmf(), &source);
+            assert_eq!(session.document().undo_labels().count(), history);
+            assert_eq!(
+                session.transform_preview().unwrap().transform.texture_lock,
+                texture_lock
+            );
+            for old in source
+                .solids()
+                .filter(|brush| session.document().owner_of_solid(brush.id) == Some(moving))
+            {
+                let (_, new) = subobject::solid(session.render_document(), old.id).unwrap();
+                for (old, new) in old.sides.iter().zip(&new.sides) {
+                    if texture_lock {
+                        assert!(
+                            (map_core::texel_uv(old, old.plane.0[0])
+                                - map_core::texel_uv(new, new.plane.0[0]))
+                            .length()
+                                < 1e-8
+                        );
+                    } else {
+                        assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+                    }
+                }
+            }
+            session
+                .apply_surface_placement(actor, report["token"].as_u64().unwrap())
+                .unwrap();
+            assert_eq!(session.document().undo_labels().count(), history + 1);
+            let again = session
+                .preview_surface_placement(
+                    actor,
+                    &[moving],
+                    Method::BrushCorner,
+                    Some(ray),
+                    options,
+                )
+                .unwrap();
+            assert_eq!(again["plan"]["translation"], json!([0.0, 0.0, 0.0]));
+            session
+                .apply_surface_placement(actor, again["token"].as_u64().unwrap())
+                .unwrap();
+            assert_eq!(session.document().undo_labels().count(), history + 1);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document().vmf(), &source);
+        }
+    }
+}
+
+#[test]
+fn corner_snap_rejections_preserve_owned_plan_and_pick_state() {
+    let (mut session, selected) = fixture();
+    let ObjectId::Solid(solid) = selected else {
+        unreachable!()
+    };
+    let options = corner_options(&session, solid);
+    let ray = Ray {
+        origin: DVec3::new(-200.0, -200.0, 100.0),
+        direction: DVec3::NEG_Z,
+    };
+    let report = session
+        .preview_surface_placement(
+            Actor::User,
+            &[selected],
+            Method::BrushCorner,
+            Some(ray),
+            options.clone(),
+        )
+        .unwrap();
+    let mut edge = options.clone();
+    edge.source_corner.as_mut().unwrap().sides.truncate(2);
+    let mut repeated = options.clone();
+    let source = repeated.source_corner.as_mut().unwrap();
+    source.sides.push(source.sides[0]);
+    let mut wrong = options.clone();
+    wrong.source_corner =
+        corner_options(&session, session.document().vmf().world.solids[0].id).source_corner;
+    for invalid in [
+        Options {
+            align: true,
+            ..options.clone()
+        },
+        Options {
+            offset: 1.0,
+            ..options.clone()
+        },
+        edge,
+        repeated,
+        wrong,
+    ] {
+        assert!(
+            session
+                .preview_surface_placement(
+                    Actor::Agent,
+                    &[selected],
+                    Method::BrushCorner,
+                    Some(ray),
+                    invalid
+                )
+                .is_err()
+        );
+        assert_eq!(session.surface_placement(), report);
+    }
+    assert!(
+        session
+            .preview_surface_placement(
+                Actor::Agent,
+                &[selected],
+                Method::BrushCorner,
+                None,
+                options.clone()
+            )
+            .is_err()
+    );
+    assert_eq!(session.surface_placement(), report);
+    let pick = session
+        .begin_surface_placement_pick(&[selected], options)
+        .unwrap();
+    assert_eq!(pick["method"], "brush_corner");
+    let token = pick["token"].as_u64().unwrap();
+    assert!(
+        session
+            .pick_surface_placement(
+                Actor::Agent,
+                token,
+                Ray {
+                    origin: DVec3::splat(1000.0),
+                    direction: DVec3::Z
+                }
+            )
+            .is_err()
+    );
+    assert!(session.surface_placement()["picking"].as_bool().unwrap());
+    session
+        .pick_surface_placement(Actor::User, token, ray)
+        .unwrap();
+    assert_eq!(
+        session.surface_placement()["plan"]["method"],
+        "brush_corner"
+    );
+}
+
+#[test]
+fn corner_snap_owner_overflow_rejects_before_replacing_a_valid_plan() {
+    let (mut session, selected) = fixture();
+    let ObjectId::Solid(solid) = selected else {
+        unreachable!()
+    };
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(65520.0, -8.0, -8.0),
+            DVec3::new(65536.0, 8.0, 8.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    session
+        .select(&[selected], super::super::SelectMode::Replace)
+        .unwrap();
+    let (_, brush) = subobject::solid(session.document(), solid).unwrap();
+    let shape = subobject::topology(brush).unwrap();
+    let vertex = shape
+        .vertices
+        .iter()
+        .min_by(|a, b| a.position.x.total_cmp(&b.position.x))
+        .unwrap();
+    let options = Options {
+        source_corner: Some(Component {
+            solid,
+            sides: vertex.sides.clone(),
+        }),
+        ..options()
+    };
+    let good = session
+        .preview_surface_placement(
+            Actor::User,
+            &[selected],
+            Method::BrushCorner,
+            Some(Ray {
+                origin: DVec3::new(-200.0, -200.0, 100.0),
+                direction: DVec3::NEG_Z,
+            }),
+            options.clone(),
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let error = session
+        .preview_surface_placement(
+            Actor::Agent,
+            &[selected],
+            Method::BrushCorner,
+            Some(Ray {
+                origin: DVec3::new(65540.0, 0.0, 0.0),
+                direction: DVec3::NEG_X,
+            }),
+            options,
+        )
+        .unwrap_err();
+    assert!(error.contains("outside ±65536"));
+    assert_eq!(session.surface_placement(), good);
+    assert_eq!(session.document().vmf(), &source);
+}
+
+#[test]
+fn corner_snap_rejects_the_first_supported_model_mesh_without_reaching_the_floor() {
+    let Ok(game) = crate::startup::mount_game(None) else {
+        return;
+    };
+    let mut session = Session::new(Ok(game));
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(-256.0, -256.0, -16.0),
+            DVec3::new(256.0, 256.0, 0.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let selected = session
+        .create_block(
+            Actor::User,
+            DVec3::new(-8.0, -8.0, 32.0),
+            DVec3::new(8.0, 8.0, 48.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    session
+        .create_entity(
+            Actor::User,
+            "prop_dynamic",
+            Some(DVec3::new(96.0, 0.0, 0.0)),
+            BTreeMap::from([(
+                "model".into(),
+                "models/props_junk/wood_crate001a.mdl".into(),
+            )]),
+        )
+        .unwrap();
+    session
+        .select(&[selected], super::super::SelectMode::Replace)
+        .unwrap();
+    let ObjectId::Solid(solid) = selected else {
+        unreachable!()
+    };
+    let options = corner_options(&session, solid);
+    let good = session
+        .preview_surface_placement(
+            Actor::User,
+            &[selected],
+            Method::BrushCorner,
+            Some(Ray {
+                origin: DVec3::new(-128.0, -128.0, 100.0),
+                direction: DVec3::NEG_Z,
+            }),
+            options.clone(),
+        )
+        .unwrap();
+    let error = session
+        .preview_surface_placement(
+            Actor::Agent,
+            &[selected],
+            Method::BrushCorner,
+            Some(Ray {
+                origin: DVec3::new(96.0, 0.0, 200.0),
+                direction: DVec3::NEG_Z,
+            }),
+            options,
+        )
+        .unwrap_err();
+    assert!(error.contains("first visible hit"));
+    assert_eq!(session.surface_placement(), good);
+}
+
+#[test]
+fn corner_snap_target_queries_share_visibility_and_reject_terrain_or_ambiguous_hits() {
+    for mode in [
+        "owned",
+        "owner_hidden",
+        "child_hidden",
+        "tools",
+        "outside",
+        "terrain",
+        "ambiguous",
+    ] {
+        let (mut session, selected) = fixture();
+        let ObjectId::Solid(source_solid) = selected else {
+            unreachable!()
+        };
+        let (owner, target) = session
+            .edit(Actor::User, "corner target", |tx| {
+                let solid = map_core::edit::block_solid(
+                    tx,
+                    DVec3::new(-200.0, -200.0, 16.0),
+                    DVec3::new(-160.0, -160.0, 24.0),
+                    if mode == "tools" {
+                        "tools/toolsnodraw"
+                    } else {
+                        "brick/test"
+                    },
+                )?;
+                let id = solid.id;
+                let owner =
+                    map_core::edit::create_entity(tx, "func_detail", None, &[], vec![solid])?;
+                Ok((owner, id))
+            })
+            .unwrap();
+        let ObjectId::Entity(owner_id) = owner else {
+            unreachable!()
+        };
+        if matches!(mode, "owner_hidden" | "child_hidden" | "ambiguous") {
+            session
+                .edit(Actor::User, "target visibility or identity", |tx| {
+                    let entity = tx.entity_mut(owner_id)?;
+                    match mode {
+                        "owner_hidden" => entity.hidden = true,
+                        "child_hidden" => entity.solids[0].hidden = true,
+                        "ambiguous" => entity.solids[0].sides[1].id = entity.solids[0].sides[0].id,
+                        _ => unreachable!(),
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+        if mode == "terrain" {
+            let face = map_core::surface::FaceId {
+                solid: target,
+                side: session.document().entity(owner_id).unwrap().solids[0].sides[0].id,
+            };
+            session
+                .edit(Actor::User, "target terrain", |tx| {
+                    map_core::displacement::edit::create(tx, &[face], 2, 0)
+                })
+                .unwrap();
+        }
+        if mode == "tools" {
+            let mut view = session.view;
+            view.tool_textures = false;
+            session.set_view(view);
+        }
+        if mode == "outside" {
+            let stamp = session.working_region_stamp();
+            session
+                .set_working_region(
+                    Actor::User,
+                    super::super::working_region::Action::Set {
+                        bounds: [DVec3::splat(-32.0), DVec3::splat(64.0)],
+                        enabled: true,
+                    },
+                    &stamp,
+                )
+                .unwrap();
+        }
+        let options = corner_options(&session, source_solid);
+        let good = session
+            .preview_surface_placement(
+                Actor::User,
+                &[selected],
+                Method::BrushCorner,
+                Some(Ray {
+                    origin: DVec3::new(-240.0, -240.0, 100.0),
+                    direction: DVec3::NEG_Z,
+                }),
+                options.clone(),
+            )
+            .unwrap();
+        let result = session.preview_surface_placement(
+            Actor::Agent,
+            &[selected],
+            Method::BrushCorner,
+            Some(Ray {
+                origin: DVec3::new(-180.0, -180.0, 100.0),
+                direction: DVec3::NEG_Z,
+            }),
+            options,
+        );
+        if matches!(mode, "terrain" | "ambiguous") {
+            assert!(result.is_err(), "{mode}");
+            assert_eq!(session.surface_placement(), good);
+        } else {
+            let report = result.unwrap();
+            if mode == "owned" {
+                assert_eq!(report["plan"]["target"], object_id(owner));
+            } else {
+                assert_ne!(report["plan"]["target"], object_id(owner), "{mode}");
+            }
+        }
     }
 }
 

@@ -1,8 +1,9 @@
 import {Button,CheckBox,ComboBox,LineEdit} from "std-widgets.slint";
 
 export component PlacementWindow inherits Window {
-    title:"Place on surface";preferred-width:560px;preferred-height:520px;
+    title:"Place on surface";preferred-width:560px;preferred-height:640px;
     in property <string> selection;
+    in property <string> source-corner;
     in-out property <int> method;
     in-out property <bool> align:false;
     in-out property <bool> texture-lock:true;
@@ -23,19 +24,20 @@ export component PlacementWindow inherits Window {
             HorizontalLayout {
                 spacing:10px;
                 Text {text:"Target";vertical-alignment:center;width:70px;}
-                ComboBox {horizontal-stretch:1;model:["Floor","Ceiling","Pick surface"];current-index<=>root.method;selected=>{root.invalidate();}}
+                ComboBox {horizontal-stretch:1;model:["Floor","Ceiling","Pick surface","Snap selected corner"];current-index<=>root.method;selected=>{if root.method==3{root.align=false;root.offset="0";}root.invalidate();}}
             }
+            if root.method==3:Text {text:"Source corner · "+root.source-corner+"\nTranslates only; no normal offset or grid rounding.";wrap:word-wrap;color:#aeb8c6;}
             HorizontalLayout {
                 spacing:10px;
                 Text {text:"Offset";vertical-alignment:center;width:70px;}
-                LineEdit {width:110px;text<=>root.offset;input-type:decimal;edited=>{root.invalidate();}}
+                LineEdit {width:110px;enabled:root.method!=3;text<=>root.offset;input-type:decimal;edited=>{root.invalidate();}}
                 Text {text:"units away from surface";vertical-alignment:center;color:#aeb8c6;}
             }
-            CheckBox {text:"Align local up to surface";checked<=>root.align;toggled=>{root.invalidate();}}
+            CheckBox {text:"Align local up to surface";enabled:root.method!=3;checked<=>root.align;toggled=>{root.invalidate();}}
             CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
             HorizontalLayout {
                 spacing:10px;
-                Button {text:root.method==2 ? "Pick surface" : "Preview placement";clicked=>{root.preview();}}
+                Button {text:root.method==3 ? "Pick target corner" : root.method==2 ? "Pick surface" : "Preview placement";clicked=>{root.preview();}}
                 Button {text:"Frame preview";enabled:root.ready;clicked=>{root.frame();}}
             }
             Text {text:root.summary;wrap:word-wrap;color:#d6deea;}

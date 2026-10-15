@@ -366,6 +366,15 @@ python3 -B scripts/validate_surface_placement.py --output /tmp/hammerr-surface-p
 
 Checks shared floor/ceiling and ray placement, actual model support/contact and model targets, hidden-target filtering, terrain triangle normals, helper fallback, source/history/camera preservation, failed-preview retention, stale/foreign ownership, Cancel/Undo/Redo/reopen and native entity transforms through identical foreground/background builds. Core checks cover brush/terrain/model normals; software UI checks drive picking, changed-settings review, Apply and foreign-preview Cancel without a desktop.
 
+The same validator also checks a rotated fractional source corner, exact target
+coincidence, unchanged committed source/history during preview, rejected options
+preserving the token, repeated no-op Apply, Undo and shared corner pick/cancel.
+Session regressions cover multi-child owner rigidity, texture policy,
+deterministic target ties, visibility filters, unsupported/ambiguous targets and
+whole-owner range rejection. Software UI exercises **Snap selected corner**,
+captured source review, disabled alignment/offset controls and Apply/Cancel;
+`HAMMERR_UI_SNAPSHOTS` writes `vertex-snap.png`.
+
 ```sh
 python3 -B scripts/validate_polygon_brushes.py --output /tmp/hammerr-polygon-brushes-check
 ```

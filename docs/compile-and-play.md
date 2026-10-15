@@ -142,7 +142,7 @@ Limits: the same area-boundary limits as plain areaportals apply. Model referenc
 With **Direct LDR**:
 
 - `light` and `light_spot` support static, switchable and animated appearances. `light_environment` remains static. All are baked in color.
-- Opaque world brushes, detail brushes and terrain cast shadows.
+- Opaque world brushes, detail brushes, terrain and [static-prop meshes](prop-shadows.md) cast shadows.
 - Rendered brush entities receive pivot-aware direct lightmaps that move with the model. Their own brushes can shadow one another; they do not cast permanent shadows into the world.
 - Each face uses its [lightmap scale and assigned smoothing groups](textures.md#face-lighting). World/detail brush smoothing retains the same fan across lightmap subdivisions.
 - Terrain is lit using its real raised surface, with smooth normals within patches and across matching equal-power full edges. The viewport uses the same normal construction.
@@ -192,7 +192,7 @@ Limits: at most 32 named light groups and four contributing styles per face, inc
 | --- | --- |
 | ![One reflected styled-light pass on the shadowed model](images/styled-bounce-on.png) | ![Four reflected styled-light passes on the same model](images/four-bounce-on.png) |
 
-Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate models do not cast permanent bounce shadows or supply reflected light. Props, more than four bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
+Limits: up to four diffuse bounces from world/detail/terrain lightmaps, preserving each static, switchable or animated light style, using average base-texture reflectivity. Source reflectivity must be between zero and one. Sky is handled by direct sky lighting and is excluded from the bounce gather. Translucent surfaces cast opaque shadows. Brush entities receive world bounce and block it with their own geometry; separate brush models do not cast permanent bounce shadows or supply reflected light. Static-prop meshes block reflected rays but do not supply reflected light. More than four bounces, HDR, emissive materials and baked prop lightmaps remain unfinished. Baked model lighting moves with the model and does not relight as it moves. The shared 100-million lighting work and 16 MiB lightmap budgets apply; exceeded limits keep the previous BSP. Use fewer bounces, lower sampling, larger lightmap scales or **Direct only** to reduce work. **Fullbright** retains this setting but performs no lighting work.
 
 #### Normal-map lighting
 
@@ -236,7 +236,7 @@ A `light_environment` adds sunlight and soft sky light:
 
 ![Soft sun shadow on the floor in Counter-Strike: Source](images/soft-sun.png)
 
-Sunlight requires sky in the sampled sun directions, while ambient samples all visible sky directions. A closed room stays dark, and opaque brushes and terrain block both. Larger sun angles widen the transition from shadow to light; higher quality reduces stepping in that transition. The sun's central direction still determines surface brightness. Higher sky quality takes longer and can reach the compiler's lighting-work limit.
+Sunlight requires sky in the sampled sun directions, while ambient samples all visible sky directions. A closed room stays dark, and opaque brushes, terrain and static-prop meshes block both. Larger sun angles widen the transition from shadow to light; higher quality reduces stepping in that transition. The sun's central direction still determines surface brightness. Higher sky quality takes longer and can reach the compiler's lighting-work limit.
 
 #### Limits and errors
 
@@ -260,9 +260,9 @@ Ambient probes let models pick up reflected light from world surfaces and the sk
 
 Fast keeps one probe per open world leaf. Balanced and Detailed select up to four and eight probes, more than 128 units apart. Small leaves can still need only one. Higher quality adds spatial coverage and preserves more local detail.
 
-Probes avoid detail solids and space below terrain. They gather reflected world and terrain lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby rays interpolate local lightmap samples; distant rays blend toward face averages. Terrain follows its displaced surface, including rotated patch origins. Diagnostics report leaves without a safe probe.
+Probes avoid detail solids and space below terrain. They gather reflected world and terrain lightmap colors and visible sky radiance, without adding direct point/spot lights twice. Nearby rays interpolate local lightmap samples; distant rays blend toward face averages. Terrain follows its displaced surface, including rotated patch origins. Opaque static-prop meshes block probe rays to lightmaps and sky. Diagnostics report leaves without a safe probe.
 
-Limits: adaptive refinement, static-prop occlusion and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. The bake is capped at 65,536 probes and the shared lighting work limit; exceeding either preserves the previous build. These probes read the baked world lightmaps, including the optional diffuse bounce; they do not produce additional world bounces.
+Limits: adaptive refinement, switching ambient cubes, reflected prop sources and baked prop lightmaps remain unfinished. Probes below terrain sheets, including ceiling-like patches, can be omitted. The bake is capped at 65,536 probes and the shared lighting work limit; exceeding either preserves the previous build. These probes read the baked world lightmaps, including the optional diffuse bounce; they do not produce additional world bounces.
 
 ### Physics
 
@@ -310,9 +310,12 @@ Not yet: reflections are not baked. Material binding, face lists and capture are
 
 - `prop_static` compiles its model, position and rotation (fractional values included), collision setting, skin, fading and lighting origin.
 - Models must be MDL version 44 or 48 and marked `$staticprop`. **Use VPhysics** also needs the model's matching `.phy` file.
-- Invalid assets, scaling, lightmap requests and ambiguous lighting origins fail with a diagnostic.
+- **Direct LDR** traces actual LOD0 model triangles for direct, sun/sky, bounced-light and model-ambient shadows. Shadow casting is independent of collision mode; native `disableshadows` turns it off, and hidden props are omitted. See [Static-prop mesh shadows](prop-shadows.md).
+- Shadow meshes need the model's matching `.vvd` and `.dx90.vtx` companions. Missing or malformed geometry fails with a prop-specific diagnostic and preserves the previous BSP; bounds are never substituted for the mesh. Fullbright and disabled-shadow props do not load these companions.
+- Shadows are opaque and two-sided. The selected skin determines material checks; alpha/translucent/additive materials, nonstandard shaders and animation/conditional blocks produce approximation warnings. Missing materials also produce an opaque-shadow warning.
+- Invalid assets, scaling, lightmap requests and ambiguous lighting origins fail with a diagnostic. **Build details…** reports participating props, triangles and disabled props under **Prop mesh shadows**.
 
-Not yet: baked prop lighting, prop shadows and exact placement in the BSP tree.
+Not yet: texture-alpha/translucent shadows, per-vertex/per-texel prop lighting, reflected prop sources, animated-prop shadows and exact placement in the BSP tree. Mesh preparation and ray traversal share the bounded, cancellable lighting work budget; the [mesh-shadow limits](prop-shadows.md#limits) also bound geometry and asset reads.
 
 ### Terrain (displacements)
 

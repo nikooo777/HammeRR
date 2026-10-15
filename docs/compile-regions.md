@@ -3,7 +3,7 @@
 # Compile regions
 
 Build a sealed part of a brush map while keeping the full source editable.
-The compiler adds six solid boundary slabs to its temporary input; it never
+The compiler adds six black solid boundary slabs to its temporary input; it never
 inserts them into your map.
 
 ## Choose a region
@@ -56,13 +56,12 @@ pending draft stale. Preview it again before applying.
 - Intersecting world and detail brushes stay whole. Runtime brush entities
   stay whole when their resolved pivot is inside; origin brushes take priority
   over explicit origins. Point entities use their origins. Originless global
-  entities and the sun remain. Hidden objects remain excluded.
+  entities, the sun and water LOD controllers remain. Sun and water-control
+  markers keep their positions and settings even outside the region.
+  Hidden objects remain excluded.
 - References are retained unchanged. Targets outside the region may be absent.
   The solid boundary can hide leaks, block views and change light or sound;
   region output is for partial-map work.
-- Keep sun markers and water LOD controllers inside the region. An outside sun
-  marker currently causes a leak diagnostic; an outside water controller is
-  omitted and the compiler supplies default distances.
 - Fully contained structural world water retains native water leaves and engine
   fluid bodies. The compiler's existing flat-top, overlap and material limits
   still apply. Entirely outside water is omitted.
@@ -71,7 +70,8 @@ pending draft stale. Preview it again before applying.
   detail/model water and boundary-crossing water are also unsupported. These
   cases stop compilation and preserve prior output.
 - At most 16,384 source objects, 65,536 source sides and 128 sides per brush.
-  Bounds, source IDs and the mounted solid nodraw material must be valid.
+  Bounds, source IDs and the mounted solid rendering `tools/toolsblack` material
+  must be valid. Missing or incompatible boundary assets stop the build.
 - Imported legacy cordons and a single enabled box under active plural cordons
   can compile. Plural or multiple records need **Preview clear** and
   **Apply region** before authoring a replacement. Clearing is undoable.

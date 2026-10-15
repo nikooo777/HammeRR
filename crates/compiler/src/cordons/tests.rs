@@ -14,6 +14,11 @@ fn fixture() -> (tempfile::TempDir, GameFs, Vmf) {
         "LightmappedGeneric { %compilenodraw 1 }",
     )
     .unwrap();
+    std::fs::write(
+        directory.path().join("materials/tools/toolsblack.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
     let mut game = common::empty_game();
     game.game_dir = directory.path().to_owned();
     game.base_dir = directory.path().to_owned();
@@ -155,7 +160,7 @@ fn contained_world_water_compiles_but_crossing_and_entity_liquids_preserve_prior
                 tx,
                 DVec3::new(-128.0, 16.0, 0.0),
                 DVec3::new(128.0, 128.0, 64.0),
-                SHELL_MATERIAL,
+                "tools/toolsnodraw",
             )?
             else {
                 unreachable!()
@@ -227,6 +232,126 @@ fn contained_world_water_compiles_but_crossing_and_entity_liquids_preserve_prior
             .omitted
             .contains(&format!("solid:{id}"))
     );
+}
+
+#[test]
+fn global_markers_keep_authored_origins_without_seeding_exterior_region_leaks() {
+    let (_directory, game, source) = fixture();
+    let mut document = Document::new(source);
+    let ids = document
+        .edit("outside global markers", |tx| {
+            ["light_environment", "water_lod_control"]
+                .into_iter()
+                .map(|classname| {
+                    let properties = if classname == "water_lod_control" {
+                        vec![
+                            ("cheapwaterstartdistance".into(), "123".into()),
+                            ("cheapwaterenddistance".into(), "456".into()),
+                        ]
+                    } else {
+                        Vec::new()
+                    };
+                    edit::create_entity(
+                        tx,
+                        classname,
+                        Some(DVec3::splat(192.0)),
+                        &properties,
+                        Vec::new(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap();
+    let source = document.into_vmf();
+    let output = crate::compile(&source, &game);
+    assert!(
+        output.bsp.is_some() && output.leak.is_none(),
+        "{:?}",
+        output.report
+    );
+    let text = output.bsp.as_ref().unwrap().entities().unwrap();
+    for classname in ["light_environment", "water_lod_control"] {
+        assert_eq!(
+            text.matches(&format!("\"classname\" \"{classname}\""))
+                .count(),
+            1
+        );
+    }
+    assert_eq!(text.matches("\"origin\" \"192 192 192\"").count(), 2);
+    assert!(text.contains("\"cheapwaterstartdistance\" \"123\""));
+    for id in ids {
+        let map_core::ObjectId::Entity(id) = id else {
+            unreachable!()
+        };
+        assert!(
+            output
+                .stats
+                .compile_region
+                .as_ref()
+                .unwrap()
+                .included
+                .contains(&format!("entity:{id}"))
+        );
+    }
+    let mut full = source.clone();
+    let bounds = compile_region::inspect(&source).unwrap().unwrap().bounds;
+    full.entities.retain(|entity| {
+        is_global(entity.classname().unwrap_or_default())
+            || entity.origin().is_none_or(|point| bounds.contains(point))
+    });
+    full.cordon = None;
+    let baseline = crate::compile(&full, &game).bsp.unwrap().to_bytes();
+    let mut document = Document::new(full);
+    document
+        .edit("disable", |tx| {
+            compile_region::apply(
+                tx,
+                Some(compile_region::Definition {
+                    enabled: false,
+                    bounds,
+                }),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        crate::compile(document.vmf(), &game)
+            .bsp
+            .unwrap()
+            .to_bytes(),
+        baseline
+    );
+}
+
+#[test]
+fn missing_or_non_rendering_boundary_material_never_substitutes_nodraw() {
+    let (_directory, game, source) = fixture();
+    let path = game.game_dir.join("previous.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    let material = game.game_dir.join("materials/tools/toolsblack.vmt");
+    for text in [
+        None,
+        Some("UnlitGeneric { %compilenodraw 1 }"),
+        Some("Water { $abovewater 1 }"),
+    ] {
+        if let Some(text) = text {
+            std::fs::write(&material, text).unwrap();
+        } else {
+            std::fs::remove_file(&material).unwrap();
+        }
+        let output = crate::compile(&source, &game);
+        assert!(output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("tools/toolsblack")),
+            "{:?}",
+            output.report
+        );
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    }
 }
 
 #[test]

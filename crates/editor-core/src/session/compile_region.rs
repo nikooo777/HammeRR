@@ -66,8 +66,8 @@ impl Session {
             "draft":self.compile_region.draft.as_ref().map(|draft| json!({"token":draft.token,"clear":draft.definition.is_none(),"region":definition_json(draft.definition),"valid":draft.generation==self.document_generation && draft.revision==self.document.revision()})),
             "suggested_bounds":{"mins":mins.to_array(),"maxs":maxs.to_array()},
             "limits":{"minimum_extent":compile_region::MIN_EXTENT,"coordinate":compile_region::MAX_COORDINATE,"shell_thickness":compile_region::SHELL_THICKNESS},
-            "help":"Region builds add a solid boundary and can hide full-map leaks. Water must fit completely inside the region and belong to the world. Terrain, slime, water in entities, overlays, areaportals and occluders require a full-map build.",
-            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals and the sun remain. Water must be fully contained and structural world geometry. Terrain, slime, detail/model water and consumed region helpers are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
+            "help":"Region builds add a black solid boundary and can hide full-map leaks. Water must fit completely inside the region and belong to the world. Terrain, slime, water in entities, overlays, areaportals and occluders require a full-map build.",
+            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals, sun and water LOD controls remain. Nonspatial sun/water controls preserve origins without seeding exterior region leaks. Water must be fully contained and structural world geometry. Terrain, slime, detail/model water and consumed region helpers are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
         })
     }
 

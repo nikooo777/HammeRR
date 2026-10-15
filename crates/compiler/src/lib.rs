@@ -534,11 +534,14 @@ fn build(
     control.advance(Stage::Portals)?;
     let mut portals = portals::build_controlled(&tree, &map.planes, control)?;
     control.advance(Stage::Flood)?;
+    let region_build = output.stats.compile_region.is_some();
     output.leak = portals::flood_controlled(
         &mut tree,
         &map.planes,
         &portals,
-        &map.entities,
+        map.entities
+            .iter()
+            .filter(|entity| !region_build || !cordons::is_global(&entity.classname)),
         &mut output.report,
         control,
     )?;

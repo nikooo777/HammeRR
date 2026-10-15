@@ -523,6 +523,7 @@ cargo test -p editor --bin editor compile_region_ui::tests
 python3 -B scripts/validate_compile_cordons.py --binary target/debug/hammerr-headless --output /tmp/hammerr-cordon-check
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-check --render --runtime
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-water-check --water --runtime
+python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-global-check --water --global-markers --runtime
 ```
 
 Compiler regressions cover native legacy/plural parsing, disabled identity,
@@ -536,6 +537,10 @@ captures an offscreen region guide; `--runtime` uses a private display with
 `--water` adds a contained world pool, crossing-volume publication guards,
 native fluid counters and a 60-second buoyancy observation above which the
 boundary traces remain dry. Water in detail/model brushes remains rejected.
+`--global-markers` places sun/water controls outside the region, verifies
+retained origins and authored distances, and checks exact shared output with
+the rendered black boundary. Compiler cases cover unavailable/incompatible
+boundary assets without a replacement material.
 The cordon script separately checks invalid imports and retained prior output.
 Use fresh output directories. Neither script sends desktop input.
 

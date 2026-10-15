@@ -43,10 +43,15 @@ impl Session {
     }
 
     fn recent_game_directory(&self) -> Option<PathBuf> {
-        self.game_error.is_none().then(|| {
-            std::fs::canonicalize(&self.game.game_dir)
-                .unwrap_or_else(|_| self.game.game_dir.clone())
-        })
+        if self.game_error.is_some() {
+            return None;
+        }
+        let path = if self.game.game_dir.is_absolute() {
+            self.game.game_dir.clone()
+        } else {
+            std::env::current_dir().ok()?.join(&self.game.game_dir)
+        };
+        Some(std::fs::canonicalize(&path).unwrap_or(path))
     }
 
     pub fn recent_maps(&self) -> Value {
@@ -323,6 +328,15 @@ mod tests {
         restarted.configure_recent_maps(Ok(directory.path().join("preferences")));
         restarted.open_recent_map(Actor::Agent, &first, false).unwrap();
         assert_eq!(restarted.compile_options(), retained);
+        restarted.open_recent_map(Actor::Agent, &second, false).unwrap();
+        assert_eq!(restarted.compile_options().lighting, compiler::LightingMode::Fullbright);
+        restarted.compiling = true;
+        restarted.open_recent_map(Actor::Agent, &first, false).unwrap();
+        assert_eq!(restarted.compile_options().lighting, compiler::LightingMode::Fullbright);
+        assert_eq!(restarted.recent_maps.entries[0].build_settings, BuildSettings::from_options(retained));
+        restarted.compiling = false;
+        restarted.open_recent_map(Actor::Agent, &first, false).unwrap();
+        assert_eq!(restarted.compile_options(), retained);
         restarted.recent_maps.entries[0].game_directory = Some(directory.path().join("other-game"));
         restarted.new_map(Actor::Agent, false).unwrap();
         restarted.set_compile_settings(Actor::Agent, "fullbright").unwrap();
@@ -331,6 +345,19 @@ mod tests {
         assert_eq!(restarted.compile_options().lighting, compiler::LightingMode::Fullbright);
         assert_eq!(restarted.recent_maps.entries[0], incompatible);
         assert_eq!(restarted.recent_maps()["entries"][0]["context_compatible"], false);
+        restarted.save(Actor::User, None).unwrap();
+        assert!(restarted.recent_maps.entries[0].game_directory.is_none());
+        assert_eq!(restarted.recent_maps()["entries"][0]["context_compatible"], true);
+    }
+
+    #[test]
+    fn relative_mounted_content_retains_an_absolute_game_identity() {
+        let session = Session::new(Ok(source_formats::gamefs::GameFs {
+            game_dir: PathBuf::new(),
+            base_dir: PathBuf::new(),
+            mounts: Vec::new(),
+        }));
+        assert_eq!(session.recent_game_directory(), Some(std::fs::canonicalize(".").unwrap()));
     }
 
     #[test]

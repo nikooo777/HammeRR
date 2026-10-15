@@ -24,7 +24,9 @@ Place selected objects against a floor, ceiling, brush face, terrain triangle or
 4. Review **Source corner**, **Target corner**, their guide marks and the **Move** delta. Use **Frame preview** to inspect the result. This operation translates without rotation, normal offset or grid rounding. **Keep textures attached** uses the same brush texture policy as ordinary placement.
 5. Click **Apply placement** for one Undo step, or **Cancel** to discard it. Repeating a coincident snap adds no history. Source and target must be visible under the current owner, tool and working-region filters.
 
-![Reviewed real source and target corners with an exact movement delta](images/vertex-snap.png)
+![Corner placement controls with source and target coordinates and movement delta](images/vertex-snap-controls.png)
+
+![A rotated brush corner snapped to a pedestal with shared placement guides](images/vertex-snap.png)
 
 MCP uses the existing placement calls with `method: "brush_corner"` and an
 explicit `source_corner: {solid, sides}` from `get_brush_components`. Opening the

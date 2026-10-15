@@ -206,6 +206,7 @@ mod tests {
                 .get_summary()
                 .contains("Working region active")
         );
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "working-region");
         let stamp = lock(&shared).working_region_stamp();
         controller.window.set_min_x("nan".into());
         controller.window.invoke_apply();
@@ -235,7 +236,6 @@ mod tests {
         ] {
             crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
         }
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "working-region");
         controller.window.invoke_clear();
         assert!(!lock(&shared).working_region_enabled());
         assert!(!lock(&shared).build_scene().vertices.is_empty());

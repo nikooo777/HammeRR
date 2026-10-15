@@ -159,6 +159,15 @@ python3 -B scripts/validate_object_picking.py --binary target/debug/hammerr-head
 
 ### Lighting and terrain checks
 
+Typed face-channel checks cover separate LDR/HDR styles and sample offsets,
+known native layouts, bounded allocations and unchanged legacy LDR bytes.
+The compiler still bakes LDR only.
+
+```sh
+cargo test -p source-formats --test lighting --test bsp --test overlays
+cargo test -p compiler --test direct_lighting --test bounced_lighting --test bump_lighting --test light_styles
+```
+
 Use the existing debug build to run these headless checks; rebuilding between scripts is unnecessary:
 
 ```sh

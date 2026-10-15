@@ -2,7 +2,7 @@
 
 # Overlays
 
-Overlays project a material onto world surfaces for markings, graffiti and signs without adding brush geometry. Fit a new overlay to one quad face, or compile an existing `info_overlay` imported from a VMF.
+Overlays project a material onto world surfaces for markings, graffiti and signs without adding brush geometry. Fit a new overlay to one quad face, refit an existing overlay to its bound face, or compile an `info_overlay` imported from a VMF.
 
 ## Create a fitted overlay
 
@@ -16,6 +16,17 @@ Overlays project a material onto world surfaces for markings, graffiti and signs
 ![Fitted overlay controls with the source outline and material thumbnail](images/overlay-authoring.png)
 
 **Overlay…** is also available without a face selection. **Review current draft** loads a shared preview and transfers its ownership to you, including a preview created through MCP with an explicit source face. Review before applying or cancelling that preview; keep the selection unchanged until applying it. Changing the map, source selection or shared draft requires another review or reopening **Overlay…**. Invalid fields preserve the previous valid draft and keep **Apply overlay** disabled.
+
+## Refit an existing overlay
+
+1. Select exactly one existing visible `info_overlay`, for example through **Object report…**. Its existing binding must contain one visible quad on a world or `func_detail` brush.
+2. Open **Overlay…** and click **Refit selected overlay**. The cyan outline previews the current full bound face, including geometry moved or reshaped since the overlay was created. Preview leaves the map and history unchanged.
+3. Check the target entity and outline. The dialog says **Refit existing overlay**; material, name, texture ranges, render order and fade fields are read-only for this operation.
+4. Click **Apply refit** to update that same entity's projection and origin in one Undo step. Its ID, raw setting strings, connections and other metadata are preserved. **Cancel** discards the owned preview.
+
+![Explicit refit controls with preserved settings](images/overlay-refit.png)
+
+**Review current draft** can load an MCP refit preview and transfers ownership before **Apply refit**. Refit keeps the existing face binding; it does not choose a different face. Multiside, hidden, missing, terrain, brush-model and nonquad bindings are rejected. After another source edit, preview refit again.
 
 ## Build an imported overlay
 
@@ -38,7 +49,7 @@ without replacing the previous BSP.
 ## Limits
 
 - New overlay fitting supports one visible planar world or `func_detail` quad. Terrain, brush models and faces with other corner counts cannot be used for new fitting. Imported overlays retain their broader compile support.
-- Editing an existing overlay's projection, corner handles, viewport material projection and automatic rebinding after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields remain read-only.
+- Refit supports only one existing bound world or `func_detail` quad. Corner handles, viewport material projection, new-face rebinding and automatic refitting after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside the explicit refit operation.
 - Targets must be visible, exposed world, detail or terrain faces. Hidden, absent, non-rendering and brush-model targets fail compilation. Hidden overlays are omitted.
 - Budgets: 1,024 overlays, 64 source sides and 64 compiled surface references per overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
 - Basis axes must be finite perpendicular unit vectors. Projection corners must form a convex quadrilateral within the compile coordinate bounds. Invalid material paths, projections or fade distances keep the previous BSP.

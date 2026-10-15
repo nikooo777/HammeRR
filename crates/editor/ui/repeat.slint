@@ -1,4 +1,4 @@
-import {Button,CheckBox,LineEdit,ScrollView,SpinBox} from "std-widgets.slint";
+import {Button,CheckBox,ComboBox,LineEdit,ScrollView,SpinBox} from "std-widgets.slint";
 
 component VectorRow inherits HorizontalLayout {
     in property <string> label;
@@ -17,9 +17,10 @@ component VectorRow inherits HorizontalLayout {
 }
 
 export component RepeatWindow inherits Window {
-    title:"Repeat array";preferred-width:660px;preferred-height:650px;
+    title:"Repeat array";preferred-width:660px;preferred-height:700px;
     in property <string> selection;
     in-out property <int> count:3;
+    in-out property <int> space-index:0;
     in-out property <string> move-x:"64";
     in-out property <string> move-y:"0";
     in-out property <string> move-z:"0";
@@ -47,10 +48,15 @@ export component RepeatWindow inherits Window {
                 SpinBox {minimum:1;maximum:64;value<=>root.count;edited=>{root.invalidate();}}
                 Text {text:"Originals stay in place";vertical-alignment:center;color:#aeb8c6;}
             }
+            HorizontalLayout {
+                spacing:10px;
+                Text {text:"Step space";vertical-alignment:center;}
+                ComboBox {model:["World", "Source local"];current-index<=>root.space-index;selected=>{root.invalidate();}}
+            }
             VectorRow {label:"Move step · units";value-x<=>root.move-x;value-y<=>root.move-y;value-z<=>root.move-z;edited=>{root.invalidate();}}
             VectorRow {label:"Rotate step · °";value-x<=>root.rotate-x;value-y<=>root.rotate-y;value-z<=>root.rotate-z;edited=>{root.invalidate();}}
             VectorRow {label:"Fixed world pivot";value-x<=>root.pivot-x;value-y<=>root.pivot-y;value-z<=>root.pivot-z;edited=>{root.invalidate();}}
-            Text {text:"Copy n rotates the originals by n × the step about this pivot, then moves by n × the world move step.";wrap:word-wrap;color:#aeb8c6;}
+            Text {text:root.space-index==1?"Copy n rotates then moves the originals by n × the steps in one fixed source frame, around the world pivot. The preview identifies the source; its original axes stay fixed for every copy.":"Copy n rotates the originals by n × the step about this pivot, then moves by n × the world move step.";wrap:word-wrap;color:#aeb8c6;}
             CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
             Text {text:"Names become unique name_copyN values. Exact internal entity links follow each copy; external links stay. Shared names and ambiguous internal links must be resolved first.";wrap:word-wrap;color:#aeb8c6;}
             Text {text:"Named sets with scripts or dynamic I/O cannot be repeated. Other custom metadata stays verbatim. Context notes copy within the map budget; saved partitions stay on originals.";wrap:word-wrap;color:#aeb8c6;}

@@ -338,6 +338,75 @@ pub fn fit(vmf: &Vmf, face: FaceId, mut options: Options) -> Result<Definition, 
     Ok(definition)
 }
 
+pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> {
+    vmf.validate_ids().map_err(|error| error.to_string())?;
+    let entity = vmf
+        .entities
+        .iter()
+        .find(|entity| entity.id == id)
+        .ok_or("Overlay entity does not exist")?;
+    if entity.hidden
+        || !entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))
+    {
+        return Err("Refit requires one visible info_overlay entity".into());
+    }
+    for key in [
+        "origin",
+        "sides",
+        "BasisOrigin",
+        "BasisNormal",
+        "BasisU",
+        "BasisV",
+        "uv0",
+        "uv1",
+        "uv2",
+        "uv3",
+    ] {
+        if entity.properties.get_all(key).count() > 1 {
+            return Err(format!("Overlay refit requires one {key} field"));
+        }
+    }
+    let existing = parse(entity)?;
+    let [side] = existing.sides.as_slice() else {
+        return Err("Overlay refit requires exactly one existing bound source side".into());
+    };
+    let solid = vmf
+        .solids()
+        .find(|solid| solid.sides.iter().any(|candidate| candidate.id == *side))
+        .ok_or("Overlay bound source side does not exist")?;
+    let face = FaceId {
+        solid: solid.id,
+        side: *side,
+    };
+    let definition = fit(vmf, face, existing.options)?;
+    Ok((face, definition))
+}
+
+pub fn refit(tx: &mut Transaction<'_>, id: u32) -> Result<ObjectId, EditError> {
+    let (face, definition) = fit_existing(tx.document().vmf(), id).map_err(EditError::Invalid)?;
+    let entity = tx.entity_mut(id)?;
+    for (key, value) in [
+        ("origin", definition.basis_origin),
+        ("BasisOrigin", definition.basis_origin),
+        ("BasisNormal", definition.basis_normal),
+        ("BasisU", definition.basis_u),
+        ("BasisV", definition.basis_v),
+    ] {
+        entity
+            .properties
+            .set(key, format_vec3(DVec3::from_array(value)));
+    }
+    entity.properties.set("sides", face.side.to_string());
+    for (index, point) in definition.uv_points.iter().enumerate() {
+        entity
+            .properties
+            .set(format!("uv{index}"), format_vec3(DVec3::from_array(*point)));
+    }
+    Ok(ObjectId::Entity(id))
+}
+
 pub fn create(
     tx: &mut Transaction<'_>,
     face: FaceId,

@@ -3,7 +3,7 @@ use std::{
     rc::Rc,
 };
 
-use glam::DVec3;
+use glam::{DMat3, DVec3};
 use map_core::{ObjectId, repeat::Options};
 use slint::ComponentHandle;
 
@@ -25,10 +25,10 @@ pub struct Controller {
     pub window: RepeatWindow,
     context: Rc<RefCell<Option<Context>>>,
     token: Rc<Cell<Option<u64>>>,
-    prepared: Rc<Cell<Option<Options>>>,
+    prepared: Rc<Cell<Option<(Options, bool)>>>,
 }
 
-fn options(window: &RepeatWindow) -> Result<Options, String> {
+fn options(window: &RepeatWindow) -> Result<(Options, bool), String> {
     let vector = |values: [slint::SharedString; 3]| {
         let mut result = DVec3::ZERO;
         for (index, value) in values.iter().enumerate() {
@@ -38,25 +38,34 @@ fn options(window: &RepeatWindow) -> Result<Options, String> {
         }
         Ok::<DVec3, String>(result)
     };
-    Ok(Options {
-        count: u32::try_from(window.get_count()).map_err(|_| "Choose a positive copy count")?,
-        translation: vector([
-            window.get_move_x(),
-            window.get_move_y(),
-            window.get_move_z(),
-        ])?,
-        rotation: vector([
-            window.get_rotate_x(),
-            window.get_rotate_y(),
-            window.get_rotate_z(),
-        ])?,
-        pivot: vector([
-            window.get_pivot_x(),
-            window.get_pivot_y(),
-            window.get_pivot_z(),
-        ])?,
-        texture_lock: window.get_texture_lock(),
-    })
+    let local = match window.get_space_index() {
+        0 => false,
+        1 => true,
+        _ => return Err("Choose World or Source local".into()),
+    };
+    Ok((
+        Options {
+            count: u32::try_from(window.get_count()).map_err(|_| "Choose a positive copy count")?,
+            translation: vector([
+                window.get_move_x(),
+                window.get_move_y(),
+                window.get_move_z(),
+            ])?,
+            rotation: vector([
+                window.get_rotate_x(),
+                window.get_rotate_y(),
+                window.get_rotate_z(),
+            ])?,
+            pivot: vector([
+                window.get_pivot_x(),
+                window.get_pivot_y(),
+                window.get_pivot_z(),
+            ])?,
+            texture_lock: window.get_texture_lock(),
+            basis: DMat3::IDENTITY,
+        },
+        local,
+    ))
 }
 
 fn validate(
@@ -86,6 +95,12 @@ fn present(window: &RepeatWindow, report: &serde_json::Value) {
         "{} additional copies · {} new objects",
         preview["count"], preview["object_count"]
     )];
+    if preview["space"] == "local" {
+        lines.push(format!(
+            "Source local · fixed frame from {}",
+            preview["frame_source"].as_str().unwrap_or_default()
+        ));
+    }
     if let Some(copies) = preview["copies"].as_array() {
         for copy in copies {
             lines.push(format!(
@@ -114,7 +129,7 @@ impl Controller {
         let window = RepeatWindow::new()?;
         window
             .window()
-            .set_size(slint::LogicalSize::new(660.0, 650.0));
+            .set_size(slint::LogicalSize::new(660.0, 700.0));
         let context = Rc::new(RefCell::new(None));
         let token = Rc::new(Cell::new(None));
         let prepared = Rc::new(Cell::new(None));
@@ -142,7 +157,12 @@ impl Controller {
                     let ids = validate(&session, &context, token.get())?;
                     let requested = options(&window)?;
                     let snapshot = session.repeat_stamp();
-                    let report = session.preview_repeat_array(&ids, requested, &snapshot)?;
+                    let report = session.preview_repeat_array_in_space(
+                        &ids,
+                        requested.0,
+                        requested.1,
+                        &snapshot,
+                    )?;
                     Ok::<_, String>((requested, report))
                 })();
                 match result {
@@ -286,6 +306,12 @@ impl Controller {
         } else {
             3
         });
+        self.window
+            .set_space_index(if resume && preview["space"] == "local" {
+                1
+            } else {
+                0
+            });
         self.window.set_move_x(translation.x.to_string().into());
         self.window.set_move_y(translation.y.to_string().into());
         self.window.set_move_z(translation.z.to_string().into());
@@ -337,26 +363,48 @@ mod tests {
             },
         )))
         .unwrap();
-        let (session, source) = crate::test_assets::repeat();
+        let (mut session, source) = crate::test_assets::repeat();
+        let ObjectId::Entity(id) = source else {
+            panic!()
+        };
+        session
+            .edit(Actor::User, "orient source", |tx| {
+                tx.entity_mut(id)?.properties.set("angles", "23 37 -11");
+                Ok(())
+            })
+            .unwrap();
         let before = session.document().vmf().clone();
         let history = session.document().undo_labels().count();
         let shared = Arc::new(Mutex::new(session));
         let controller = Controller::new(&shared).unwrap();
         controller.initialize(&lock(&shared)).unwrap();
+        assert_eq!(controller.window.get_space_index(), 0);
+        controller.window.set_space_index(1);
         controller.window.set_rotate_z("15".into());
         controller.window.invoke_preview();
         assert!(controller.window.get_ready());
         assert!(controller.window.get_summary().contains("array_part_copy3"));
+        assert!(controller.window.get_summary().contains("Source local"));
+        assert_eq!(lock(&shared).repeat_array()["preview"]["space"], "local");
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
         controller.window.show().unwrap();
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "repeat-array");
+        controller.window.set_space_index(0);
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        controller.window.set_space_index(1);
         controller.window.set_move_y("16".into());
         controller.window.invoke_invalidate();
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().vmf(), &before);
         controller.window.invoke_preview();
+        let local_preview = lock(&shared).render_document().vmf().clone();
+        controller.initialize(&lock(&shared)).unwrap();
+        assert_eq!(controller.window.get_space_index(), 1);
+        assert!(controller.window.get_ready());
         controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &local_preview);
         assert!(!controller.window.window().is_visible());
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
         lock(&shared).undo(Actor::User).unwrap();

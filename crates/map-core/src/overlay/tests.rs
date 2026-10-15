@@ -263,3 +263,155 @@ fn checked_imports_and_fitting_share_projection_and_option_validation() {
             .contains("side allocation budget")
     );
 }
+
+#[test]
+fn refit_updates_only_existing_projection_and_preserves_raw_imported_metadata() {
+    use source_formats::{
+        keyvalues::Node,
+        vmf::{Connection, Properties},
+    };
+
+    for detail in [false, true] {
+        let (mut document, face) = fixture(detail);
+        let ObjectId::Entity(id) = document
+            .edit("overlay", |tx| create(tx, face, options()))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let source_owner = document.owner_of_solid(face.solid).unwrap();
+        document
+            .edit("imported metadata and moved source", |tx| {
+                let entity = tx.entity_mut(id)?;
+                for (key, raw) in [
+                    ("material", "Materials/Decals/marking.VMT"),
+                    ("targetname", "  imported marking  "),
+                    ("RenderOrder", "03"),
+                    ("StartU", "01.000"),
+                    ("EndU", "00.000"),
+                    ("StartV", "-0.5000"),
+                    ("EndV", "1.5000"),
+                    ("fademindist", "016.000"),
+                    ("fademaxdist", "064.000"),
+                    ("custom_option", "opaque raw value"),
+                ] {
+                    entity.properties.set(key, raw);
+                }
+                entity.connections = Some(vec![Connection {
+                    output: "OnUser1".into(),
+                    value: "relay,Trigger,,0,-1".into(),
+                }]);
+                entity.editor = Some(Properties(vec![("color".into(), "1 2 3".into())]));
+                entity.extra.push(Node::block(
+                    "custom",
+                    vec![Node::string("keep", "verbatim")],
+                ));
+                edit::transform(
+                    tx,
+                    &[source_owner],
+                    edit::Transform {
+                        translation: DVec3::new(3.125, -2.375, 4.625),
+                        rotation: DVec3::new(7.25, -3.125, 2.625),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let (bound, expected) = fit_existing(&before, id).unwrap();
+        assert_eq!(bound, face);
+        assert_ne!(
+            parse(document.entity(id).unwrap()).unwrap().corners(),
+            expected.corners()
+        );
+        assert_eq!(
+            document.edit("Refit overlay", |tx| refit(tx, id)).unwrap(),
+            ObjectId::Entity(id)
+        );
+        let after = document.vmf().clone();
+        assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
+        let mut retained = document.entity(id).unwrap().clone();
+        let original = before
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        for key in [
+            "origin",
+            "sides",
+            "BasisOrigin",
+            "BasisNormal",
+            "BasisU",
+            "BasisV",
+            "uv0",
+            "uv1",
+            "uv2",
+            "uv3",
+        ] {
+            retained
+                .properties
+                .set(key, original.properties.get(key).unwrap());
+        }
+        assert_eq!(&retained, original);
+        assert_eq!(after.entities.len(), before.entities.len());
+        for original in before.solids() {
+            assert_eq!(
+                after
+                    .solids()
+                    .find(|solid| solid.id == original.id)
+                    .unwrap(),
+                original
+            );
+        }
+        assert_eq!(document.undo().unwrap().label, "Refit overlay");
+        assert_eq!(document.vmf(), &before);
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &after);
+    }
+}
+
+#[test]
+fn refit_rejects_ambiguous_hidden_missing_and_malformed_bindings_atomically() {
+    let (mut document, face) = fixture(false);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create(tx, face, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    for case in 0..6 {
+        let mut source = document.vmf().clone();
+        let other_side = source.world.solids[0]
+            .sides
+            .iter()
+            .find(|side| side.id != face.side)
+            .unwrap()
+            .id;
+        let overlay = source
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        match case {
+            0 => overlay
+                .properties
+                .set("sides", format!("{} {other_side}", face.side)),
+            1 => overlay.hidden = true,
+            2 => overlay.properties.set("sides", u32::MAX.to_string()),
+            3 => overlay.properties.0.push(("basisu".into(), "1 0 0".into())),
+            4 => overlay.properties.set("BasisNormal", "malformed"),
+            5 => source.world.solids[0].hidden = true,
+            _ => unreachable!(),
+        }
+        let mut invalid = Document::new(source);
+        let before = invalid.vmf().clone();
+        let revision = invalid.revision();
+        assert!(fit_existing(&before, id).is_err(), "case {case}");
+        assert!(
+            invalid.edit("invalid refit", |tx| refit(tx, id)).is_err(),
+            "case {case}"
+        );
+        assert_eq!(invalid.vmf(), &before);
+        assert_eq!(invalid.revision(), revision);
+    }
+}

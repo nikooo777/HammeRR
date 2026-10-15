@@ -17,6 +17,7 @@ struct Form {
     source: Option<FaceId>,
     token: Option<u64>,
     reviewed: Option<Options>,
+    refit: bool,
     snapshot: String,
     seen: String,
     serial: u64,
@@ -129,6 +130,11 @@ fn outline(value: &Value) -> Option<String> {
 }
 
 fn refresh_material(window: &OverlayWindow, session: &mut Session) {
+    if window.get_material().trim().is_empty() {
+        window.set_material_image(slint::Image::default());
+        window.set_material_detail("Choose an overlay material".into());
+        return;
+    }
     match session.material_preview(&window.get_material()) {
         Ok(preview) => {
             window.set_material_image(preview_image(&preview));
@@ -138,9 +144,9 @@ fn refresh_material(window: &OverlayWindow, session: &mut Session) {
                 format!("{} × {}", preview.width, preview.height).into()
             });
         }
-        Err(_) => {
+        Err(error) => {
             window.set_material_image(slint::Image::default());
-            window.set_material_detail("Choose an overlay material".into());
+            window.set_material_detail(error.into());
         }
     }
 }
@@ -153,7 +159,9 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     let context_refreshed = form.seen != snapshot;
     form.seen = snapshot.into();
     window.set_can_review(draft["valid"] == true);
-    window.set_can_preview(form.source.is_some() && form.snapshot == snapshot);
+    window.set_refit_mode(form.refit);
+    window.set_can_preview(!form.refit && form.source.is_some() && form.snapshot == snapshot);
+    window.set_can_refit(!state["selected_overlay"].is_null() && form.snapshot == snapshot);
     let matches = draft["token"].as_u64() == form.token && draft["owner"] == "you";
     window.set_ready(
         matches
@@ -164,7 +172,13 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     window.set_draft_label(if draft.is_null() {
         "No overlay draft · Fit / Preview leaves the map unchanged".into()
     } else if draft["valid"] != true {
-        "The shared draft is stale · reopen Overlay to fit the current face".into()
+        "The shared draft is stale · reopen Overlay to preview the current source".into()
+    } else if matches && form.refit {
+        format!(
+            "Refit {} · Apply refit updates this existing entity",
+            draft["entity"].as_str().unwrap_or("overlay")
+        )
+        .into()
     } else if matches {
         "Your fitted overlay draft · Apply overlay creates one entity".into()
     } else {
@@ -172,6 +186,8 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     });
     let display_source = if matches && draft["valid"] == true {
         &draft["source"]
+    } else if !state["selected_overlay"].is_null() {
+        &state["selected_overlay"]["source"]
     } else {
         &state["selected_source"]
     };
@@ -182,19 +198,25 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         )
         .into()
     } else {
-        state["selection_error"]
-            .as_str()
-            .unwrap_or("Select exactly one visible world or detail quad face")
-            .into()
+        state[if session.face_mode() {
+            "selection_error"
+        } else {
+            "refit_error"
+        }]
+        .as_str()
+        .unwrap_or("Select exactly one visible world or detail quad face")
+        .into()
     });
     let corners = if matches && draft["valid"] == true {
         &draft["corners"]
+    } else if !state["selected_overlay"].is_null() {
+        &state["selected_overlay"]["corners"]
     } else {
         &state["selected_source"]["corners"]
     };
     window.set_outline(outline(corners).unwrap_or_default().into());
     if form.snapshot != snapshot {
-        window.set_message("Map, selection or shared draft changed. Review current draft, or reopen Overlay to use the selected face.".into());
+        window.set_message("Map, selection or shared draft changed. Review current draft, or reopen Overlay to use the selected face or overlay.".into());
     } else if context_refreshed && window.get_ready() {
         window.set_message("".into());
     }
@@ -217,6 +239,7 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
     form.source = source(&draft["source"]);
     form.token = draft["token"].as_u64();
     form.reviewed = fields(window).ok();
+    form.refit = draft["operation"] == "refit";
     form.snapshot = state["snapshot"].as_str().unwrap_or_default().into();
     form.serial += 1;
 }
@@ -225,6 +248,9 @@ fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) 
     let result = (|| {
         let (source, snapshot) = {
             let form = form.borrow();
+            if form.refit {
+                return Err("Refit preserves existing settings. Use Apply refit or Cancel.".into());
+            }
             (
                 form.source
                     .ok_or("Select one world or detail quad face and reopen Overlay")?,
@@ -256,6 +282,27 @@ fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) 
     refresh(window, session, form);
 }
 
+fn preview_refit(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
+    let result = (|| {
+        let state = session.get_overlay_state();
+        let id = state["selected_overlay"]["id"]
+            .as_u64()
+            .and_then(|id| u32::try_from(id).ok())
+            .ok_or("Select one eligible existing overlay and reopen Overlay")?;
+        let snapshot = form.borrow().snapshot.clone();
+        session.preview_overlay_refit(Actor::User, id, &snapshot)
+    })();
+    match result {
+        Ok(state) => {
+            adopt(window, &state, form);
+            window.set_message("Review the cyan outline, then Apply refit. Existing settings and metadata are preserved.".into());
+        }
+        Err(error) => window.set_message(error.into()),
+    }
+    refresh_material(window, session);
+    refresh(window, session, form);
+}
+
 fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
     let token = form.borrow_mut().token.take();
     let state = session.get_overlay_state();
@@ -280,10 +327,17 @@ impl Controller {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || preview(&window.unwrap(), &mut lock(&shared), &form)
         });
+        window.on_refit({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || preview_refit(&window.unwrap(), &mut lock(&shared), &form)
+        });
         window.on_fit({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
                 let window = window.unwrap();
+                if form.borrow().refit {
+                    return;
+                }
                 window.set_u_start("0".into());
                 window.set_u_end("1".into());
                 window.set_v_start("0".into());
@@ -305,7 +359,7 @@ impl Controller {
                 match session.review_overlay(Actor::User, token) {
                     Ok(state) => {
                         adopt(&window, &state, &form);
-                        window.set_message("Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft.".into());
+                        window.set_message(if state["draft"]["operation"] == "refit" { "Refit draft loaded. Apply refit updates the existing entity; Cancel discards this reviewed draft." } else { "Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft." }.into());
                     }
                     Err(error) => window.set_message(error.into()),
                 }
@@ -328,14 +382,14 @@ impl Controller {
                 let Some(token) = token else {
                     window.set_ready(false);
                     window.set_message(
-                        "Fit / Preview or Review current draft before applying.".into(),
+                        "Preview or Review current draft before applying.".into(),
                     );
                     return;
                 };
                 match session.apply_overlay(Actor::User, token) {
-                    Ok(_) => {
+                    Ok(result) => {
                         *form.borrow_mut() = Form::default();
-                        window.set_message("Overlay created and selected. Undo removes it.".into());
+                        window.set_message(if result["operation"] == "refit" { "Overlay refitted and selected. Undo restores its previous projection." } else { "Overlay created and selected. Undo removes it." }.into());
                         refresh(&window, &session, &form);
                         let _ = window.hide();
                     }
@@ -369,11 +423,12 @@ impl Controller {
         form.source = source(&state["selected_source"]);
         form.snapshot = state["snapshot"].as_str().unwrap_or_default().into();
         form.reviewed = None;
+        form.refit = false;
         form.serial += 1;
         drop(form);
         load(&self.window, &Value::Null);
         self.window.set_material(material.into());
-        self.window.set_message(state["selection_error"].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.").into());
+        self.window.set_message(if !state["selected_overlay"].is_null() { "Refit selected overlay previews its existing face binding. Apply refit updates the same entity." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
         refresh_material(&self.window, session);
         refresh(&self.window, session, &self.form);
         self.window.show()
@@ -398,7 +453,8 @@ impl Controller {
         target: &MaterialTarget,
         material: &str,
     ) -> Result<(), String> {
-        if !self.window.window().is_visible()
+        if self.form.borrow().refit
+            || !self.window.window().is_visible()
             || target.snapshot != session.overlay_stamp()
             || target.serial != self.form.borrow().serial
         {
@@ -428,7 +484,12 @@ mod tests {
             },
         )))
         .unwrap();
-        let (_assets, game) = crate::test_assets::game();
+        let (assets, game) = crate::test_assets::game();
+        std::fs::write(
+            assets.path().join("materials/test/broken.vmt"),
+            "LightmappedGeneric { $basetexture }",
+        )
+        .unwrap();
         let mut session = Session::new(Ok(game));
         let ObjectId::Solid(solid) = session
             .create_block(
@@ -464,6 +525,12 @@ mod tests {
         assert!(controller.window.get_can_preview());
         assert!(!controller.window.get_outline().is_empty());
         assert!(controller.window.get_material_image().size().width > 0);
+        let material_error = lock(&shared).material_preview("test/broken").unwrap_err();
+        controller.window.set_material("test/broken".into());
+        controller.window.invoke_edited();
+        assert_eq!(controller.window.get_material_detail(), material_error);
+        controller.window.set_material("test/checker".into());
+        controller.window.invoke_edited();
         controller.window.set_targetname("floor_wayfinding".into());
         controller.window.set_render_order(1);
         controller.window.set_u_start("2".into());
@@ -603,6 +670,84 @@ mod tests {
         lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &original);
         lock(&shared).redo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &applied);
+        let overlay_id = overlay.id;
+        {
+            let mut session = lock(&shared);
+            session
+                .edit(Actor::Agent, "move bound face", |tx| {
+                    tx.entity_mut(overlay_id)?
+                        .properties
+                        .set("StartU", "01.000");
+                    map_core::edit::translate(
+                        tx,
+                        &[ObjectId::Solid(solid)],
+                        DVec3::new(3.125, -2.375, 4.625),
+                        true,
+                    )
+                })
+                .unwrap();
+            session
+                .select(
+                    &[ObjectId::Entity(overlay_id)],
+                    crate::session::SelectMode::Replace,
+                )
+                .unwrap();
+        }
+        let before_refit = lock(&shared).document().vmf().clone();
+        let history_refit = lock(&shared).document().undo_labels().count();
+        controller.show(&mut lock(&shared), "test/checker").unwrap();
+        assert!(controller.window.get_can_refit());
+        assert!(!controller.window.get_can_preview());
+        controller.window.invoke_refit();
+        assert!(controller.window.get_refit_mode());
+        assert!(controller.window.get_ready());
+        assert!(!controller.window.get_can_preview());
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "overlay-refit");
+        crate::ui::tests::assert_dialog_button_visible(&controller.window, "Apply refit");
+        crate::ui::tests::assert_dialog_button_visible(
+            &controller.window,
+            "Refit selected overlay",
+        );
+        assert_eq!(
+            lock(&shared).get_overlay_state()["draft"]["operation"],
+            "refit"
+        );
+        let target = controller.material_target(&lock(&shared));
+        assert!(
+            controller
+                .choose_material(&mut lock(&shared), &target, "test/other")
+                .is_err()
+        );
+        assert_eq!(lock(&shared).document().vmf(), &before_refit);
+        assert_eq!(
+            lock(&shared).document().undo_labels().count(),
+            history_refit
+        );
+        controller.window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &before_refit);
+        controller.show(&mut lock(&shared), "test/checker").unwrap();
+        controller.window.invoke_refit();
+        controller.window.invoke_apply();
+        let refitted = lock(&shared).document().vmf().clone();
+        assert_eq!(refitted.entities.len(), before_refit.entities.len());
+        assert_eq!(lock(&shared).selected_ids(), [ObjectId::Entity(overlay_id)]);
+        assert_eq!(
+            lock(&shared)
+                .document()
+                .entity(overlay_id)
+                .unwrap()
+                .properties
+                .get("StartU"),
+            Some("01.000")
+        );
+        assert_eq!(
+            lock(&shared).document().undo_labels().count(),
+            history_refit + 1
+        );
+        lock(&shared).undo(Actor::Agent).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before_refit);
+        lock(&shared).undo(Actor::Agent).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &applied);
         lock(&shared).undo(Actor::Agent).unwrap();
 

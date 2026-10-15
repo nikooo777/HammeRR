@@ -22,11 +22,14 @@ export component OverlayWindow inherits Window {
     in property <bool> ready;
     in property <bool> can-preview;
     in property <bool> can-review;
+    in property <bool> can-refit;
+    in property <bool> refit-mode;
     callback edited();
     callback browse-material();
     callback fit();
     callback preview();
     callback review();
+    callback refit();
     callback apply();
     callback cancel();
     forward-focus: keys;
@@ -37,7 +40,7 @@ export component OverlayWindow inherits Window {
         VerticalLayout {
             padding: 20px;
             spacing: 10px;
-            Text { text: "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
+            Text { text: root.refit-mode ? "Refit existing overlay" : "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
             ScrollView {
                 vertical-stretch: 1;
@@ -78,36 +81,36 @@ export component OverlayWindow inherits Window {
                     Text { text: "Material"; font-weight: 600; }
                     HorizontalLayout {
                         spacing: 10px;
-                        LineEdit { text <=> root.material; horizontal-stretch: 1; accessible-label: "Overlay material"; edited => { root.edited(); } }
-                        Button { text: "Browse materials…"; clicked => { root.browse-material(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.material; horizontal-stretch: 1; accessible-label: "Overlay material"; edited => { root.edited(); } }
+                        Button { text: "Browse materials…"; enabled: !root.refit-mode; clicked => { root.browse-material(); } }
                     }
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Name"; width: 72px; vertical-alignment: center; }
-                        LineEdit { text <=> root.targetname; placeholder-text: "Optional runtime name"; accessible-label: "Overlay name"; horizontal-stretch: 1; edited => { root.edited(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.targetname; placeholder-text: "Optional runtime name"; accessible-label: "Overlay name"; horizontal-stretch: 1; edited => { root.edited(); } }
                         Text { text: "Render order"; vertical-alignment: center; }
-                        SpinBox { minimum: 0; maximum: 3; value <=> root.render-order; accessible-label: "Overlay render order"; edited => { root.edited(); } }
+                        SpinBox { enabled: !root.refit-mode; minimum: 0; maximum: 3; value <=> root.render-order; accessible-label: "Overlay render order"; edited => { root.edited(); } }
                     }
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Texture"; width: 72px; vertical-alignment: center; }
                         Text { text: "U start"; vertical-alignment: center; }
-                        LineEdit { text <=> root.u-start; width: 80px; input-type: decimal; accessible-label: "Overlay U start"; edited => { root.edited(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.u-start; width: 80px; input-type: decimal; accessible-label: "Overlay U start"; edited => { root.edited(); } }
                         Text { text: "U end"; vertical-alignment: center; }
-                        LineEdit { text <=> root.u-end; width: 80px; input-type: decimal; accessible-label: "Overlay U end"; edited => { root.edited(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.u-end; width: 80px; input-type: decimal; accessible-label: "Overlay U end"; edited => { root.edited(); } }
                         Text { text: "V start"; vertical-alignment: center; }
-                        LineEdit { text <=> root.v-start; width: 80px; input-type: decimal; accessible-label: "Overlay V start"; edited => { root.edited(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.v-start; width: 80px; input-type: decimal; accessible-label: "Overlay V start"; edited => { root.edited(); } }
                         Text { text: "V end"; vertical-alignment: center; }
-                        LineEdit { text <=> root.v-end; width: 80px; input-type: decimal; accessible-label: "Overlay V end"; edited => { root.edited(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.v-end; width: 80px; input-type: decimal; accessible-label: "Overlay V end"; edited => { root.edited(); } }
                     }
-                    Text { text: "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                    Text { text: root.refit-mode ? "Refit preserves the existing material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Fade"; width: 72px; vertical-alignment: center; }
                         Text { text: "Start distance"; vertical-alignment: center; }
-                        LineEdit { text <=> root.fade-min; input-type: decimal; accessible-label: "Overlay fade start distance"; edited => { root.edited(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.fade-min; input-type: decimal; accessible-label: "Overlay fade start distance"; edited => { root.edited(); } }
                         Text { text: "End distance"; vertical-alignment: center; }
-                        LineEdit { text <=> root.fade-max; input-type: decimal; accessible-label: "Overlay fade end distance"; edited => { root.edited(); } }
+                        LineEdit { enabled: !root.refit-mode; text <=> root.fade-max; input-type: decimal; accessible-label: "Overlay fade end distance"; edited => { root.edited(); } }
                     }
                     Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
                     Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
@@ -124,9 +127,10 @@ export component OverlayWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 10px;
+                Button { text: "Refit selected overlay"; enabled: root.can-refit; clicked => { root.refit(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.refit-mode ? "Apply refit" : "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

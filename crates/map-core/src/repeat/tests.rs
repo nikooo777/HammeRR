@@ -8,6 +8,7 @@ fn options(count: u32) -> Options {
         translation: DVec3::X * 64.0,
         rotation: DVec3::ZERO,
         pivot: DVec3::ZERO,
+        basis: DMat3::IDENTITY,
         texture_lock: true,
     }
 }
@@ -145,6 +146,161 @@ fn nth_copy_uses_original_and_fixed_pivot_with_world_translation() {
         assert!(entity.origin().unwrap().abs_diff_eq(expected, 1e-8));
         assert_eq!(entity.properties.get("targetname"), Some(""));
     }
+}
+
+#[test]
+fn fixed_local_frame_rotates_each_original_and_keeps_attached_texels() {
+    let mut document = Document::empty();
+    let source = document
+        .edit("source", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(3.125, -7.25, 2.5),
+                DVec3::new(19.5, 3.75, 13.625),
+                "brick/wall",
+            )
+        })
+        .unwrap();
+    let ObjectId::Solid(id) = source else {
+        panic!()
+    };
+    let original = document.solid(id).unwrap().clone();
+    let basis = DMat3::from_rotation_z(0.61) * DMat3::from_rotation_y(-0.37);
+    let pivot = DVec3::new(-5.25, 8.125, 1.5);
+    let step = DVec3::new(4.5, -1.25, 2.0);
+    let result = document
+        .edit("local array", |tx| {
+            create(
+                tx,
+                &[source],
+                Options {
+                    basis,
+                    pivot,
+                    translation: step,
+                    rotation: DVec3::X * 90.0,
+                    ..options(3)
+                },
+                &Catalog::default(),
+            )
+        })
+        .unwrap();
+    assert_eq!(document.solid(id), Some(&original));
+    for copy in result.copies {
+        let ObjectId::Solid(id) = copy.objects[0] else {
+            panic!()
+        };
+        let target = document.solid(id).unwrap();
+        let factor = f64::from(copy.index);
+        for (before, after) in original.sides.iter().zip(&target.sides) {
+            for (point, actual) in before.plane.0.into_iter().zip(after.plane.0) {
+                let local = basis.transpose() * (point - pivot);
+                let rotated = match copy.index {
+                    1 => DVec3::new(local.x, -local.z, local.y),
+                    2 => DVec3::new(local.x, -local.y, -local.z),
+                    3 => DVec3::new(local.x, local.z, -local.y),
+                    _ => unreachable!(),
+                };
+                let expected = pivot + basis * (rotated + step * factor);
+                assert!(actual.abs_diff_eq(expected, 1e-8));
+                assert!(
+                    crate::texel_uv(before, point)
+                        .abs_diff_eq(crate::texel_uv(after, actual), 1e-8)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn invalid_repeat_frames_reject_the_complete_transaction() {
+    for basis in [
+        DMat3::ZERO,
+        DMat3::from_diagonal(DVec3::new(-1.0, 1.0, 1.0)),
+        DMat3::from_diagonal(DVec3::new(1.0, 1.01, 1.0)),
+        DMat3::from_cols(DVec3::NAN, DVec3::Y, DVec3::Z),
+    ] {
+        let mut document = Document::empty();
+        let source = entity(&mut document, "part", DVec3::ZERO);
+        let before = document.vmf().clone();
+        let history = document.undo_labels().count();
+        assert!(
+            document
+                .edit("invalid local array", |tx| create(
+                    tx,
+                    &[source],
+                    Options {
+                        basis,
+                        ..options(2)
+                    },
+                    &Catalog::default(),
+                ))
+                .is_err()
+        );
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.undo_labels().count(), history);
+    }
+}
+
+#[test]
+fn local_arrays_keep_generated_names_and_internal_parent_links() {
+    let mut document = Document::empty();
+    let parent = entity(&mut document, "parent", DVec3::X * 10.0);
+    let child = entity(&mut document, "child", DVec3::Y * 20.0);
+    document
+        .edit("parent link", |tx| {
+            tx.entity_mut(number(child))?
+                .properties
+                .set("parentname", "parent,attachment");
+            Ok(())
+        })
+        .unwrap();
+    let before = document.vmf().clone();
+    let basis = DMat3::from_rotation_z(0.61);
+    let result = document
+        .edit("local array", |tx| {
+            create(
+                tx,
+                &[child, parent],
+                Options {
+                    basis,
+                    ..options(2)
+                },
+                &Catalog::default(),
+            )
+        })
+        .unwrap();
+    for copy in result.copies {
+        let child = document.entity(number(copy.objects[0])).unwrap();
+        let parent = document.entity(number(copy.objects[1])).unwrap();
+        assert_eq!(
+            child.properties.get("parentname"),
+            Some(format!("parent_copy{},attachment", copy.index).as_str())
+        );
+        assert_eq!(
+            parent.properties.get("targetname"),
+            Some(format!("parent_copy{}", copy.index).as_str())
+        );
+        assert_eq!(copy.remapped_references, 1);
+        assert!(parent.origin().unwrap().abs_diff_eq(
+            DVec3::X * 10.0 + basis.x_axis * (64.0 * f64::from(copy.index)),
+            1e-8
+        ));
+    }
+    assert_eq!(
+        document.entity(number(parent)),
+        before
+            .entities
+            .iter()
+            .find(|entity| entity.id == number(parent))
+    );
+    assert_eq!(
+        document.entity(number(child)),
+        before
+            .entities
+            .iter()
+            .find(|entity| entity.id == number(child))
+    );
+    document.vmf().validate_ids().unwrap();
 }
 
 #[test]

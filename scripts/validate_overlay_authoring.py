@@ -118,6 +118,42 @@ def validate(client, output, render=False):
     client.call("apply_overlay", {"token": stale["draft"]["token"]}, error=True)
     check(detail(client, [plate]) == changed and not client.call("get_overlay_state")["draft"]["valid"], "Source edits invalidate Apply without changing the edited source")
     client.call("cancel_overlay", {"token": stale["draft"]["token"]})
+    client.call("select", {"ids": [overlay]})
+    eligible = client.call("get_overlay_state")
+    check(eligible["selected_overlay"]["entity"] == overlay and eligible["refit_error"] is None, "The selected existing overlay exposes its eligible original face binding")
+    original_overlay = detail(client, [overlay])[0]
+    refit_info = client.call("get_map_info")
+    before_refit_bsp = output / "before-refit.bsp"
+    client.call("compile_map", {"path": str(before_refit_bsp)})
+    refit = client.call("preview_overlay_refit", {"snapshot": eligible["snapshot"]})
+    check(refit["draft"]["operation"] == "refit" and refit["draft"]["entity"] == overlay and refit["draft"]["source"] == source, "Refit previews the same entity and its existing source without rebinding")
+    check(refit["draft"]["corners"] != state["draft"]["corners"], "Refit follows the moved tilted source face")
+    check(detail(client, [overlay])[0] == original_overlay and detail(client, [plate]) == changed and client.call("get_map_info")["undo"] == refit_info["undo"], "Refit preview preserves entities, source and history")
+    for invalid in [{"id": plate}, {"id": "entity:4000000000"}, {"id": overlay, "source": source}]:
+        client.call("preview_overlay_refit", {"snapshot": refit["snapshot"], **invalid}, error=True)
+        check(client.call("get_overlay_state")["draft"] == refit["draft"], f"Rejected refit preserves the valid draft: {invalid}")
+    refit_uncommitted = output / "refit-uncommitted.bsp"
+    client.call("compile_map", {"path": str(refit_uncommitted)})
+    check(refit_uncommitted.read_bytes() == before_refit_bsp.read_bytes() and client.call("get_overlay_state")["draft"]["valid"], "Uncommitted refit is excluded from compilation and keeps its token valid")
+    client.call("cancel_overlay", {"token": refit["draft"]["token"]})
+    check(detail(client, [overlay])[0] == original_overlay and client.call("get_map_info")["undo"] == refit_info["undo"], "Cancel refit preserves the original overlay and history")
+    refit = client.call("preview_overlay_refit", {"snapshot": client.call("get_overlay_state")["snapshot"], "id": overlay})
+    applied_refit = client.call("apply_overlay", {"token": refit["draft"]["token"]})
+    check(applied_refit["operation"] == "refit" and applied_refit["updated"] == overlay and "created" not in applied_refit, "Apply refit explicitly updates the same entity")
+    refitted = detail(client, [overlay])[0]
+    projection = {"origin", "sides", "basisorigin", "basisnormal", "basisu", "basisv", "uv0", "uv1", "uv2", "uv3"}
+    retained = lambda entity: [(key, value) for key, value in entity["properties"] if key.lower() not in projection]
+    check(retained(refitted) == retained(original_overlay) and dict(refitted["properties"])["sides"] == dict(original_overlay["properties"])["sides"], "Refit preserves raw settings and the existing side binding")
+    after_refit_info = client.call("get_map_info")
+    check(after_refit_info["point_entities"] == refit_info["point_entities"] and after_refit_info["selection"] == [overlay] and after_refit_info["undo"][0] == "Refit overlay" and len(after_refit_info["undo"]) == len(refit_info["undo"]) + 1, "Refit creates no entity and records exactly one Undo step")
+    check(detail(client, [plate]) == changed and source_path.read_bytes() == saved, "Refit leaves brush geometry and the saved VMF unchanged")
+    refit_bsp = output / "refitted.bsp"
+    client.call("compile_map", {"path": str(refit_bsp)})
+    check(len(records(refit_bsp.read_bytes(), 45, "<ihH64i22f")) == 1 and records(refit_bsp.read_bytes(), 60, "<2f") == fades, "Refitted projection compiles as one native overlay with unchanged fades")
+    client.call("undo")
+    check(detail(client, [overlay])[0] == original_overlay and detail(client, [plate]) == changed, "Undo refit restores the exact prior overlay and keeps the moved source")
+    client.call("redo")
+    check(detail(client, [overlay])[0] == refitted, "Redo restores the refitted projection on the same entity")
     return checks
 
 

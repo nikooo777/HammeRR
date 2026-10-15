@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use glam::DVec3;
+use glam::{DMat3, DVec3};
 use source_formats::fgd::Catalog;
 
 use crate::{Document, EditError, ObjectId, Transaction, connections, edit, references};
@@ -17,6 +17,7 @@ pub struct Options {
     pub translation: DVec3,
     pub rotation: DVec3,
     pub pivot: DVec3,
+    pub basis: DMat3,
     pub texture_lock: bool,
 }
 
@@ -406,9 +407,14 @@ pub fn create(
             tx,
             &objects,
             edit::Transform {
-                translation: options.translation * factor,
+                translation: if options.basis == DMat3::IDENTITY {
+                    options.translation * factor
+                } else {
+                    options.basis * (options.translation * factor)
+                },
                 rotation: options.rotation * factor,
                 pivot: options.pivot,
+                basis: options.basis,
                 texture_lock: options.texture_lock,
                 ..edit::Transform::default()
             },

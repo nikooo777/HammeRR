@@ -168,9 +168,11 @@ pub struct RepeatArrayArgs {
     pub ids: Option<Vec<String>>,
     /// Additional copies, excluding originals: 1–64, within the generated-object/side limits.
     pub count: u32,
-    /// World XYZ translation step; copy n moves by n times this step.
+    /// "world" (default) or "local". Local uses the first original source in stable object-ID order (brushes before entities), with the same frame for every copy.
+    pub space: Option<String>,
+    /// XYZ translation step in the chosen frame; copy n moves by n times this step.
     pub translation: Option<[f64; 3]>,
-    /// World XYZ degree step; copy n rotates by n times this step about the fixed pivot.
+    /// XYZ degree step in the chosen frame; copy n rotates by n times this step about the fixed world pivot.
     pub rotation: Option<[f64; 3]>,
     /// Fixed world pivot. Defaults to the source selection center.
     pub pivot: Option<[f64; 3]>,

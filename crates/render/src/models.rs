@@ -318,6 +318,10 @@ impl Instance {
     }
 
     pub fn pick(&self, ray: &Ray) -> Option<Hit> {
+        self.pick_surface(ray).map(|surface| surface.hit)
+    }
+
+    pub fn pick_surface(&self, ray: &Ray) -> Option<map_core::query::SurfaceHit> {
         let bounds = self.asset.model.bounds_for_body(self.body)?;
         if !ray.origin.is_finite() {
             return None;
@@ -339,7 +343,7 @@ impl Instance {
         ) {
             return None;
         }
-        let mut nearest: Option<f64> = None;
+        let mut nearest: Option<(f64, DVec3)> = None;
         for part in model.parts_for_body(self.body) {
             for indices in part.indices.as_chunks::<3>().0 {
                 let points = std::array::from_fn(|axis| {
@@ -350,19 +354,29 @@ impl Instance {
                     )
                 });
                 if let Some(distance) = map_core::query::ray_triangle(&ray, points)
-                    && nearest.is_none_or(|old| distance < old)
+                    && nearest.is_none_or(|(old, _)| distance < old)
                 {
-                    nearest = Some(distance);
+                    let mut normal = self.rotation
+                        * (points[2] - points[0])
+                            .cross(points[1] - points[0])
+                            .try_normalize()?;
+                    if normal.dot(world_ray.direction) > 0.0 {
+                        normal = -normal;
+                    }
+                    nearest = Some((distance, normal));
                 }
             }
         }
-        let distance = nearest?;
-        Some(Hit {
-            object: self.id,
-            solid: None,
-            side: None,
-            distance,
-            point: world_ray.origin + world_ray.direction * distance,
+        let (distance, normal) = nearest?;
+        Some(map_core::query::SurfaceHit {
+            normal,
+            hit: Hit {
+                object: self.id,
+                solid: None,
+                side: None,
+                distance,
+                point: world_ray.origin + world_ray.direction * distance,
+            },
         })
     }
 }

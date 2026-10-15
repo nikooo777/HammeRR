@@ -2089,6 +2089,37 @@ pub struct SoundVolumeArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct SurfacePlacementArgs {
+    pub ids: Option<Vec<String>>,
+    pub method: Option<String>,
+    pub ray_origin: Option<[f64; 3]>,
+    pub ray_direction: Option<[f64; 3]>,
+    #[serde(default)]
+    pub align: bool,
+    pub offset: Option<f64>,
+    pub texture_lock: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SurfacePlacementPickArgs {
+    pub token: u64,
+    pub origin: [f64; 3],
+    pub direction: [f64; 3],
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BeginSurfacePlacementPickArgs {
+    pub ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub align: bool,
+    pub offset: Option<f64>,
+    pub texture_lock: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ModelAttachmentArgs {
     pub id: Option<String>,
     /// Native attachment index from inspect_entity_model.attachments, starting at 1.
@@ -4745,6 +4776,124 @@ impl EditorServer {
                         args.classname
                     )
                 })
+        })
+    }
+
+    #[tool(
+        description = "Preview rigid surface placement of selected or explicit object ids together. method=floor (default) or ceiling casts vertically and preserves XY; method=ray uses ray_origin/ray_direction and centers the selection tangentially at the hit. Optional align rotates the first object's local up to the geometric normal; offset is normal distance, texture_lock defaults to current settings. Supports actual brush/terrain/model geometry and helper bounds for unsupported point assets. Returns owned token and contact/transform details; no source/history edit. Finish other geometry previews first. UI: Place on surface…."
+    )]
+    fn preview_surface_placement(
+        &self,
+        Parameters(args): Parameters<SurfacePlacementArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let method = crate::session::placement::Method::parse(
+                args.method.as_deref().unwrap_or("floor"),
+            )?;
+            let ray = match (args.ray_origin, args.ray_direction) {
+                (Some(origin), Some(direction)) => Some(map_core::query::Ray {
+                    origin: DVec3::from_array(origin),
+                    direction: DVec3::from_array(direction),
+                }),
+                (None, None) => None,
+                _ => return Err("Supply both ray_origin and ray_direction".into()),
+            };
+            let options = crate::session::placement::Options {
+                align: args.align,
+                offset: args.offset.unwrap_or(0.0),
+                texture_lock: args
+                    .texture_lock
+                    .unwrap_or(session.transform_tool().texture_lock),
+            };
+            session.preview_surface_placement(Actor::Agent, &ids, method, ray, options)
+        })
+    }
+
+    #[tool(
+        description = "Arm shared viewport surface picking for selected/explicit ids, optional align, normal offset and texture_lock. Returns owned token without editing source/history. The next pick_surface_placement supplies the ray; missed/invalid hits keep picking active. UI: Place on surface… → Pick surface."
+    )]
+    fn begin_surface_placement_pick(
+        &self,
+        Parameters(args): Parameters<BeginSurfacePlacementPickArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let options = crate::session::placement::Options {
+                align: args.align,
+                offset: args.offset.unwrap_or(0.0),
+                texture_lock: args
+                    .texture_lock
+                    .unwrap_or(session.transform_tool().texture_lock),
+            };
+            session.begin_surface_placement_pick(&ids, options)
+        })
+    }
+
+    #[tool(
+        description = "Complete owned surface picking with a world origin/direction ray. Excludes selected objects and hidden/tool-filtered targets, uses geometric brush/terrain/model normals and installs the same transform preview as the viewport click. No source/history edit."
+    )]
+    fn pick_surface_placement(
+        &self,
+        Parameters(args): Parameters<SurfacePlacementPickArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().pick_surface_placement(
+                Actor::Agent,
+                args.token,
+                map_core::query::Ray {
+                    origin: DVec3::from_array(args.origin),
+                    direction: DVec3::from_array(args.direction),
+                },
+            )
+        })
+    }
+
+    #[tool(
+        description = "Inspect the shared surface-placement token, validity, picking state, selection, options and last contact/transform plan. Optional token checks ownership; stale plans remain inspectable/cancellable. UI: placement summary.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_surface_placement(
+        &self,
+        Parameters(args): Parameters<ModelChoiceQueryArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let report = self.session().surface_placement();
+            if args
+                .token
+                .is_some_and(|token| report["token"].as_u64() != Some(token))
+            {
+                return Err("Surface placement was closed or replaced".into());
+            }
+            Ok(report)
+        })
+    }
+
+    #[tool(
+        description = "Apply only the captured valid surface-placement preview in one undoable transform, preserving unrelated data and chosen texture-lock policy. UI: Apply placement."
+    )]
+    fn apply_surface_placement(
+        &self,
+        Parameters(args): Parameters<ModelChoiceTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .apply_surface_placement(Actor::Agent, args.token)
+        })
+    }
+
+    #[tool(
+        description = "Cancel only the captured surface placement/picking token, including stale cleanup. Clears its owned transform only; a numeric/handle/other preview replacement is preserved. UI: Cancel/Escape."
+    )]
+    fn cancel_surface_placement(
+        &self,
+        Parameters(args): Parameters<ModelChoiceTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().cancel_surface_placement(args.token)?;
+            Ok(json!({"cancelled":true}))
         })
     }
 

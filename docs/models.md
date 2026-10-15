@@ -17,6 +17,8 @@ View Source model meshes and checked reference poses with their materials and sk
 11. Click **Frame attachment** to focus the viewport on it. Inspection and guides leave the map and Undo history unchanged; framing moves the camera.
 12. **Reload models** rereads model files after external changes. **Cancel**, **Escape** or closing the window clears its own attachment guide and closes the window. An agent’s replacement guide is preserved.
 
+Use [Surface placement](placement.md) to drop models onto floors or ceilings, or align them against a picked surface using their displayed mesh vertices.
+
 ![Searchable model selection with an isolated skin preview](images/model-browser.png)
 
 ![Source model meshes with authored positions, rotations and skins](images/model-previews.png)

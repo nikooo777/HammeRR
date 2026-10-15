@@ -102,6 +102,21 @@ fn model_tints_modulate_vertices_and_keep_black_selection_visible() {
 }
 
 #[test]
+fn model_surface_hits_use_world_triangle_normals() {
+    let mut entity = Entity::new(2, "prop_dynamic");
+    entity.properties.set("origin", "0 0 0");
+    entity.properties.set("angles", "0 90 0");
+    let instance = Instance::new(&entity, asset()).unwrap();
+    let ray = Ray {
+        origin: DVec3::new(0.0, 0.0, 100.0),
+        direction: DVec3::NEG_Z,
+    };
+    let surface = instance.pick_surface(&ray).unwrap();
+    assert!(surface.normal.abs_diff_eq(DVec3::Z, 1e-10));
+    assert_eq!(instance.pick(&ray), Some(surface.hit));
+}
+
+#[test]
 fn attachments_compose_entity_rotations_and_native_world_alignment() {
     let mut asset = asset();
     let model = &mut Arc::get_mut(&mut asset).unwrap().model;

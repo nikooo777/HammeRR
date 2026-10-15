@@ -35,6 +35,45 @@ pub fn ray_triangle(ray: &Ray, positions: [DVec3; 3]) -> Option<f64> {
     terrain::triangle(ray, a, b, c)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfaceHit {
+    pub hit: Hit,
+    pub normal: DVec3,
+}
+
+pub fn pick_surface(
+    doc: &Document,
+    ray: &Ray,
+    include_solid: impl Fn(&Solid) -> bool,
+) -> Option<SurfaceHit> {
+    let hit = pick_face(doc, ray, include_solid)?;
+    let solid = doc.solid(hit.solid?)?;
+    let geometry = BrushGeometry::from_solid(solid).ok()?;
+    let side = hit.side?;
+    let face = geometry
+        .faces
+        .iter()
+        .find(|face| solid.sides[face.side].id == side)?;
+    let mut normal = face.plane.normal;
+    if let Some(info) = &solid.sides[face.side].displacement {
+        let mesh = crate::DisplacementMesh::build(face, info).ok()?;
+        let ray = Ray {
+            origin: ray.origin,
+            direction: ray.direction.try_normalize()?,
+        };
+        let (triangle, _) = pick_displacement_triangle(&ray, &mesh)?;
+        let [a, b, c] =
+            crate::displacement::triangles::indices((mesh.size - 1).ilog2()).ok()?[triangle];
+        normal = (mesh.positions[c] - mesh.positions[a])
+            .cross(mesh.positions[b] - mesh.positions[a])
+            .try_normalize()?;
+    }
+    if normal.dot(ray.direction) > 0.0 {
+        normal = -normal;
+    }
+    Some(SurfaceHit { hit, normal })
+}
+
 pub fn pick_displacement_triangle(
     ray: &Ray,
     mesh: &crate::DisplacementMesh,
@@ -374,6 +413,54 @@ mod tests {
     use super::*;
     use crate::edit::{create_block, create_entity};
     use crate::surface::FaceId;
+
+    #[test]
+    fn surface_hits_report_geometric_brush_and_terrain_normals() {
+        let mut doc = Document::empty();
+        let id = doc
+            .edit("floor", |tx| {
+                create_block(
+                    tx,
+                    DVec3::new(-128.0, -128.0, -16.0),
+                    DVec3::new(128.0, 128.0, 0.0),
+                    "test",
+                )
+            })
+            .unwrap();
+        doc.edit("slope", |tx| {
+            crate::edit::transform(
+                tx,
+                &[id],
+                crate::edit::Transform {
+                    rotation: DVec3::new(0.0, 30.0, 0.0),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        let ray = Ray {
+            origin: DVec3::new(0.0, 0.0, 200.0),
+            direction: DVec3::NEG_Z * 5.0,
+        };
+        let hit = pick_surface(&doc, &ray, |_| true).unwrap();
+        assert!(
+            hit.normal
+                .abs_diff_eq(DVec3::new(0.5, 0.0, 3.0f64.sqrt() / 2.0), 1e-8)
+        );
+        let (doc, _) = raised_terrain();
+        let hit = pick_surface(
+            &doc,
+            &Ray {
+                origin: DVec3::new(8.0, 8.0, 200.0),
+                ..ray
+            },
+            |_| true,
+        )
+        .unwrap();
+        assert!(hit.hit.point.z > 16.0);
+        assert!(hit.normal.z > 0.1 && hit.normal.z < 0.99);
+        assert!(hit.normal.dot(ray.direction) < 0.0);
+    }
 
     #[test]
     fn local_bounds_use_brush_vertices_after_oblique_rotation() {

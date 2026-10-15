@@ -295,3 +295,9 @@ python3 -B scripts/validate_model_tints.py --output /tmp/hammerr-model-tints-che
 ```
 
 Checks real model RGB image changes, common color-control metadata, fourth-component preservation, invalid intensity, Undo/Redo/reopen, native dynamic rendercolor fields through both build paths and colored-static rejection preserving prior BSP output. Renderer checks cover exact vertex modulation and legible selection for black models; shared Session checks keep native alpha separate from light brightness.
+
+```sh
+python3 -B scripts/validate_surface_placement.py --output /tmp/hammerr-surface-placement-check
+```
+
+Checks shared floor/ceiling and ray placement, actual model support/contact and model targets, hidden-target filtering, terrain triangle normals, helper fallback, source/history/camera preservation, failed-preview retention, stale/foreign ownership, Cancel/Undo/Redo/reopen and native entity transforms through identical foreground/background builds. Core checks cover brush/terrain/model normals; software UI checks drive picking, changed-settings review, Apply and foreign-preview Cancel without a desktop.

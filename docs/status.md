@@ -13,6 +13,7 @@ HammeRR is in active development.
 | --- | --- |
 | Opening and saving VMFs | Works. Imported properties and extra blocks are retained; saves increment the map version and use standard VMF formatting. Round trips through other editors haven't been verified yet. |
 | Brushes, transforms and shapes | Works. |
+| Surface placement | Shared floor/ceiling and picked-surface previews, mesh/terrain contact, normal alignment, offsets and one-step Undo work. Independent object settling, overlap resolution and physics placement are planned. |
 | Hollow, carve and clip | Works for brushes. Terrain is rejected. |
 | Vertices, edges and faces | Brush component editing works. Terrain has separate vertex controls. |
 | Flat partitions | Works. Inward extrusion, free-form dividing lines and per-piece texture axes, fit and justification are planned. |

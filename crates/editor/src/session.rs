@@ -38,6 +38,7 @@ mod model_attachments;
 pub mod model_browser;
 pub mod models;
 pub mod paint;
+pub mod placement;
 pub mod pointfiles;
 pub mod primitives;
 mod recovery;
@@ -130,6 +131,7 @@ pub enum SelectMode {
 pub struct Session {
     model_browser: model_browser::State,
     sounds: sounds::State,
+    placement: placement::State,
     model_attachments: model_attachments::State,
     models: std::cell::RefCell<render::models::Library>,
     game: Arc<GameFs>,
@@ -249,6 +251,7 @@ impl Session {
             models: std::cell::RefCell::default(),
             model_browser: model_browser::State::default(),
             sounds: sounds::State::default(),
+            placement: placement::State::default(),
             model_attachments: model_attachments::State::default(),
             terrain_handles: terrain_handles::State::default(),
             surface_sample: None,
@@ -1966,6 +1969,7 @@ impl Session {
         }
         self.append_context_guides(&mut mesh);
         self.append_model_attachment_guide(&mut mesh);
+        self.append_surface_placement_guide(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
         self.append_terrain_triangle_guides(&mut mesh);

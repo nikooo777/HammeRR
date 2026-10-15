@@ -275,6 +275,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Sky and surface tint on a weapon model in Counter-Strike: Source](docs/images/model-ambient.png) |
 | Models pick up reflected light from nearby world surfaces and visible sky. |
 
+| Surface placement |
+| --- |
+| ![A model aligned against a wall with a normal offset](docs/images/surface-placement.png) |
+| Drop selections to floors or ceilings, or align them against picked brush, terrain and model surfaces. |
+
 ## Status
 
 The editor covers most everyday brush work. Notable gaps:

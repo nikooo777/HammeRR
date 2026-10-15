@@ -1,0 +1,52 @@
+import {Button,CheckBox,ComboBox,LineEdit} from "std-widgets.slint";
+
+export component PlacementWindow inherits Window {
+    title:"Place on surface";preferred-width:560px;preferred-height:520px;
+    in property <string> selection;
+    in-out property <int> method;
+    in-out property <bool> align:false;
+    in-out property <bool> texture-lock:true;
+    in-out property <string> offset:"0";
+    in property <float> aspect:1;
+    in property <bool> ready;
+    in property <bool> picking;
+    in property <string> summary;
+    in property <string> message;
+    callback preview();callback apply();callback cancel();callback invalidate();callback frame();
+    forward-focus:dialog-focus;
+    dialog-focus:=FocusScope {
+        key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
+        VerticalLayout {
+            padding:20px;spacing:14px;
+            Text {text:"Place selection on a surface";font-size:20px;}
+            Text {text:root.selection+" · selected objects move together";wrap:word-wrap;color:#aeb8c6;}
+            HorizontalLayout {
+                spacing:10px;
+                Text {text:"Target";vertical-alignment:center;width:70px;}
+                ComboBox {horizontal-stretch:1;model:["Floor","Ceiling","Pick surface"];current-index<=>root.method;selected=>{root.invalidate();}}
+            }
+            HorizontalLayout {
+                spacing:10px;
+                Text {text:"Offset";vertical-alignment:center;width:70px;}
+                LineEdit {width:110px;text<=>root.offset;input-type:decimal;edited=>{root.invalidate();}}
+                Text {text:"units away from surface";vertical-alignment:center;color:#aeb8c6;}
+            }
+            CheckBox {text:"Align local up to surface";checked<=>root.align;toggled=>{root.invalidate();}}
+            CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
+            HorizontalLayout {
+                spacing:10px;
+                Button {text:root.method==2 ? "Pick surface" : "Preview placement";clicked=>{root.preview();}}
+                Button {text:"Frame preview";enabled:root.ready;clicked=>{root.frame();}}
+            }
+            Text {text:root.summary;wrap:word-wrap;color:#d6deea;}
+            Rectangle {vertical-stretch:1;}
+            Text {text:root.message;wrap:word-wrap;color:#aeb8c6;min-height:30px;}
+            HorizontalLayout {
+                spacing:10px;
+                Button {text:"Cancel";clicked=>{root.cancel();}}
+                Rectangle {horizontal-stretch:1;}
+                Button {text:"Apply placement";enabled:root.ready;clicked=>{root.apply();}}
+            }
+        }
+    }
+}

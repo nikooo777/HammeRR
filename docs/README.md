@@ -12,6 +12,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Editor basics](basics.md) | The window, previews and undo, navigation, viewport modes, saved camera views |
 | [Selecting](selection.md) | Click, area, volume and paint selection |
 | [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, mirror, shear, brush shapes |
+| [Surface placement](placement.md) | Dropping groups to floors or ceilings, picking targets, normal alignment and offsets |
 | [Hollow, carve and clip](brush-tools.md) | Turning solids into rooms, subtracting shapes, cutting brushes with a plane |
 | [Vertices, edges and faces](components.md) | Moving, scaling, rotating, welding, splitting and roof ridges |
 | [Flat partitions](partitions.md) | Dividing a face into pieces to raise, extrude or restyle them |

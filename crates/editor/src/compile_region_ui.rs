@@ -74,6 +74,7 @@ fn load(window: &CompileRegionWindow, region: &Value) {
 fn refresh(window: &CompileRegionWindow, session: &Session, form: &RefCell<Form>) {
     form.borrow_mut().seen = Some(session.compile_region_stamp());
     let state = session.compile_region_state();
+    window.set_scope_help(state["help"].as_str().unwrap().into());
     let committed = &state["committed"];
     let scope = &state["build_scope"];
     let label = if let Some(error) = scope["error"].as_str() {

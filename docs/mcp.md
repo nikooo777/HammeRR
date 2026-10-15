@@ -529,12 +529,20 @@ committed metadata only. The job's `compile_region` captures its start scope;
 `result.stats.compile_region` reports actual bounds, shell thickness, generated
 brush IDs and included/omitted source object IDs. It is null for full-map output.
 Editing the region makes earlier output stale without changing a running job.
+`get_map_info.compile_region` is the lightweight current effective build scope;
+`get_compile_region` also includes the owned form, suggested bounds and shared
+human-facing `help` text.
 
 One finite axis-aligned box is supported, at least 16 units per axis and within
 ±16,368. Intersecting world/detail brushes and included brush models stay whole;
 point origins and resolved model pivots determine entity inclusion. References
-remain unchanged. Visible terrain, overlays, areaportals/windows, occluders,
-instances and visclusters, plus retained water/slime, reject before publication.
+remain unchanged. Fully contained structural world water retains the normal
+native water/physics path. Crossing water, detail/model water, slime, visible
+terrain, overlays, areaportals/windows, occluders, instances and visclusters
+reject before publication.
+Sun markers and water LOD controls currently need inside origins: an outside
+sun seeds a leak, while an outside water controller is omitted and defaults
+are generated.
 Disable regions for full-map leak checks. Globally disabled imported plural
 metadata retains full-map behavior even with enabled children. Explicit Clear
 is required before replacing imported plural/multiple records. See

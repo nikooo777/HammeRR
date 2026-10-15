@@ -270,7 +270,7 @@ impl Session {
                 revision: self.document.revision(),
             },
             options: self.compilation.options,
-            region: super::compile_region::build_configuration(self.document.vmf()),
+            region: self.compile_region_build_scope(),
             recipe: self.compilation.recipes.active.clone(),
             started: Instant::now(),
             finished: None,

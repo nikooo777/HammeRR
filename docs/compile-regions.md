@@ -30,6 +30,17 @@ by an agent. Applying or cancelling it requires explicit review; a replacement
 draft cannot be cancelled by an older window token. Any map edit makes a
 pending draft stale. Preview it again before applying.
 
+## Include a water volume
+
+1. Create [world water](compile-and-play.md#water) with a flat visible top face.
+2. Include the entire water brush between **Minimum** and **Maximum**. Its
+   sides may meet the region boundary, but cannot cross it. Click
+   **Preview region**, then **Apply region**.
+3. For floating objects, open **Build settings…** and choose
+   **CS:S engine physics** under **Physics bodies**, then **Compile**.
+4. A crossing-water diagnostic leaves the previous BSP intact. Enlarge the
+   region, move the whole volume inside, or disable the region before rebuilding.
+
 ## Return to full-map builds
 
 1. Open **Region build…**, uncheck **Enable region for builds**, then click
@@ -49,10 +60,16 @@ pending draft stale. Preview it again before applying.
 - References are retained unchanged. Targets outside the region may be absent.
   The solid boundary can hide leaks, block views and change light or sound;
   region output is for partial-map work.
+- Keep sun markers and water LOD controllers inside the region. An outside sun
+  marker currently causes a leak diagnostic; an outside water controller is
+  omitted and the compiler supplies default distances.
+- Fully contained structural world water retains native water leaves and engine
+  fluid bodies. The compiler's existing flat-top, overlap and material limits
+  still apply. Entirely outside water is omitted.
 - Visible terrain, overlays, areaportals, areaportal windows, occluders,
-  instances and visibility clusters require full-map builds. Retained water or
-  slime is also unsupported. These cases stop compilation and preserve prior
-  output rather than producing an incomplete region.
+  instances and visibility clusters require full-map builds. Retained slime,
+  detail/model water and boundary-crossing water are also unsupported. These
+  cases stop compilation and preserve prior output.
 - At most 16,384 source objects, 65,536 source sides and 128 sides per brush.
   Bounds, source IDs and the mounted solid nodraw material must be valid.
 - Imported legacy cordons and a single enabled box under active plural cordons

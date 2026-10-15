@@ -47,6 +47,13 @@ def validate(args):
         ]:
             ids.append(client.call("create_entity", {"classname": classname, "origin": origin, "properties": properties})["id"])
         outside = ids[-3:]
+        if args.water:
+            pool = client.call("create_block", {"mins": [-128, 16, 0], "maxs": [128, 128, 64], "material": "tools/toolsnodraw"})["id"]
+            brush = detail(client, [pool])[0]
+            top = next(face for face in brush["faces"] if face["normal"] == [0, 0, 1])
+            client.call("select_faces", {"faces": [{"solid": brush["solid"], "side": top["side"]}]})
+            client.call("edit_faces", {"material": "liquids/aztecwater"})
+            ids.append(pool)
         client.call("set_compile_settings", {"lighting": "fullbright", "physics": "none"})
         source = args.output / "source.vmf"
         client.call("save_map", {"path": str(source)})
@@ -91,7 +98,8 @@ def validate(args):
         built = client.call("compile_map", {"path": str(region_path)})
         scope = built["stats"]["compile_region"]
         check(scope["mins"] == LOW and scope["maxs"] == HIGH and scope["shell_thickness"] == 16, "The result reports exact region and boundary dimensions")
-        check(built["stats"]["brushes"] == 9 and len(scope["generated_brushes"]) == 6, "Three retained source brushes share six generated sealing slabs")
+        check(built["stats"]["brushes"] == 9 + int(args.water) and len(scope["generated_brushes"]) == 6, "Retained source brushes share six generated sealing slabs")
+        check(client.call("get_map_info")["compile_region"] == client.call("get_compile_region")["build_scope"], "The map-info summary reports effective region scope without form bounds")
         check(all(item in scope["omitted"] for item in outside) and built["stats"]["static_props"] == 0, "Map, lights and independent static-prop baking share the filtered VMF")
         check(b"outside_region" not in region_path.read_bytes(), "The omitted point entity does not reappear in emitted entities")
         check(detail(client, ids) == original_objects and client.call("get_map_info")["undo"] == history and client.call("get_map_info")["selection"] == selection and source.read_bytes() == saved, "Compilation preserves source geometry, history, selection and saved bytes")
@@ -115,6 +123,16 @@ def validate(args):
         client.call("preview_compile_region", invalid, error=True)
         check(client.call("get_compile_region")["draft"]["token"] == valid["draft"]["token"], "Invalid bounds preserve a valid draft and ownership")
         client.call("cancel_compile_region", {"token": valid["draft"]["token"]})
+        if args.water:
+            previous = region_path.read_bytes()
+            crossing = args.output / "crossing-water.bsp"
+            crossing.write_bytes(previous)
+            apply(client, high=[127, 128, 256])
+            rejected = client.call("compile_map", {"path": str(crossing)}, error=True)
+            check("crosses a compile-region boundary" in json.dumps(rejected) and crossing.read_bytes() == previous, "Crossing water rejects before replacing the previous region BSP")
+            client.call("start_compile", {"path": str(crossing)})
+            check(wait_job(client)["status"] == "failed" and crossing.read_bytes() == previous, "Background crossing-water rejection preserves the same output")
+            client.call("undo")
         helper = client.call("create_entity", {"classname": "info_overlay", "origin": [400, 400, 64]})["id"]
         region_path.write_bytes(b"previous region output")
         rejected = client.call("compile_map", {"path": str(region_path)}, error=True)
@@ -128,6 +146,8 @@ def validate(args):
         client.call("start_compile", {"path": str(native_background)})
         check(wait_job(client)["status"] == "completed" and native_path.read_bytes() == native_background.read_bytes(), "Lit engine-physics region builds agree through both paths")
         check(native["stats"]["physics_models"] == 1, "The generated boundary participates in engine collision")
+        if args.water:
+            check(native["stats"]["water_regions"] == native["stats"]["physics_fluids"] == 1 and native["stats"]["water_leaves"] > 0, "Contained world water retains native leaves and one engine fluid body")
         native_source = args.output / "native-source.vmf"
         client.call("save_map", {"path": str(native_source)})
         legacy = args.output / "legacy-import.bsp"
@@ -166,6 +186,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--water", action="store_true", help="Include contained world water and check crossing-volume rejection")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
@@ -173,21 +194,28 @@ def main():
     args.binary = args.binary.resolve()
     args.output = args.output.resolve()
     if args.worker:
-        runtime.OBSERVER = OBSERVER
+        runtime.OBSERVER = OBSERVER.replace(", 64)", ", 192)") if args.water else OBSERVER
+        args.observe_seconds = 60 if args.water else 30
         runtime.worker(args)
         return
     args.output.mkdir(parents=True)
     bsp = validate(args)
     if args.runtime:
-        native = runtime.private_display(Path(__file__), args, bsp)
+        native = runtime.private_display(Path(__file__), args, bsp, extra_flags=["--water"] if args.water else ())
         result = json.loads((native / "runtime.json").read_text())
         log = (native / "cstrike/hammerr-runtime.log").read_text(errors="replace")
         traces = [[float(value) for value in row] for row in re.findall(r"HAMMERR_REGION_TRACE ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)", log)]
         assert '"sv_lan" = "1"' in log and len(traces) >= 3
         assert all(abs(value - 128 / 300) < 0.001 for row in traces for value in row), traces
-        assert 0 < result["prop_positions"][-1][2] < 64
-        assert max(abs(a - b) for a, b in zip(result["prop_positions"][-1], result["prop_positions"][-2], strict=True)) < 0.1
-        (args.output / "native-validation.json").write_text(json.dumps({"boundary_traces": traces[-3:], "grounded_player_and_stable_prop": True, "insecure": True, "sv_lan": True}, indent=2) + "\n")
+        positions = result["prop_positions"]
+        if args.water:
+            assert 40 < positions[-1][2] < 96
+            assert all(-128 < point[0] < 128 and 16 < point[1] < 128 for point in positions[-3:])
+            assert any(b[2] - a[2] > 8 for a, b in zip(positions[1:], positions[2:]))
+        else:
+            assert 0 < positions[-1][2] < 64
+        assert max(abs(a - b) for a, b in zip(positions[-1], positions[-2], strict=True)) < (2 if args.water else 0.1)
+        (args.output / "native-validation.json").write_text(json.dumps({"boundary_traces": traces[-3:], "grounded_player_and_stable_prop": True, "buoyant_prop": args.water, "insecure": True, "sv_lan": True}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

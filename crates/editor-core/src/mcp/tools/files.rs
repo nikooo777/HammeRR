@@ -40,7 +40,7 @@ impl EditorServer {
             .collect();
         let mut result = json!({
             "rendering": rendering,
-            "compile_region": session.compile_region_state(),
+            "compile_region": session.compile_region_build_scope(),
             "context": session.context_state(),
             "primitive": session.primitive_state(),
             "repeat_array": session.repeat_array(),

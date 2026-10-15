@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
-use map_core::{Document, compile_region, edit};
+use map_core::{BrushGeometry, Document, compile_region, edit};
 use source_formats::{
     bsp::contents,
     gamefs::GameFs,
@@ -40,15 +40,15 @@ pub(super) struct Prepared<'a> {
     pub region: Option<RegionSummary>,
 }
 
-fn selected_brush(
+fn selected_geometry(
     solid: &Solid,
     bounds: compile_region::Bounds,
     report: &mut Report,
     control: &Control,
-) -> Result<bool, String> {
+) -> Result<Option<BrushGeometry>, String> {
     control.checkpoint()?;
     if solid.hidden {
-        return Ok(false);
+        return Ok(None);
     }
     if solid.sides.len() > MAX_SIDES_PER_BRUSH {
         return Err(format!(
@@ -57,23 +57,39 @@ fn selected_brush(
     }
     let geometry = origins::checked_geometry(solid, report)
         .ok_or("Compile region cannot determine bounds of an invalid source brush")?;
-    Ok(bounds.intersects(geometry.mins, geometry.maxs))
+    Ok(bounds
+        .intersects(geometry.mins, geometry.maxs)
+        .then_some(geometry))
 }
 
 fn check_materials(
     solid: &Solid,
+    world: Option<(compile_region::Bounds, &BrushGeometry)>,
     materials: &mut Materials<'_>,
     control: &Control,
 ) -> Result<(), String> {
+    let mut flags = 0;
     for side in &solid.sides {
         control.checkpoint()?;
         let index = materials.load(&side.material)?;
-        if materials.get(index).contents & (contents::WATER | contents::SLIME) != 0 {
-            return Err(format!(
-                "Compile regions do not support retained water/slime brushes yet (solid:{})",
-                solid.id
-            ));
-        }
+        flags |= materials.get(index).contents;
+    }
+    if flags & (contents::WATER | contents::SLIME) == 0 {
+        return Ok(());
+    }
+    let Some((bounds, geometry)) =
+        world.filter(|_| flags & (contents::DETAIL | contents::SLIME) == 0)
+    else {
+        return Err(format!(
+            "Compile regions support water only in structural world brushes; detail/model water and slime require a full-map build (solid:{})",
+            solid.id
+        ));
+    };
+    if !bounds.contains(geometry.mins) || !bounds.contains(geometry.maxs) {
+        return Err(format!(
+            "Water brush crosses a compile-region boundary; include the whole volume or disable the region (solid:{})",
+            solid.id
+        ));
     }
     Ok(())
 }
@@ -135,8 +151,8 @@ pub(super) fn prepare<'a>(
     let mut world = BTreeSet::new();
     let mut entities = BTreeMap::new();
     for solid in &source.world.solids {
-        if selected_brush(solid, bounds, report, control)? {
-            check_materials(solid, &mut materials, control)?;
+        if let Some(geometry) = selected_geometry(solid, bounds, report, control)? {
+            check_materials(solid, Some((bounds, &geometry)), &mut materials, control)?;
             world.insert(solid.id);
         }
     }
@@ -156,8 +172,8 @@ pub(super) fn prepare<'a>(
         if classname.eq_ignore_ascii_case("func_detail") {
             let mut retained = BTreeSet::new();
             for solid in &entity.solids {
-                if selected_brush(solid, bounds, report, control)? {
-                    check_materials(solid, &mut materials, control)?;
+                if selected_geometry(solid, bounds, report, control)?.is_some() {
+                    check_materials(solid, None, &mut materials, control)?;
                     retained.insert(solid.id);
                 }
             }
@@ -175,7 +191,7 @@ pub(super) fn prepare<'a>(
                     .iter()
                     .filter(|solid| !solid.hidden && !plan.volumes.contains(&solid.id))
                 {
-                    check_materials(solid, &mut materials, control)?;
+                    check_materials(solid, None, &mut materials, control)?;
                 }
                 entities.insert(entity.id, None);
             }

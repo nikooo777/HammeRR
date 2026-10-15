@@ -3,7 +3,7 @@ use std::sync::Arc;
 use glam::DVec2;
 use source_formats::{vmt, vtf::Vtf};
 
-use super::{Assets, Budget};
+use super::{Allocation, Assets, Budget};
 
 const MAX_TEXTURE_SIZE: u32 = 4096;
 const MAX_ALPHA_BYTES: usize = 64 * 1024 * 1024;
@@ -103,6 +103,21 @@ fn transform(value: Option<&str>) -> Result<[f64; 4], String> {
         center[0] * (1.0 - scale[0]) + translate[0],
         center[1] * (1.0 - scale[1]) + translate[1],
     ])
+}
+
+fn texture_allocations(
+    pixels: usize,
+    budget: &Budget<'_>,
+) -> Result<(Allocation, Allocation), String> {
+    let alpha_bytes = pixels
+        .checked_add(size_of::<Texture>() + 2 * size_of::<usize>())
+        .ok_or("Texture-shadow alpha allocation size overflow")?;
+    let alpha = budget.reserve_bytes(alpha_bytes)?;
+    let rgba_bytes = pixels
+        .checked_mul(4)
+        .ok_or("Texture-shadow image allocation size overflow")?;
+    let rgba = budget.reserve_bytes(rgba_bytes)?;
+    Ok((alpha, rgba))
 }
 
 pub(super) fn prepare(
@@ -233,6 +248,7 @@ pub(super) fn prepare(
                     "Static-prop texture shadows exceed the 64 MiB decoded alpha limit".into(),
                 );
             }
+            let (alpha_allocation, _rgba_allocation) = texture_allocations(pixels, budget)?;
             budget.consume(pixels * 2)?;
             let image = vtf
                 .decode_rgba8(0, 0, 0)
@@ -253,11 +269,15 @@ pub(super) fn prepare(
                     .map(|pixel| pixel[3])
                     .collect(),
             });
+            assets.allocations.push(alpha_allocation);
             assets.alpha_bytes += pixels;
             assets.textures.insert(path, Arc::clone(&texture));
             texture
         }
     };
+    let material_allocation =
+        budget.reserve_bytes(size_of::<Material>() + 2 * size_of::<usize>())?;
+    assets.allocations.push(material_allocation);
     Ok(Some(Arc::new(Material {
         texture,
         transform,
@@ -291,6 +311,32 @@ mod tests {
             [DVec2::ZERO, DVec2::X * 2.0, DVec2::Y * 2.0],
         ));
         triangle
+    }
+
+    #[test]
+    fn alpha_and_decode_admission_precede_allocation_and_release_on_failure() {
+        let control = crate::Control::default();
+        let budget = Budget::new(&control);
+        let pixels = 64usize;
+        let (alpha, rgba) = texture_allocations(pixels, &budget).unwrap();
+        let total = budget.live_bytes();
+        assert!(total >= pixels * 5);
+        drop(rgba);
+        assert_eq!(
+            budget.live_bytes(),
+            pixels + size_of::<Texture>() + 2 * size_of::<usize>()
+        );
+        drop(alpha);
+        assert_eq!(budget.live_bytes(), 0);
+        let held = budget
+            .reserve_bytes(crate::lighting::bake::MAX_LIGHTING_LIVE_BYTES - total + 1)
+            .unwrap();
+        let before = budget.live_bytes();
+        assert!(texture_allocations(pixels, &budget).is_err());
+        assert_eq!(budget.live_bytes(), before);
+        drop(held);
+        assert!(texture_allocations(usize::MAX, &budget).is_err());
+        assert_eq!(budget.live_bytes(), 0);
     }
 
     #[test]

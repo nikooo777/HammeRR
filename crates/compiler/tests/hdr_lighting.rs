@@ -217,11 +217,11 @@ fn dual_channel_radiance_matches_independent_numeric_references_and_legacy_ldr()
     );
     assert_eq!(
         bsp.world_lights(LightingKind::Ldr).unwrap()[0].intensity,
-        [100.0, 0.0, 0.0]
+        [(100.0_f64 / 255.0) as f32, 0.0, 0.0]
     );
     assert_eq!(
         bsp.world_lights(LightingKind::Hdr).unwrap()[0].intensity,
-        [0.0, 0.0, 1600.0]
+        [0.0, 0.0, (1600.0_f64 / 255.0) as f32]
     );
     for (index, lump) in ldr.bsp.unwrap().lumps.into_iter().enumerate() {
         if !HDR_LUMPS.contains(&index) {

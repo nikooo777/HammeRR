@@ -9,7 +9,7 @@ use source_formats::{
     vmt::Material,
 };
 
-use super::bake::Budget;
+use super::bake::{Allocation, Budget};
 use super::shadows::{ShadowIndex, ShadowObject, Triangle};
 use crate::{Diagnostic, Report, map::MAX_COMPILE_COORD};
 
@@ -17,6 +17,7 @@ const MAX_TRIANGLES: usize = 262_144;
 const MAX_ASSET_BYTES: usize = 256 * 1024 * 1024;
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 const MAX_MATERIAL_LOOKUPS: usize = 65_536;
+const MAX_TRACKING_BYTES: usize = 8 * MAX_MATERIAL_LOOKUPS * size_of::<Allocation>();
 const NO_SHADOW: u32 = 0x10;
 const CAST_TEXTURE_SHADOWS: u32 = 0x0004_0000;
 
@@ -100,12 +101,45 @@ impl ShadowObject for ProbeBounds {
     }
 }
 
+pub(super) struct Prepared {
+    pub shadows: ShadowIndex<PropTriangle>,
+    pub bounds: ShadowIndex<ProbeBounds>,
+    pub stats: Stats,
+    pub allocations: Vec<Allocation>,
+}
+
+struct Buffers {
+    triangles: Vec<PropTriangle>,
+    bounds: Vec<ProbeBounds>,
+    allocation: Allocation,
+}
+
+impl Buffers {
+    fn new(props: usize, budget: &Budget<'_>) -> Result<Self, String> {
+        if props > source_formats::bsp::MAX_STATIC_PROPS {
+            return Err("Static-prop probe bounds exceed the prop allocation limit".into());
+        }
+        let triangles = if props == 0 { 0 } else { MAX_TRIANGLES };
+        let bytes = ShadowIndex::<PropTriangle>::allocation_bytes(triangles)?
+            .checked_add(ShadowIndex::<ProbeBounds>::allocation_bytes(props)?)
+            .and_then(|bytes| bytes.checked_add(MAX_TRACKING_BYTES))
+            .ok_or("Lighting prop shadow allocation size overflow")?;
+        let allocation = budget.reserve_bytes(bytes)?;
+        Ok(Self {
+            triangles: Vec::with_capacity(triangles),
+            bounds: Vec::with_capacity(props),
+            allocation,
+        })
+    }
+}
+
 struct Assets<'a> {
     fs: &'a GameFs,
     bytes: usize,
     lookups: usize,
     textures: BTreeMap<String, Arc<alpha::Texture>>,
     alpha_bytes: usize,
+    allocations: Vec<Allocation>,
 }
 
 impl Assets<'_> {
@@ -263,10 +297,11 @@ pub(super) fn build(
     fs: &GameFs,
     report: &mut Report,
     budget: &mut Budget<'_>,
-) -> Result<(ShadowIndex<PropTriangle>, ShadowIndex<ProbeBounds>, Stats), String> {
+) -> Result<Prepared, String> {
     let mut triangles = Vec::new();
     let mut probe_bounds = Vec::new();
     let mut stats = Stats::default();
+    let mut allocations = Vec::new();
     let start_work = budget.work();
     if let Some(props) = bsp.static_props().map_err(|error| error.to_string())? {
         let entities: Vec<_> = vmf
@@ -288,12 +323,20 @@ pub(super) fn build(
             lookups: 0,
             textures: BTreeMap::new(),
             alpha_bytes: 0,
+            allocations: Vec::new(),
         };
         stats.disabled = props
             .props
             .iter()
             .filter(|prop| prop.flags & NO_SHADOW != 0)
             .count();
+        let shadow_props = props.props.len() - stats.disabled;
+        if shadow_props > 0 {
+            let buffers = Buffers::new(shadow_props, budget)?;
+            triangles = buffers.triangles;
+            probe_bounds = buffers.bounds;
+            allocations.push(buffers.allocation);
+        }
         let mut by_model = vec![Vec::new(); props.models.len()];
         for (index, prop) in props.props.iter().enumerate() {
             budget.consume(1)?;
@@ -406,6 +449,7 @@ pub(super) fn build(
         }
         stats.alpha_textures = assets.textures.len();
         stats.alpha_bytes = assets.alpha_bytes;
+        allocations.append(&mut assets.allocations);
     }
     stats.triangles = triangles.len();
     stats.alpha_triangles = triangles
@@ -418,7 +462,12 @@ pub(super) fn build(
     if stats.props > 0 {
         report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. {} triangles use {} alpha-test materials and {} textures ({} decoded alpha bytes). Two-sided opaque/cutout triangles block direct, sky, bounced and ambient rays. Cutouts use mip0 nearest texels, not filtered or fractional transmission. Prop vertex/lightmap baking, reflected prop sources and animated props remain unfinished", stats.props, stats.models, stats.triangles, stats.disabled, stats.alpha_triangles, stats.alpha_materials, stats.alpha_textures, stats.alpha_bytes), None, None));
     }
-    Ok((index, probe_bounds, stats))
+    Ok(Prepared {
+        shadows: index,
+        bounds: probe_bounds,
+        stats,
+        allocations,
+    })
 }
 
 #[cfg(test)]
@@ -460,6 +509,32 @@ mod tests {
             body_groups: Vec::new(),
             attachments: Vec::new(),
         }
+    }
+
+    #[test]
+    fn prop_buffers_admit_full_retained_capacities_before_growth() {
+        let control = Control::default();
+        let budget = Budget::new(&control);
+        let buffers = Buffers::new(1, &budget).unwrap();
+        assert_eq!(buffers.triangles.capacity(), MAX_TRIANGLES);
+        assert_eq!(buffers.bounds.capacity(), 1);
+        assert!(
+            budget.live_bytes()
+                >= buffers.triangles.capacity() * size_of::<PropTriangle>()
+                    + buffers.bounds.capacity() * size_of::<ProbeBounds>()
+        );
+        let required = budget.live_bytes();
+        drop(buffers);
+        assert_eq!(budget.live_bytes(), 0);
+        let held = budget
+            .reserve_bytes(super::super::bake::MAX_LIGHTING_LIVE_BYTES - required + 1)
+            .unwrap();
+        let before = budget.live_bytes();
+        assert!(Buffers::new(1, &budget).is_err());
+        assert_eq!(budget.live_bytes(), before);
+        drop(held);
+        control.cancel().unwrap();
+        assert!(Buffers::new(1, &budget).is_err());
     }
 
     #[test]

@@ -33,6 +33,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Entities and logic](entities.md) | Placing entities, lights, brush entities, inputs/outputs, safe renaming, editing many entities |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, lighting, physics, leaks, launching Counter-Strike: Source |
+| [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
 | [Static-prop shadows](prop-shadows.md) | Opaque model-mesh blockers, shadow flags and material limits |
 | [Occluders](occluders.md) | Compiling static visibility blockers and their native activation records |
 | [Build recipes](build-recipes.md) | Recalling Fast preview, Final lighting and named custom compiler settings |

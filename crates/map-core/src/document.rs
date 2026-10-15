@@ -73,6 +73,7 @@ pub struct Step {
     changes: Vec<Change>,
     world: Option<(Properties, Properties)>,
     extra: Option<(Vec<Node>, Vec<Node>)>,
+    cordon: Option<(Option<Node>, Option<Node>)>,
     groups: Option<(Vec<Group>, Vec<Group>)>,
     visgroups: Option<(VisGroups, VisGroups)>,
 }
@@ -168,6 +169,10 @@ impl Document {
 
     pub fn vmf(&self) -> &Vmf {
         &self.vmf
+    }
+
+    pub fn into_vmf(self) -> Vmf {
+        self.vmf
     }
 
     /// An independent draft with the same identity/revision state and no edit history.
@@ -295,6 +300,7 @@ impl Document {
             touched: Vec::new(),
             world: None,
             extra: None,
+            cordon: None,
             groups: None,
             visgroups: None,
         };
@@ -314,6 +320,9 @@ impl Document {
     /// Returns the undone step.
     pub fn undo(&mut self) -> Option<&Step> {
         let step = self.undo.pop()?;
+        if let Some((before, _)) = &step.cordon {
+            self.vmf.cordon = before.clone();
+        }
         if let Some((before, _)) = &step.visgroups {
             self.vmf.visgroups = before.clone();
         }
@@ -339,6 +348,9 @@ impl Document {
     /// Returns the redone step.
     pub fn redo(&mut self) -> Option<&Step> {
         let step = self.redo.pop()?;
+        if let Some((_, after)) = &step.cordon {
+            self.vmf.cordon = after.clone();
+        }
         if let Some((_, after)) = &step.visgroups {
             self.vmf.visgroups = after.clone();
         }
@@ -418,11 +430,18 @@ pub struct Transaction<'a> {
     touched: Vec<(ObjectId, State)>,
     world: Option<Properties>,
     extra: Option<Vec<Node>>,
+    cordon: Option<Option<Node>>,
     groups: Option<Vec<Group>>,
     visgroups: Option<VisGroups>,
 }
 
 impl Transaction<'_> {
+    pub(crate) fn set_cordon(&mut self, node: Option<Node>) {
+        self.cordon
+            .get_or_insert_with(|| self.doc.vmf.cordon.clone());
+        self.doc.vmf.cordon = node;
+    }
+
     pub(crate) fn set_visgroups(&mut self, groups: VisGroups) {
         self.doc.context_fingerprint.take();
         self.visgroups
@@ -643,6 +662,10 @@ impl Transaction<'_> {
             .extra
             .filter(|before| before != &doc.vmf.extra)
             .map(|before| (before, doc.vmf.extra.clone()));
+        let cordon = self
+            .cordon
+            .filter(|before| before != &doc.vmf.cordon)
+            .map(|before| (before, doc.vmf.cordon.clone()));
         let groups = self
             .groups
             .filter(|before| before != &doc.vmf.world.groups)
@@ -654,6 +677,7 @@ impl Transaction<'_> {
         if changes.is_empty()
             && world.is_none()
             && extra.is_none()
+            && cordon.is_none()
             && groups.is_none()
             && visgroups.is_none()
         {
@@ -664,6 +688,7 @@ impl Transaction<'_> {
             changes,
             world,
             extra,
+            cordon,
             groups,
             visgroups,
         });
@@ -672,6 +697,9 @@ impl Transaction<'_> {
     }
 
     fn rollback(self) {
+        if let Some(before) = self.cordon {
+            self.doc.vmf.cordon = before;
+        }
         (
             self.doc.next_object_id,
             self.doc.next_side_id,

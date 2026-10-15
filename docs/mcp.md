@@ -514,15 +514,31 @@ changed file metadata or Session state invalidates stale requests. Direct librar
 replacement/renaming, private formats and referenced instances are unavailable.
 See [Prefab library](prefabs.md).
 
-### Imported compile regions
+### Compile regions
 
-`compile_map` and `start_compile` reject active or ambiguous imported legacy
-`cordon` and plural `cordons` metadata before geometry conversion. Diagnostics
-appear in the normal build response/status shared with **Build details…**.
-Existing BSPs, source geometry, selection and history remain intact. Globally
-disabled metadata permits an unchanged full-map build, including active child
-records under a disabled plural block. Region authoring and sealed partial builds
-are unavailable; disable the cordon in its source editor and save the VMF first.
+| Tool | Inputs and behavior |
+| --- | --- |
+| `get_compile_region` | Inspect committed bounds/enabled state, metadata errors, `snapshot`, suggested bounds, draft token and limits. |
+| `preview_compile_region` | Latest `snapshot` plus `enabled`, `mins` and `maxs`; or `clear:true` alone with `snapshot` to remove metadata. Returns an owned draft token without editing source/history. |
+| `apply_compile_region` | Current draft `token`; one undoable metadata edit. Stale map snapshots and replaced tokens reject. |
+| `cancel_compile_region` | Matching `token` only; preserves committed metadata and any replacement draft. |
+| `frame_compile_region` | Optional positive finite `aspect`, default 16:9; frames current draft or committed bounds without editing geometry/selection. |
+
+`compile_map`, `start_compile` and Run Map share one preprocessing path and use
+committed metadata only. The job's `compile_region` captures its start scope;
+`result.stats.compile_region` reports actual bounds, shell thickness, generated
+brush IDs and included/omitted source object IDs. It is null for full-map output.
+Editing the region makes earlier output stale without changing a running job.
+
+One finite axis-aligned box is supported, at least 16 units per axis and within
+±16,368. Intersecting world/detail brushes and included brush models stay whole;
+point origins and resolved model pivots determine entity inclusion. References
+remain unchanged. Visible terrain, overlays, areaportals/windows, occluders,
+instances and visclusters, plus retained water/slime, reject before publication.
+Disable regions for full-map leak checks. Globally disabled imported plural
+metadata retains full-map behavior even with enabled children. Explicit Clear
+is required before replacing imported plural/multiple records. See
+[Compile regions](compile-regions.md).
 
 ### Material asset errors
 

@@ -27,6 +27,7 @@ pub mod clip_points;
 pub mod clipboard;
 mod clipping;
 pub mod compilation;
+pub mod compile_region;
 pub mod component_drag;
 pub mod component_picking;
 pub mod components;
@@ -138,6 +139,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    compile_region: compile_region::State,
     geometry: previews::State,
     groups: groups::State,
     layers: layers::State,
@@ -243,6 +245,7 @@ impl Session {
         };
         Self {
             geometry: previews::State::default(),
+            compile_region: compile_region::State::default(),
             groups: groups::State::default(),
             layers: layers::State::default(),
             prefabs: prefabs::State::default(),
@@ -1951,6 +1954,7 @@ impl Session {
         self.append_model_attachment_guide(&mut mesh);
         self.append_surface_placement_guide(&mut mesh);
         self.append_volume_guide(&mut mesh);
+        self.append_compile_region_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
         self.append_terrain_triangle_guides(&mut mesh);
         self.append_terrain_stroke_guides(&mut mesh);

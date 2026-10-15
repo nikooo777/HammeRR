@@ -1,6 +1,7 @@
 import argparse
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from validate_compile_jobs import wait_job
 from validate_face_lighting import DEFAULT_BINARY, Client
@@ -22,8 +23,8 @@ def validate(client, output):
     full_map = baseline.read_bytes()
     source = original.read_text()
     cases = [
-        ("legacy-active", 'cordon { "active" "1" "mins" "(-64 -64 0)" "maxs" "(64 64 128)" }', True),
-        ("modern-active", 'cordons { "active" "true" cordon { "active" "true" box { "mins" "(-64 -64 0)" "maxs" "(64 64 128)" } } }', True),
+        ("legacy-incomplete", 'cordon { "active" "1" "mins" "(-64 -64 0)" }', True),
+        ("modern-empty", 'cordons { "active" "true" }', True),
         ("ambiguous", 'cordon { "active" "0" "active" "1" }', True),
         ("disabled", 'cordons { "active" "false" cordon { "active" "true" } }', False),
     ]
@@ -38,7 +39,7 @@ def validate(client, output):
         response = client.call("compile_map", {"path": str(target)}, error=rejected)
         result = json.loads(response["content"][0]["text"]) if rejected else response
         if rejected:
-            check(not result["success"] and any("cordon" in item["message"].lower() and item["level"] == "error" for item in result["diagnostics"]), f"{name}: synchronous build explains unsupported cordons")
+            check(not result["success"] and any("cordon" in item["message"].lower() and item["level"] == "error" for item in result["diagnostics"]), f"{name}: synchronous build explains invalid cordons")
         else:
             check(result["success"], f"{name}: global disable overrides active child records")
         check(target.read_bytes() == full_map, f"{name}: synchronous build preserves full-map output")
@@ -62,7 +63,8 @@ def main():
     args = parser.parse_args()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True)
-    client = Client(None, args.binary.resolve(), args.output)
+    with patch.dict("os.environ", {"HAMMERR_RECENT_MAPS_DIR": str(args.output / "recent"), "HAMMERR_BUILD_RECIPES": str(args.output / "recipes.json")}):
+        client = Client(None, args.binary.resolve(), args.output)
     try:
         validate(client, args.output)
     finally:

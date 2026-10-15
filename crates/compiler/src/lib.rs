@@ -19,6 +19,10 @@ mod visibility;
 mod water;
 pub mod winding;
 
+#[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod test_common;
+
 use std::io::Write;
 use std::time::{Duration, Instant};
 use std::{io, path::Path};
@@ -29,6 +33,7 @@ use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
 pub use control::{Control, Stage};
+pub use cordons::RegionSummary;
 pub use portals::Leak;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -305,6 +310,7 @@ impl Report {
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
+    pub compile_region: Option<RegionSummary>,
     pub lighting_mode: LightingMode,
     pub bounces: u8,
     pub bounce_rays: usize,
@@ -461,7 +467,9 @@ fn build(
 ) -> Result<(), String> {
     options.validate()?;
     control.advance(Stage::Loading)?;
-    cordons::validate(vmf)?;
+    let prepared = cordons::prepare(vmf, fs, &mut output.report, control)?;
+    output.stats.compile_region = prepared.region;
+    let vmf = prepared.vmf.as_ref();
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
     output.stats.brushes = map.brushes.len();
     output.stats.cubemap_samples = map.cubemaps.len();

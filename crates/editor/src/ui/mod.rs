@@ -78,6 +78,7 @@ struct Ui {
     clipboard: Option<clipboard_ui::Controller>,
     object_groups: Option<groups_ui::Controller>,
     layers: Option<layers_ui::Controller>,
+    compile_region: Option<compile_region_ui::Controller>,
     prefabs: Option<prefabs_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
@@ -129,6 +130,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_can_undo(doc.undo_labels().next().is_some());
     app.set_can_redo(doc.redo_labels().next().is_some());
     app.set_compiling(session.compiling());
+    app.set_compile_region_label(session.compile_region_label().into());
     app.set_launching(session.launching());
     app.set_game_running(session.game_running());
     app.set_has_selection(!session.selection().is_empty());
@@ -296,6 +298,7 @@ pub(super) fn run(
         clipboard: None,
         object_groups: None,
         layers: None,
+        compile_region: None,
         prefabs: None,
         color_target: None,
         material_window: None,
@@ -1165,6 +1168,29 @@ pub(super) fn run(
                 }
             }
             if let Err(error) = ui.object_groups.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_compile_region({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().compile_region.is_none() {
+                let viewport = app.clone();
+                match compile_region_ui::Controller::new(&shared, move || {
+                    let app = viewport.unwrap();
+                    (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01)
+                }) {
+                    Ok(controller) => ui.borrow_mut().compile_region = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            if let Err(error) = ui.compile_region.as_ref().unwrap().show(&lock(&shared)) {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -2400,6 +2426,11 @@ pub(super) fn run(
                     statistics_ui::refresh_changed(window, &lock(&ui.session));
                 }
                 if let Some(controller) = &ui.object_groups
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.compile_region
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

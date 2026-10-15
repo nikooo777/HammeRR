@@ -132,6 +132,7 @@ get_object_report searches names/classes/materials/types/visibility/bounds; sele
 selects all matches and can frame them. set_object_visibility hides/shows/isolates/restores \
 saved VMF visibility. Hidden objects and child brushes are OMITTED from compilation. \
 get_compile_settings and set_compile_settings select shared build lighting (fullbright/direct_ldr) and physics (none/engine). Engine physics uses the verified installed CS:S Linux64 library in an isolated worker for world, clip, brush-model and horizontal world-fluid bodies; terrain contact meshes are supported and static props use model assets; world/terrain triangles retain VMT surface properties through a checked 127-entry native table; brush-model surfaces, density and compiler-derived masses remain unfinished. \
+Use get_compile_region and preview_compile_region for native sealed build bounds; apply_compile_region or cancel_compile_region owns the returned token. Only committed enabled regions affect builds; disable them for full-map leak checks. Jobs capture their start scope. \
 Start asynchronous builds with start_compile; poll get_compile_status and cancel_compile using the job token. Compile synchronously with compile_map or compile and play with run_map; inspect engine output with \
 game_log and stop the managed client with stop_game. Failed compiles expose leak paths \
 in the viewport; set_view controls their visibility.";
@@ -538,6 +539,7 @@ impl EditorServer {
     fn tool_router() -> ToolRouter<Self> {
         Self::assets_tools()
             + Self::build_tools()
+            + Self::compile_region_tools()
             + Self::checks_tools()
             + Self::clipboard_tools()
             + Self::components_tools()

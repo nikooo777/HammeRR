@@ -259,10 +259,9 @@ fn placement_fixture(
             .tie_to_entity(actor, &objects, "func_detail", Default::default())
             .unwrap();
     }
-    let side = session
-        .document
-        .solid(solid)
+    let side = subobject::solid(session.document(), solid)
         .unwrap()
+        .1
         .sides
         .iter()
         .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
@@ -783,7 +782,9 @@ fn multi_source_fitting_is_order_independent_and_roofs_preserve_saved_metadata()
         )
         .unwrap();
         let positions = part.positions(16.125);
-        let raised = session.render_document().solid(part.source.solid).unwrap();
+        let raised = subobject::solid(session.render_document(), part.source.solid)
+            .unwrap()
+            .1;
         for piece in &part.loops {
             let roof = raised
                 .sides

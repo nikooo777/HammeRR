@@ -111,7 +111,7 @@ fn precise_corner(solid: &Solid, component: &Component, approximate: DVec3) -> O
             Some((map_core::Plane::from_points(side.plane.0)?, side.plane.0[1]))
         })
         .collect::<Option<Vec<_>>>()?;
-    let reference = planes.first()?.1;
+    let reference = approximate;
     let mut best = None;
     let mut largest = 0.0;
     for (a, first) in planes.iter().enumerate() {

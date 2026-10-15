@@ -9,6 +9,70 @@ from validate_terrain_lod import build
 from validate_visibility import ROOM
 
 
+def selection_checks(client, ids, origins, reports):
+    history = client.call("get_map_info")["undo"]
+    for object_id, origin, report in zip(ids, origins, reports, strict=True):
+        low, high = report["world_bounds"]
+        details = client.call("get_objects", {"ids": [object_id]})["objects"][0]
+        assert details["bounds"] == {"mins": low, "maxs": high}
+        small = {
+            "mins": [value - 9 for value in origin],
+            "maxs": [value + 9 for value in origin],
+        }
+        common = {"selection_mode": "objects", "preview": True}
+        contained = client.call(
+            "select_volume", {**common, **small, "rule": "contained"}
+        )["preview"]
+        assert object_id not in contained["objects"]
+        client.call("cancel_volume_selection", {"token": contained["token"]})
+        center = [(a + b) / 2 for a, b in zip(low, high, strict=True)]
+        remote = {
+            "mins": [high[0] - 0.5, center[1] - 1, center[2] - 1],
+            "maxs": [high[0] + 0.5, center[1] + 1, center[2] + 1],
+        }
+        crossing = client.call(
+            "select_volume", {**common, **remote, "rule": "intersecting"}
+        )["preview"]
+        assert object_id in crossing["objects"]
+        client.call("cancel_volume_selection", {"token": crossing["token"]})
+        found = client.call(
+            "find_objects",
+            {
+                "classname": "prop_static",
+                "hidden": False,
+                "within": [remote["mins"], remote["maxs"]],
+            },
+        )["objects"]
+        matched = next(row for row in found if row["id"] == object_id)
+        assert matched["bounds"] == {"mins": low, "maxs": high}
+        camera = {"projection": "top", "center": center, "ortho_height": 128}
+        common_area = {"width": 512, "height": 512, "camera": camera, "preview": True}
+        area = client.call(
+            "select_area",
+            {
+                **common_area,
+                "start": [220, 220],
+                "end": [292, 292],
+                "rule": "contained",
+            },
+        )
+        assert object_id not in area["matches"]["objects"]
+        client.call("cancel_area_selection")
+        x = 256 + (high[0] - center[0]) * 4
+        area = client.call(
+            "select_area",
+            {
+                **common_area,
+                "start": [x - 2, 252],
+                "end": [x + 2, 260],
+                "rule": "intersecting",
+            },
+        )
+        assert object_id in area["matches"]["objects"]
+        client.call("cancel_area_selection")
+    assert client.call("get_map_info")["undo"] == history
+
+
 def validate(args):
     client = Client(None, args.binary, args.output)
     try:
@@ -101,6 +165,7 @@ def validate(args):
         assert all(
             report["displayed"] and report["error"] is None for report in reports
         )
+        selection_checks(client, ids, origins, reports)
         for object_id, origin, report in zip(ids, origins, reports, strict=True):
             low, high = report["world_bounds"]
             center = [(a + b) / 2 for a, b in zip(low, high, strict=True)]

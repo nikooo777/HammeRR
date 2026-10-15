@@ -1081,11 +1081,7 @@ impl Session {
         self.cancel_connection_edit();
         self.cancel_entity_rename();
         self.camera = Camera::from_vmf(document.vmf()).unwrap_or_else(|| {
-            let bounds = query::union(
-                document
-                    .objects()
-                    .filter_map(|id| query::bounds(&document, id)),
-            );
+            let bounds = self.object_bounds_in(&document, &document.objects().collect::<Vec<_>>());
             bounds.map_or(self.camera, |(lo, hi)| {
                 Camera::overview(lo.as_vec3(), hi.as_vec3())
             })
@@ -1344,11 +1340,7 @@ impl Session {
             return camera;
         }
         let bounds = self.selection_bounds().or_else(|| {
-            query::union(
-                self.document
-                    .objects()
-                    .filter_map(|id| query::bounds(&self.document, id)),
-            )
+            self.object_bounds_in(&self.document, &self.document.objects().collect::<Vec<_>>())
         });
         let (mins, maxs) = bounds.unwrap_or((DVec3::splat(-384.0), DVec3::splat(384.0)));
         if projection == Projection::Perspective {

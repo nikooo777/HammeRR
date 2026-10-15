@@ -9,7 +9,7 @@ The **Selection** dropdown in the inspector switches between:
 - **Objects**: brushes and entities. A brush entity is always selected as a whole.
 - **Faces · materials & textures**: individual brush faces, for [texture work](textures.md).
 
-Click to select, Ctrl+click to toggle. Every tool on this page works in both modes.
+Click to select, Ctrl+click to toggle. Loaded models use their visible triangles for point picking. Model entities belong to **Objects** mode; their mesh triangles are not editable brush faces.
 
 ## Selection rules
 
@@ -17,6 +17,8 @@ Area, volume and paint selection share two settings:
 
 - **Match**: **Intersects** accepts anything that touches the area. **Fully inside** requires all of an object's visible brushes to fit inside it.
 - **Combine**: **Replace**, **Add**, **Remove** or **Toggle** the current selection.
+
+Loaded model entities use their transformed asset bounds for area and volume matching. **Fully inside** requires that whole bounding box to fit; **Intersects** accepts a touching box. These tests include empty space inside a model’s bounds. Unsupported model assets retain helper bounds.
 
 Hidden objects and hidden tool brushes are skipped. Previews highlight the candidates without changing the selection or the undo history.
 

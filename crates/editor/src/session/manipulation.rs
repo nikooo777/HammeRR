@@ -369,6 +369,15 @@ impl Session {
             return Ok(DMat3::IDENTITY);
         }
         let id = ids.iter().min().ok_or("Select objects to transform")?;
+        if matches!(id, ObjectId::Entity(_))
+            && let Some(instance) = self
+                .model_instances(&self.document)
+                .instances
+                .into_iter()
+                .find(|instance| instance.id == *id)
+        {
+            return Ok(DMat3::from_quat(instance.rotation));
+        }
         query::local_basis(&self.document, *id)
             .ok_or("Selected object has no valid local frame".into())
     }
@@ -534,8 +543,9 @@ impl Session {
             .pivot
             .unwrap_or(self.selection_pivot(&ids)?);
         let basis = self.transform_basis(&ids, self.transform_tool.local)?;
-        let (mins, maxs) =
-            query::bounds_in_basis(&self.document, &ids, basis).ok_or("Selection has no bounds")?;
+        let (mins, maxs) = self
+            .object_bounds_in_basis(&self.document, &ids, basis)
+            .ok_or("Selection has no bounds")?;
         let extent = maxs - mins;
         let mut drag = TransformDrag {
             handle,
@@ -757,10 +767,7 @@ impl Session {
         self.cancel_face_preview();
         self.cancel_block_preview();
         self.spatial.draw_block = false;
-        let hidden = self.hidden_tool_brushes();
-        let matches = region.select(&self.document, rule, self.face_mode, |solid| {
-            !hidden.contains(&solid.id)
-        });
+        let matches = self.select_region(&region, rule, self.face_mode);
         self.area_preview = Some(AreaPreview {
             camera,
             start,

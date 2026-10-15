@@ -264,7 +264,7 @@ python3 -B scripts/validate_model_previews.py --output /tmp/hammerr-model-previe
 cargo test -p source-formats --test css decodes_css_static_model_geometry -- --nocapture
 ```
 
-Checks CPU model inspection, invalid paths/skins/arguments, three real model meshes, pixel picks beyond helper bounds, skin-render differences, draft transforms, cache reload, helper fallbacks, source/history preservation, native static-prop positions/angles/skins through both builds and save/reopen. Decoder tests cover fixups, mesh-relative indices, triangle strips, checksums, malformed ranges and nonfinite data. Bounded-read tests reject oversized directory/VPK entries before allocation. Software UI checks inspection, reload and Cancel. The CSS format check uses the local install (`CSS_DIR` overrides its location).
+Checks CPU model inspection, invalid paths/skins/arguments, three real model meshes, model-aware area/volume contained/intersecting rules, object/query response schemas and bounds, pixel picks beyond helper bounds, skin-render differences, draft transforms, cache reload, helper fallbacks, source/history preservation, native static-prop positions/angles/skins through both builds and save/reopen. Decoder tests cover fixups, mesh-relative indices, triangle strips, checksums, malformed ranges and nonfinite data. Bounded-read tests reject oversized directory/VPK entries before allocation. Software UI checks inspection, reload and Cancel. The CSS format check uses the local install (`CSS_DIR` overrides its location).
 
 ```sh
 python3 -B scripts/validate_model_browser.py --output /tmp/hammerr-model-browser-check

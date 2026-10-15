@@ -55,11 +55,7 @@ impl Session {
         let (mut mins, mut maxs) = self
             .selection_bounds()
             .or_else(|| {
-                query::union(
-                    self.document
-                        .objects()
-                        .filter_map(|id| query::bounds(&self.document, id)),
-                )
+                self.object_bounds_in(&self.document, &self.document.objects().collect::<Vec<_>>())
             })
             .unwrap_or((DVec3::splat(-64.0), DVec3::splat(64.0)));
         for axis in 0..3 {
@@ -92,10 +88,7 @@ impl Session {
         self.cancel_area_selection();
         self.clip_tool = false;
         self.spatial.draw_block = false;
-        let hidden = self.hidden_tool_brushes();
-        let matches = region.select(&self.document, spec.rule, spec.faces, |solid| {
-            !hidden.contains(&solid.id)
-        });
+        let matches = self.select_region(&region, spec.rule, spec.faces);
         self.volume.serial += 1;
         let token = self.volume.serial;
         self.volume.preview = Some(Preview {
@@ -173,7 +166,7 @@ impl Session {
                 "faces":preview.matches.faces.iter().skip(offset).take(limit.clamp(1,500)).map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>()})
         });
         json!({"preview":preview,"suggested_bounds":self.volume_selection_bounds().map(|point|point.to_array()),
-            "hidden_policy":"Hidden objects, child brushes and hidden tool brushes are excluded; terrain uses actual displaced sheets, excluding ordinary parent faces and volumes."})
+            "hidden_policy":"Hidden objects, child brushes and hidden tool brushes are excluded; terrain uses actual displaced sheets, excluding ordinary parent faces and volumes. Loaded models use their transformed asset bounds; unsupported models retain helper bounds."})
     }
 
     pub fn append_volume_guide(&self, mesh: &mut render::SceneMesh) {

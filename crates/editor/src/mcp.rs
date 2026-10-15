@@ -4270,6 +4270,8 @@ impl EditorServer {
                 .take(args.limit.unwrap_or(50).min(500))
                 .map(|row| {
                     let mut value = summary(session.document(), row.object);
+                    value["bounds"] =
+                        bounds_json(row.bounds.map(|[low, high]| (vec3(low), vec3(high))));
                     value["hidden"] = json!(row.hidden);
                     value["hidden_brushes"] = json!(row.hidden_brushes);
                     value
@@ -4417,10 +4419,14 @@ impl EditorServer {
         run(|| {
             let session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let model_bounds = session.model_bounds_in(session.document());
             let objects = ids
                 .iter()
                 .map(|&id| {
                     let mut value = detail(session.document(), id)?;
+                    if let Some(&bounds) = model_bounds.get(&id) {
+                        value["bounds"] = bounds_json(Some(bounds));
+                    }
                     let context = session.object_context_summary(id);
                     if !context.is_null() {
                         value["context"] = context;

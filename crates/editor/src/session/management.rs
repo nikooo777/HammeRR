@@ -144,6 +144,7 @@ impl Session {
             }
         }
         let mut rows = Vec::new();
+        let model_bounds = self.model_bounds_in(&self.document);
         for id in self.document.objects() {
             let (kind, classname, targetname, hidden, solids) = match id {
                 ObjectId::Solid(id) => {
@@ -175,7 +176,10 @@ impl Session {
                 ObjectId::Solid(id) => format!("solid:{id}"),
                 ObjectId::Entity(id) => format!("entity:{id}"),
             };
-            let bounds = query::bounds(&self.document, id);
+            let bounds = model_bounds
+                .get(&id)
+                .copied()
+                .or_else(|| query::bounds(&self.document, id));
             if !contains(classname, &filter.classname)
                 || !contains(targetname, &filter.targetname)
                 || filter.hidden.is_some_and(|wanted| wanted != hidden)

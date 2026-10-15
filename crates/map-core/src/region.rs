@@ -1,5 +1,5 @@
 use glam::DVec3;
-use source_formats::vmf::Solid;
+use source_formats::vmf::{Entity, Solid};
 
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, ObjectId, Plane, query};
@@ -121,6 +121,17 @@ impl Region {
         faces: bool,
         include: impl Fn(&Solid) -> bool,
     ) -> Selection {
+        self.select_with_entity_bounds(document, rule, faces, include, query::entity_bounds)
+    }
+
+    pub fn select_with_entity_bounds(
+        &self,
+        document: &Document,
+        rule: Match,
+        faces: bool,
+        include: impl Fn(&Solid) -> bool,
+        entity_bounds: impl Fn(&Entity) -> Option<(DVec3, DVec3)>,
+    ) -> Selection {
         let mut result = Selection::default();
         for id in document.objects() {
             let solids: Vec<_> = match id {
@@ -132,7 +143,7 @@ impl Region {
                     }
                     if entity.solids.is_empty() {
                         if !faces
-                            && query::entity_bounds(entity)
+                            && entity_bounds(entity)
                                 .is_some_and(|(mins, maxs)| self.box_matches(mins, maxs, rule))
                         {
                             result.objects.push(ObjectId::Entity(id));
@@ -252,6 +263,60 @@ mod tests {
         ] {
             assert!(Region::from_bounds(mins, maxs).is_err());
         }
+    }
+
+    #[test]
+    fn supplied_entity_bounds_replace_helpers_without_affecting_faces_or_visibility() {
+        let mut document = Document::empty();
+        let id = document
+            .edit("entity", |tx| {
+                edit::create_entity(tx, "prop_static", Some(DVec3::ZERO), &[], Vec::new())
+            })
+            .unwrap();
+        let bounds = |_: &Entity| Some((DVec3::splat(-20.0), DVec3::splat(20.0)));
+        let small = region(DVec3::splat(-9.0), DVec3::splat(9.0));
+        assert_eq!(
+            small
+                .select(&document, Match::Contained, false, |_| true)
+                .objects,
+            [id]
+        );
+        assert!(
+            small
+                .select_with_entity_bounds(&document, Match::Contained, false, |_| true, bounds)
+                .objects
+                .is_empty()
+        );
+        let edge = region(DVec3::new(18.0, -1.0, -1.0), DVec3::new(22.0, 1.0, 1.0));
+        assert!(
+            edge.select(&document, Match::Intersecting, false, |_| true)
+                .objects
+                .is_empty()
+        );
+        assert_eq!(
+            edge.select_with_entity_bounds(&document, Match::Intersecting, false, |_| true, bounds)
+                .objects,
+            [id]
+        );
+        assert!(
+            edge.select_with_entity_bounds(&document, Match::Intersecting, true, |_| true, bounds)
+                .objects
+                .is_empty()
+        );
+        let ObjectId::Entity(entity) = id else {
+            unreachable!()
+        };
+        document
+            .edit("hide", |tx| {
+                tx.entity_mut(entity)?.hidden = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            edge.select_with_entity_bounds(&document, Match::Intersecting, false, |_| true, bounds)
+                .objects
+                .is_empty()
+        );
     }
 
     #[test]

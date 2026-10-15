@@ -181,7 +181,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Source models |
 | --- |
 | ![Model browser and skin preview](docs/images/model-browser.png) |
-| Browse models and skins with isolated previews, then inspect, pick and frame their meshes. |
+| Browse models and skins with isolated previews, then select, inspect and frame their meshes. |
 
 | Terrain triangles |
 | --- |

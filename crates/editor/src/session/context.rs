@@ -86,7 +86,7 @@ fn region(fields: &Fields) -> Result<Region, String> {
 
 fn object_bounds(session: &Session, id: ObjectId) -> Option<(DVec3, DVec3)> {
     match id {
-        ObjectId::Entity(_) => query::bounds(session.document(), id),
+        ObjectId::Entity(_) => session.object_bounds_in(session.document(), &[id]),
         ObjectId::Solid(id) => map_core::surface::solid(session.document(), id)
             .and_then(|solid| map_core::BrushGeometry::from_solid(solid).ok())
             .map(|geometry| (geometry.mins, geometry.maxs)),

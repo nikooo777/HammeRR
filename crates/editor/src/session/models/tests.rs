@@ -95,3 +95,155 @@ fn model_previews_share_real_assets_picks_bounds_cache_and_source_history() {
         assert_eq!(session.document().vmf(), &source);
     }
 }
+
+#[test]
+fn model_bounds_drive_region_reports_local_handles_and_helper_fallbacks() {
+    use crate::session::{ObjectFilter, Pointer, SelectMode, volume};
+    use glam::{DMat3, DVec2, Vec3};
+    use map_core::region::Match;
+    for actor in [Actor::User, Actor::Agent] {
+        let Ok(game) = crate::mount_game(None) else {
+            return;
+        };
+        let mut session = Session::new(Ok(game));
+        let id = session
+            .create_entity(
+                actor,
+                "prop_static",
+                Some(DVec3::ZERO),
+                BTreeMap::from([
+                    (
+                        "model".into(),
+                        "models/props_junk/wood_crate001a.mdl".into(),
+                    ),
+                    ("angles".into(), "0 30 0".into()),
+                ]),
+            )
+            .unwrap();
+        let ObjectId::Entity(entity) = id else {
+            unreachable!()
+        };
+        let source = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let small = volume::Spec {
+            mins: DVec3::splat(-9.0),
+            maxs: DVec3::splat(9.0),
+            rule: Match::Contained,
+            mode: SelectMode::Replace,
+            faces: false,
+        };
+        let token = session.preview_volume_selection(small).unwrap();
+        assert!(session.volume_preview().unwrap().matches.objects.is_empty());
+        session.cancel_volume_selection(token).unwrap();
+        let remote = volume::Spec {
+            mins: DVec3::new(20.0, -2.0, -2.0),
+            maxs: DVec3::new(24.0, 2.0, 2.0),
+            rule: Match::Intersecting,
+            ..small
+        };
+        let token = session.preview_volume_selection(remote).unwrap();
+        assert_eq!(session.volume_preview().unwrap().matches.objects, [id]);
+        session.cancel_volume_selection(token).unwrap();
+        let camera = render::Camera::planar(render::Projection::Top, Vec3::ZERO, 128.0);
+        let small_area = session
+            .preview_area_selection(
+                actor,
+                camera,
+                Pointer {
+                    position: DVec2::new(220.0, 220.0),
+                    size: (512, 512),
+                },
+                DVec2::new(292.0, 292.0),
+                Match::Contained,
+                SelectMode::Replace,
+            )
+            .unwrap();
+        assert!(small_area.objects.is_empty());
+        let remote_area = session
+            .preview_area_selection(
+                actor,
+                camera,
+                Pointer {
+                    position: DVec2::new(336.0, 248.0),
+                    size: (512, 512),
+                },
+                DVec2::new(352.0, 264.0),
+                Match::Intersecting,
+                SelectMode::Replace,
+            )
+            .unwrap();
+        assert_eq!(remote_area.objects, [id]);
+        session.cancel_area_selection();
+        let bounds = session.object_bounds_in(session.document(), &[id]).unwrap();
+        assert_eq!(
+            session.object_report(&ObjectFilter::default()).unwrap()[0].bounds,
+            Some([bounds.0.to_array(), bounds.1.to_array()])
+        );
+        assert!(
+            !session
+                .object_report(&ObjectFilter {
+                    within: Some([remote.mins.to_array(), remote.maxs.to_array()]),
+                    ..Default::default()
+                })
+                .unwrap()
+                .is_empty()
+        );
+        let basis = session.transform_basis(&[id], true).unwrap();
+        let instance = session
+            .model_instances(session.document())
+            .instances
+            .pop()
+            .unwrap();
+        assert_eq!(
+            session
+                .object_bounds_in_basis(session.document(), &[id], basis)
+                .unwrap(),
+            instance.bounds_in_basis(basis)
+        );
+        assert_eq!(
+            session
+                .object_bounds_in_basis(session.document(), &[id], DMat3::IDENTITY)
+                .unwrap(),
+            bounds
+        );
+        session.set_face_mode(true);
+        let token = session
+            .preview_volume_selection(volume::Spec {
+                faces: true,
+                ..remote
+            })
+            .unwrap();
+        assert!(session.volume_preview().unwrap().matches.faces.is_empty());
+        session.cancel_volume_selection(token).unwrap();
+        session.set_face_mode(false);
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.document.undo_labels().count(), history);
+        session
+            .edit(actor, "hide model", |tx| {
+                tx.entity_mut(entity)?.hidden = true;
+                Ok(())
+            })
+            .unwrap();
+        let token = session.preview_volume_selection(remote).unwrap();
+        assert!(session.volume_preview().unwrap().matches.objects.is_empty());
+        session.cancel_volume_selection(token).unwrap();
+        session.undo(actor).unwrap();
+        session
+            .set_entity_properties(actor, entity, &[("modelscale".into(), Some("2".into()))])
+            .unwrap();
+        let token = session.preview_volume_selection(small).unwrap();
+        assert_eq!(session.volume_preview().unwrap().matches.objects, [id]);
+        session.cancel_volume_selection(token).unwrap();
+        session.undo(actor).unwrap();
+        session
+            .set_entity_properties(
+                actor,
+                entity,
+                &[("angles".into(), None), ("angle".into(), Some("-1".into()))],
+            )
+            .unwrap();
+        let expected =
+            DMat3::from_quat(session.model_instances(session.document()).instances[0].rotation);
+        assert_eq!(session.transform_basis(&[id], true).unwrap(), expected);
+    }
+}

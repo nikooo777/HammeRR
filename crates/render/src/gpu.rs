@@ -351,8 +351,12 @@ impl Renderer {
         let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("2D sky"),
             entries: &[
-                texture_entry(0), texture_entry(1), texture_entry(2),
-                texture_entry(3), texture_entry(4), texture_entry(5),
+                texture_entry(0),
+                texture_entry(1),
+                texture_entry(2),
+                texture_entry(3),
+                texture_entry(4),
+                texture_entry(5),
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -382,7 +386,11 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&material_layout)],
             immediate_size: 0,
         });
-        let pipeline = |label, blend, depth_write, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule| {
+        let pipeline = |label,
+                        blend,
+                        depth_write,
+                        layout: &wgpu::PipelineLayout,
+                        shader: &wgpu::ShaderModule| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -434,8 +442,13 @@ impl Renderer {
         };
         let opaque_pipeline = pipeline("opaque", None, true, &layout, &shader);
         let sky_pipeline = pipeline("2D sky", None, true, &sky_pipeline_layout, &sky_shader);
-        let translucent_pipeline =
-            pipeline("translucent", Some(wgpu::BlendState::ALPHA_BLENDING), false, &layout, &shader);
+        let translucent_pipeline = pipeline(
+            "translucent",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+            &layout,
+            &shader,
+        );
 
         let line_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lines"),
@@ -586,13 +599,17 @@ impl Renderer {
                 opaque.push(draw);
             }
         }
-        let skybox = mesh.skybox.as_ref().filter(|skybox| skybox.ready()).and_then(|skybox| {
-            if !self.skyboxes.contains_key(&skybox.name) {
-                let binding = self.sky_bind_group(ctx, skybox);
-                self.skyboxes.insert(skybox.name.clone(), binding);
-            }
-            self.skyboxes.get(&skybox.name).cloned().flatten()
-        });
+        let skybox = mesh
+            .skybox
+            .as_ref()
+            .filter(|skybox| skybox.ready())
+            .and_then(|skybox| {
+                if !self.skyboxes.contains_key(&skybox.name) {
+                    let binding = self.sky_bind_group(ctx, skybox);
+                    self.skyboxes.insert(skybox.name.clone(), binding);
+                }
+                self.skyboxes.get(&skybox.name).cloned().flatten()
+            });
         GpuScene {
             skybox,
             vertices,
@@ -606,22 +623,48 @@ impl Renderer {
         }
     }
 
-    fn sky_bind_group(&self, ctx: &GpuContext, skybox: &crate::sky::Skybox) -> Option<wgpu::BindGroup> {
-        let textures = skybox.faces.iter().map(|face| upload_vtf(ctx, face.texture.as_ref()?))
+    fn sky_bind_group(
+        &self,
+        ctx: &GpuContext,
+        skybox: &crate::sky::Skybox,
+    ) -> Option<wgpu::BindGroup> {
+        let textures = skybox
+            .faces
+            .iter()
+            .map(|face| upload_vtf(ctx, face.texture.as_ref()?))
             .collect::<Option<Vec<_>>>()?;
-        let views = textures.iter().map(|texture| texture.create_view(&Default::default())).collect::<Vec<_>>();
-        let mut entries = views.iter().enumerate().map(|(binding, view)| wgpu::BindGroupEntry {
-            binding: binding as u32,
-            resource: wgpu::BindingResource::TextureView(view),
-        }).collect::<Vec<_>>();
-        entries.push(wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.sky_sampler) });
-        let transforms = skybox.faces.each_ref().map(|face| face.transform);
-        let params = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("sky texture transforms"), contents: bytemuck::cast_slice(&transforms), usage: wgpu::BufferUsages::UNIFORM,
+        let views = textures
+            .iter()
+            .map(|texture| texture.create_view(&Default::default()))
+            .collect::<Vec<_>>();
+        let mut entries = views
+            .iter()
+            .enumerate()
+            .map(|(binding, view)| wgpu::BindGroupEntry {
+                binding: binding as u32,
+                resource: wgpu::BindingResource::TextureView(view),
+            })
+            .collect::<Vec<_>>();
+        entries.push(wgpu::BindGroupEntry {
+            binding: 6,
+            resource: wgpu::BindingResource::Sampler(&self.sky_sampler),
         });
-        entries.push(wgpu::BindGroupEntry { binding: 7, resource: params.as_entire_binding() });
+        let transforms = skybox.faces.each_ref().map(|face| face.transform);
+        let params = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sky texture transforms"),
+                contents: bytemuck::cast_slice(&transforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        entries.push(wgpu::BindGroupEntry {
+            binding: 7,
+            resource: params.as_entire_binding(),
+        });
         Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&skybox.name), layout: &self.sky_layout, entries: &entries,
+            label: Some(&skybox.name),
+            layout: &self.sky_layout,
+            entries: &entries,
         }))
     }
 
@@ -826,14 +869,20 @@ impl Renderer {
                     let Some(Some(material)) = self.materials.get(draw.batch.material) else {
                         continue;
                     };
-                    if draw.sky && options.sky_preview && options.surface == SurfaceView::Textured
+                    if draw.sky
+                        && options.sky_preview
+                        && options.surface == SurfaceView::Textured
                         && camera.projection == crate::Projection::Perspective
                         && let Some(skybox) = &scene.skybox
                     {
                         pass.set_pipeline(&self.sky_pipeline);
                         pass.set_bind_group(1, skybox, &[]);
                         let batch = draw.batch;
-                        pass.draw_indexed(batch.first_index..batch.first_index + batch.index_count, 0, 0..1);
+                        pass.draw_indexed(
+                            batch.first_index..batch.first_index + batch.index_count,
+                            0,
+                            0..1,
+                        );
                         continue;
                     }
                     pass.set_pipeline(if options.surface == SurfaceView::Textured || draw.helper {

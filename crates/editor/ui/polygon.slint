@@ -51,7 +51,7 @@ export component PolygonWindow inherits Window {
                         min-height:320px;vertical-stretch:1;
                         pad:=Rectangle {
                         width:min(parent.width,parent.height);height:self.width;
-                        x:(parent.width-self.width)/2;y:(parent.height-self.height)/2;
+                        x:(parent.width - self.width)/2;y:(parent.height - self.height)/2;
                         for i in 17:Rectangle {x:parent.width*i/16;y:0;width:1px;height:parent.height;background:i==8 ? #4a596a : #242f3d;}
                         for i in 17:Rectangle {x:0;y:parent.height*i/16;width:parent.width;height:1px;background:i==8 ? #4a596a : #242f3d;}
                         Path {width:parent.width;height:parent.height;viewbox-width:512;viewbox-height:512;commands:root.outline;stroke:#72c7ee;stroke-width:2px;fill:#386c8a30;}

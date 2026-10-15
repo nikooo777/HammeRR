@@ -111,7 +111,10 @@ impl Default for MaterialLibrary {
 impl MaterialLibrary {
     pub fn skybox(&mut self, fs: &GameFs, name: &str) -> Arc<crate::sky::Skybox> {
         let name = name.trim().to_ascii_lowercase();
-        self.skyboxes.entry(name.clone()).or_insert_with(|| Arc::new(crate::sky::Skybox::load(fs, &name))).clone()
+        self.skyboxes
+            .entry(name.clone())
+            .or_insert_with(|| Arc::new(crate::sky::Skybox::load(fs, &name)))
+            .clone()
     }
 
     /// Flat white, tinted by vertex color: entity boxes and other helpers.

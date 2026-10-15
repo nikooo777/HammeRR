@@ -369,7 +369,11 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             shared_camera: self.camera,
-            groups: if spec.faces { None } else { self.group_selection_index() },
+            groups: if spec.faces {
+                None
+            } else {
+                self.group_selection_index()
+            },
         };
         update_stroke(&mut stroke, &self.document, &[spec.pointer.position])?;
         self.cancel_area_selection();
@@ -557,8 +561,11 @@ fn update_stroke(
                     faces.insert(FaceId { solid, side });
                 }
             } else {
-                if let Some(groups) = &stroke.groups { objects.extend(groups.members(hit.object)); }
-                else { objects.insert(hit.object); }
+                if let Some(groups) = &stroke.groups {
+                    objects.extend(groups.members(hit.object));
+                } else {
+                    objects.insert(hit.object);
+                }
             }
         }
         if objects.len() + faces.len() > MAX_MATCHES {

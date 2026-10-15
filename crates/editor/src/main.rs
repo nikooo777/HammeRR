@@ -1,5 +1,4 @@
 mod carve_ui;
-mod merge_ui;
 mod checks_ui;
 mod compile_ui;
 mod components_ui;
@@ -16,6 +15,7 @@ mod material_favorites;
 mod material_replace_ui;
 mod materials;
 mod mcp;
+mod merge_ui;
 mod model_browser_ui;
 mod model_preview;
 mod model_ui;
@@ -23,12 +23,12 @@ mod placement_ui;
 mod pointfile_ui;
 mod polygon_ui;
 mod primitive_ui;
-mod recovery;
-mod recovery_ui;
 mod recent_maps;
 mod recent_maps_ui;
-mod repeat_ui;
+mod recovery;
+mod recovery_ui;
 mod rename_ui;
+mod repeat_ui;
 mod saved_views_ui;
 mod session;
 mod sounds_ui;
@@ -3281,7 +3281,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            let window = ui.borrow().recent_maps_window.as_ref().unwrap().clone_strong();
+            let window = ui
+                .borrow()
+                .recent_maps_window
+                .as_ref()
+                .unwrap()
+                .clone_strong();
             window.set_discard_changes(false);
             window.set_confirm_clear(false);
             window.set_message("".into());
@@ -4036,7 +4041,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ui = ui.borrow();
             let controller = ui.repeat.as_ref().unwrap();
             match controller.initialize(&lock(&shared)) {
-                Ok(()) => { let _ = controller.window.show(); }
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
                 Err(error) => app.unwrap().set_message(error.into()),
             }
         }
@@ -4048,7 +4055,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if ui.object_groups.is_none() {
                 match groups_ui::Controller::new(&ui.session) {
                     Ok(controller) => ui.object_groups = Some(controller),
-                    Err(error) => { app.unwrap().set_message(error.to_string().into()); return; }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
                 }
             }
             if let Err(error) = ui.object_groups.as_ref().unwrap().show(&lock(&ui.session)) {
@@ -4696,7 +4706,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 match (hit, click.control) {
                     (Some(hit), true) => session.select_grouped(&[hit.object], SelectMode::Toggle),
-                    (Some(hit), false) => session.select_grouped(&[hit.object], SelectMode::Replace),
+                    (Some(hit), false) => {
+                        session.select_grouped(&[hit.object], SelectMode::Replace)
+                    }
                     (None, true) => Ok(()),
                     (None, false) => session.select(&[], SelectMode::Replace),
                 }
@@ -4992,7 +5004,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     app.set_show_tools(session.view().tool_textures);
                     app.set_sky_preview(session.view().sky_preview);
-                    app.set_sky_preview_status(session.skybox_preview().map_or_else(|| "Set world skyname to select a 2D sky".to_owned(), |skybox| skybox.summary()).into());
+                    app.set_sky_preview_status(
+                        session
+                            .skybox_preview()
+                            .map_or_else(
+                                || "Set world skyname to select a 2D sky".to_owned(),
+                                |skybox| skybox.summary(),
+                            )
+                            .into(),
+                    );
                     app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
@@ -5066,7 +5086,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     app.set_show_tools(session.view().tool_textures);
                     app.set_sky_preview(session.view().sky_preview);
-                    app.set_sky_preview_status(session.skybox_preview().map_or_else(|| "Set world skyname to select a 2D sky".to_owned(), |skybox| skybox.summary()).into());
+                    app.set_sky_preview_status(
+                        session
+                            .skybox_preview()
+                            .map_or_else(
+                                || "Set world skyname to select a 2D sky".to_owned(),
+                                |skybox| skybox.summary(),
+                            )
+                            .into(),
+                    );
                     app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
@@ -7923,51 +7951,55 @@ mod tests {
         .unwrap();
         let mut state = Session::new(Err("no assets needed".into()));
         let mut ids = Vec::new();
-        for (mins,maxs) in [
-            (DVec3::ZERO,DVec3::splat(64.0)),
-            (DVec3::new(64.0,0.0,0.0),DVec3::new(128.0,64.0,64.0)),
-            (DVec3::splat(256.0),DVec3::splat(288.0)),
+        for (mins, maxs) in [
+            (DVec3::ZERO, DVec3::splat(64.0)),
+            (DVec3::new(64.0, 0.0, 0.0), DVec3::new(128.0, 64.0, 64.0)),
+            (DVec3::splat(256.0), DVec3::splat(288.0)),
         ] {
-            ids.push(state.create_block(Actor::Agent,mins,maxs,"brick/test",false).unwrap());
+            ids.push(
+                state
+                    .create_block(Actor::Agent, mins, maxs, "brick/test", false)
+                    .unwrap(),
+            );
         }
-        state.select(&ids,SelectMode::Replace).unwrap();
+        state.select(&ids, SelectMode::Replace).unwrap();
         let original = state.document().vmf().clone();
         let shared = Arc::new(Mutex::new(state));
         let window = MergeWindow::new().unwrap();
-        merge_ui::bind(&window,&shared);
-        merge_ui::refresh(&window,&lock(&shared));
-        assert_eq!(window.get_sources().row_count(),3);
+        merge_ui::bind(&window, &shared);
+        merge_ui::refresh(&window, &lock(&shared));
+        assert_eq!(window.get_sources().row_count(), 3);
         let excluded = window.get_sources().row_data(2).unwrap().solid;
         window.invoke_choose_source(excluded.clone());
         window.invoke_preview_edit();
         assert!(window.get_ready());
-        assert_eq!(window.get_sources().row_count(),3);
+        assert_eq!(window.get_sources().row_count(), 3);
         assert!(!window.get_sources().row_data(2).unwrap().selected);
         assert!(window.get_summary().contains("2 brushes"));
-        assert_eq!(lock(&shared).document().vmf(),&original);
+        assert_eq!(lock(&shared).document().vmf(), &original);
         let draft = lock(&shared).render_document().vmf().clone();
         window.show().unwrap();
-        save_ui_snapshot(window.window(),"brush-merging");
-        for label in ["Cancel","Discard preview","Preview merge","Apply merge"] {
-            assert_dialog_button_visible(&window,label);
+        save_ui_snapshot(window.window(), "brush-merging");
+        for label in ["Cancel", "Discard preview", "Preview merge", "Apply merge"] {
+            assert_dialog_button_visible(&window, label);
         }
         window.invoke_choose_source(excluded.clone());
         assert!(!window.get_ready());
         window.invoke_apply();
-        assert_eq!(lock(&shared).document().vmf(),&original);
+        assert_eq!(lock(&shared).document().vmf(), &original);
         window.invoke_choose_source(excluded);
         window.invoke_discard();
         assert!(window.get_token().is_empty());
-        assert_eq!(lock(&shared).render_document().vmf(),&original);
+        assert_eq!(lock(&shared).render_document().vmf(), &original);
         window.invoke_preview_edit();
         window.invoke_cancel();
         assert!(lock(&shared).merge_report()["preview"].is_null());
-        merge_ui::refresh(&window,&lock(&shared));
+        merge_ui::refresh(&window, &lock(&shared));
         window.invoke_preview_edit();
         window.invoke_apply();
-        assert_eq!(lock(&shared).document().vmf(),&draft);
+        assert_eq!(lock(&shared).document().vmf(), &draft);
         lock(&shared).undo(Actor::User).unwrap();
-        assert_eq!(lock(&shared).document().vmf(),&original);
+        assert_eq!(lock(&shared).document().vmf(), &original);
     }
 
     #[test]
@@ -9638,10 +9670,14 @@ mod tests {
         let mut session = Session::new(Err("no assets needed".into()));
         session.configure_recent_maps(Ok(directory.path().join("preferences")));
         session.save(Actor::User, Some(&first)).unwrap();
-        session.set_compile_settings(Actor::Agent, "direct_ldr").unwrap();
+        session
+            .set_compile_settings(Actor::Agent, "direct_ldr")
+            .unwrap();
         session.new_map(Actor::User, false).unwrap();
         session.save(Actor::User, Some(&second)).unwrap();
-        session.set_compile_settings(Actor::Agent, "fullbright").unwrap();
+        session
+            .set_compile_settings(Actor::Agent, "fullbright")
+            .unwrap();
         let shared = Arc::new(Mutex::new(session));
         let window = RecentMapsWindow::new().unwrap();
         recent_maps_ui::bind(&window, &shared);
@@ -9651,7 +9687,13 @@ mod tests {
         window.invoke_select_map(first.to_string_lossy().to_string().into());
         assert!(window.get_selected_detail().contains("direct_ldr"));
         save_ui_snapshot(window.window(), "recent-maps");
-        for label in ["Refresh list", "Open selected map", "Remove from list", "Clear list", "Cancel / close"] {
+        for label in [
+            "Refresh list",
+            "Open selected map",
+            "Remove from list",
+            "Clear list",
+            "Cancel / close",
+        ] {
             assert_dialog_button_visible(&window, label);
         }
         let before = lock(&shared).document().vmf().clone();
@@ -9661,15 +9703,34 @@ mod tests {
         window.show().unwrap();
         window.invoke_open_selected();
         assert_eq!(lock(&shared).path(), Some(first.as_path()));
-        assert_eq!(lock(&shared).compile_options().lighting, compiler::LightingMode::DirectLdr);
-        lock(&shared).create_block(Actor::User, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false).unwrap();
+        assert_eq!(
+            lock(&shared).compile_options().lighting,
+            compiler::LightingMode::DirectLdr
+        );
+        lock(&shared)
+            .create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(64.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
         recent_maps_ui::refresh(&window, &lock(&shared));
         window.show().unwrap();
         window.invoke_select_map(second.to_string_lossy().to_string().into());
         window.invoke_open_selected();
         assert!(window.get_message().contains("unsaved"));
         window.set_discard_changes(true);
-        lock(&shared).create_block(Actor::Agent, DVec3::splat(128.0), DVec3::splat(192.0), "brick/test", false).unwrap();
+        lock(&shared)
+            .create_block(
+                Actor::Agent,
+                DVec3::splat(128.0),
+                DVec3::splat(192.0),
+                "brick/test",
+                false,
+            )
+            .unwrap();
         let dirty = lock(&shared).document().vmf().clone();
         window.invoke_open_selected();
         assert!(window.get_message().contains("changed"));
@@ -9678,7 +9739,10 @@ mod tests {
         window.set_discard_changes(true);
         window.invoke_open_selected();
         assert_eq!(lock(&shared).path(), Some(second.as_path()));
-        assert_eq!(lock(&shared).compile_options().lighting, compiler::LightingMode::Fullbright);
+        assert_eq!(
+            lock(&shared).compile_options().lighting,
+            compiler::LightingMode::Fullbright
+        );
         window.invoke_select_map(first.to_string_lossy().to_string().into());
         window.invoke_remove_selected();
         assert_eq!(window.get_rows().row_count(), 1);

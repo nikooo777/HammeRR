@@ -182,7 +182,7 @@ fn scene_retains_sky_geometry_and_resolves_custom_compile_sky_materials() {
     assert!(library.get(mesh.batches[0].material).tool);
     assert_eq!(&before, document.vmf());
     for name in ["tools/toolsskybox", "tools/toolsskybox2d"] {
-        let missing_tool = crate::MaterialInfo::load(&fixture.fs, name);
+        let missing_tool = crate::materials::MaterialInfo::load(&fixture.fs, name);
         assert!(missing_tool.sky && missing_tool.tool);
     }
 }

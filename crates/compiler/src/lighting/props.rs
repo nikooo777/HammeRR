@@ -154,7 +154,7 @@ fn append(
     let origin = DVec3::from_array(prop.origin.map(f64::from));
     let mut degenerate = 0;
     for part in model.parts_for_body(0) {
-        for indices in part.indices.chunks_exact(3) {
+        for indices in part.indices.as_chunks::<3>().0 {
             budget.consume(4)?;
             let points = std::array::from_fn(|corner| {
                 origin

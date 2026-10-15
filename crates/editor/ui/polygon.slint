@@ -65,10 +65,10 @@ export component PolygonWindow inherits Window {
                     HorizontalLayout {
                         spacing:7px;
                         Text {text:"View center";vertical-alignment:center;}
-                        LineEdit {min-width:0px;width:90px;text<=>root.center-u;input-type:decimal;edited=>{root.view-edited();}}
-                        LineEdit {min-width:0px;width:90px;text<=>root.center-v;input-type:decimal;edited=>{root.view-edited();}}
+                        LineEdit {width:90px;text<=>root.center-u;input-type:decimal;edited=>{root.view-edited();}}
+                        LineEdit {width:90px;text<=>root.center-v;input-type:decimal;edited=>{root.view-edited();}}
                         Text {text:"Span";vertical-alignment:center;}
-                        LineEdit {min-width:0px;width:90px;text<=>root.span;input-type:decimal;edited=>{root.view-edited();}}
+                        LineEdit {width:90px;text<=>root.span;input-type:decimal;edited=>{root.view-edited();}}
                     }
                     HorizontalLayout {
                         spacing:8px;
@@ -77,7 +77,7 @@ export component PolygonWindow inherits Window {
                     }
                 }
                 VerticalLayout {
-                    width:300px;min-width:300px;max-width:300px;horizontal-stretch:0;spacing:8px;
+                    width:300px;horizontal-stretch:0;spacing:8px;
                     Text {text:root.axis==0 ? "Corners · Y / Z" : root.axis==1 ? "Corners · X / Z" : "Corners · X / Y";font-weight:600;}
                     ScrollView {
                         vertical-stretch:1;
@@ -86,17 +86,17 @@ export component PolygonWindow inherits Window {
                             for corner[index] in root.corners:HorizontalLayout {
                                 spacing:5px;min-height:32px;max-height:32px;
                                 Text {text:corner.label;vertical-alignment:center;width:22px;}
-                                LineEdit {min-width:0px;width:90px;max-width:90px;text:corner.u;input-type:decimal;accepted=>{root.change-corner(index,self.text,corner.v);}}
-                                LineEdit {min-width:0px;width:90px;max-width:90px;text:corner.v;input-type:decimal;accepted=>{root.change-corner(index,corner.u,self.text);}}
-                                Button {text:"×";min-width:28px;width:28px;max-width:28px;clicked=>{root.remove-corner(index);}}
+                                LineEdit {width:90px;text:corner.u;input-type:decimal;accepted=>{root.change-corner(index,self.text,corner.v);}}
+                                LineEdit {width:90px;text:corner.v;input-type:decimal;accepted=>{root.change-corner(index,corner.u,self.text);}}
+                                Button {text:"×";width:28px;clicked=>{root.remove-corner(index);}}
                             }
                         }
                     }
                     HorizontalLayout {
                         spacing:5px;
-                        LineEdit {min-width:0px;width:85px;text<=>root.corner-u;input-type:decimal;}
-                        LineEdit {min-width:0px;width:85px;text<=>root.corner-v;input-type:decimal;}
-                        Button {text:"Add corner";min-width:90px;width:90px;clicked=>{root.add-corner();}}
+                        LineEdit {width:85px;text<=>root.corner-u;input-type:decimal;}
+                        LineEdit {width:85px;text<=>root.corner-v;input-type:decimal;}
+                        Button {text:"Add corner";width:90px;clicked=>{root.add-corner();}}
                     }
                     Text {text:"Exact corner changes use Enter. Concave outlines become several editable convex brushes.";wrap:word-wrap;color:#b6c1cf;}
                 }

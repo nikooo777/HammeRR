@@ -407,16 +407,21 @@ mod tests {
         let mut budget = Budget::new(&control);
         let color = DVec3::new(0.5, 0.25, 0.125);
         let surfaces = SurfaceIndex {
-            geometry: ShadowIndex::new(vec![Surface {
-                triangle: Triangle::new([
-                    DVec3::new(-128.0, -128.0, 64.0),
-                    DVec3::new(128.0, -128.0, 64.0),
-                    DVec3::new(0.0, 128.0, 64.0),
-                ]).unwrap(),
-                normal: DVec3::NEG_Z,
-                source: 0,
-                coordinates: None,
-            }], &mut |work| budget.consume(work)).unwrap(),
+            geometry: ShadowIndex::new(
+                vec![Surface {
+                    triangle: Triangle::new([
+                        DVec3::new(-128.0, -128.0, 64.0),
+                        DVec3::new(128.0, -128.0, 64.0),
+                        DVec3::new(0.0, 128.0, 64.0),
+                    ])
+                    .unwrap(),
+                    normal: DVec3::NEG_Z,
+                    source: 0,
+                    coordinates: None,
+                }],
+                &mut |work| budget.consume(work),
+            )
+            .unwrap(),
             radiance: vec![Radiance {
                 average: color,
                 reflectivity: DVec3::ONE,
@@ -428,16 +433,39 @@ mod tests {
                 extras: Vec::new(),
             }],
         };
-        let shadows = ShadowIndex::new(Vec::<Occluder>::new(), &mut |work| budget.consume(work)).unwrap();
+        let shadows =
+            ShadowIndex::new(Vec::<Occluder>::new(), &mut |work| budget.consume(work)).unwrap();
         for height in [32.0, 64.0, 96.0] {
-            let props = ShadowIndex::new(vec![super::super::props::PropTriangle::new([
-                DVec3::new(-8.0, -8.0, height),
-                DVec3::new(8.0, -8.0, height),
-                DVec3::new(0.0, 8.0, height),
-            ]).unwrap()], &mut |work| budget.consume(work)).unwrap();
-            let center = surfaces.trace(DVec3::ZERO, DVec3::Z, 0.0, &shadows, &props, &mut budget).unwrap();
-            assert_eq!(center.map(|hit| hit.color), if height < 64.0 { None } else { Some(color) });
-            let hole = surfaces.trace(DVec3::X * 32.0, DVec3::Z, 0.0, &shadows, &props, &mut budget).unwrap().unwrap();
+            let props = ShadowIndex::new(
+                vec![
+                    super::super::props::PropTriangle::new([
+                        DVec3::new(-8.0, -8.0, height),
+                        DVec3::new(8.0, -8.0, height),
+                        DVec3::new(0.0, 8.0, height),
+                    ])
+                    .unwrap(),
+                ],
+                &mut |work| budget.consume(work),
+            )
+            .unwrap();
+            let center = surfaces
+                .trace(DVec3::ZERO, DVec3::Z, 0.0, &shadows, &props, &mut budget)
+                .unwrap();
+            assert_eq!(
+                center.map(|hit| hit.color),
+                if height < 64.0 { None } else { Some(color) }
+            );
+            let hole = surfaces
+                .trace(
+                    DVec3::X * 32.0,
+                    DVec3::Z,
+                    0.0,
+                    &shadows,
+                    &props,
+                    &mut budget,
+                )
+                .unwrap()
+                .unwrap();
             assert_eq!(hole.color, color);
             assert!(hole.front);
         }

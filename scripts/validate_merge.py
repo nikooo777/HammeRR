@@ -167,7 +167,9 @@ def validate(client, output, render=False):
     client.call("undo")
     check(detail(client, ids) == original, "Undo restores exact source brushes")
     client.call("redo")
-    check(detail(client, [first, unrelated]) == applied, "Redo restores the exact merge")
+    check(
+        detail(client, [first, unrelated]) == applied, "Redo restores the exact merge"
+    )
     saved = output / "merged.vmf"
     client.call("save_map", {"path": str(saved)})
     client.call("open_map", {"path": str(saved)})
@@ -200,7 +202,9 @@ def validate(client, output, render=False):
         pair = [block([0, 0, 0], [64, 64, 64]), block(mins, maxs)]
         source = detail(client, pair)
         preview(pair, error=True)
-        check(detail(client, pair) == source, f"Nonconvex/tangent union {index} rejects")
+        check(
+            detail(client, pair) == source, f"Nonconvex/tangent union {index} rejects"
+        )
 
     rng = random.Random(10)
     for index in range(12):
@@ -222,7 +226,9 @@ def validate(client, output, render=False):
         check(
             all(
                 abs(actual - expected) < 0.0001
-                for actual, expected in zip(actual_min + actual_max, [x, y, z, x + width, y + height, z + depth])
+                for actual, expected in zip(
+                    actual_min + actual_max, [x, y, z, x + width, y + height, z + depth]
+                )
             )
             and len(brush["faces"]) == 6,
             f"Fractional tiled union {index} keeps the exact exterior bounds",
@@ -244,7 +250,12 @@ def validate(client, output, render=False):
     draft = preview(pair)
     client.call(
         "create_primitive",
-        {"shape": "cylinder", "mins": [256, 0, 0], "maxs": [320, 64, 64], "preview": True},
+        {
+            "shape": "cylinder",
+            "mins": [256, 0, 0],
+            "maxs": [320, 64, 64],
+            "preview": True,
+        },
     )
     primitive = client.call("get_primitive_preview")
     client.call("cancel_merge", {"token": draft["preview"]["token"]}, error=True)
@@ -261,7 +272,9 @@ def validate(client, output, render=False):
     client.call("new_map", {"discard_changes": True})
     pair = [block([0, 0, 0], [64, 64, 64]), block([64, 0, 0], [128, 64, 64])]
     sibling = block([256, 0, 0], [288, 32, 32])
-    owner = client.call("tie_to_entity", {"ids": [*pair, sibling], "classname": "func_detail"})["id"]
+    owner = client.call(
+        "tie_to_entity", {"ids": [*pair, sibling], "classname": "func_detail"}
+    )["id"]
     original_owner = detail(client, [owner])[0]
     draft = preview(pair)
     check(
@@ -277,17 +290,30 @@ def validate(client, output, render=False):
         "Entity merge preserves sibling brushes and owner properties",
     )
     client.call("undo")
-    check(detail(client, [owner])[0] == original_owner, "Undo restores all entity children")
+    check(
+        detail(client, [owner])[0] == original_owner,
+        "Undo restores all entity children",
+    )
     world = block([128, 0, 0], [192, 64, 64])
     preview([pair[1], world], error=True)
     check(state()["preview"] is None, "Mixed entity/world ownership rejects")
-    top = next(face for face in original_owner["brushes"][0]["faces"] if face["normal"][2] > 0.9)
-    client.call("create_terrain", {"faces": [{"solid": number(pair[0]), "side": top["side"]}], "power": 2})
+    top = next(
+        face
+        for face in original_owner["brushes"][0]["faces"]
+        if face["normal"][2] > 0.9
+    )
+    client.call(
+        "create_terrain",
+        {"faces": [{"solid": number(pair[0]), "side": top["side"]}], "power": 2},
+    )
     preview(pair, error=True)
     check(state()["preview"] is None, "Displacement brush merging rejects")
 
     client.call("new_map", {"discard_changes": True})
-    floor = [block([-144, -144, -16], [0, 144, 0]), block([0, -144, -16], [144, 144, 0])]
+    floor = [
+        block([-144, -144, -16], [0, 144, 0]),
+        block([0, -144, -16], [144, 144, 0]),
+    ]
     draft = preview(floor)
     client.call("commit_merge", {"token": draft["preview"]["token"]})
     for mins, maxs in [
@@ -298,23 +324,34 @@ def validate(client, output, render=False):
         ([-128, 128, 0], [128, 144, 128]),
     ]:
         block(mins, maxs)
-    client.call("create_entity", {"classname": "info_player_counterterrorist", "origin": [0, 0, 64]})
+    client.call(
+        "create_entity",
+        {"classname": "info_player_counterterrorist", "origin": [0, 0, 64]},
+    )
     saved = output / "merged-room.vmf"
     client.call("save_map", {"path": str(saved)})
     client.call("open_map", {"path": str(saved)})
     compiled = client.call("compile_map", {"path": str(output / "merged-room.bsp")})
     check(
-        compiled["success"] and compiled["leak"] is None and compiled["stats"]["brushes"] == 6,
+        compiled["success"]
+        and compiled["leak"] is None
+        and compiled["stats"]["brushes"] == 6,
         "A room with a merged floor saves, reopens and compiles sealed with six brushes",
     )
     return checks
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate convex brush merging through private headless MCP")
+    parser = argparse.ArgumentParser(
+        description="Validate convex brush merging through private headless MCP"
+    )
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
-    parser.add_argument("--output", type=Path, default=Path("/tmp/hammerr-merge-validation"))
-    parser.add_argument("--render", action="store_true", help="Also check offscreen preview pixels")
+    parser.add_argument(
+        "--output", type=Path, default=Path("/tmp/hammerr-merge-validation")
+    )
+    parser.add_argument(
+        "--render", action="store_true", help="Also check offscreen preview pixels"
+    )
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     client = Client(None, args.binary, args.output)

@@ -297,7 +297,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Generate a rounded terrain preview from up to16 selected/explicit base quad cages. Replaces sculpted positions; retains powers, start corners, blend values, flags/tags, materials and mapping. Uses four Catmull-Clark rounds and fixed base boundary edges. Matching full edges share samples; half-edge and non-manifold/corner-only networks reject atomically. Saved explicit grids remain editable unless unsupported caches are present. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain… → Subdivide base cage."
+        description = "Generate a rounded terrain preview from up to16 selected/explicit base quad cages. Replaces sculpted positions; retains powers, start corners, blend values, flags/tags, materials and mapping. Uses four Catmull-Clark rounds and fixed base boundary edges. Matching full/whole-to-half edges share samples on a conforming cage with two grid densities. Nested half-edge chains, inconsistent densities, fractional/ambiguous contacts and non-manifold/corner-only networks reject atomically. Saved explicit grids remain editable unless unsupported caches are present. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain… → Subdivide base cage."
     )]
     pub(in crate::mcp) fn preview_terrain_subdivision(
         &self,

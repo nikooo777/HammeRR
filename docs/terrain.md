@@ -16,7 +16,7 @@ Turn world quad faces into flat terrain surfaces at three grid resolutions. Scul
 
 ![A newly created terrain grid](images/terrain-creation.png)
 
-Limits: 1–16 world quad faces per action, one per parent brush. Nonquad faces, brush entities and parents with existing terrain are rejected together; no partial conversion occurs. Terrain is a surface: its parent brush does not seal the map or become a solid collision box. Creation adds one undo step and retains face selection. Subdivision and holes remain planned. Use a visible ordinary solid material for native compilation.
+Limits: 1–16 world quad faces per action, one per parent brush. Nonquad faces, brush entities and parents with existing terrain are rejected together; no partial conversion occurs. Terrain is a surface: its parent brush does not seal the map or become a solid collision box. Creation adds one undo step and retains face selection. Holes remain planned. Use a visible ordinary solid material for native compilation.
 
 ## Change grid resolution
 
@@ -37,14 +37,14 @@ Round connected base quad faces into a smooth terrain surface.
 
 1. Create terrain on the base faces that form the shape. Include every face you want rounded; each surface may use its own grid resolution and start corner.
 2. Select those faces and open **Edit terrain…**. Choose **Operation → Subdivide base cage**.
-3. Click **Preview**. This replaces existing sculpted positions. Blend values, materials, mapping, flags, triangle tags, powers and start corners stay fixed. Matching full edges share samples; the outer base edges stay fixed.
+3. Click **Preview**. This replaces existing sculpted positions. Blend values, materials, mapping, flags, triangle tags, powers and start corners stay fixed. Matching full edges and exact whole-to-half junctions share samples; the outer base edges stay fixed.
 4. Inspect the shape, then click **Apply** for one Undo step or **Cancel** to discard it. Repeating the same subdivision is a no-op. Generated grids can still be sculpted, moved, painted, sewn or resized.
 
 ![Connected terrain subdivision controls](images/terrain-subdivision-controls.png)
 
 ![Three connected terrain faces rounded across mixed resolutions](images/subdivided-terrain.png)
 
-Limits: 1–16 quad cages, four Catmull–Clark refinement rounds, sampled at each surface's existing power. It generates geometry from the base faces, replacing prior sculpting on interiors and boundaries. Half-edge connections, corner-only contacts, ambiguous overlaps, non-manifold or inconsistently oriented cages, opaque data and nonzero offset-normal caches reject together. Base boundary edges are pinned; crease controls and half-edge cage subdivision remain planned. Compilation applies its existing mixed-resolution LOD rules. The saved `subdiv` marker alone does not block supported editing operations.
+Limits: 1–16 quad cages, four Catmull–Clark refinement rounds, sampled at each surface's existing power. Exact whole-to-half junctions use a shared quad cage with two grid densities; one large edge may meet one or two smaller edges. Nested chains requiring a third density, inconsistent density cycles, other fractional contacts, corner-only contacts, ambiguous overlaps, non-manifold or inconsistently oriented cages, opaque data and nonzero offset-normal caches reject together. It generates geometry from the base faces, replacing prior sculpting on interiors and boundaries. Unmatched outer base edges stay pinned. Compilation applies its existing mixed-resolution LOD and border-normal rules. The saved `subdiv` marker alone does not block supported editing operations. Crease controls remain planned.
 
 ## Sculpt heights
 
@@ -173,7 +173,7 @@ Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can r
 
 For corner-only contacts, **Preview** reports **corner joins** separately from joined borders. Only those shared corner vertices move; optional alpha averages once across the same group. Unrelated borders and interiors stay fixed.
 
-Limits: full or exact whole-to-half base edges and matching base corners at powers 2–4. Missing matches, ambiguous overlaps, Source-float-collapsed corners and unsupported cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans and half-edge cage subdivision remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
+Limits: full or exact whole-to-half base edges and matching base corners at powers 2–4. Missing matches, ambiguous overlaps, Source-float-collapsed corners and unsupported cache data reject atomically. Unmatched borders stay fixed. Sewing can remove fine detail along a border to make it match the coarser grid. Other fractional spans remain planned. Start corners, materials, mapping, IDs, triangle tags and collision settings remain fixed.
 
 ## Set collision behavior
 

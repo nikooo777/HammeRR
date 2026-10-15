@@ -1,6 +1,10 @@
 use super::*;
 use map_core::surface::{PaintMode, SurfaceSample};
 
+#[cfg(test)]
+#[path = "surface_subdivision_half_edge_tests.rs"]
+mod subdivision_half_edge_tests;
+
 #[derive(Debug, Clone, Copy)]
 pub enum GroupProjection {
     Face(Option<FaceId>),

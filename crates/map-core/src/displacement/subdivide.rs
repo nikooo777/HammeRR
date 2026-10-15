@@ -13,9 +13,12 @@ use crate::{
 
 const LEVELS: usize = 4;
 const CELLS: usize = 1 << LEVELS;
-const SIZE: usize = CELLS + 1;
 const MAX_FACES: usize = 16;
+const MAX_CAGE_CELLS: usize = 2;
+const MAX_CELLS: usize = CELLS * MAX_CAGE_CELLS;
+const MAX_SIZE: usize = MAX_CELLS + 1;
 
+mod cage;
 #[cfg(test)]
 mod tests;
 
@@ -56,8 +59,8 @@ fn invalid(message: &str) -> EditError {
 
 impl Topology {
     fn build(mesh: &Mesh) -> Result<Self, EditError> {
-        if mesh.faces.len() > MAX_FACES * CELLS * CELLS
-            || mesh.points.len() > MAX_FACES * SIZE * SIZE
+        if mesh.faces.len() > MAX_FACES * MAX_CELLS * MAX_CELLS
+            || mesh.points.len() > MAX_FACES * MAX_SIZE * MAX_SIZE
         {
             return Err(invalid("Terrain subdivision exceeds its bounded cage size"));
         }
@@ -246,60 +249,34 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
         .collect::<Vec<_>>();
     let neighbors =
         neighbors::find_spans(&views, &mut |_| Ok(())).map_err(|error| invalid(&error))?;
-    if neighbors.ambiguous > 0
-        || neighbors.pairs.iter().any(|pair| {
-            pair.first_span != neighbors::Span::Full || pair.second_span != neighbors::Span::Full
-        })
-    {
+    if neighbors.ambiguous > 0 || neighbors.mismatched > 0 {
         return Err(invalid(
-            "Subdivision needs unambiguous full-edge cages; half-edge junctions remain unsupported",
+            "Subdivision needs unambiguous matching full or whole-to-half cage edges",
         ));
     }
-    let mut mesh = Mesh {
-        points: Vec::new(),
-        faces: Vec::with_capacity(grids.len()),
-    };
-    let mut lookup = BTreeMap::new();
-    for (source, corners) in corners.into_iter().enumerate() {
-        let mut vertices = [0; 4];
-        for (slot, point) in vertices.iter_mut().zip(corners) {
-            let key = neighbors::key(point.as_vec3().as_dvec3());
-            *slot = *lookup.entry(key).or_insert_with(|| {
-                let id = mesh.points.len();
-                mesh.points.push(point);
-                id
-            });
-        }
-        mesh.faces.push(Quad {
-            vertices,
-            source,
-            row: 0,
-            column: 0,
-        });
-    }
+    let (mut mesh, cage_cells) = cage::build(&corners, &neighbors.pairs)?;
     let topology = Topology::build(&mesh)?;
-    let shared_edges = topology
-        .edges
-        .iter()
-        .filter(|edge| edge.faces.len() == 2)
-        .count();
-    if shared_edges != neighbors.pairs.len() {
-        return Err(invalid(
-            "Subdivision cages need matching Source-float corner positions",
-        ));
-    }
+    cage::validate_links(&mesh, &topology, &cage_cells, &neighbors.pairs)?;
     for _ in 0..LEVELS {
         mesh = mesh.refine()?;
     }
-    let mut samples = vec![vec![None; SIZE * SIZE]; grids.len()];
+    let sizes = cage_cells
+        .iter()
+        .map(|cells| cells * CELLS + 1)
+        .collect::<Vec<_>>();
+    let mut samples = sizes
+        .iter()
+        .map(|size| vec![None; size * size])
+        .collect::<Vec<_>>();
     for face in &mesh.faces {
+        let size = sizes[face.source];
         for (vertex, (row, column)) in face.vertices.into_iter().zip([
             (face.row, face.column),
             (face.row + 1, face.column),
             (face.row + 1, face.column + 1),
             (face.row, face.column + 1),
         ]) {
-            let previous = samples[face.source][row * SIZE + column].replace(vertex);
+            let previous = samples[face.source][row * size + column].replace(vertex);
             if previous.is_some_and(|previous| previous != vertex) {
                 return Err(invalid("Subdivision produced conflicting grid samples"));
             }
@@ -327,11 +304,12 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
         result.offsets = None;
         let baseline = DisplacementMesh::build(&geometry, &result)
             .map_err(|error| invalid(&error.to_string()))?;
-        let stride = CELLS / (size - 1);
+        let sample_size = sizes[index];
+        let stride = (sample_size - 1) / (size - 1);
         let mut offsets = vec![vec![DVec3::ZERO; size]; size];
         for (row, output) in offsets.iter_mut().enumerate() {
             for (column, offset) in output.iter_mut().enumerate() {
-                let vertex = samples[index][row * stride * SIZE + column * stride]
+                let vertex = samples[index][row * stride * sample_size + column * stride]
                     .ok_or_else(|| invalid("Subdivision is missing a grid sample"))?;
                 *offset = mesh.points[vertex] - baseline.positions[row * size + column];
                 if !offset.is_finite() {
@@ -347,7 +325,7 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
             let row = vertex / size;
             let column = vertex % size;
             let expected =
-                mesh.points[samples[index][row * stride * SIZE + column * stride].unwrap()];
+                mesh.points[samples[index][row * stride * sample_size + column * stride].unwrap()];
             if point.abs().max_element() > MAX_COORDINATE || point.distance(expected) > 1e-8 {
                 return Err(invalid(
                     "Stored terrain rows cannot represent the subdivided samples precisely",
@@ -359,7 +337,7 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
     }
     Ok(Plan {
         edits,
-        shared_edges,
+        shared_edges: neighbors.pairs.len(),
         vertices,
     })
 }

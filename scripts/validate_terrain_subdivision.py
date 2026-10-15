@@ -22,13 +22,20 @@ def validate(args):
                 {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
             )
         faces, ordinary = [], None
-        for index, (low, high, normal, power, corner) in enumerate(
+        patches = (
             [
+                ([-64, -64, 128], [64, 64, 144], [0, 0, 1], 2, 1),
+                ([-64, -64, 16], [-48, 0, 144], [-1, 0, 0], 3, 3),
+                ([-64, 0, 16], [-48, 64, 144], [-1, 0, 0], 4, 2),
+            ]
+            if args.split_edge
+            else [
                 ([-64, -64, 128], [64, 64, 144], [0, 0, 1], 2, 0),
                 ([-64, -64, 16], [64, -48, 144], [0, -1, 0], 3, 1),
                 ([-64, -64, 16], [-48, 64, 144], [-1, 0, 0], 4, 3),
             ]
-        ):
+        )
+        for index, (low, high, normal, power, corner) in enumerate(patches):
             parent = client.call(
                 "create_block",
                 {"mins": low, "maxs": high, "material": "dev/dev_measuregeneric01"},
@@ -93,12 +100,20 @@ def validate(args):
                 vertices["vertices"], new["positions"], strict=True
             ):
                 base = vertex["base_position"]
-                if base == [-64, -64, 144]:
+                if base == ([-64, 0, 144] if args.split_edge else [-64, -64, 144]):
                     joint.append(point)
                 fixed = (
-                    (index == 0 and (base[0] == 64 or base[1] == 64))
-                    or (index == 1 and (base[0] == 64 or base[2] == 16))
-                    or (index == 2 and (base[1] == 64 or base[2] == 16))
+                    (
+                        (index == 0 and (base[0] == 64 or base[1] in [-64, 64]))
+                        or (index == 1 and (base[1] == -64 or base[2] == 16))
+                        or (index == 2 and (base[1] == 64 or base[2] == 16))
+                    )
+                    if args.split_edge
+                    else (
+                        (index == 0 and (base[0] == 64 or base[1] == 64))
+                        or (index == 1 and (base[0] == 64 or base[2] == 16))
+                        or (index == 2 and (base[1] == 64 or base[2] == 16))
+                    )
                 )
                 if fixed:
                     assert all(
@@ -108,6 +123,13 @@ def validate(args):
         assert len(joint) == 3
         assert all(math.dist(joint[0], point) < 1e-9 for point in joint)
         assert joint[0][0] > -64 and joint[0][1] > -64 and joint[0][2] < 144
+        shared = {}
+        for old, new in zip(authored, rounded["faces"], strict=True):
+            for vertex, point in zip(old["vertices"], new["positions"], strict=True):
+                key = tuple(vertex["base_position"])
+                if key in shared:
+                    assert math.dist(point, shared[key]) < 1e-9
+                shared[key] = point
         for invalid in [{"typo": True}, {"faces": [*faces, ordinary]}]:
             client.call("preview_terrain_subdivision", invalid, error=True)
             assert (
@@ -183,6 +205,7 @@ def validate(args):
         )
         bsp, stats = build(client, args.output, "subdivided")
         assert stats["displacements"] == 3 and stats["displacement_neighbor_pairs"] == 3
+        assert stats["displacement_half_edge_pairs"] == (2 if args.split_edge else 0)
         assert stats["displacement_lod_snapped_vertices"] > 0
         infos = records(bsp.read_bytes(), 26, "<3f4ifi2H2i48s40s10I")
         native = records(bsp.read_bytes(), 33, "<5f")
@@ -210,12 +233,18 @@ def validate(args):
         assert source.read_text().count('"subdiv" "1"') == 3
         client.call("open_map", {"path": str(source)})
         assert client.call("get_terrain_grids", {"faces": faces}) == rounded
+        reopened, reopened_stats = build(client, args.output, "reopened")
+        assert reopened.read_bytes() == bsp.read_bytes()
+        assert {
+            key: value for key, value in reopened_stats.items() if key != "elapsed_ms"
+        } == {key: value for key, value in stats.items() if key != "elapsed_ms"}
         (args.output / "validation.json").write_text(
             json.dumps(
                 {
                     "subdivision": True,
                     "powers": [2, 3, 4],
                     "shared_edges": 3,
+                    "half_edge_pairs": 2 if args.split_edge else 0,
                     "native_active_samples": checked,
                     "stats": stats,
                 },
@@ -230,6 +259,7 @@ def validate(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument("--split-edge", action="store_true")
     parser.add_argument(
         "--output", type=Path, default=Path("/tmp/hammerr-terrain-subdivision")
     )

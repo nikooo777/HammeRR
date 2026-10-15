@@ -413,12 +413,33 @@ Tint fields use three integer channels from 0 to 255 with an optional preserved 
 
 ### Surface placement
 
-1. Call `preview_surface_placement` with optional `ids` (selection by default), `method` (`floor`, `ceiling`, or `ray`), `align`, `offset` and `texture_lock`. Floor is the default; ray placement requires `ray_origin` and `ray_direction`. It creates the same preview as **Place on surface…** without changing the source or history.
-2. To share interactive picking, call `begin_surface_placement_pick` with the same options except method/ray. It returns an owned `token`. Call `pick_surface_placement` with that token, `origin` and `direction`, or let a person click a viewport surface. Misses preserve the pending pick.
-3. `get_surface_placement` reports the active or stale token, `valid`, `picking`, selected IDs, options and any error. Its `plan` includes method, target ID/face, hit point, geometric normal, pivot, translation, rotation, support-point count and achieved contact offset. An optional token checks ownership.
+1. Call `preview_surface_placement` with optional `ids` (selection by default), `method` (`floor`, `ceiling`, `ray` or `brush_corner`), `align`, `offset` and `texture_lock`. Floor is the default; ray and corner placement require `ray_origin` and `ray_direction`. It creates the same preview as **Place on surface…** without changing the source or history.
+2. To share interactive picking, call `begin_surface_placement_pick` with `ids`, optional `method` (`ray`, the default, or `brush_corner`), placement options and the corner identity when required. It returns an owned `token`. Call `pick_surface_placement` with that token, `origin` and `direction`, or let a person click a viewport surface. Misses and unsupported hits preserve the pending pick.
+3. `get_surface_placement` reports the active or stale token, `valid`, `picking`, `method`, selected IDs, options and any error. Its `plan` includes method, target ID/solid/side, hit point, geometric normal, pivot, translation, rotation, support-point count and achieved contact offset. An optional token checks ownership.
 4. Inspect with `render_view` or frame with `frame_selection`. Call `apply_surface_placement` with the token for one Undo step, or `cancel_surface_placement` to discard only that placement. No-op placements create no Undo entry. Foreign tokens fail without clearing replacements.
 
 Source, scene or selection changes invalidate the draft. Other geometry previews must be finished first. Opening the human window resumes a valid shared placement; replaced tokens require reopening for review. The whole selection moves rigidly, with actual brush/terrain/model vertices and helper-bound fallbacks. This operation does not simulate physics or resolve other contacts. See [Surface placement](placement.md) for target, alignment and resource limits.
+
+For `method: "brush_corner"`, pass `source_corner: {solid, sides}` from a vertex
+reported by `get_brush_components`: the numeric brush ID and complete incident
+side-ID set, with no raw position field. `ids` must identify exactly one world
+brush or brush-entity owner containing that corner. The mode translates the
+whole owner so the source vertex meets the nearest real corner of the first
+visible flat brush face hit by the ray. Equal-distance ties use incident-side
+identity. No grid rounding, rotation or surface offset is applied; `align: true`
+or nonzero `offset` rejects. Other methods do not accept `source_corner`.
+
+Read captured `source_corner` / `source_position` even while picking, then
+`plan.corner.source`, `plan.corner.target` (solid/sides), `plan.corner.position`
+and `plan.translation` before Apply. `plan.contact_offset` is null for corner
+snapping. Both brushes require checked 4–64-side topology; every translated
+child, including hidden brushes, must remain within ±65,536 units. Hidden/tool/
+working-region exclusions apply. Model/point sources, displacement source
+brushes and terrain/model target vertices reject; an unsupported first hit is
+not bypassed. Invalid requests retain a valid plan. Existing Apply/Cancel and
+Undo rules apply; an already coincident snap creates no history. Human controls:
+**Reshape brushes… → Vertices**, select one corner, then **Place on surface… →
+Snap selected corner → Pick target corner → Apply placement**.
 
 ### Polygon brushes
 

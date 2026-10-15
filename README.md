@@ -75,10 +75,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Brush sources and a convex merge preview](docs/images/brush-merging.png) |
 | Join adjacent or overlapping brushes into one convex brush while keeping outer face settings. |
 
-| Surface placement |
-| --- |
-| ![A model aligned against a wall with a normal offset](docs/images/surface-placement.png) |
-| Drop selections to floors or ceilings, or align them against picked brush, terrain and model surfaces. |
+| Surface placement | Corner snapping |
+| --- | --- |
+| ![A model aligned against a wall with a normal offset](docs/images/surface-placement.png) | ![Reviewed source and target brush corners](docs/images/vertex-snap.png) |
+| Drop selections to floors or ceilings, or align them against picked brush, terrain and model surfaces. | Move a brush owner so its chosen corner meets a corner on a picked face. |
 
 | Repeated placement |
 | --- |

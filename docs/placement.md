@@ -2,7 +2,7 @@
 
 # Surface placement
 
-Place selected objects against a floor, ceiling, brush face, terrain triangle or supported model mesh. Review the shared preview before changing the map.
+Place selected objects against a floor, ceiling, brush face, terrain triangle or supported model mesh, or snap one brush owner's chosen corner to another brush corner. Review the shared preview before changing the map.
 
 1. Select one or more objects, then click **Place on surface…** in the selection controls.
 2. Choose **Target**: **Floor** casts down from the selection; **Ceiling** casts up; **Pick surface** lets you choose a visible surface in the viewport.
@@ -19,10 +19,17 @@ Place selected objects against a floor, ceiling, brush face, terrain triangle or
 ## Snap a real corner
 
 1. Select one brush or brush entity. Open **Reshape brushes…**, choose **Vertices** and select exactly one corner through the existing list or viewport picker.
-2. Open **Place on surface…** and choose **Snap selected corner** under **Target**. Check **Source corner**: its brush ID, incident face IDs and coordinates identify a real brush vertex. The whole selected owner moves together, including its other child brushes.
+2. Open **Place on surface…** and choose **Snap selected corner** under **Target**. Check **Source corner**: its brush ID, incident face IDs and coordinates identify a real brush vertex. The whole selected owner moves together, including its other child brushes. This mode resets **Offset** to `0` and **Align local up to surface** to off, and disables both controls.
 3. Click **Pick target corner**, then click a visible flat brush face. Its corner nearest to the hit point becomes the target; equal distances use incident face IDs for a stable choice. A miss or unsupported hit leaves picking active.
-4. Review the source/target marks, identities, coordinates and **Move** delta. This operation translates without rotation, normal offset or grid rounding. **Keep textures attached** uses the same brush texture policy as ordinary placement.
+4. Review **Source corner**, **Target corner**, their guide marks and the **Move** delta. Use **Frame preview** to inspect the result. This operation translates without rotation, normal offset or grid rounding. **Keep textures attached** uses the same brush texture policy as ordinary placement.
 5. Click **Apply placement** for one Undo step, or **Cancel** to discard it. Repeating a coincident snap adds no history. Source and target must be visible under the current owner, tool and working-region filters.
+
+![Reviewed real source and target corners with an exact movement delta](images/vertex-snap.png)
+
+MCP uses the existing placement calls with `method: "brush_corner"` and an
+explicit `source_corner: {solid, sides}` from `get_brush_components`. Opening the
+dialog resumes that shared pick or preview, including its captured source
+identity. See [MCP surface placement](mcp.md#surface-placement).
 
 ## Limits
 

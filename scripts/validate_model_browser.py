@@ -31,6 +31,67 @@ def image(client, output, path, skin):
     return hashlib.sha256(pixels).hexdigest()
 
 
+def reference_checks(client, output, static_entity):
+    paths = [
+        "models/player/t_phoenix.mdl",
+        "models/player/ct_urban.mdl",
+        "models/weapons/w_rif_ak47.mdl",
+    ]
+    before = client.call("get_map_info")["undo"]
+    camera = client.call("get_camera")
+    selection = client.call("get_selection")
+    assets = [client.call("inspect_model", {"path": path}) for path in paths]
+    assert [asset["reference_bones"] for asset in assets] == [50, 50, 4]
+    assert all(
+        asset["pose"] == "reference" and not asset["static_prop"] for asset in assets
+    )
+    for index, path in enumerate(paths):
+        image(client, output / f"reference-{index}.png", path, 0)
+    token = client.call("begin_model_choice", {"id": static_entity})["token"]
+    client.call("choose_model", {"token": token, "path": paths[0]}, error=True)
+    assert client.call("get_model_choice", {"token": token})["asset"] is None
+    client.call("cancel_model_choice", {"token": token})
+    assert client.call("get_map_info")["undo"] == before
+    assert client.call("get_camera") == camera
+    assert client.call("get_selection") == selection
+    ids = []
+    for path, origin in zip(
+        paths, [[-96, 96, 0], [80, 96, 0], [0, 16, 48]], strict=True
+    ):
+        entity = client.call(
+            "create_entity",
+            {
+                "classname": "prop_dynamic",
+                "origin": origin,
+                "properties": {
+                    "model": path,
+                    "angles": "0 30 0",
+                    "skin": "0",
+                    "solid": "0",
+                    "DefaultAnim": "idle",
+                },
+            },
+        )["id"]
+        assert client.call("inspect_entity_model", {"id": entity})["displayed"]
+        ids.append(entity)
+    token = client.call("begin_model_choice", {"id": ids[0]})["token"]
+    client.call("choose_model", {"token": token, "path": paths[1]})
+    client.call("apply_model_choice", {"token": token})
+    assert (
+        client.call("inspect_entity_model", {"id": ids[0]})["asset"]["path"] == paths[1]
+    )
+    client.call("undo")
+    assert (
+        client.call("inspect_entity_model", {"id": ids[0]})["asset"]["path"] == paths[0]
+    )
+    client.call("select", {"ids": []})
+    client.render(
+        output / "reference-models.png",
+        camera={"position": [-220, -210, 148], "look_at": [0, 64, 44]},
+    )
+    return ids, assets
+
+
 def validate(args):
     client = Client(None, args.binary, args.output)
     try:
@@ -106,16 +167,34 @@ def validate(args):
         client.call("cancel_model_choice", {"token": token})
         client.call("begin_model_choice", {"id": entity}, error=True)
         client.call("cancel_transform_preview")
+        reference_ids, references = reference_checks(client, args.output, entity)
         client.call("set_compile_settings", {"lighting": "direct_ldr"})
         bsp, stats = build(client, args.output, "model-browser")
         props = static_records(bsp.read_bytes())
         assert stats["static_props"] == len(props["props"]) == 1
         assert props["models"] == [path]
         assert props["props"][0][11] == 5
+        data = bsp.read_bytes()
+        assert all(asset["path"].encode() in data for asset in references)
+        client.call(
+            "set_entity_properties",
+            {"id": entity, "set": {"model": references[0]["path"], "skin": "0"}},
+        )
+        failed = client.call("compile_map", {"path": str(bsp)}, error=True)
+        failure = json.loads(failed["content"][0]["text"])
+        assert any(
+            row["object"] == entity and "staticprop" in row["message"]
+            for row in failure["diagnostics"]
+        )
+        assert bsp.read_bytes() == data
+        client.call("undo")
         vmf = args.output / "model-browser.vmf"
         client.call("save_map", {"path": str(vmf)})
         client.call("open_map", {"path": str(vmf), "discard_changes": True})
         assert client.call("inspect_entity_model", {"id": entity})["asset"]["skin"] == 5
+        for object_id in reference_ids:
+            report = client.call("inspect_entity_model", {"id": object_id})
+            assert report["displayed"] and report["asset"]["pose"] == "reference"
         inspector = client.call("get_entity_inspector", {"id": entity})
         model = next(
             field for field in inspector["properties"] if field["key"] == "model"
@@ -127,6 +206,7 @@ def validate(args):
                     "model_browser": True,
                     "catalog": catalog,
                     "skins": [first, second],
+                    "references": references,
                     "stats": stats,
                 },
                 indent=2,

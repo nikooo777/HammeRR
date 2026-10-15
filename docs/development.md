@@ -261,7 +261,7 @@ Checks connected folded power-2/3/4 cages, shared samples and pinned base bounda
 
 ```sh
 python3 -B scripts/validate_model_previews.py --output /tmp/hammerr-model-previews-check
-cargo test -p source-formats --test css decodes_css_static_model_geometry -- --nocapture
+cargo test -p source-formats --test css decodes_css_ -- --nocapture
 ```
 
 Checks CPU model inspection, invalid paths/skins/arguments, three real model meshes, model-aware area/volume contained/intersecting rules, object/query response schemas and bounds, pixel picks beyond helper bounds, skin-render differences, draft transforms, cache reload, helper fallbacks, source/history preservation, native static-prop positions/angles/skins through both builds and save/reopen. Decoder tests cover fixups, mesh-relative indices, triangle strips, checksums, malformed ranges and nonfinite data. Bounded-read tests reject oversized directory/VPK entries before allocation. Software UI checks inspection, reload and Cancel. The CSS format check uses the local install (`CSS_DIR` overrides its location).
@@ -271,3 +271,5 @@ python3 -B scripts/validate_model_browser.py --output /tmp/hammerr-model-browser
 ```
 
 Checks catalog search/groups/pages, isolated model/skin image changes, unchanged active scene/camera/selection/history, atomic model+skin Undo/Redo, stale and replaced choices, foreign geometry preview preservation, native static-prop fields through both compile paths and save/reopen. Shared Session and software UI checks cover empty model fields, pose validation and Cancel ownership.
+
+The model browser check also covers three real skeletal/weapon reference poses, compatible entity choices, static-prop rejection without replacing prior BSP output, native dynamic-model paths, owned Apply/Undo and save/reopen. Decoder checks cover parent chains, inverse binds, weighted positions/normals and measured float-weight tolerance.

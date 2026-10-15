@@ -72,14 +72,7 @@ fn read(fs: &GameFs, path: &str) -> Result<Vec<u8>, String> {
 fn load(fs: &GameFs, path: &str) -> Result<Asset, String> {
     let stem = path.strip_suffix(".mdl").unwrap();
     let mdl = read(fs, path)?;
-    if !source_formats::mdl::ModelHeader::parse(&mdl)
-        .map_err(|error| format!("{path}: {error}"))?
-        .is_static_prop()
-    {
-        return Err(format!(
-            "{path}: viewport geometry currently requires a static-prop model"
-        ));
-    }
+    source_formats::mdl::ModelHeader::parse(&mdl).map_err(|error| format!("{path}: {error}"))?;
     let vvd = read(fs, &format!("{stem}.vvd"))?;
     let vtx = read(fs, &format!("{stem}.dx90.vtx"))?;
     let model = Model::parse(&mdl, &vvd, &vtx).map_err(|error| format!("{path}: {error}"))?;
@@ -187,6 +180,13 @@ pub struct Instance {
 
 impl Instance {
     pub fn new(entity: &Entity, asset: Arc<Asset>) -> Result<Self, String> {
+        if entity
+            .classname()
+            .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
+            && !asset.model.header.is_static_prop()
+        {
+            return Err("This model requires prop_dynamic, prop_physics or another compatible model entity; prop_static requires a static-prop asset".into());
+        }
         let origin = entity
             .origin()
             .filter(|point| point.is_finite() && point.abs().max_element() <= 65536.0)

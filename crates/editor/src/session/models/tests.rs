@@ -247,3 +247,85 @@ fn model_bounds_drive_region_reports_local_handles_and_helper_fallbacks() {
         assert_eq!(session.transform_basis(&[id], true).unwrap(), expected);
     }
 }
+
+#[test]
+fn reference_model_previews_share_pose_class_eligibility_and_owned_choices() {
+    for actor in [Actor::User, Actor::Agent] {
+        let Ok(game) = crate::mount_game(None) else {
+            return;
+        };
+        let mut session = Session::new(Ok(game));
+        let path = "models/player/t_phoenix.mdl";
+        let ObjectId::Entity(incompatible) = session
+            .create_entity(
+                actor,
+                "prop_static",
+                Some(DVec3::ZERO),
+                BTreeMap::from([("model".into(), path.into())]),
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let bad = session.inspect_entity_model(incompatible).unwrap();
+        assert_eq!(bad["displayed"], false);
+        assert!(bad["error"].as_str().unwrap().contains("prop_static"));
+        let ObjectId::Entity(id) = session
+            .create_entity(
+                actor,
+                "prop_dynamic",
+                Some(DVec3::new(64.0, 0.0, 0.0)),
+                BTreeMap::from([("model".into(), path.into())]),
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let report = session.inspect_entity_model(id).unwrap();
+        assert_eq!(report["asset"]["pose"], "reference");
+        assert_eq!(report["asset"]["reference_bones"], 50);
+        assert_eq!(report["asset"]["static_prop"], false);
+        assert_eq!(report["displayed"], true);
+        assert_eq!(session.build_scene().stats.model_entities, 1);
+        let instance = session
+            .model_instances(session.document())
+            .instances
+            .pop()
+            .unwrap();
+        let triangle = instance.asset.model.parts[0].indices[..3]
+            .iter()
+            .map(|&index| instance.point(instance.asset.model.vertices[index as usize].position))
+            .collect::<Vec<_>>();
+        let center = (triangle[0] + triangle[1] + triangle[2]) / 3.0;
+        let normal = (triangle[1] - triangle[0])
+            .cross(triangle[2] - triangle[0])
+            .normalize();
+        assert_eq!(
+            session
+                .pick(&Ray {
+                    origin: center - normal * 16.0,
+                    direction: normal
+                })
+                .unwrap()
+                .object,
+            ObjectId::Entity(id)
+        );
+        let token = session.begin_model_choice(id).unwrap()["token"]
+            .as_u64()
+            .unwrap();
+        session
+            .choose_model(token, "models/player/ct_urban.mdl", 0)
+            .unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+        session.apply_model_choice(actor, token).unwrap();
+        assert_eq!(
+            session.inspect_entity_model(id).unwrap()["asset"]["path"],
+            "models/player/ct_urban.mdl"
+        );
+        session.undo(actor).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+    }
+}

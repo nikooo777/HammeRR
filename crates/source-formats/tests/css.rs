@@ -19,6 +19,42 @@ fn css_gameinfo() -> Option<PathBuf> {
 }
 
 #[test]
+fn decodes_css_reference_pose_model_geometry() {
+    let Some(gameinfo) = css_gameinfo() else {
+        return;
+    };
+    let fs = GameFs::from_gameinfo(gameinfo).unwrap();
+    for path in [
+        "models/player/t_phoenix.mdl",
+        "models/player/ct_urban.mdl",
+        "models/weapons/w_rif_ak47.mdl",
+    ] {
+        let stem = path.strip_suffix(".mdl").unwrap();
+        let mdl = fs.read(path).unwrap().unwrap();
+        let vvd = fs.read(&format!("{stem}.vvd")).unwrap().unwrap();
+        let vtx = fs.read(&format!("{stem}.dx90.vtx")).unwrap().unwrap();
+        let model = source_formats::model::Model::parse(&mdl, &vvd, &vtx)
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+        assert!(!model.header.is_static_prop(), "{path}");
+        assert!(model.reference_bones > 0);
+        assert!(
+            model
+                .parts
+                .iter()
+                .map(|part| part.indices.len())
+                .sum::<usize>()
+                > 36
+        );
+        eprintln!(
+            "{path}: {} bones, {} vertices, {} meshes",
+            model.reference_bones,
+            model.vertices.len(),
+            model.parts.len()
+        );
+    }
+}
+
+#[test]
 fn decodes_css_static_model_geometry() {
     let Some(gameinfo) = css_gameinfo() else {
         eprintln!("CS:S not installed; skipping");

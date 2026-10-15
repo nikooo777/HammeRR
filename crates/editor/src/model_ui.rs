@@ -26,6 +26,11 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
     match result {
         Ok(report) => {
             let asset = &report["asset"];
+            window.set_pose_info(if asset["pose"] == "reference" {
+                format!("Reference pose · {} bones · body 0 · LOD 0. Animation, other bodygroups and scaling remain planned.",asset["reference_bones"]).into()
+            } else {
+                "Static model · body 0 · LOD 0. Other bodygroups and scaling remain planned.".into()
+            });
             window.set_model_path(asset["path"].as_str().unwrap_or_default().into());
             window.set_geometry(
                 format!(
@@ -84,6 +89,7 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
             window.set_geometry("Model preview unavailable".into());
             window.set_skin_info("".into());
             window.set_bounds("".into());
+            window.set_pose_info("".into());
             window.set_materials(Default::default());
             window.set_message(error.into());
         }
@@ -156,12 +162,9 @@ mod tests {
         let ObjectId::Entity(id) = session
             .create_entity(
                 Actor::User,
-                "prop_static",
+                "prop_dynamic",
                 Some(DVec3::ZERO),
-                BTreeMap::from([(
-                    "model".into(),
-                    "models/props_junk/wood_crate001a.mdl".into(),
-                )]),
+                BTreeMap::from([("model".into(), "models/player/ct_urban.mdl".into())]),
             )
             .unwrap()
         else {
@@ -179,6 +182,7 @@ mod tests {
             controller.window.get_message()
         );
         assert!(controller.window.get_materials().row_count() > 0);
+        assert!(controller.window.get_pose_info().contains("Reference pose"));
         controller.window.show().unwrap();
         crate::tests::save_ui_snapshot(controller.window.window(), "model-details");
         controller.window.invoke_reload();

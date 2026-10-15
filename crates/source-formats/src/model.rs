@@ -2,6 +2,7 @@ use std::io;
 
 use crate::mdl::ModelHeader;
 
+mod bones;
 mod reader;
 #[cfg(test)]
 mod tests;
@@ -39,6 +40,7 @@ pub struct Model {
     pub skins: Vec<Vec<usize>>,
     pub bounds: [[f32; 3]; 2],
     pub body_parts: usize,
+    pub reference_bones: usize,
 }
 
 struct Mesh {
@@ -54,12 +56,10 @@ fn invalid(message: &str) -> io::Error {
 impl Model {
     pub fn parse(mdl: &[u8], vvd: &[u8], vtx: &[u8]) -> io::Result<Self> {
         let header = ModelHeader::parse(mdl)?;
-        if !header.is_static_prop() {
-            return Err(invalid(
-                "viewport geometry currently requires a static-prop model",
-            ));
-        }
         let reader = reader::Reader::new(mdl, 240)?;
+        let reference = (!header.is_static_prop())
+            .then(|| bones::reference(&reader))
+            .transpose()?;
         let textures = reader.table(0, 204, 208, 64, MAX_MATERIALS)?;
         let mut materials = Vec::with_capacity(textures.len);
         for index in 0..textures.len {
@@ -98,7 +98,7 @@ impl Model {
             }
             skins.push(skin);
         }
-        let vertices = vvd::parse(vvd, header.checksum)?;
+        let vertices = vvd::parse(vvd, header.checksum, reference.as_deref())?;
         let bodies = reader.table(0, 232, 236, 16, MAX_BODY_PARTS)?;
         let mut meshes = Vec::with_capacity(bodies.len);
         let mut model_counts = Vec::with_capacity(bodies.len);
@@ -167,6 +167,7 @@ impl Model {
             skins,
             bounds: [mins, maxs],
             body_parts: bodies.len,
+            reference_bones: reference.as_ref().map_or(0, Vec::len),
         })
     }
 

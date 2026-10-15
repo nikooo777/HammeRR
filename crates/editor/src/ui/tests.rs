@@ -1380,6 +1380,45 @@ pub(crate) fn partition_texture_controls_share_preview_inheritance_keep_cancel_a
     window.invoke_preview_partition_texture();
     assert!(window.get_ready());
     let reviewed = lock(&shared).partition_preview_token();
+    let cut_inputs = (window.get_cut_first(), window.get_cut_second());
+    window.set_cut_first("25".into());
+    window.set_cut_second("75".into());
+    window.set_texture_justify_u(3);
+    for fit in [true, false] {
+        if fit {
+            window.invoke_fit_partition_texture();
+        } else {
+            window.invoke_justify_partition_texture();
+        }
+        assert!(window.get_message().contains("Preview the dividing edge"));
+        assert_eq!(lock(&shared).partition_preview_token(), reviewed);
+        assert_eq!(window.get_cut_first(), "25");
+        assert_eq!(window.get_cut_second(), "75");
+    }
+    window.set_cut_first(cut_inputs.0);
+    window.set_cut_second(cut_inputs.1);
+    let refs = components_ui::partition_material_target(&lock(&shared)).2;
+    let displayed_scope = window.get_top_material_scope();
+    let displayed_shift = window.get_texture_shift_u();
+    lock(&shared)
+        .select_component_partitions(reviewed.unwrap(), &refs[1..], SelectMode::Replace)
+        .unwrap();
+    for fit in [true, false] {
+        if fit {
+            window.invoke_fit_partition_texture();
+        } else {
+            window.invoke_justify_partition_texture();
+        }
+        assert!(window.get_message().contains("highlighted pieces changed"));
+        assert_eq!(lock(&shared).partition_preview_token(), reviewed);
+        assert_eq!(window.get_top_material_scope(), displayed_scope);
+        assert_eq!(window.get_texture_shift_u(), displayed_shift);
+    }
+    lock(&shared)
+        .select_component_partitions(reviewed.unwrap(), &refs, SelectMode::Replace)
+        .unwrap();
+    components_ui::refresh(&window, &lock(&shared));
+    let reviewed = lock(&shared).partition_preview_token();
     window.set_texture_rotation("42".into());
     window.invoke_fit_partition_texture();
     assert!(window.get_message().contains("Preview texture placement"));

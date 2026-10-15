@@ -461,11 +461,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                 .filter(|piece| piece["selected"] == true)
         })
         .collect::<Vec<_>>();
-    let scope = format!(
-        "{}:{}",
-        session.component_stamp(),
-        serde_json::json!(partition["selection"])
-    );
+    let scope = partition_material_scope(session, partition);
     window.set_has_material_targets(!highlighted.is_empty());
     if window.get_top_material_scope() != scope {
         let names = highlighted
@@ -1111,13 +1107,24 @@ pub fn choose_partition_texture(
     Ok(())
 }
 
+fn partition_material_scope(session: &Session, partition: &serde_json::Value) -> String {
+    format!(
+        "{}:{}",
+        session.component_stamp(),
+        serde_json::json!(partition["selection"])
+    )
+}
+
 pub fn place_partition_texture(
     window: &ComponentsWindow,
     session: &mut Session,
     target: &PartitionMaterialTarget,
     fit: bool,
 ) -> Result<(), String> {
-    if target != &partition_material_target(session)
+    let report = session.component_report(&[])?;
+    let partition = &report["preview"]["partition"];
+    if window.get_top_material_scope() != partition_material_scope(session, partition)
+        || target != &partition_material_target(session)
         || window.get_token().parse::<u64>().ok() != target.0
     {
         return Err(
@@ -1129,6 +1136,9 @@ pub fn place_partition_texture(
     }
     if !texture_inputs_match(window) {
         return Err("Preview texture placement before fitting or justifying".into());
+    }
+    if !cut_inputs_match(window, &partition["edge_parameters"]) {
+        return Err("Preview the dividing edge before fitting or justifying".into());
     }
     let justify = if fit {
         [None, None]

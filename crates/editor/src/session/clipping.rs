@@ -43,6 +43,7 @@ impl Session {
         }
         self.cancel_clip_preview();
         self.clear_hollow_preview();
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();
@@ -149,6 +150,7 @@ impl Session {
             self.clip_drag = None;
             self.cancel_transform_preview();
             self.clear_hollow_preview();
+            self.clear_paste_preview();
             self.clear_repeat_preview();
             self.clear_carve_preview();
             self.clear_merge_preview();

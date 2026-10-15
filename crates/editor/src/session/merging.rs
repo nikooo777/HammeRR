@@ -137,6 +137,7 @@ impl Session {
         self.clear_paint_stroke();
         self.clear_hollow_preview();
         self.clear_carve_preview();
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.clear_merge_preview();
         self.clip_tool = false;

@@ -37,7 +37,7 @@ fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
 }
 
-fn parent(editor: Option<&Properties>) -> Result<Option<u32>, EditError> {
+pub(crate) fn parent(editor: Option<&Properties>) -> Result<Option<u32>, EditError> {
     let Some(editor) = editor else {
         return Ok(None);
     };

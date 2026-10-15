@@ -121,6 +121,7 @@ impl Session {
         self.clear_component_edit();
         self.clear_primitive_preview();
         self.clear_paint_stroke();
+        self.clear_paste_preview();
         self.clear_repeat_preview();
         self.clear_carve_preview();
         self.clear_merge_preview();

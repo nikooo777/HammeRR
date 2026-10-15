@@ -1,0 +1,75 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+export component PasteWindow inherits Window {
+    title: "Paste objects · HammeRR";
+    preferred-width: 760px;
+    preferred-height: 690px;
+    background: #202020;
+    in property <string> destination;
+    in property <string> payload;
+    in property <string> details;
+    in property <string> message;
+    in property <bool> has-payload;
+    in property <bool> can-restore;
+    in property <bool> ready;
+    in-out property <int> placement;
+    in-out property <string> offset-x: "0";
+    in-out property <string> offset-y: "0";
+    in-out property <string> offset-z: "0";
+    in-out property <bool> texture-lock: true;
+    in-out property <bool> keep-external;
+    in-out property <bool> restore-names;
+    callback preview();
+    callback apply();
+    callback cancel();
+    callback invalidate();
+    callback read-system();
+    callback publish-system();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: "Paste objects"; font-size: 21px; }
+            Text { text: root.destination; wrap: word-wrap; color: #aeb8c6; }
+            Text { text: root.payload; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Read system clipboard"; clicked => { root.read-system(); } }
+                Button { text: "Publish to system clipboard"; enabled: root.has-payload; clicked => { root.publish-system(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Placement"; vertical-alignment: center; }
+                ComboBox { model: ["In place", "Offset"]; current-index <=> root.placement; selected => { root.invalidate(); } }
+                Text { text: "World units"; vertical-alignment: center; color: #aeb8c6; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "X"; vertical-alignment: center; }
+                LineEdit { text <=> root.offset-x; enabled: root.placement == 1; input-type: decimal; preferred-width: 140px; edited => { root.invalidate(); } }
+                Text { text: "Y"; vertical-alignment: center; }
+                LineEdit { text <=> root.offset-y; enabled: root.placement == 1; input-type: decimal; preferred-width: 140px; edited => { root.invalidate(); } }
+                Text { text: "Z"; vertical-alignment: center; }
+                LineEdit { text <=> root.offset-z; enabled: root.placement == 1; input-type: decimal; preferred-width: 140px; edited => { root.invalidate(); } }
+            }
+            CheckBox { text: "Keep textures attached"; checked <=> root.texture-lock; toggled => { root.invalidate(); } }
+            CheckBox { text: "Keep external links by name"; checked <=> root.keep-external; toggled => { root.invalidate(); } }
+            CheckBox { text: "Restore cut names"; checked <=> root.restore-names; enabled: root.can-restore; toggled => { root.invalidate(); } }
+            Text { text: root.can-restore ? "Cut names can reconnect incoming links while this map remains unchanged." : "Copies receive unique names. Internal links follow the pasted objects."; color: #aeb8c6; wrap: word-wrap; }
+            ScrollView {
+                vertical-stretch: 1;
+                Text { text: root.details; wrap: word-wrap; color: #d6deea; }
+            }
+            Text { text: root.message; wrap: word-wrap; color: #aeb8c6; min-height: 42px; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Preview paste"; enabled: root.has-payload; clicked => { root.preview(); } }
+                Button { text: "Apply paste"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

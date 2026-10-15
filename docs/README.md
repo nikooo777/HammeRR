@@ -12,6 +12,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Editor basics](basics.md) | The window, previews and undo, navigation, viewport modes, saved camera views |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Selecting](selection.md) | Click, area, volume and paint selection |
+| [Cut, copy and paste](clipboard.md) | Detached object transfer, placement previews, native VMF text and safe references |
 | [Object groups](groups.md) | Nested groups, membership editing, group selection and temporary bypass |
 | [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, mirror, shear, brush shapes |
 | [Polygon brushes](polygon-brushes.md) | Drawing convex or concave outlines and extruding editable brushes |

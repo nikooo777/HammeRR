@@ -54,7 +54,7 @@ fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
 }
 
-fn validate(
+pub(crate) fn validate(
     document: &Document,
     ids: &[ObjectId],
     options: Options,
@@ -166,7 +166,7 @@ fn validate(
     Ok(())
 }
 
-fn validate_opaque_links(
+pub(crate) fn validate_opaque_links(
     document: &Document,
     sources: &BTreeSet<u32>,
     names: &BTreeMap<String, (u32, String)>,
@@ -199,7 +199,7 @@ fn validate_opaque_links(
     Ok(())
 }
 
-fn source_names(
+pub(crate) fn source_names(
     document: &Document,
     ids: &[ObjectId],
 ) -> std::result::Result<BTreeMap<String, (u32, String)>, EditError> {
@@ -257,7 +257,7 @@ fn source_names(
     Ok(names)
 }
 
-fn planned_names(
+pub(crate) fn planned_names(
     document: &Document,
     names: &BTreeMap<String, (u32, String)>,
     scan: &[references::Reference],
@@ -303,7 +303,7 @@ fn planned_names(
     Ok(batches)
 }
 
-fn copied_reference<'a>(
+pub(crate) fn copied_reference<'a>(
     entity: &'a mut source_formats::vmf::Entity,
     reference: &references::Reference,
 ) -> std::result::Result<&'a mut String, EditError> {

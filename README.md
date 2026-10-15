@@ -177,6 +177,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Map totals and material usage](docs/images/map-statistics.png) | ![A red leak path through the map](docs/images/pointfile-viewport.png) |
 | Counts and breakdowns of brushes, entities, materials, models and terrain. | Follow a leak's pointfile through the map, point by point. |
 
+| Cut, copy and paste |
+| --- |
+| ![Paste placement and link handling](docs/images/clipboard-paste.png) |
+| Transfer brushes and entities between maps with previewed placement, groups, notes and checked links. |
+
 | Object groups |
 | --- |
 | ![Nested object groups and membership controls](docs/images/object-groups.png) |

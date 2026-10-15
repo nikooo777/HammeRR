@@ -276,7 +276,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Edit materials and texture offsets (texels), scales (world units per texel) and absolute rotation (degrees about the face normal). Lightmap scale is 1–1024 world units per lighting pixel. Smoothing group lists replace/add/remove memberships (1–24 smooth, 25–32 hard-edge); empty replacement clears. Omitted values preserve each face's original value. Omitted faces use shared face selection. Fit maps one material tile onto each face's projected bounds using actual texture dimensions. Preview renders a draft without changing the map or undo history; commit or cancel it with the preview tools. Atomic, undoable when applied."
+        description = "Edit materials and texture offsets (texels), scales (world units per texel) and absolute rotation (degrees about the face normal). Lightmap scale is 1–1024 world units per lighting pixel. Smoothing group lists replace/add/remove memberships (1–24 smooth, 25–32 hard-edge); empty replacement clears. Direct u_axis/v_axis world vectors allow skew without normalization; null components preserve each face's component. Vectors cannot combine with alignment or rotation, and must produce a finite nonsingular projection on every target face. Scales and texel offsets remain independent. Omitted values preserve each face's original value. Omitted faces use shared face selection. Fit maps one material tile onto each face's projected bounds using actual texture dimensions. Preview renders a draft without changing the map or undo history; commit or cancel it with the preview tools. Atomic, undoable when applied."
     )]
     pub(in crate::mcp) fn edit_faces(
         &self,
@@ -298,6 +298,8 @@ impl EditorServer {
                     scale_u: args.scale_u,
                     scale_v: args.scale_v,
                     rotation: args.rotation,
+                    u_axis: args.u_axis,
+                    v_axis: args.v_axis,
                     lightmap_scale: args.lightmap_scale,
                     smoothing_groups: args
                         .smoothing_groups

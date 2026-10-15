@@ -885,6 +885,17 @@ export component SurfaceWindow inherits Window {
     in-out property <string> scale-v;
     in-out property <string> rotation;
     in-out property <bool> fit;
+    in-out property <bool> direct-vectors;
+    in-out property <string> u-x;
+    in-out property <string> u-y;
+    in-out property <string> u-z;
+    in-out property <string> v-x;
+    in-out property <string> v-y;
+    in-out property <string> v-z;
+    in-out property <bool> ready;
+    in-out property <string> reviewed-fields;
+    in-out property <string> reviewed-token;
+    in-out property <string> owned-token;
     callback browse();
     callback preview-edit();
     callback apply();
@@ -903,90 +914,122 @@ export component SurfaceWindow inherits Window {
             ComboBox {
                 model: ["Edit texture settings", "Paint sampled material", "Copy sampled projection", "Wrap across a shared edge", "Wrap connected faces"];
                 current-index <=> root.operation-index;
+                selected => { root.ready = false; }
             }
             if root.operation-index != 0: VerticalLayout {
                 spacing: 16px;
                 HorizontalLayout {
                     spacing: 16px;
                     Image { width: 96px; height: 96px; source: root.sample-preview; image-fit: contain; }
-                    VerticalLayout {
+                      VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "Sampled texture"; font-size: 16px; }
+                            Text { text: root.sample-label; wrap: word-wrap; color: #c8ccd4; }
+                        }
+                    }
+                    Text {
+                        text: root.operation-index == 1 ? "Apply the sampled material. Keep the target faces' offsets, scale and rotation." : root.operation-index == 2 ? "Copy the material and its world-space texture projection. Useful for matching parallel surfaces." : root.operation-index == 3 ? "Fold the sampled projection around each shared edge so the texture meets continuously. Each target must touch the sampled face." : "Carry the sampled texture through connected faces, folding it at each shared edge. Include intermediate faces. Disconnected targets and closed loops that need a seam are rejected; select an open strip to leave a seam.";
+                        wrap: word-wrap;
+                    }
+                    Text { text: "The sample keeps its captured values even if the source is edited. Sample again to refresh it."; color: #969ca8; wrap: word-wrap; }
+                    Rectangle { vertical-stretch: 1; }
+                }
+                if root.operation-index == 0: ScrollView {
+                    vertical-stretch: 1;
+                  VerticalLayout {
+                    spacing: 10px;
+                    Text { text: "Blank fields keep each face's current value."; color: #969ca8; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Image { width: 72px; height: 72px; source: root.preview; image-fit: contain; }
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "Material"; }
+                            LineEdit { text <=> root.material; placeholder-text: "Mixed · keep current materials"; edited => { root.ready = false; } }
+                            Button { text: "Browse materials…"; clicked => { root.browse(); } }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text { text: "Projection"; vertical-alignment: center; }
+                        ComboBox {
+                            enabled: !root.direct-vectors;
+                            model: ["Keep current axes", "Align to world", "Align to face"];
+                            current-index <=> root.alignment-index;
+                            selected => { if self.current-index != 0 { root.rotation = "0"; } root.ready = false; }
+                        }
+                    }
+                    Text { text: "Offset · texture pixels"; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Horizontal"; vertical-alignment: center; }
+                        LineEdit { text <=> root.shift-u; input-type: decimal; placeholder-text: "Keep"; edited => { root.ready = false; } }
+                        Text { text: "Vertical"; vertical-alignment: center; }
+                        LineEdit { text <=> root.shift-v; input-type: decimal; placeholder-text: "Keep"; edited => { root.ready = false; } }
+                    }
+                    Text { text: "Scale · world units per texture pixel"; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Horizontal"; vertical-alignment: center; }
+                        LineEdit { text <=> root.scale-u; input-type: decimal; placeholder-text: "Keep"; edited => { root.ready = false; } }
+                        Text { text: "Vertical"; vertical-alignment: center; }
+                        LineEdit { text <=> root.scale-v; input-type: decimal; placeholder-text: "Keep"; edited => { root.ready = false; } }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Rotation · degrees"; vertical-alignment: center; }
+                        LineEdit { enabled: !root.direct-vectors; text <=> root.rotation; input-type: decimal; placeholder-text: "Keep"; edited => { root.ready = false; } }
+                    }
+                    Slider {
+                        enabled: !root.direct-vectors;
+                        minimum: -180; maximum: 180;
+                        value: root.rotation == "" ? 0 : root.rotation.to-float();
+                        released(value) => { root.rotation = "\{round(value)}"; root.ready = false; }
+                    }
+                    CheckBox { text: "Advanced U/V world vectors"; checked <=> root.direct-vectors; toggled => { root.ready = false; } }
+                    if root.direct-vectors: VerticalLayout {
                         spacing: 8px;
-                        Text { text: "Sampled texture"; font-size: 16px; }
-                        Text { text: root.sample-label; wrap: word-wrap; color: #c8ccd4; }
+                        Text { text: "Set vector components to skew the texture. Magnitudes are kept. Blank components keep each face's value; mixed components are blank."; wrap: word-wrap; color: #b6bac3; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 16px; text: ""; }
+                            Text { text: "X"; horizontal-stretch: 1; }
+                            Text { text: "Y"; horizontal-stretch: 1; }
+                            Text { text: "Z"; horizontal-stretch: 1; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 16px; text: "U"; vertical-alignment: center; }
+                            LineEdit { text <=> root.u-x; input-type: decimal; placeholder-text: "X · mixed / keep"; accessible-label: "U vector X"; edited => { root.ready = false; } }
+                            LineEdit { text <=> root.u-y; input-type: decimal; placeholder-text: "Y · mixed / keep"; accessible-label: "U vector Y"; edited => { root.ready = false; } }
+                            LineEdit { text <=> root.u-z; input-type: decimal; placeholder-text: "Z · mixed / keep"; accessible-label: "U vector Z"; edited => { root.ready = false; } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 16px; text: "V"; vertical-alignment: center; }
+                            LineEdit { text <=> root.v-x; input-type: decimal; placeholder-text: "X · mixed / keep"; accessible-label: "V vector X"; edited => { root.ready = false; } }
+                            LineEdit { text <=> root.v-y; input-type: decimal; placeholder-text: "Y · mixed / keep"; accessible-label: "V vector Y"; edited => { root.ready = false; } }
+                            LineEdit { text <=> root.v-z; input-type: decimal; placeholder-text: "Z · mixed / keep"; accessible-label: "V vector Z"; edited => { root.ready = false; } }
+                        }
+                        Text { text: "UV = dot(world position, vector) / scale + offset. Rotation metadata stays fixed. Preview these fields before Apply."; wrap: word-wrap; color: #b6bac3; }
                     }
-                }
-                Text {
-                    text: root.operation-index == 1 ? "Apply the sampled material. Keep the target faces' offsets, scale and rotation." : root.operation-index == 2 ? "Copy the material and its world-space texture projection. Useful for matching parallel surfaces." : root.operation-index == 3 ? "Fold the sampled projection around each shared edge so the texture meets continuously. Each target must touch the sampled face." : "Carry the sampled texture through connected faces, folding it at each shared edge. Include intermediate faces. Disconnected targets and closed loops that need a seam are rejected; select an open strip to leave a seam.";
-                    wrap: word-wrap;
-                }
-                Text { text: "The sample keeps its captured values even if the source is edited. Sample again to refresh it."; color: #969ca8; wrap: word-wrap; }
-                Rectangle { vertical-stretch: 1; }
-            }
-            if root.operation-index == 0: VerticalLayout {
-                spacing: 10px;
-                Text { text: "Blank fields keep each face's current value."; color: #969ca8; }
-                HorizontalLayout {
-                    spacing: 12px;
-                    Image { width: 72px; height: 72px; source: root.preview; image-fit: contain; }
-                    VerticalLayout {
-                        spacing: 6px;
-                        Text { text: "Material"; }
-                        LineEdit { text <=> root.material; placeholder-text: "Mixed · keep current materials"; }
-                        Button { text: "Browse materials…"; clicked => { root.browse(); } }
+                    CheckBox { text: "Fit one texture tile to each face"; checked <=> root.fit; toggled => { root.ready = false; } }
+                    Text { text: "Placement within a texture tile · keeps scale"; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Horizontal"; vertical-alignment: center; }
+                        ComboBox { model: ["Keep offset", "Left", "Center", "Right"]; current-index <=> root.justify-u-index; selected => { root.ready = false; } }
+                        Text { text: "Vertical"; vertical-alignment: center; }
+                        ComboBox { model: ["Keep offset", "Top", "Center", "Bottom"]; current-index <=> root.justify-v-index; selected => { root.ready = false; } }
                     }
-                }
-                HorizontalLayout {
-                    spacing: 12px;
-                    Text { text: "Projection"; vertical-alignment: center; }
-                    ComboBox {
-                        model: ["Keep current axes", "Align to world", "Align to face"];
-                        current-index <=> root.alignment-index;
-                        selected => { if self.current-index != 0 { root.rotation = "0"; } }
-                    }
-                }
-                Text { text: "Offset · texture pixels"; }
-                HorizontalLayout {
-                    spacing: 10px;
-                    Text { text: "Horizontal"; vertical-alignment: center; }
-                    LineEdit { text <=> root.shift-u; input-type: decimal; placeholder-text: "Keep"; }
-                    Text { text: "Vertical"; vertical-alignment: center; }
-                    LineEdit { text <=> root.shift-v; input-type: decimal; placeholder-text: "Keep"; }
-                }
-                Text { text: "Scale · world units per texture pixel"; }
-                HorizontalLayout {
-                    spacing: 10px;
-                    Text { text: "Horizontal"; vertical-alignment: center; }
-                    LineEdit { text <=> root.scale-u; input-type: decimal; placeholder-text: "Keep"; }
-                    Text { text: "Vertical"; vertical-alignment: center; }
-                    LineEdit { text <=> root.scale-v; input-type: decimal; placeholder-text: "Keep"; }
-                }
-                HorizontalLayout {
-                    spacing: 10px;
-                    Text { text: "Rotation · degrees"; vertical-alignment: center; }
-                    LineEdit { text <=> root.rotation; input-type: decimal; placeholder-text: "Keep"; }
-                }
-                Slider {
-                    minimum: -180; maximum: 180;
-                    value: root.rotation == "" ? 0 : root.rotation.to-float();
-                    released(value) => { root.rotation = "\{round(value)}"; }
-                }
-                CheckBox { text: "Fit one texture tile to each face"; checked <=> root.fit; }
-                Text { text: "Placement within a texture tile · keeps scale"; }
-                HorizontalLayout {
-                    spacing: 10px;
-                    Text { text: "Horizontal"; vertical-alignment: center; }
-                    ComboBox { model: ["Keep offset", "Left", "Center", "Right"]; current-index <=> root.justify-u-index; }
-                    Text { text: "Vertical"; vertical-alignment: center; }
-                    ComboBox { model: ["Keep offset", "Top", "Center", "Bottom"]; current-index <=> root.justify-v-index; }
                 }
             }
             Text { text: root.message; wrap: word-wrap; }
-            Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Preview textures"; enabled: !root.stale && (root.operation-index == 0 || root.sample-present); clicked => { root.preview-edit(); } }
-                Button { text: "Apply textures"; enabled: !root.stale && (root.operation-index == 0 || root.sample-present); clicked => { root.apply(); } }
+                Button { text: "Apply textures"; enabled: !root.stale && (root.operation-index == 0 || root.sample-present) && (root.operation-index != 0 || !root.direct-vectors || root.ready); clicked => { root.apply(); } }
             }
         }
     }

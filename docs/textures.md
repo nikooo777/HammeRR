@@ -67,6 +67,21 @@ even after a model switches to a different existing candidate.
 
 ![Face material, offset, scale, rotation and preview controls](images/face-textures.png)
 
+
+## Set U/V vectors and skew
+
+Set the texture projection directly without changing the face geometry.
+
+1. Select the faces and open **Edit face textures…**.
+2. Choose **Edit texture settings** and enable **Advanced U/V world vectors**.
+3. Enter the world X, Y and Z components in the **U** and **V** rows. Common values are shown; mixed components are blank. Leave a component blank to keep each face's current value. For example, on a horizontal face, **U** = `1, 0.5, 0` and **V** = `0, -1, 0` adds skew.
+4. Keep or edit **Offset · texture pixels** and **Scale · world units per texture pixel**. Each texture coordinate is `dot(world position, vector) / scale + offset`; vector magnitudes are kept, so a longer vector increases repetition at the same scale.
+5. Click **Preview textures** and review the viewport. Click **Apply textures** to keep exactly that preview in one Undo step. Editing a field requires another preview. **Cancel**, Escape or closing the window discards the draft.
+
+![Direct U/V world-vector controls with mixed values and preview review](images/uv-vectors.png)
+
+Limits: both vectors must be finite and produce a nonzero, nonsingular projection on every selected face. Zero vectors, nearly parallel projections, edge-on mappings and non-finite texel coordinates are rejected for the whole selection. World and brush-entity faces can share an edit. Vectors are never normalized or replaced with another projection. Direct mode keeps the stored rotation value; **Projection** alignment and **Rotation · degrees** are available when the advanced mode is off. Fitting and placement can still change scale and offsets when explicitly chosen. Terrain keeps its sculpt, blend and other metadata; this edits the base projection. Repeatable random UV variation remains separate.
+
 ## Sample and reuse a texture
 
 1. Select one face and click **Sample face texture**.

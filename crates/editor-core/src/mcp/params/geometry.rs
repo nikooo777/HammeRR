@@ -288,6 +288,10 @@ pub struct EditFacesArgs {
     pub scale_u: Option<f64>,
     pub scale_v: Option<f64>,
     pub rotation: Option<f64>,
+    /// Direct world-space U vector, without normalization. Null components keep each face's value. Cannot combine with alignment or rotation; scales/texel offsets stay independent.
+    pub u_axis: Option<[Option<f64>; 3]>,
+    /// Direct world-space V vector, allowing skew. Null components preserve values. Must span every target face together with U; no fallback projection.
+    pub v_axis: Option<[Option<f64>; 3]>,
     /// World units per lighting pixel, 1–1024. Smaller values give denser authored lightmaps.
     pub lightmap_scale: Option<u32>,
     /// Replace groups with these numbers (1–32); [] clears. 25–32 are Source hard-edge groups.
@@ -349,6 +353,7 @@ pub(in crate::mcp) fn face_state(session: &Session) -> Value {
             Some(json!({"solid": face.solid, "side": face.side, "material": side.material,
                 "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
                 "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
+                "u_axis": side.u_axis.axis.to_array(), "v_axis": side.v_axis.axis.to_array(),
                 "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0)), "smoothing_mask": side.smoothing_groups.unwrap_or(0),
                 "uaxis": side.u_axis.to_string(), "vaxis": side.v_axis.to_string()}))
         }).collect::<Vec<_>>(),
@@ -357,9 +362,11 @@ pub(in crate::mcp) fn face_state(session: &Session) -> Value {
             Some(json!({"solid": face.solid, "side": face.side, "owner": session.document().owner_of_solid(face.solid).map(id_string),
                 "material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset,
                 "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
+                "u_axis": side.u_axis.axis.to_array(), "v_axis": side.v_axis.axis.to_array(),
                 "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0)), "smoothing_mask": side.smoothing_groups.unwrap_or(0),
                 "uaxis": side.u_axis.to_string(), "vaxis": side.v_axis.to_string(),
-                "preview": session.preview_side(face).map(|side| json!({"material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset, "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation, "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0))}))}))
+                "preview": session.preview_side(face).map(|side| json!({"material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset, "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
+                "u_axis": side.u_axis.axis.to_array(), "v_axis": side.v_axis.axis.to_array(), "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0))}))}))
         }).collect::<Vec<_>>()})
 }
 
@@ -622,6 +629,28 @@ mod surface_corner_tests {
             let mut invalid = valid.clone();
             invalid["source_corner"] = corner;
             assert!(serde_json::from_value::<SurfacePlacementArgs>(invalid).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod vector_tests {
+    use super::*;
+
+    #[test]
+    fn direct_vector_parameters_accept_full_and_component_preserving_axes() {
+        let args: EditFacesArgs = serde_json::from_value(
+            json!({"u_axis": [2.0, null, 0.125], "v_axis": [0.25, -1.5, 0.0], "preview": true}),
+        )
+        .unwrap();
+        assert_eq!(args.u_axis, Some([Some(2.0), None, Some(0.125)]));
+        assert_eq!(args.v_axis, Some([Some(0.25), Some(-1.5), Some(0.0)]));
+        for invalid in [
+            json!({"u_axis": [1.0, 0.0]}),
+            json!({"v_axis": [0.0, 1.0, 0.0, 2.0]}),
+            json!({"u_axis": ["1", 0.0, 0.0]}),
+        ] {
+            assert!(serde_json::from_value::<EditFacesArgs>(invalid).is_err());
         }
     }
 }

@@ -1415,3 +1415,7 @@ fn terrain_triangle_subsets_share_actors_and_preserve_failed_drafts_and_history(
         assert_eq!(session.document().vmf(), &changed);
     }
 }
+
+#[cfg(test)]
+#[path = "surface_vectors_tests.rs"]
+mod vector_tests;

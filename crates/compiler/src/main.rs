@@ -5,7 +5,7 @@ use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90]";
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -121,8 +121,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "hint surfaces: {} · added splits: {} · work units: {}",
         stats.hint_surfaces, stats.hint_splits, stats.hint_work
     );
+    let ldr_prefix = if stats.hdr.is_some() { "LDR " } else { "" };
     println!(
-        "lighting {}: {} baked faces, {} samples, {} light sources, {} bytes",
+        "{ldr_prefix}lighting {}: {} baked faces, {} samples, {} light sources, {} bytes",
         stats.lighting_mode.label(),
         stats.lighting_faces,
         stats.lightmap_samples,
@@ -130,11 +131,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.lighting_bytes
     );
     println!(
-        "brush entity lightmaps: {} models · {} faces",
+        "{ldr_prefix}brush entity lightmaps: {} models · {} faces",
         stats.lit_brush_models, stats.model_lighting_faces
     );
     println!(
-        "normal-map lighting: {} faces · {} directional maps",
+        "{ldr_prefix}normal-map lighting: {} faces · {} directional maps",
         stats.bump_faces, stats.bump_lightmaps
     );
     println!(
@@ -145,14 +146,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.light_culling_work
     );
     println!(
-        "light styles: {} · styled faces: {} · lightmaps: {} · switched groups: {}",
+        "{ldr_prefix}light styles: {} · styled faces: {} · lightmaps: {} · switched groups: {}",
         stats.light_styles,
         stats.styled_faces,
         stats.light_style_maps,
         stats.switchable_light_groups
     );
     println!(
-        "indirect light: {} bounces, {} rays, {} samples lit, {} model faces, {} model samples lit, {} work units",
+        "{ldr_prefix}indirect light: {} bounces, {} rays, {} samples lit, {} model faces, {} model samples lit, {} work units",
         stats.bounces,
         stats.bounce_rays,
         stats.bounce_samples,
@@ -165,9 +166,56 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats.smoothed_faces, stats.smoothed_corners, stats.normal_work
     );
     println!(
-        "model ambient: {} probes, {} bytes",
+        "{ldr_prefix}model ambient: {} probes, {} bytes",
         stats.ambient_samples, stats.ambient_bytes
     );
+    if let Some(hdr) = &stats.hdr {
+        println!(
+            "HDR lighting: {} faces, {} samples, {} world lights, {} bytes, {} work units",
+            hdr.lighting_faces,
+            hdr.lightmap_samples,
+            hdr.world_lights,
+            hdr.lighting_bytes,
+            hdr.lighting_work
+        );
+        println!(
+            "HDR styles: {} · styled faces: {} · lightmaps: {} · brush models: {} · model faces: {} · normal-map faces: {} · directional maps: {}",
+            hdr.light_styles,
+            hdr.styled_faces,
+            hdr.light_style_maps,
+            hdr.lit_brush_models,
+            hdr.model_lighting_faces,
+            hdr.bump_faces,
+            hdr.bump_lightmaps
+        );
+        println!(
+            "HDR indirect light: {} bounces, {} rays, {} samples lit, {} model faces, {} model samples lit, {} work units",
+            hdr.bounces,
+            hdr.bounce_rays,
+            hdr.bounce_samples,
+            hdr.model_bounce_faces,
+            hdr.model_bounce_samples,
+            hdr.bounce_work
+        );
+        println!(
+            "HDR model ambient: {} probes, {} bytes · native map data: {}",
+            hdr.ambient_samples,
+            hdr.ambient_bytes,
+            if hdr.map_data_present {
+                "HDR data ready"
+            } else {
+                "HDR unavailable: incomplete map data"
+            }
+        );
+    }
+    if stats.lighting_mode.performs_lighting() {
+        println!(
+            "Lighting work: LDR {} · HDR {} · shared total {}",
+            stats.lighting_work,
+            stats.hdr.as_ref().map_or(0, |hdr| hdr.lighting_work),
+            stats.lighting_total_work
+        );
+    }
     println!(
         "static props: {}, model assets: {}, leaf references: {}",
         stats.static_props, stats.static_prop_models, stats.static_prop_leaf_refs

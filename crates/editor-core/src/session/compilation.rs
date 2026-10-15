@@ -106,7 +106,7 @@ impl Session {
     }
 
     pub fn compile_settings(&self) -> Value {
-        let choices = [compiler::LightingMode::Fullbright, compiler::LightingMode::DirectLdr]
+        let choices = [compiler::LightingMode::Fullbright, compiler::LightingMode::DirectLdr, compiler::LightingMode::DirectLdrHdr]
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let physics_choices = [compiler::PhysicsMode::None, compiler::PhysicsMode::Engine]
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
@@ -459,7 +459,10 @@ mod tests {
 
     #[test]
     fn build_lighting_settings_are_shared_and_do_not_edit_map_history() {
-        for actor in [Actor::User, Actor::Agent] {
+        for (actor, lighting) in [Actor::User, Actor::Agent]
+            .into_iter()
+            .flat_map(|actor| ["direct_ldr", "direct_ldr_hdr"].map(|lighting| (actor, lighting)))
+        {
             let (directory, game, _) = crate::test_assets::game_process(true);
             let mut session = Session::new(Ok(game));
             session.replace_document(
@@ -468,6 +471,10 @@ mod tests {
             );
             let before = session.document.vmf().write(&Default::default());
             let revision = session.document.revision();
+            let choices = session.compile_settings()["choices"].clone();
+            assert_eq!(choices.as_array().unwrap().len(), 3);
+            assert_eq!(choices[2]["name"], "direct_ldr_hdr");
+            assert_eq!(choices[2]["label"], "Direct LDR + HDR");
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
             assert_eq!(session.compile_settings()["sky_quality"], "fast");
             assert_eq!(session.compile_settings()["visibility"], "fast");
@@ -488,7 +495,7 @@ mod tests {
                     .update_build_settings(
                         actor,
                         BuildSettingsUpdate {
-                            lighting: Some("direct_ldr"),
+                            lighting: Some(lighting),
                             smoothing_angle: Some(91),
                             ..Default::default()
                         }
@@ -502,7 +509,7 @@ mod tests {
             let selected = session.compile_settings();
             assert!(
                 session
-                    .update_compile_options(actor, Some("direct_ldr"), None, None, None, Some(5))
+                    .update_compile_options(actor, Some(lighting), None, None, None, Some(5))
                     .is_err()
             );
             assert_eq!(session.compile_settings(), selected);
@@ -515,7 +522,7 @@ mod tests {
                 session
                     .update_compile_options(
                         actor,
-                        Some("direct_ldr"),
+                        Some(lighting),
                         Some("engine"),
                         Some("detailed"),
                         Some("invalid"),
@@ -530,12 +537,7 @@ mod tests {
             assert_eq!(result["sky_quality"], "balanced");
             assert!(
                 session
-                    .update_compile_settings_quality(
-                        actor,
-                        Some("direct_ldr"),
-                        None,
-                        Some("unknown")
-                    )
+                    .update_compile_settings_quality(actor, Some(lighting), None, Some("unknown"))
                     .is_err()
             );
             assert_eq!(session.compile_settings()["lighting"], "fullbright");
@@ -553,14 +555,14 @@ mod tests {
                     .unwrap();
                 assert_eq!(session.compile_settings()["bounces"], count);
             }
-            let result = session.set_compile_settings(actor, "direct_ldr").unwrap();
-            assert_eq!(result["lighting"], "direct_ldr");
+            let result = session.set_compile_settings(actor, lighting).unwrap();
+            assert_eq!(result["lighting"], lighting);
             assert!(
                 session
                     .update_compile_settings(actor, Some("fullbright"), Some("unknown"))
                     .is_err()
             );
-            assert_eq!(session.compile_settings()["lighting"], "direct_ldr");
+            assert_eq!(session.compile_settings()["lighting"], lighting);
             let result = session
                 .update_compile_settings(actor, None, Some("engine"))
                 .unwrap();
@@ -604,7 +606,7 @@ mod tests {
             );
             assert_eq!(
                 session.compile_status()["job"]["settings"]["lighting"],
-                "direct_ldr"
+                lighting
             );
             assert_eq!(session.compile_settings()["editable"], false);
             assert_eq!(
@@ -721,6 +723,16 @@ mod tests {
                 .unwrap()
                 > 0
         );
+        session
+            .set_compile_settings(Actor::Agent, "direct_ldr_hdr")
+            .unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], true);
+        assert!(session.launch_readiness().is_err());
+        session
+            .set_compile_settings(Actor::User, "direct_ldr")
+            .unwrap();
+        assert_eq!(session.compile_status()["job"]["stale"], false);
+        assert!(session.launch_readiness().is_ok());
         assert_eq!(session.document.vmf().write(&Default::default()), before);
     }
 }

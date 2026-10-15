@@ -42,6 +42,7 @@ pub enum LightingMode {
     #[default]
     Fullbright,
     DirectLdr,
+    DirectLdrHdr,
 }
 
 impl LightingMode {
@@ -49,6 +50,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "fullbright",
             Self::DirectLdr => "direct_ldr",
+            Self::DirectLdrHdr => "direct_ldr_hdr",
         }
     }
 
@@ -56,6 +58,7 @@ impl LightingMode {
         match self {
             Self::Fullbright => "Fullbright",
             Self::DirectLdr => "Direct LDR",
+            Self::DirectLdrHdr => "Direct LDR + HDR",
         }
     }
 
@@ -63,7 +66,10 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. Up to four style-preserving diffuse bounces reach world, terrain and brush entities. HDR and prop lightmaps remain unfinished."
+                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. Up to four style-preserving diffuse bounces reach world, terrain and brush entities. Prop lightmaps remain unfinished."
+            }
+            Self::DirectLdrHdr => {
+                "Bakes separate LDR and HDR lightmaps, world lights and model ambient, selecting each channel's authored light inputs. Sampling, diffuse bounces and brush smoothing apply to both channels within one shared work limit. Empty HDR lighting, world-light or ambient data cannot activate native HDR. Runtime HDR depends on the game and hardware; HDR viewport, exposure authoring, HDR cubemaps and prop lightmaps remain unfinished."
             }
         }
     }
@@ -72,8 +78,13 @@ impl LightingMode {
         match name.trim().to_ascii_lowercase().as_str() {
             "fullbright" => Ok(Self::Fullbright),
             "direct_ldr" => Ok(Self::DirectLdr),
-            _ => Err("Lighting must be fullbright or direct_ldr".into()),
+            "direct_ldr_hdr" => Ok(Self::DirectLdrHdr),
+            _ => Err("Lighting must be fullbright, direct_ldr or direct_ldr_hdr".into()),
         }
+    }
+
+    pub const fn performs_lighting(self) -> bool {
+        matches!(self, Self::DirectLdr | Self::DirectLdrHdr)
     }
 }
 
@@ -309,9 +320,36 @@ impl Report {
 }
 
 #[derive(Debug, Default, serde::Serialize)]
+pub struct HdrLightingStats {
+    pub world_lights: usize,
+    pub light_styles: usize,
+    pub styled_faces: usize,
+    pub light_style_maps: usize,
+    pub lighting_faces: usize,
+    pub lit_brush_models: usize,
+    pub model_lighting_faces: usize,
+    pub lightmap_samples: usize,
+    pub lighting_bytes: usize,
+    pub lighting_work: usize,
+    pub ambient_samples: usize,
+    pub ambient_bytes: usize,
+    pub bounces: u8,
+    pub bounce_rays: usize,
+    pub bounce_samples: usize,
+    pub bounce_work: usize,
+    pub model_bounce_faces: usize,
+    pub model_bounce_samples: usize,
+    pub bump_faces: usize,
+    pub bump_lightmaps: usize,
+    pub map_data_present: bool,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
     pub compile_region: Option<RegionSummary>,
     pub lighting_mode: LightingMode,
+    pub hdr: Option<HdrLightingStats>,
+    pub lighting_total_work: usize,
     pub bounces: u8,
     pub bounce_rays: usize,
     pub bounce_samples: usize,
@@ -511,7 +549,7 @@ fn build(
     if output.report.has_errors() {
         return Ok(());
     }
-    if options.lighting == LightingMode::DirectLdr {
+    if options.lighting.performs_lighting() {
         output.stats.switchable_light_groups = lighting::styles::prepare(&mut map, control)?;
     }
     let neighbors = map.connect_terrain(&mut output.report, control)?;
@@ -626,14 +664,14 @@ fn build(
     ));
     control.advance(Stage::Faces)?;
     let mut retained_points = 0;
-    let retention = if options.lighting != LightingMode::DirectLdr {
+    let retention = if !options.lighting.performs_lighting() {
         faces::SourceRetention::None
     } else if options.smoothing_angle == 0 {
         faces::SourceRetention::Assigned
     } else {
         faces::SourceRetention::All
     };
-    let world_retention = if options.lighting == LightingMode::Fullbright {
+    let world_retention = if !options.lighting.performs_lighting() {
         faces::SourceRetention::Assigned
     } else {
         retention
@@ -718,7 +756,7 @@ fn build(
     output.stats.static_props = prop_stats.props;
     output.stats.static_prop_models = prop_stats.models;
     output.stats.static_prop_leaf_refs = prop_stats.leaf_refs;
-    if options.lighting == LightingMode::DirectLdr {
+    if options.lighting.performs_lighting() {
         control.advance(Stage::Lighting)?;
         let stats = lighting::bake(
             &map,
@@ -748,6 +786,33 @@ fn build(
         output.stats.lightmap_samples = stats.samples;
         output.stats.lighting_bytes = stats.bytes;
         output.stats.lighting_work = stats.work;
+        output.stats.lighting_total_work = stats.total_work;
+        output.stats.hdr = stats.hdr;
+        if let Some(hdr) = output
+            .stats
+            .hdr
+            .as_ref()
+            .filter(|hdr| !hdr.map_data_present)
+        {
+            let mut missing = Vec::new();
+            if hdr.lighting_bytes == 0 {
+                missing.push("HDR light samples (lump 53)");
+            }
+            if hdr.world_lights == 0 {
+                missing.push("HDR world lights (lump 54)");
+            }
+            if hdr.ambient_samples == 0 {
+                missing.push("HDR model ambient samples (lump 55)");
+            }
+            output.report.diagnostics.push(Diagnostic::warning(
+                format!(
+                    "HDR unavailable: incomplete map data; missing {}. These arrays must all be nonempty to activate native HDR",
+                    missing.join(", ")
+                ),
+                None,
+                None,
+            ));
+        }
         output.stats.prop_shadow_props = stats.prop_shadows.props;
         output.stats.prop_shadow_models = stats.prop_shadows.models;
         output.stats.prop_shadow_triangles = stats.prop_shadows.triangles;

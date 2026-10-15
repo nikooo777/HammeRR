@@ -115,7 +115,7 @@ export component CompileWindow inherits Window {
                     Text { text: "Indirect light"; vertical-alignment: center; }
                     bounce-selector := ComboBox { model: root.bounce-modes; enabled: root.sky-enabled; selected(value) => { root.change-bounces(self.current-index); } }
                 }
-                Text { text: "Diffuse bounces preserve each light style while reflecting light from world brushes and terrain into shaded world surfaces and brush entities. More bounces add work within the same build limit. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+                Text { text: "Diffuse bounces preserve each light style while reflecting light from world brushes and terrain into shaded world surfaces and brush entities. More bounces add work within the same build limit. Used by Direct LDR and Direct LDR + HDR."; wrap: word-wrap; color: #bac2ce; }
                 HorizontalLayout {
                     spacing: 12px;
                     Text { text: "Brush smoothing angle"; vertical-alignment: center; }
@@ -129,7 +129,7 @@ export component CompileWindow inherits Window {
                     Text { text: "Sampling quality"; vertical-alignment: center; }
                     sky-selector := ComboBox { model: root.sky-qualities; enabled: root.sky-enabled; selected(value) => { root.change-sky-quality(self.current-index); } }
                 }
-                Text { text: "More directions improve soft sun shadows, sky/model ambient and bounced light, and take longer. Used by Direct LDR."; wrap: word-wrap; color: #bac2ce; }
+                Text { text: "More directions improve soft sun shadows, sky/model ambient and bounced light, and take longer. Used by Direct LDR and Direct LDR + HDR."; wrap: word-wrap; color: #bac2ce; }
                 Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
                 Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
                 Text { text: "Diagnostics"; font-weight: 600; }

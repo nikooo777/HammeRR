@@ -921,22 +921,22 @@ export component SurfaceWindow inherits Window {
                 HorizontalLayout {
                     spacing: 16px;
                     Image { width: 96px; height: 96px; source: root.sample-preview; image-fit: contain; }
-                      VerticalLayout {
-                            spacing: 8px;
-                            Text { text: "Sampled texture"; font-size: 16px; }
-                            Text { text: root.sample-label; wrap: word-wrap; color: #c8ccd4; }
-                        }
+                    VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "Sampled texture"; font-size: 16px; }
+                        Text { text: root.sample-label; wrap: word-wrap; color: #c8ccd4; }
                     }
-                    Text {
-                        text: root.operation-index == 1 ? "Apply the sampled material. Keep the target faces' offsets, scale and rotation." : root.operation-index == 2 ? "Copy the material and its world-space texture projection. Useful for matching parallel surfaces." : root.operation-index == 3 ? "Fold the sampled projection around each shared edge so the texture meets continuously. Each target must touch the sampled face." : "Carry the sampled texture through connected faces, folding it at each shared edge. Include intermediate faces. Disconnected targets and closed loops that need a seam are rejected; select an open strip to leave a seam.";
-                        wrap: word-wrap;
-                    }
-                    Text { text: "The sample keeps its captured values even if the source is edited. Sample again to refresh it."; color: #969ca8; wrap: word-wrap; }
-                    Rectangle { vertical-stretch: 1; }
                 }
-                if root.operation-index == 0: ScrollView {
-                    vertical-stretch: 1;
-                  VerticalLayout {
+                Text {
+                    text: root.operation-index == 1 ? "Apply the sampled material. Keep the target faces' offsets, scale and rotation." : root.operation-index == 2 ? "Copy the material and its world-space texture projection. Useful for matching parallel surfaces." : root.operation-index == 3 ? "Fold the sampled projection around each shared edge so the texture meets continuously. Each target must touch the sampled face." : "Carry the sampled texture through connected faces, folding it at each shared edge. Include intermediate faces. Disconnected targets and closed loops that need a seam are rejected; select an open strip to leave a seam.";
+                    wrap: word-wrap;
+                }
+                Text { text: "The sample keeps its captured values even if the source is edited. Sample again to refresh it."; color: #969ca8; wrap: word-wrap; }
+                Rectangle { vertical-stretch: 1; }
+            }
+            if root.operation-index == 0: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
                     spacing: 10px;
                     Text { text: "Blank fields keep each face's current value."; color: #969ca8; }
                     HorizontalLayout {
@@ -989,7 +989,7 @@ export component SurfaceWindow inherits Window {
                     CheckBox { text: "Advanced U/V world vectors"; checked <=> root.direct-vectors; toggled => { root.ready = false; } }
                     if root.direct-vectors: VerticalLayout {
                         spacing: 8px;
-                        Text { text: "Set vector components to skew the texture. Magnitudes are kept. Blank components keep each face's value; mixed components are blank."; wrap: word-wrap; color: #b6bac3; }
+                        Text { text: "U runs horizontally across the texture; V runs vertically. Components use world X, Y and Z. Blank keeps each face’s value."; wrap: word-wrap; color: #b6bac3; }
                         HorizontalLayout {
                             spacing: 8px;
                             Text { width: 16px; text: ""; }
@@ -1011,7 +1011,7 @@ export component SurfaceWindow inherits Window {
                             LineEdit { text <=> root.v-y; input-type: decimal; placeholder-text: "Y · mixed / keep"; accessible-label: "V vector Y"; edited => { root.ready = false; } }
                             LineEdit { text <=> root.v-z; input-type: decimal; placeholder-text: "Z · mixed / keep"; accessible-label: "V vector Z"; edited => { root.ready = false; } }
                         }
-                        Text { text: "UV = dot(world position, vector) / scale + offset. Rotation metadata stays fixed. Preview these fields before Apply."; wrap: word-wrap; color: #b6bac3; }
+                        Text { text: "Component magnitudes are preserved. Click Preview textures before Apply textures."; wrap: word-wrap; color: #b6bac3; }
                     }
                     CheckBox { text: "Fit one texture tile to each face"; checked <=> root.fit; toggled => { root.ready = false; } }
                     Text { text: "Placement within a texture tile · keeps scale"; }

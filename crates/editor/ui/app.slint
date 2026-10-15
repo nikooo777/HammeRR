@@ -1256,6 +1256,70 @@ export component ChecksWindow inherits Window {
     }
 }
 
+export struct RecentMapRow { path: string, title: string, detail: string }
+
+export component RecentMapsWindow inherits Window {
+    title: "Recent maps - HammeRR";
+    preferred-width: 760px;
+    preferred-height: 720px;
+    in property <[RecentMapRow]> rows;
+    in property <string> summary;
+    in property <string> selected-detail;
+    in property <bool> selected-available;
+    in property <bool> writable;
+    in property <bool> dirty-map;
+    in property <string> warning;
+    in property <string> message;
+    in-out property <string> selected-path;
+    in-out property <string> map-guard;
+    in-out property <bool> discard-changes;
+    in-out property <bool> confirm-clear;
+    callback select-map(string);
+    callback open-selected();
+    callback remove-selected();
+    callback clear-list();
+    callback refresh();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px; spacing: 10px;
+            Text { text: "Recent maps"; font-size: 23px; font-weight: 600; }
+            Text { text: "Reopen a map with its retained build settings. Game content stays mounted from this editor session."; wrap: word-wrap; color: #aab0bb; }
+            HorizontalLayout {
+                Text { text: root.summary; horizontal-stretch: 1; vertical-alignment: center; }
+                Button { text: "Refresh list"; clicked => { root.refresh(); } }
+            }
+            ListView {
+                min-height: 140px;
+                for row in root.rows: VerticalLayout {
+                    spacing: 3px; padding-bottom: 10px;
+                    Button { text: row.title + (root.selected-path == row.path ? " · selected" : ""); clicked => { root.select-map(row.path); } }
+                    Text { text: row.path; wrap: word-wrap; color: #c8ccd4; font-size: 12px; }
+                    Text { text: row.detail; color: #aab0bb; font-size: 12px; }
+                }
+            }
+            Text { text: root.selected-detail; wrap: word-wrap; color: #c8ccd4; }
+            if root.dirty-map: CheckBox { text: "Discard current unsaved edits when opening"; checked <=> root.discard-changes; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Open selected map"; enabled: root.selected-available && (!root.dirty-map || root.discard-changes); clicked => { root.open-selected(); } }
+                Button { text: "Remove from list"; enabled: root.writable && root.selected-path != ""; clicked => { root.remove-selected(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                CheckBox { text: "Confirm clear list"; checked <=> root.confirm-clear; }
+                Button { text: "Clear list"; enabled: root.writable && root.confirm-clear && root.rows.length > 0; clicked => { root.clear-list(); } }
+            }
+            if root.warning != "": Text { text: root.warning; wrap: word-wrap; color: #efa47c; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; }
+            Button { text: "Cancel / close"; clicked => { root.cancel(); } }
+        }
+    }
+}
+
 export component RecoveryWindow inherits Window {
     title: "Recovery - HammeRR";
     preferred-width: 780px;
@@ -1750,6 +1814,7 @@ export component AppWindow inherits Window {
 
     callback new-map();
     callback open-map();
+    callback recent-maps();
     callback save-map();
     callback compile-map();
     callback run-map();
@@ -1865,6 +1930,11 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.open-map();
                     }
+                }
+
+                Button {
+                    text: "Recent…";
+                    clicked => { root.recent-maps(); }
                 }
 
                 Button {

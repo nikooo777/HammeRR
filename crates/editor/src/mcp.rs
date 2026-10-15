@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use base64::Engine;
@@ -851,6 +851,12 @@ pub struct OpenMapArgs {
 pub struct NewMapArgs {
     #[serde(default)]
     pub discard_changes: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RecentMapPathArgs {
+    /// Exact absolute path returned by get_recent_maps.
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -4525,6 +4531,38 @@ impl EditorServer {
                 args.discard_changes,
             )?;
             Ok(json!({ "message": message }))
+        })
+    }
+
+    #[tool(description = "List up to 20 recent maps, most recent first, with file availability, retained game directory and build settings, context compatibility, persistence status and storage errors. Read only; missing files remain in the list until explicitly removed.", annotations(read_only_hint = true))]
+    fn get_recent_maps(&self) -> ToolResult {
+        ok(self.session().recent_maps())
+    }
+
+    #[tool(description = "Reopen an exact path from get_recent_maps through the normal map validation and dirty/discard guards. Restores retained build settings only for matching mounted game content and while no compile is active. Does not switch game content. Failed opens preserve the map, history and recent list.")]
+    fn open_recent_map(&self, Parameters(args): Parameters<OpenMapArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let message = session.open_recent_map(Actor::Agent, Path::new(&args.path), args.discard_changes)?;
+            Ok(json!({"message": message, "recent_maps": session.recent_maps(), "build_settings": session.compile_settings()}))
+        })
+    }
+
+    #[tool(description = "Remove one exact path returned by get_recent_maps from the retained list. Does not delete or edit the map file, current map or undo history. Failed storage writes preserve the list.")]
+    fn remove_recent_map(&self, Parameters(args): Parameters<RecentMapPathArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.remove_recent_map(Path::new(&args.path))?;
+            Ok(session.recent_maps())
+        })
+    }
+
+    #[tool(description = "Clear the retained recent-map list and its saved per-map build context. Does not delete map files or edit the current map. Failed storage writes preserve the previous list.")]
+    fn clear_recent_maps(&self) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.clear_recent_maps()?;
+            Ok(session.recent_maps())
         })
     }
 

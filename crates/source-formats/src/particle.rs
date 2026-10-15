@@ -141,6 +141,39 @@ enum Attribute {
     Other,
 }
 
+#[derive(Clone, Copy)]
+#[repr(usize)]
+enum Field {
+    Definitions,
+    Material,
+    MaxParticles,
+    FunctionName,
+    Children,
+    Child,
+    Renderers,
+    Operators,
+    Initializers,
+    Emitters,
+    Forces,
+    Constraints,
+}
+
+const FIELD_NAMES: [&str; 12] = [
+    "particlesystemdefinitions",
+    "material",
+    "max_particles",
+    "functionname",
+    "children",
+    "child",
+    "renderers",
+    "operators",
+    "initializers",
+    "emitters",
+    "forces",
+    "constraints",
+];
+type FieldKeys = [Option<usize>; FIELD_NAMES.len()];
+
 struct Element {
     kind: usize,
     name: String,
@@ -148,14 +181,11 @@ struct Element {
 }
 
 impl Element {
-    fn field<'a>(&'a self, strings: &[String], name: &str) -> Option<&'a Attribute> {
-        self.attributes
-            .iter()
-            .find(|(key, _)| strings[**key].eq_ignore_ascii_case(name))
-            .map(|(_, value)| value)
+    fn field(&self, keys: &FieldKeys, field: Field) -> Option<&Attribute> {
+        self.attributes.get(&keys[field as usize]?)
     }
-    fn references(&self, strings: &[String], name: &str) -> io::Result<&[Option<usize>]> {
-        match self.field(strings, name) {
+    fn references(&self, keys: &FieldKeys, field: Field) -> io::Result<&[Option<usize>]> {
+        match self.field(keys, field) {
             Some(Attribute::References(values)) => Ok(values),
             None => Ok(&[]),
             _ => Err(invalid(
@@ -198,6 +228,13 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
         .iter()
         .map(|value| value.to_ascii_lowercase())
         .collect::<Vec<_>>();
+    let mut attribute_keys = BTreeMap::new();
+    let canonical_keys = folded_strings
+        .iter()
+        .enumerate()
+        .map(|(index, name)| *attribute_keys.entry(name.as_str()).or_insert(index))
+        .collect::<Vec<_>>();
+    let field_keys: FieldKeys = FIELD_NAMES.map(|name| attribute_keys.get(name).copied());
     let element_count = reader.count(MAX_ELEMENTS)?;
     if element_count == 0 {
         return Err(invalid("Particle DMX has no root element"));
@@ -223,8 +260,8 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
         }
         let mut names = BTreeSet::new();
         for _ in 0..count {
-            let name = reader.index(&strings)?;
-            if !names.insert(&folded_strings[name]) {
+            let name = canonical_keys[reader.index(&strings)?];
+            if !names.insert(name) {
                 return Err(invalid("Particle DMX has duplicate attributes"));
             }
             let encoded = reader.take(1)?[0];
@@ -299,10 +336,7 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
     ) {
         return Err(invalid("Particle PCF root has an unexpected element type"));
     }
-    if elements[0]
-        .field(&strings, "particleSystemDefinitions")
-        .is_none()
-    {
+    if elements[0].field(&field_keys, Field::Definitions).is_none() {
         return Err(invalid(
             "Particle PCF root has no particleSystemDefinitions",
         ));
@@ -310,7 +344,7 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
     let mut metadata_bytes = 0usize;
     let mut definitions = Vec::new();
     let mut roots = BTreeSet::new();
-    for index in elements[0].references(&strings, "particleSystemDefinitions")? {
+    for index in elements[0].references(&field_keys, Field::Definitions)? {
         let index = index.ok_or_else(|| invalid("Particle definition root is null"))?;
         if !roots.insert(index) {
             return Err(invalid("Particle definition root is repeated"));
@@ -319,27 +353,27 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
         if strings[element.kind] != "DmeParticleSystemDefinition"
             || element.name.is_empty()
             || element.name.len() > 255
-            || element.name.contains(['\r', '\n'])
+            || element.name.contains(['\"', '\r', '\n'])
         {
             return Err(invalid("Particle definition type or name is invalid"));
         }
         let mut functions = BTreeMap::new();
-        for category in [
-            "renderers",
-            "operators",
-            "initializers",
-            "emitters",
-            "forces",
-            "constraints",
+        for (field, category) in [
+            (Field::Renderers, "renderers"),
+            (Field::Operators, "operators"),
+            (Field::Initializers, "initializers"),
+            (Field::Emitters, "emitters"),
+            (Field::Forces, "forces"),
+            (Field::Constraints, "constraints"),
         ] {
             let mut names = Vec::new();
-            for index in element.references(&strings, category)? {
+            for index in element.references(&field_keys, field)? {
                 let index = index.ok_or_else(|| invalid("Particle function reference is null"))?;
                 let function = &elements[index];
                 if strings[function.kind] != "DmeParticleOperator" {
                     return Err(invalid("Particle function has an unexpected element type"));
                 }
-                let name = match function.field(&strings, "functionName") {
+                let name = match function.field(&field_keys, Field::FunctionName) {
                     Some(Attribute::Text(value)) => value.as_str(),
                     None => &function.name,
                     _ => return Err(invalid("Particle functionName must be a string")),
@@ -356,13 +390,13 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
             functions.insert(category.into(), names);
         }
         let mut children = Vec::new();
-        for index in element.references(&strings, "children")? {
+        for index in element.references(&field_keys, Field::Children)? {
             let index = index.ok_or_else(|| invalid("Particle child reference is null"))?;
             let child = &elements[index];
             if strings[child.kind] != "DmeParticleChild" {
                 return Err(invalid("Particle child has an unexpected element type"));
             }
-            let name = match child.field(&strings, "child") {
+            let name = match child.field(&field_keys, Field::Child) {
                 Some(Attribute::Reference(Some(index)))
                     if strings[elements[*index].kind] == "DmeParticleSystemDefinition" =>
                 {
@@ -370,7 +404,7 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
                 }
                 _ => return Err(invalid("Particle child has no internal child definition")),
             };
-            if name.is_empty() || name.len() > 255 || name.contains(['\r', '\n']) {
+            if name.is_empty() || name.len() > 255 || name.contains(['\"', '\r', '\n']) {
                 return Err(invalid("Particle child system name is invalid"));
             }
             metadata_bytes += name.len();
@@ -379,12 +413,12 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
             }
             children.push(name.clone());
         }
-        let material = match element.field(&strings, "material") {
+        let material = match element.field(&field_keys, Field::Material) {
             Some(Attribute::Text(value)) => Some(value.clone()),
             None => None,
             _ => return Err(invalid("Particle material must be a string")),
         };
-        let max_particles = match element.field(&strings, "max_particles") {
+        let max_particles = match element.field(&field_keys, Field::MaxParticles) {
             Some(Attribute::Int(value)) => Some(*value),
             None => None,
             _ => return Err(invalid("Particle maximum count must be an integer")),

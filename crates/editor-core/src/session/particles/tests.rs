@@ -206,3 +206,29 @@ fn definition_and_preview_changes_require_review_without_source_changes() {
     assert!(session.apply_particle_choice(Actor::User, token).is_err());
     session.cancel_particle_choice(token).unwrap();
 }
+
+#[test]
+fn quoted_particle_names_cannot_change_source_or_poison_catalog_retries() {
+    let (directory, mut session, id) = fixture();
+    let token = session.begin_particle_choice(id, false).unwrap()["token"]
+        .as_u64()
+        .unwrap();
+    session.choose_particle(token, "test_flame").unwrap();
+    let before = session.particle_choice(token).unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    assert!(session.choose_particle(token, "bad\"effect").is_err());
+    assert_eq!(session.particle_choice(token).unwrap(), before);
+    let path = directory.path().join("particles/test.pcf");
+    std::fs::write(&path, pcf("bad\"effect")).unwrap();
+    assert!(session.apply_particle_choice(Actor::Agent, token).is_err());
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.document().undo_labels().count(), history);
+    session.reload_particle_assets();
+    assert!(session.browse_particles("", "all", 0, 10).is_err());
+    std::fs::write(&path, pcf("test_flame")).unwrap();
+    assert_eq!(
+        session.browse_particles("flame", "all", 0, 10).unwrap()["total"],
+        1
+    );
+}

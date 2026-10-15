@@ -40,6 +40,23 @@ pub(super) fn texture_json(texture: PartitionTexture) -> Value {
 }
 
 impl Draft {
+    fn texture_targets(&self, pieces: &[PartitionRef]) -> Result<BTreeSet<PartitionRef>, String> {
+        let targets = pieces.iter().cloned().collect::<BTreeSet<_>>();
+        if pieces.is_empty()
+            || pieces.len() > subobject::MAX_SOLIDS * 2
+            || targets.len() != pieces.len()
+            || targets.iter().any(|piece| {
+                !self.partitions.iter().any(|part| {
+                    part.source.solid == piece.solid
+                        && part.loops.iter().any(|item| item.id == piece.partition)
+                })
+            })
+        {
+            return Err("Choose 1–32 distinct pieces from the current draft".into());
+        }
+        Ok(targets)
+    }
+
     pub(in crate::session::components) fn texture_plan(&self) -> Vec<PieceTexture> {
         self.textures
             .iter()
@@ -77,29 +94,97 @@ impl Draft {
 }
 
 impl Session {
+    pub fn place_component_partition_texture(
+        &mut self,
+        token: u64,
+        pieces: &[PartitionRef],
+        fit: bool,
+        justify: [Option<map_core::surface::Justify>; 2],
+    ) -> Result<u64, String> {
+        let mut draft = self.checked_flat_texture_partition(token)?;
+        let targets = draft.texture_targets(pieces)?;
+        if !fit && justify.iter().all(Option::is_none) {
+            return Err("Choose Fit or at least one texture justification".into());
+        }
+        let mut textures = Vec::new();
+        for target in targets {
+            let part = draft
+                .partitions
+                .iter()
+                .find(|part| part.source.solid == target.solid)
+                .unwrap();
+            let piece = part
+                .loops
+                .iter()
+                .find(|piece| piece.id == target.partition)
+                .unwrap();
+            let name = draft
+                .effective_material(&self.document, part, piece.id)
+                .ok_or("Partition source material does not exist")?;
+            let material = self.material_preview(name)?;
+            if material.missing
+                || material.image.is_none()
+                || material.width == 0
+                || material.height == 0
+            {
+                return Err(format!(
+                    "Cannot place {name}: texture dimensions unavailable"
+                ));
+            }
+            let source = map_core::surface::side(
+                &self.document,
+                map_core::surface::FaceId {
+                    solid: part.source.solid,
+                    side: part.source.side,
+                },
+            )
+            .ok_or("Partition source face does not exist")?;
+            let points = piece
+                .vertices
+                .iter()
+                .map(|vertex| part.vertices[*vertex as usize].position)
+                .collect::<Vec<_>>();
+            let texture = draft
+                .effective_texture(&self.document, part, piece.id)
+                .ok_or("Partition source texture does not exist")?
+                .place(
+                    source,
+                    &points,
+                    [material.width, material.height],
+                    fit,
+                    justify,
+                )
+                .map_err(|error| error.to_string())?;
+            textures.push((target, texture));
+        }
+        draft.textures.extend(textures);
+        self.install_checked_texture_partition(draft)
+    }
+
+    fn checked_flat_texture_partition(&self, token: u64) -> Result<Draft, String> {
+        let draft = self.checked_partition(token)?;
+        if draft.rise != 0.0 || self.checked_component_preview(token)?.extrusion.is_some() {
+            return Err("Return to flat before changing planned top textures".into());
+        }
+        Ok(draft.clone())
+    }
+
+    fn install_checked_texture_partition(&mut self, draft: Draft) -> Result<u64, String> {
+        self.document
+            .preview_snapshot()
+            .edit("check planned partition textures", |tx| draft.store(tx))
+            .map_err(|error| error.to_string())?;
+        Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
+    }
+
     pub fn update_component_partition_texture(
         &mut self,
         token: u64,
         pieces: &[PartitionRef],
         texture: Option<PartitionTexture>,
     ) -> Result<u64, String> {
-        let mut draft = self.checked_partition(token)?.clone();
-        if draft.rise != 0.0 || self.checked_component_preview(token)?.extrusion.is_some() {
-            return Err("Return to flat before changing planned top textures".into());
-        }
-        let targets = pieces.iter().cloned().collect::<BTreeSet<_>>();
-        if pieces.is_empty()
-            || pieces.len() > subobject::MAX_SOLIDS * 2
-            || targets.len() != pieces.len()
-            || targets.iter().any(|piece| {
-                !draft.partitions.iter().any(|part| {
-                    part.source.solid == piece.solid
-                        && part.loops.iter().any(|item| item.id == piece.partition)
-                })
-            })
-        {
-            return Err("Choose 1–32 distinct pieces from the current draft".into());
-        }
+        let mut draft = self.checked_flat_texture_partition(token)?;
+        let targets = draft.texture_targets(pieces)?;
         if let Some(texture) = texture {
             texture.validate().map_err(|error| error.to_string())?;
         }
@@ -110,11 +195,7 @@ impl Session {
                 draft.textures.remove(&piece);
             }
         }
-        self.document
-            .preview_snapshot()
-            .edit("check planned partition textures", |tx| draft.store(tx))
-            .map_err(|error| error.to_string())?;
-        Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
+        self.install_checked_texture_partition(draft)
     }
 }
 

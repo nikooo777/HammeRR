@@ -1230,13 +1230,14 @@ pub(crate) fn partition_texture_controls_share_preview_inheritance_keep_cancel_a
         },
     )))
     .unwrap();
-    let mut state = Session::new(Err("no assets needed".into()));
+    let (_assets, game) = crate::test_assets::game();
+    let mut state = Session::new(Ok(game));
     let ObjectId::Solid(id) = state
         .create_block(
             Actor::Agent,
             DVec3::ZERO,
             DVec3::splat(64.0),
-            "brick/test",
+            "test/checker",
             false,
         )
         .unwrap()
@@ -1290,12 +1291,38 @@ pub(crate) fn partition_texture_controls_share_preview_inheritance_keep_cancel_a
     window.set_texture_scale_u("-0.375".into());
     window.invoke_preview_partition_texture();
     assert!(window.get_ready());
+    let reviewed = lock(&shared).partition_preview_token();
+    window.set_texture_rotation("42".into());
+    window.invoke_fit_partition_texture();
+    assert!(window.get_message().contains("Preview texture placement"));
+    assert_eq!(lock(&shared).partition_preview_token(), reviewed);
+    window.set_texture_rotation("37".into());
+    window.invoke_fit_partition_texture();
+    assert!(window.get_ready());
+    assert_ne!(window.get_texture_scale_u(), "-0.375");
+    assert!(window.get_texture_scale_u().parse::<f64>().unwrap() < 0.0);
+    assert_eq!(window.get_texture_rotation(), "37");
+    window.set_texture_scale_u("-0.375".into());
+    window.set_texture_scale_v("0.625".into());
+    window.invoke_preview_partition_texture();
+    let scales = (window.get_texture_scale_u(), window.get_texture_scale_v());
+    window.set_texture_justify_u(3);
+    window.set_texture_justify_v(2);
+    window.invoke_justify_partition_texture();
+    assert!(window.get_ready());
+    assert_eq!(
+        (window.get_texture_scale_u(), window.get_texture_scale_v()),
+        scales
+    );
+    assert_eq!(window.get_texture_rotation(), "37");
     window.show().unwrap();
     window
         .window()
-        .set_size(slint::PhysicalSize::new(1100, 900));
+        .set_size(slint::PhysicalSize::new(1100, 1100));
     save_ui_snapshot(window.window(), "partition-texture-placement");
     assert_dialog_button_visible(&window, "Cancel");
+    assert_dialog_button_visible(&window, "Fit each piece");
+    assert_dialog_button_visible(&window, "Preview justification");
     window.invoke_inherit_partition_texture();
     assert!(window.get_top_texture_summary().contains("inherited"));
     window.invoke_choose_texture_rotation(90.0);

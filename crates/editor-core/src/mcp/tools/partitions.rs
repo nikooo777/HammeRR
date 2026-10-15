@@ -91,6 +91,28 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Fit or justify the existing effective texture projection independently on 1–32 distinct flat partition loops using each piece's actual corners and effective material dimensions. Supply current token, partitions [{solid,partition}], fit:true and/or justify_u/justify_v: start, center or end (horizontal left/center/right; vertical top/center/bottom). Fit maps one tile over each loop's projected bounds, preserving rotation, axes and signed mirroring; justification shifts a chosen bound or center to that material tile and preserves scale. Fit runs before justification when combined. Without Fit, omitted axes preserve their shifts. Supports triangles, pentagons and all current convex adjusted loops; source face bounds are never substituted. Uses the same Session operation as Fit each piece and Preview justification. Missing dimensions, empty/duplicate/stale refs, invalid projections, raised/extruded scopes and metadata-budget failures retain the previous draft and token. Returns replacement token and effective_texture/texture_plan per loop. Review the flat preview, then Keep or raise/extrude and Apply; Cancel discards changes. Other plans, materials, lighting, source geometry and history remain intact. Explicit projection-axis authoring is unavailable."
+    )]
+    pub(in crate::mcp) fn place_component_partition_texture(
+        &self,
+        Parameters(args): Parameters<PlacePartitionTextureArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.place_component_partition_texture(
+                parse_token(&args.token)?,
+                &args.partitions,
+                args.fit.unwrap_or(false),
+                [
+                    args.justify_u.map(Into::into),
+                    args.justify_v.map(Into::into),
+                ],
+            )?;
+            selected_component_report(&session)
+        })
+    }
+
+    #[tool(
         description = "Preview outward extrusion of the highlighted flat partition pieces into separate convex brushes. Requires a current flat-partition token; select 1–32 pieces using select_component_partitions across 1–16 source brushes. height is 0.125–4096 world units along each original face normal. Source brushes and saved partition intents remain unchanged. World sources add world children; brush-entity sources add children to the same entity. Each prism has fresh solid/side IDs, a top using its planned material and texture placement or source inheritance, a base inheriting the original source face, three boundary walls inheriting neighboring faces, and a divider inheriting the source face. Walls receive new world UV axes; optional wall_material overrides all four walls. texture_lock defaults false; true attaches only top UVs to corresponding corners. Inspect preview.extrusion for allocated IDs, provenance, owners, bounds and all face planes/materials/UVs. Updates rebuild from the original source and replace the token; invalid updates retain the last valid preview. Frame and pick the visible prisms through the existing partition tools. Changing highlights requires another preview before Apply. commit_component_edit verifies exact replay, adds all volumes in one undo step and selects their faces. Cancel discards geometry and allocations. raise_component_partition with zero returns to flat. Save/build/play remain guarded until Apply or Cancel."
     )]
     pub(in crate::mcp) fn preview_partition_extrusion(

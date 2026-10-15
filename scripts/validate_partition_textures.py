@@ -28,6 +28,37 @@ def validate(client, output, render):
 
     tools = {tool["name"]: tool["inputSchema"] for tool in client.rpc("tools/list", {})["tools"]}
     check("update_component_partition_texture" in tools, "Texture placement is discoverable")
+    check("place_component_partition_texture" in tools, "Per-piece Fit and Justify are discoverable")
+
+    def place(draft, refs, **settings):
+        return client.call("place_component_partition_texture", {
+            "token": draft["token"], "partitions": refs, **settings,
+        })["preview"]
+
+    def piece_bounds(draft):
+        part = draft["partition"]["partitions"][0]
+        extruded = client.call("preview_partition_extrusion", {
+            "token": draft["token"], "height": 16.125, "texture_lock": True,
+        })["preview"]
+        bounds = {}
+        for output_piece in extruded["extrusion"]["pieces"]:
+            piece = next(piece for piece in part["loops"] if piece["id"] == output_piece["partition"])
+            top = next(face for face in output_piece["faces"] if face["surface"] == "top")
+            values = []
+            for vertex in piece["vertices"]:
+                point = part["vertices"][vertex]["position"].copy()
+                point[2] += 16.125
+                values.append([
+                    sum(a * b for a, b in zip(top[key]["axis"], point, strict=True)) / top[key]["scale"] + top[key]["offset"]
+                    for key in ["uaxis", "vaxis"]
+                ])
+            bounds[piece["id"]] = (
+                [min(value[axis] for value in values) for axis in range(2)],
+                [max(value[axis] for value in values) for axis in range(2)],
+            )
+        flat = client.call("raise_component_partition", {"token": extruded["token"], "rise": 0})["preview"]
+        return flat, bounds
+
     textures = [
         {"shift": [13.125, -27.5], "scale": [-0.375, 0.625], "rotation": 37},
         {"shift": [-41.75, 6.25], "scale": [0.25, -0.5], "rotation": -73},
@@ -105,6 +136,54 @@ def validate(client, output, render):
             client.call("commit_component_edit", {"token": draft["token"]})
             client.call("undo")
             check(client.call("get_saved_component_partitions")["entries"][0]["top_textures"] == textures, f"{label}: extrusion undo retains plans")
+            draft = resume(solid, side)
+            draft = client.call("update_component_partition_cut", {"token": draft["token"], "edge_parameters": [0.2, 0.8]})["preview"]
+            sizes = []
+            for ref, material in zip(refs, ["brick/brickwall001a", "de_cbble/woodfloor01"], strict=True):
+                preview = client.call("preview_material", {"material": material})
+                check(not preview["missing"], f"{label}: actual dimensions available for {material}")
+                sizes.append([preview["width"], preview["height"]])
+                draft = client.call("update_component_partition_material", {"token": draft["token"], "partitions": [ref], "material": material})["preview"]
+            previous = draft["token"]
+            draft = place(draft, list(reversed(refs)), fit=True)
+            fitted = [piece["texture_plan"] for piece in draft["partition"]["partitions"][0]["loops"]]
+            for index, planned in enumerate(fitted):
+                check(planned["rotation"] == textures[index]["rotation"] and all(a * b > 0 for a, b in zip(planned["scale"], textures[index]["scale"], strict=True)), f"{label}: Fit preserves rotation and mirroring for piece {index}")
+            draft, bounds = piece_bounds(draft)
+            for index, (lo, hi) in bounds.items():
+                check(all(abs(value) < 1e-6 for value in lo) and all(abs(a - b) < 1e-6 for a, b in zip(hi, sizes[index], strict=True)), f"{label}: adjusted piece {index} fits one actual material tile")
+            client.call("place_component_partition_texture", {"token": previous, "partitions": refs, "fit": True}, error=True)
+            for bad_refs, settings in [([], {"fit": True}), ([refs[0], refs[0]], {"fit": True}), ([{"solid": solid, "partition": 9}], {"fit": True}), (refs, {})]:
+                client.call("place_component_partition_texture", {"token": draft["token"], "partitions": bad_refs, **settings}, error=True)
+                check(inspect()["preview"]["token"] == draft["token"], f"{label}: rejected Fit/Justify keeps current token")
+            for index in range(2):
+                draft = style(draft, [refs[index]], textures[index])
+            sibling = draft["partition"]["partitions"][0]["loops"][1]["texture_plan"]
+            draft = place(draft, [refs[0]], justify_u="end")
+            one = draft["partition"]["partitions"][0]["loops"]
+            check(one[0]["texture_plan"]["shift"][1] == textures[0]["shift"][1] and one[1]["texture_plan"] == sibling, f"{label}: one-axis justification preserves other axis and sibling")
+            for placement in ["start", "center", "end"]:
+                draft = place(draft, refs, justify_u=placement, justify_v=placement)
+                planned = draft["partition"]["partitions"][0]["loops"]
+                check(all(piece["texture_plan"]["scale"] == textures[index]["scale"] and piece["texture_plan"]["rotation"] == textures[index]["rotation"] for index, piece in enumerate(planned)), f"{label}: {placement} justification preserves scales and rotations")
+                draft, bounds = piece_bounds(draft)
+                for index, (lo, hi) in bounds.items():
+                    actual = lo if placement == "start" else hi if placement == "end" else [(a + b) / 2 for a, b in zip(lo, hi, strict=True)]
+                    expected = [0, 0] if placement == "start" else sizes[index] if placement == "end" else [size / 2 for size in sizes[index]]
+                    check(all(abs(a - b) < 1e-6 for a, b in zip(actual, expected, strict=True)), f"{label}: piece {index} {placement} uses its material tile")
+            draft = client.call("update_component_partition_material", {"token": draft["token"], "partitions": [refs[1]], "material": "missing/partition_fit_dimensions"})["preview"]
+            client.call("place_component_partition_texture", {"token": draft["token"], "partitions": refs, "fit": True}, error=True)
+            check(inspect()["preview"]["token"] == draft["token"], f"{label}: unavailable dimensions preserve all plans")
+            client.call("cancel_component_edit", {"token": draft["token"]})
+            check(client.call("get_saved_component_partitions")["entries"][0]["top_textures"] == textures, f"{label}: Cancel leaves kept placement intact")
+            draft = resume(solid, side)
+            draft = place(draft, refs, fit=True, justify_u="center", justify_v="center")
+            fitted = [piece["texture_plan"] for piece in draft["partition"]["partitions"][0]["loops"]]
+            client.call("store_component_partition", {"token": draft["token"]})
+            check(client.call("get_saved_component_partitions")["entries"][0]["top_textures"] == fitted, f"{label}: Keep persists fitted texture metadata")
+            client.call("undo")
+            check(client.call("get_saved_component_partitions")["entries"][0]["top_textures"] == textures, f"{label}: Undo restores previous texture metadata atomically")
+
     return checks
 
 

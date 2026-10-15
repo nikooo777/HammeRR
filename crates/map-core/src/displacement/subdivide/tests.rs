@@ -325,7 +325,7 @@ fn generated_grids_remain_editable_and_real_offset_normal_caches_stay_guarded() 
 }
 
 #[test]
-fn invalid_half_edges_corner_contacts_and_duplicate_cages_reject_before_edits() {
+fn invalid_fractional_edges_corner_contacts_and_duplicate_cages_reject_before_edits() {
     for corner_only in [false, true] {
         let mut document = Document::empty();
         let first = add(
@@ -343,7 +343,7 @@ fn invalid_half_edges_corner_contacts_and_duplicate_cages_reject_before_edits() 
             } else {
                 DVec3::new(128.0, 0.0, 0.0)
             },
-            DVec3::new(192.0, if corner_only { 96.0 } else { 32.0 }, 16.0),
+            DVec3::new(192.0, if corner_only { 96.0 } else { 16.0 }, 16.0),
             DVec3::Z,
             3,
             1,
@@ -404,4 +404,276 @@ fn invalid_half_edges_corner_contacts_and_duplicate_cages_reject_before_edits() 
         })
         .is_err()
     );
+}
+
+fn half_fixture(powers: [u32; 3], rotation: u32) -> (Document, Vec<FaceId>) {
+    let mut document = Document::empty();
+    let faces = vec![
+        add(
+            &mut document,
+            DVec3::new(0.0, 0.0, 48.0),
+            DVec3::new(64.0, 128.0, 64.0),
+            DVec3::Z,
+            powers[0],
+            rotation,
+        ),
+        add(
+            &mut document,
+            DVec3::ZERO,
+            DVec3::new(16.0, 64.0, 64.0),
+            DVec3::NEG_X,
+            powers[1],
+            (rotation + 1) % 4,
+        ),
+        add(
+            &mut document,
+            DVec3::new(0.0, 64.0, 0.0),
+            DVec3::new(16.0, 128.0, 64.0),
+            DVec3::NEG_X,
+            powers[2],
+            (rotation + 3) % 4,
+        ),
+    ];
+    (document, faces)
+}
+
+fn assert_border_samples(before: &[edit::TerrainGrid], after: &[edit::TerrainGrid]) {
+    let views = before
+        .iter()
+        .map(|grid| {
+            let n = grid.mesh.size;
+            neighbors::SurfaceGrid {
+                power: grid.power,
+                corners: [0, n * (n - 1), n * n - 1, n - 1].map(|id| grid.mesh.base_positions[id]),
+                positions: &grid.mesh.base_positions,
+            }
+        })
+        .collect::<Vec<_>>();
+    let links = neighbors::find_spans(&views, &mut |_| Ok(())).unwrap();
+    let generated = views
+        .iter()
+        .zip(after)
+        .map(|(view, grid)| neighbors::SurfaceGrid {
+            power: view.power,
+            corners: view.corners,
+            positions: &grid.mesh.positions,
+        })
+        .collect::<Vec<_>>();
+    let normals = neighbors::vertex_normals(&generated, &links.pairs, &mut |_| Ok(())).unwrap();
+    let mut covered = before
+        .iter()
+        .map(|grid| vec![false; grid.mesh.positions.len()])
+        .collect::<Vec<_>>();
+    for pair in &links.pairs {
+        for (source, edge, span) in [
+            (pair.first, pair.first_edge, pair.first_span),
+            (pair.second, pair.second_edge, pair.second_span),
+        ] {
+            for vertex in span.indices(before[source].power, edge).unwrap() {
+                covered[source][vertex] = true;
+            }
+        }
+        for (a, b) in neighbors::common_span_indices(
+            (before[pair.first].power, pair.first_edge, pair.first_span),
+            (
+                before[pair.second].power,
+                pair.second_edge,
+                pair.second_span,
+            ),
+        )
+        .unwrap()
+        {
+            assert!(
+                after[pair.first].mesh.positions[a].distance(after[pair.second].mesh.positions[b])
+                    < 1e-10
+            );
+            assert_eq!(normals[pair.first][a], normals[pair.second][b]);
+            assert!(DVec3::from_array(normals[pair.first][a]).is_finite());
+        }
+    }
+    for (source, grid) in after.iter().enumerate() {
+        for edge in 0..4 {
+            for vertex in neighbors::edge_indices(grid.mesh.size, edge).unwrap() {
+                if !covered[source][vertex] {
+                    assert!(
+                        grid.mesh.positions[vertex].distance(grid.mesh.base_positions[vertex])
+                            < 1e-10
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn half_edge_cages_share_stencils_across_powers_rotated_starts_and_partial_coverage() {
+    for powers in [[2, 3, 4], [4, 2, 3], [3, 4, 2], [2; 3], [3; 3], [4; 3]] {
+        for rotation in 0..4 {
+            for count in [2, 3] {
+                let (mut document, mut faces) = half_fixture(powers, rotation);
+                faces.truncate(count);
+                let before = edit::inspect(&document, &faces).unwrap();
+                let planned = plan(&document, &faces).unwrap();
+                assert_eq!(planned.shared_edges, if count == 2 { 1 } else { 3 });
+                assert_eq!(
+                    planned.vertices,
+                    before
+                        .iter()
+                        .map(|grid| grid.mesh.positions.len())
+                        .sum::<usize>()
+                );
+                assert_eq!(apply(&mut document, planned), count);
+                let after = edit::inspect(&document, &faces).unwrap();
+                assert_border_samples(&before, &after);
+                assert!(
+                    before
+                        .iter()
+                        .zip(&after)
+                        .all(|(a, b)| a.mesh.positions != b.mesh.positions)
+                );
+                assert!(super::super::sew::plan(&document, &faces, false).is_ok());
+                let repeated = plan(&document, &faces).unwrap();
+                assert_eq!(apply(&mut document, repeated), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn half_and_full_edge_components_preserve_rows_metadata_and_reopen_exactly() {
+    let (mut document, mut faces) = half_fixture([2, 3, 4], 1);
+    faces.push(add(
+        &mut document,
+        DVec3::new(64.0, 0.0, 48.0),
+        DVec3::new(128.0, 128.0, 64.0),
+        DVec3::Z,
+        3,
+        2,
+    ));
+    document
+        .edit("terrain metadata", |tx| {
+            for (index, face) in faces.iter().enumerate() {
+                let side = tx
+                    .solid_mut(face.solid)?
+                    .sides
+                    .iter_mut()
+                    .find(|side| side.id == face.side)
+                    .unwrap();
+                let info = side.displacement.as_mut().unwrap();
+                let size = (1 << info.power) + 1;
+                info.normals = Some(vec![vec![DVec3::new(0.25, 0.5, 1.0); size]; size]);
+                info.distances = Some(vec![vec![2.0; size]; size]);
+                info.elevation = 7.0;
+                info.offsets = Some(vec![vec![DVec3::splat(-2.0); size]; size]);
+                info.offset_normals = Some(vec![vec![DVec3::ZERO; size]; size]);
+                info.alphas = Some(vec![vec![index as f64 * 63.0; size]; size]);
+                info.flags = Some(5);
+                info.extra_properties.set("test_metadata", "half-edge");
+            }
+            Ok(())
+        })
+        .unwrap();
+    let original = document.vmf().clone();
+    let before = edit::inspect(&document, &faces).unwrap();
+    let planned = plan(&document, &faces).unwrap();
+    assert_eq!(planned.shared_edges, 4);
+    for (face, generated) in &planned.edits {
+        let source = surface::side(&document, *face)
+            .unwrap()
+            .displacement
+            .as_ref()
+            .unwrap();
+        let mut restored = generated.clone();
+        restored.offsets = source.offsets.clone();
+        restored.subdivided = source.subdivided;
+        assert_eq!(&restored, source);
+    }
+    apply(&mut document, planned);
+    let rounded = document.vmf().clone();
+    let after = edit::inspect(&document, &faces).unwrap();
+    assert_border_samples(&before, &after);
+    let reopened = Document::new(
+        source_formats::vmf::Vmf::parse(&rounded.write(&Default::default())).unwrap(),
+    );
+    for (stored, expected) in edit::inspect(&reopened, &faces).unwrap().iter().zip(&after) {
+        assert_eq!(stored.mesh, expected.mesh);
+    }
+    document.undo().unwrap();
+    assert_eq!(document.vmf(), &original);
+    document.redo().unwrap();
+    assert_eq!(document.vmf(), &rounded);
+}
+
+#[test]
+fn ambiguous_half_junctions_and_nested_density_chains_reject_before_edits() {
+    let (mut document, mut faces) = half_fixture([2, 3, 4], 0);
+    faces.push(add(
+        &mut document,
+        DVec3::ZERO,
+        DVec3::new(16.0, 128.0, 64.0),
+        DVec3::NEG_X,
+        2,
+        0,
+    ));
+    let source = document.vmf().clone();
+    assert!(
+        plan(&document, &faces)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("unambiguous")
+    );
+    assert_eq!(document.vmf(), &source);
+    let (mut document, mut faces) = half_fixture([2, 3, 4], 0);
+    faces.truncate(2);
+    faces.push(add(
+        &mut document,
+        DVec3::ZERO,
+        DVec3::new(64.0, 32.0, 16.0),
+        DVec3::NEG_Z,
+        2,
+        1,
+    ));
+    let source = document.vmf().clone();
+    assert!(
+        plan(&document, &faces)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("nested")
+    );
+    assert_eq!(document.vmf(), &source);
+}
+
+#[test]
+fn half_junction_uses_one_conforming_catmull_clark_stencil() {
+    let (document, faces) = half_fixture([2, 3, 4], 0);
+    let grids = edit::inspect(&document, &faces).unwrap();
+    let corners = grids
+        .iter()
+        .map(|grid| {
+            let n = grid.mesh.size;
+            [0, n * (n - 1), n * n - 1, n - 1].map(|id| grid.mesh.base_positions[id])
+        })
+        .collect::<Vec<_>>();
+    let views = grids
+        .iter()
+        .zip(&corners)
+        .map(|(grid, &corners)| neighbors::SurfaceGrid {
+            power: grid.power,
+            corners,
+            positions: &grid.mesh.base_positions,
+        })
+        .collect::<Vec<_>>();
+    let links = neighbors::find_spans(&views, &mut |_| Ok(())).unwrap();
+    let (mesh, cells) = cage::build(&corners, &links.pairs).unwrap();
+    assert_eq!(cells, [2, 1, 1]);
+    assert_eq!(mesh.faces.len(), 6);
+    let junction = mesh
+        .points
+        .iter()
+        .position(|&point| point == DVec3::new(0.0, 64.0, 64.0))
+        .unwrap();
+    let refined = mesh.refine().unwrap();
+    assert_eq!(refined.points[junction], DVec3::new(4.0, 64.0, 56.0));
 }

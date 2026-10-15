@@ -183,6 +183,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) |
 | Browse models, skins and named bodygroups with static or reference pose previews. |
 
+| Sound exploration |
+| --- |
+| ![Sound browser and audition controls](docs/images/sound-browser.png) |
+| Find sound files and script names, audition variants and assign them to entities. |
+
 | Model attachment points |
 | --- |
 | ![Named attachment inspection](docs/images/model-attachments.png) |

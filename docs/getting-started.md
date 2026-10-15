@@ -7,6 +7,7 @@
 - **Linux.**
 - **Rust 1.92 or newer.**
 - **A Vulkan-capable graphics driver** for the editor window and rendered views. Headless editing and compiling work without one.
+- **FFmpeg and ffplay** on `PATH` for optional [sound audition and audio export](sounds.md).
 - **Counter-Strike: Source** installed through Steam. HammeRR uses its materials and entity definitions, and launches the Linux client to play compiled maps.
 
 ## Build

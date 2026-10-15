@@ -24,6 +24,7 @@ mod recovery_ui;
 mod rename_ui;
 mod saved_views_ui;
 mod session;
+mod sounds_ui;
 mod spatial;
 mod statistics_ui;
 mod steam;
@@ -174,6 +175,7 @@ struct Ui {
     color_window: Option<ColorWindow>,
     model: Option<model_ui::Controller>,
     model_browser: Option<model_browser_ui::Controller>,
+    sounds: Option<sounds_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -1269,6 +1271,7 @@ fn property_row(field: inspector::Field) -> KeyValue {
         Control::Color => "color",
         Control::Material => "material",
         Control::Model => "model",
+        Control::Sound => "sound",
     };
     KeyValue {
         key: field.key.into(),
@@ -3153,6 +3156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         color_window: None,
         model: None,
         model_browser: None,
+        sounds: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -3863,6 +3867,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_browse_material({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |key| show_material_window(&app.unwrap(), &ui, &key)
+    });
+    app.on_browse_sound({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move |key| {
+            let shared = session_of(&ui);
+            if ui.borrow().sounds.is_none() {
+                match sounds_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().sounds = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.sounds.as_ref().unwrap();
+            let result = {
+                let mut session = lock(&shared);
+                single_selected_entity(&session)
+                    .ok_or("Select an entity with a sound field".to_owned())
+                    .and_then(|id| controller.initialize(&mut session, id, &key))
+            };
+            match result {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
     });
     app.on_browse_model({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -4658,6 +4691,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         controller.refresh(&session);
                     }
+                    if let Some(controller) = &ui.sounds
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&mut session);
+                    }
                     if let Some(controller) = &ui.lighting
                         && controller.window.window().is_visible()
                     {
@@ -4697,6 +4735,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&session);
+                    }
+                    if let Some(controller) = &ui.sounds
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&mut session);
                     }
                     if let Some(controller) = &ui.volume
                         && controller.window.window().is_visible()
@@ -4878,6 +4921,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.sounds
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh_playback(&mut lock(&ui.session));
                 }
                 if let Some(controller) = &ui.compile_status
                     && controller.window.window().is_visible()

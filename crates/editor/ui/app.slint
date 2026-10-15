@@ -12,6 +12,7 @@ export { ContextWindow, ContextRow } from "context.slint";
 export { TerrainTrianglesWindow, TerrainTriangleRow } from "terrain-triangles.slint";
 export {ModelWindow} from "models.slint";
 export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-browser.slint";
+export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
@@ -982,6 +983,7 @@ component PropertyField inherits VerticalLayout {
     callback pick-color();
     callback pick-material();
     callback pick-model();
+    callback pick-sound();
     spacing: 5px;
     padding-bottom: 12px;
     HorizontalLayout {
@@ -1043,7 +1045,7 @@ component PropertyField inherits VerticalLayout {
         enabled: !root.field.read-only;
         released(value) => { root.edited(root.field.type-name == "integer" ? "\{round(value)}" : "\{value}"); }
     }
-    if root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "material" || root.field.control == "model": HorizontalLayout {
+    if root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "material" || root.field.control == "model" || root.field.control == "sound": HorizontalLayout {
         spacing: 6px;
         LineEdit {
             horizontal-stretch: 1;
@@ -1054,6 +1056,7 @@ component PropertyField inherits VerticalLayout {
         }
         if root.field.control == "material": Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-material(); } }
         if root.field.control == "model" && root.model-browsing: Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-model(); } }
+        if root.field.control == "sound" && root.model-browsing: Button { text: "Browse…"; enabled: !root.field.read-only; clicked => { root.pick-sound(); } }
     }
     if root.show-help: Text { text: root.field.description; wrap: word-wrap; color: #8a909c; font-size: 12px; }
     if root.advanced && (root.field.control == "color" || root.field.control == "vector" || root.field.control == "flags"): LineEdit {
@@ -1797,6 +1800,7 @@ export component AppWindow inherits Window {
     callback sample-face-texture();
     callback browse-material(key: string);
     callback browse-model();
+    callback browse-sound(string);
     callback material-changed();
     callback pick-color(key: string);
     callback property-component-edited(key: string, index: int, value: string);
@@ -2505,6 +2509,7 @@ export component AppWindow inherits Window {
                                 pick-color => { root.pick-color(row.key); }
                                 pick-material => { root.browse-material(row.key); }
                                 pick-model => { root.browse-model(); }
+                                pick-sound => { root.browse-sound(row.key); }
                             }
                         }
                     }

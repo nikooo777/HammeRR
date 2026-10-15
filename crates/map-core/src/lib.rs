@@ -14,6 +14,7 @@ pub mod light;
 pub mod partition_metadata;
 pub mod picking;
 pub mod plane;
+pub mod polygon;
 pub mod primitive;
 pub mod query;
 pub mod references;

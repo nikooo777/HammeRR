@@ -14,6 +14,7 @@ export {ModelWindow} from "models.slint";
 export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-browser.slint";
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 export {PlacementWindow} from "placement.slint";
+export {PolygonWindow,PolygonCorner} from "polygon.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
 export struct EntityClassRow {
@@ -1824,6 +1825,7 @@ export component AppWindow inherits Window {
     callback map-checks();
     callback design-context();
     callback brush-shapes();
+    callback draw-polygon();
     callback brush-components();
     callback hollow-brushes();
     callback carve-brushes();
@@ -2484,6 +2486,7 @@ export component AppWindow inherits Window {
                         Button { text: "Recovery…"; clicked => { root.recovery(); } }
                     }
                     Button { text: "Brush shapes…"; clicked => { root.brush-shapes(); } }
+                    Button { text: "Draw polygon…"; clicked => { root.draw-polygon(); } }
                     Button { text: "Design context…"; clicked => { root.design-context(); } }
                     Button { text: "Edit selected entity properties…"; clicked => { root.batch-properties(); } }
                     if root.entity-selected: Button {

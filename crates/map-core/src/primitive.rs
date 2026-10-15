@@ -1,6 +1,6 @@
 use std::f64::consts::{PI, TAU};
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use source_formats::vmf::{Properties, Solid};
 
 use crate::{BrushGeometry, EditError, ObjectId, Plane, Transaction, edit};
@@ -17,6 +17,7 @@ pub enum Shape {
     Cone,
     Sphere,
     Arch,
+    Polygon,
 }
 
 impl Shape {
@@ -27,7 +28,10 @@ impl Shape {
             "cone" => Ok(Self::Cone),
             "sphere" => Ok(Self::Sphere),
             "arch" => Ok(Self::Arch),
-            _ => Err(invalid("Choose wedge, cylinder, cone, sphere or arch")),
+            "polygon" => Ok(Self::Polygon),
+            _ => Err(invalid(
+                "Choose wedge, cylinder, cone, sphere, arch or polygon",
+            )),
         }
     }
     pub fn name(self) -> &'static str {
@@ -37,6 +41,7 @@ impl Shape {
             Self::Cone => "cone",
             Self::Sphere => "sphere",
             Self::Arch => "arch",
+            Self::Polygon => "polygon",
         }
     }
 }
@@ -85,6 +90,56 @@ pub struct Spec {
     pub start_angle: f64,
     pub sweep_angle: f64,
     pub material: String,
+    pub outline: Vec<DVec2>,
+}
+
+pub struct PolygonSpec {
+    pub outline: Vec<DVec2>,
+    pub axis: Axis,
+    pub base: f64,
+    pub depth: f64,
+    pub material: String,
+}
+
+impl PolygonSpec {
+    pub fn into_spec(self) -> Result<Spec, EditError> {
+        if !self.base.is_finite() || !self.depth.is_finite() || self.depth < MIN_SIZE {
+            return Err(invalid(
+                "Polygon start must be finite and depth at least 0.125 units",
+            ));
+        }
+        crate::polygon::parts(&self.outline)?;
+        let low = self
+            .outline
+            .iter()
+            .copied()
+            .fold(DVec2::splat(f64::INFINITY), DVec2::min);
+        let high = self
+            .outline
+            .iter()
+            .copied()
+            .fold(DVec2::splat(f64::NEG_INFINITY), DVec2::max);
+        let [u, v, w] = self.axis.indices();
+        let mut mins = DVec3::ZERO;
+        let mut maxs = DVec3::ZERO;
+        mins[u] = low.x;
+        mins[v] = low.y;
+        mins[w] = self.base;
+        maxs[u] = high.x;
+        maxs[v] = high.y;
+        maxs[w] = self.base + self.depth;
+        let spec = Spec {
+            shape: Shape::Polygon,
+            mins,
+            maxs,
+            axis: self.axis,
+            material: self.material,
+            outline: self.outline,
+            ..Spec::default()
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
 }
 
 impl Default for Spec {
@@ -100,6 +155,7 @@ impl Default for Spec {
             start_angle: 0.0,
             sweep_angle: 180.0,
             material: "TOOLS/TOOLSNODRAW".into(),
+            outline: Vec::new(),
         }
     }
 }
@@ -126,10 +182,33 @@ impl Spec {
                 "Choose a nonempty material path without quotes or control characters",
             ));
         }
-        if self.shape != Shape::Wedge && !(3..=MAX_SEGMENTS).contains(&self.segments) {
+        if !matches!(self.shape, Shape::Wedge | Shape::Polygon)
+            && !(3..=MAX_SEGMENTS).contains(&self.segments)
+        {
             return Err(invalid(format!(
                 "Curved shapes need 3–{MAX_SEGMENTS} segments"
             )));
+        }
+        if self.shape == Shape::Polygon {
+            crate::polygon::parts(&self.outline)?;
+            let [u, v, _] = self.axis.indices();
+            let low = self
+                .outline
+                .iter()
+                .copied()
+                .fold(DVec2::splat(f64::INFINITY), DVec2::min);
+            let high = self
+                .outline
+                .iter()
+                .copied()
+                .fold(DVec2::splat(f64::NEG_INFINITY), DVec2::max);
+            if low != DVec2::new(self.mins[u], self.mins[v])
+                || high != DVec2::new(self.maxs[u], self.maxs[v])
+            {
+                return Err(invalid("Polygon outline and supplied bounds must agree"));
+            }
+        } else if !self.outline.is_empty() {
+            return Err(invalid("Outline corners are only valid for polygon shapes"));
         }
         if self.shape == Shape::Sphere
             && (!(2..=32).contains(&self.bands)
@@ -188,8 +267,30 @@ impl Spec {
             .collect()
     }
 
-    fn polygons(&self) -> Vec<Vec<Vec<DVec3>>> {
-        match self.shape {
+    fn polygons(&self) -> Result<Vec<Vec<Vec<DVec3>>>, EditError> {
+        if self.shape == Shape::Polygon {
+            let [u, v, w] = self.axis.indices();
+            return crate::polygon::parts(&self.outline)?
+                .into_iter()
+                .map(|outline| {
+                    let ring = |height| {
+                        outline
+                            .iter()
+                            .map(|corner| {
+                                let mut point = DVec3::ZERO;
+                                point[u] = corner.x;
+                                point[v] = corner.y;
+                                point[w] = height;
+                                point
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    Ok(prism(&ring(self.mins[w]), &ring(self.maxs[w])))
+                })
+                .collect();
+        }
+        Ok(match self.shape {
+            Shape::Polygon => unreachable!(),
             Shape::Wedge => {
                 let a = DVec3::new(0.0, 0.0, 0.0);
                 let b = DVec3::new(1.0, 0.0, 0.0);
@@ -277,7 +378,7 @@ impl Spec {
                 .map(|face| face.into_iter().map(|p| self.point(p)).collect())
                 .collect()
         })
-        .collect()
+        .collect())
     }
 }
 
@@ -342,7 +443,7 @@ pub(crate) fn convex_planes(faces: Vec<Vec<DVec3>>) -> Result<Vec<[DVec3; 3]>, E
 pub fn create(tx: &mut Transaction, spec: &Spec) -> Result<Vec<ObjectId>, EditError> {
     spec.validate()?;
     let planned = spec
-        .polygons()
+        .polygons()?
         .into_iter()
         .map(convex_planes)
         .collect::<Result<Vec<_>, _>>()?;
@@ -388,6 +489,59 @@ mod tests {
                     .sum::<f64>()
             })
             .sum()
+    }
+
+    #[test]
+    fn polygon_extrusions_preserve_concavity_volume_and_winding_on_every_axis() {
+        let outline = vec![
+            DVec2::new(0., 0.),
+            DVec2::new(128., 0.),
+            DVec2::new(128., 32.),
+            DVec2::new(32., 32.),
+            DVec2::new(32., 96.),
+            DVec2::new(0., 96.),
+        ];
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            for outline in [outline.clone(), outline.iter().copied().rev().collect()] {
+                let spec = PolygonSpec {
+                    outline,
+                    axis,
+                    base: -12.25,
+                    depth: 16.5,
+                    material: "brick/test".into(),
+                }
+                .into_spec()
+                .unwrap();
+                let mut document = Document::empty();
+                let before = document.vmf().clone();
+                let ids = document.edit("polygon", |tx| create(tx, &spec)).unwrap();
+                assert_eq!(ids.len(), 4);
+                let mut actual = 0.0;
+                for id in &ids {
+                    let ObjectId::Solid(id) = id else { panic!() };
+                    let solid = document.solid(*id).unwrap();
+                    let geometry = BrushGeometry::from_solid(solid).unwrap();
+                    actual += volume(&geometry);
+                    assert!(solid.sides.iter().all(|side| side.material == "BRICK/TEST"));
+                }
+                assert!((actual - 6144.0 * 16.5).abs() < 1e-5);
+                let [u, v, w] = axis.indices();
+                let mut point = DVec3::ZERO;
+                point[u] = 96.;
+                point[v] = 64.;
+                point[w] = -4.;
+                assert!(ids.iter().all(|id| {
+                    let ObjectId::Solid(id) = id else { panic!() };
+                    BrushGeometry::from_solid(document.solid(*id).unwrap())
+                        .unwrap()
+                        .faces
+                        .iter()
+                        .any(|face| face.plane.distance_to(point) > 1e-5)
+                }));
+                document.undo().unwrap();
+                assert_eq!(document.vmf(), &before);
+            }
+        }
     }
 
     #[test]

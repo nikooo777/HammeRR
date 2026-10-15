@@ -1,5 +1,6 @@
 use super::*;
 use map_core::subobject::{PartitionTexture, PieceTexture};
+use std::collections::btree_map::Entry;
 
 pub(super) fn saved_textures(
     document: &map_core::Document,
@@ -107,6 +108,7 @@ impl Session {
             return Err("Choose Fit or at least one texture justification".into());
         }
         let mut textures = Vec::new();
+        let mut material_dimensions = BTreeMap::new();
         for target in targets {
             let part = draft
                 .partitions
@@ -121,16 +123,22 @@ impl Session {
             let name = draft
                 .effective_material(&self.document, part, piece.id)
                 .ok_or("Partition source material does not exist")?;
-            let material = self.material_preview(name)?;
-            if material.missing
-                || material.image.is_none()
-                || material.width == 0
-                || material.height == 0
-            {
-                return Err(format!(
-                    "Cannot place {name}: texture dimensions unavailable"
-                ));
-            }
+            let dimensions = match material_dimensions.entry(name.trim().to_ascii_lowercase()) {
+                Entry::Occupied(entry) => *entry.get(),
+                Entry::Vacant(entry) => {
+                    let material = self.material_preview(name)?;
+                    if material.missing
+                        || material.image.is_none()
+                        || material.width == 0
+                        || material.height == 0
+                    {
+                        return Err(format!(
+                            "Cannot place {name}: texture dimensions unavailable"
+                        ));
+                    }
+                    *entry.insert([material.width, material.height])
+                }
+            };
             let source = map_core::surface::side(
                 &self.document,
                 map_core::surface::FaceId {
@@ -147,13 +155,7 @@ impl Session {
             let texture = draft
                 .effective_texture(&self.document, part, piece.id)
                 .ok_or("Partition source texture does not exist")?
-                .place(
-                    source,
-                    &points,
-                    [material.width, material.height],
-                    fit,
-                    justify,
-                )
+                .place(source, &points, dimensions, fit, justify)
                 .map_err(|error| error.to_string())?;
             textures.push((target, texture));
         }

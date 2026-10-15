@@ -228,7 +228,7 @@ impl Session {
         } else {
             self.model_bounds_in(&self.document)
         };
-        region.select_with_entity_bounds(
+        let mut matches = region.select_with_entity_bounds(
             &self.document,
             rule,
             faces,
@@ -239,6 +239,8 @@ impl Session {
                     .copied()
                     .or_else(|| map_core::query::entity_bounds(entity))
             },
-        )
+        );
+        if !faces { matches.objects = self.group_region_matches(&matches.objects, rule); }
+        matches
     }
 }

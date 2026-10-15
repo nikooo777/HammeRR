@@ -6,6 +6,7 @@ mod components_ui;
 mod connection_ui;
 mod context_ui;
 mod game;
+mod groups_ui;
 mod hollow_ui;
 mod inspector;
 mod interaction;
@@ -188,6 +189,7 @@ struct Ui {
     sounds: Option<sounds_ui::Controller>,
     placement: Option<placement_ui::Controller>,
     repeat: Option<repeat_ui::Controller>,
+    object_groups: Option<groups_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -3218,6 +3220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sounds: None,
         placement: None,
         repeat: None,
+        object_groups: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -4038,6 +4041,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    app.on_object_groups({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.object_groups.is_none() {
+                match groups_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.object_groups = Some(controller),
+                    Err(error) => { app.unwrap().set_message(error.to_string().into()); return; }
+                }
+            }
+            if let Err(error) = ui.object_groups.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
     app.on_place_on_surface({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -4677,8 +4695,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 match (hit, click.control) {
-                    (Some(hit), true) => session.select(&[hit.object], SelectMode::Toggle),
-                    (Some(hit), false) => session.select(&[hit.object], SelectMode::Replace),
+                    (Some(hit), true) => session.select_grouped(&[hit.object], SelectMode::Toggle),
+                    (Some(hit), false) => session.select_grouped(&[hit.object], SelectMode::Replace),
                     (None, true) => Ok(()),
                     (None, false) => session.select(&[], SelectMode::Replace),
                 }
@@ -5202,6 +5220,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     && window.window().is_visible()
                 {
                     statistics_ui::refresh_changed(window, &lock(&ui.session));
+                }
+                if let Some(controller) = &ui.object_groups
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.saved_views
                     && controller.window.window().is_visible()

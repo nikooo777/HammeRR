@@ -31,6 +31,7 @@ pub mod component_drag;
 pub mod component_picking;
 pub mod components;
 pub mod context;
+pub mod groups;
 mod favorites;
 pub mod hollowing;
 mod management;
@@ -132,6 +133,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    groups: groups::State,
     model_browser: model_browser::State,
     sounds: sounds::State,
     placement: placement::State,
@@ -242,6 +244,7 @@ impl Session {
             ),
         };
         Self {
+            groups: groups::State::default(),
             game: Arc::new(game),
             game_error,
             document: Document::empty(),
@@ -1101,6 +1104,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.groups.draft = None;
         self.surface_sample = None;
         self.material_search.report = None;
         self.context.draft = None;
@@ -1257,6 +1261,24 @@ impl Session {
     }
 
     pub fn select(&mut self, ids: &[ObjectId], mode: SelectMode) -> Result<(), String> {
+        let units = ids.iter().map(|&id| vec![id]).collect::<Vec<_>>();
+        self.select_object_units(&units, mode)
+    }
+
+    pub fn select_grouped(&mut self, ids: &[ObjectId], mode: SelectMode) -> Result<(), String> {
+        if !self.view.tool_textures {
+            self.hidden_tool_brushes();
+        }
+        let units = self.group_selection_units(ids);
+        self.select_object_units(&units, mode)
+    }
+
+    fn select_exact(&mut self, ids: &[ObjectId], mode: SelectMode) -> Result<(), String> {
+        self.select_object_units(&[ids.to_vec()], mode)
+    }
+
+    fn select_object_units(&mut self, units: &[Vec<ObjectId>], mode: SelectMode) -> Result<(), String> {
+        let ids: BTreeSet<_> = units.iter().flatten().copied().collect();
         if let Some(missing) = ids.iter().find(|&&id| !self.document.contains(id)) {
             return Err(format!("{missing} does not exist"));
         }
@@ -1266,14 +1288,16 @@ impl Session {
         self.face_mode = false;
         self.face_selection.clear();
         match mode {
-            SelectMode::Replace => self.selection = ids.iter().copied().collect(),
-            SelectMode::Add => self.selection.extend(ids),
+            SelectMode::Replace => self.selection = ids.clone(),
+            SelectMode::Add => self.selection.extend(&ids),
             SelectMode::Remove => ids.iter().for_each(|id| {
                 self.selection.remove(id);
             }),
-            SelectMode::Toggle => ids.iter().for_each(|&id| {
-                if !self.selection.remove(&id) {
-                    self.selection.insert(id);
+            SelectMode::Toggle => units.iter().for_each(|unit| {
+                if unit.iter().all(|id| self.selection.contains(id)) {
+                    for id in unit { self.selection.remove(id); }
+                } else {
+                    self.selection.extend(unit);
                 }
             }),
         }
@@ -1872,7 +1896,7 @@ impl Session {
             .area_preview
             .as_ref()
             .map_or(selected.clone(), |preview| {
-                manipulation::combined_selection(&selected, &preview.matches.objects, preview.mode)
+                self.grouped_preview_selection(&selected, &preview.matches.objects, preview.mode)
             });
         let selected_faces: HashSet<FaceId> = self.face_selection.iter().copied().collect();
         let selected_faces = self.area_preview.as_ref().map_or_else(
@@ -1897,7 +1921,7 @@ impl Session {
                 )
             } else {
                 (
-                    manipulation::combined_selection(
+                    self.grouped_preview_selection(
                         &selected,
                         &preview.matches.objects,
                         preview.spec.mode,
@@ -1920,7 +1944,7 @@ impl Session {
                 )
             } else {
                 (
-                    manipulation::combined_selection(
+                    self.grouped_preview_selection(
                         &selected,
                         &stroke.objects.iter().copied().collect::<Vec<_>>(),
                         stroke.spec.mode,

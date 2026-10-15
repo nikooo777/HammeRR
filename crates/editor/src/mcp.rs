@@ -979,6 +979,65 @@ pub struct SelectArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectGroupsArgs {
+    pub group: Option<u32>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BeginObjectGroupArgs {
+    /// Omit to create a group from the selection, preserving complete existing groups as nested members.
+    pub group: Option<u32>,
+    #[serde(default)]
+    pub ungroup: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectGroupTokenArgs {
+    pub token: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateObjectGroupArgs {
+    pub token: u64,
+    pub name: Option<String>,
+    pub parent: Option<u32>,
+    #[serde(default)]
+    pub clear_parent: bool,
+    /// Complete direct membership: solid:<id>, entity:<id> or group:<id>.
+    pub members: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectObjectGroupArgs {
+    pub group: u32,
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub include_hidden: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectObjectGroupMemberArgs {
+    pub member: String,
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub include_hidden: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GroupSelectionBypassArgs {
+    pub bypass: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateBlockArgs {
     /// Box minimum corner; give mins+maxs or center+size.
     pub mins: Option<[f64; 3]>,
@@ -4856,8 +4915,64 @@ impl EditorServer {
         })
     }
 
+    #[tool(description = "Inspect native VMF object groups, nested parents, direct membership and shared edit draft. Default page 100, maximum 200. group adds a paginated direct-member detail; counts include hidden members. Malformed imported group graphs remain preserved and reject grouping authoring.", annotations(read_only_hint = true))]
+    fn get_object_groups(&self, Parameters(args): Parameters<ObjectGroupsArgs>) -> ToolResult {
+        run(|| self.session().object_groups(args.group, args.offset.unwrap_or(0), args.limit.unwrap_or(100)))
+    }
+
+    #[tool(description = "Begin a shared cancellable native object-group draft. Omit group to create from the selection; completely selected existing groups become nested members. group edits its direct membership/name/parent; ungroup=true previews deletion of that group and promotion of direct members to its parent. Source and Undo history stay unchanged. UI: Object groups… → New from selection / Edit group / Ungroup….")]
+    fn begin_object_group_edit(&self, Parameters(args): Parameters<BeginObjectGroupArgs>) -> ToolResult {
+        run(|| self.session().begin_group_edit(args.group, args.ungroup))
+    }
+
+    #[tool(description = "Update the captured object-group draft with a name, parent or full direct-member list. clear_parent=true moves the group to the root. Removed members return to the group's previous parent; added members leave their previous direct group. Nested groups stay intact. Cycles/missing IDs are inspectable invalid drafts and cannot apply. UI: Group name / Parent group / Remove / Add group.")]
+    fn update_object_group_edit(&self, Parameters(args): Parameters<UpdateObjectGroupArgs>) -> ToolResult {
+        run(|| {
+            if args.clear_parent && args.parent.is_some() { return Err("Choose parent or clear_parent, not both".into()); }
+            let parent = if args.clear_parent { Some(None) } else { args.parent.map(Some) };
+            let members = args.members.as_ref().map(|members| members.iter().map(|member| crate::session::groups::parse_member(member)).collect::<Result<Vec<_>, _>>()).transpose()?;
+            self.session().update_group_edit(args.token, args.name, parent, members)
+        })
+    }
+
+    #[tool(description = "Add the current object selection to the captured shared group draft. Completely selected existing groups become nested members; group bypass permits selecting individual members. Does not edit source/history. UI: Add current selection.")]
+    fn add_object_group_selection(&self, Parameters(args): Parameters<ObjectGroupTokenArgs>) -> ToolResult {
+        run(|| self.session().add_selection_to_group_edit(args.token))
+    }
+
+    #[tool(description = "Apply the captured valid object-group draft as one undoable edit, preserving unknown native metadata and nested membership. Rejects replaced tokens, changed map revisions and map replacement. UI: Apply group / Ungroup.")]
+    fn apply_object_group_edit(&self, Parameters(args): Parameters<ObjectGroupTokenArgs>) -> ToolResult {
+        run(|| self.session().apply_group_edit(Actor::Agent, args.token))
+    }
+
+    #[tool(description = "Cancel only the captured object-group draft, including a stale draft. Foreign or replaced tokens reject cancellation; source and Undo history stay unchanged. UI: Cancel / Escape / close.")]
+    fn cancel_object_group_edit(&self, Parameters(args): Parameters<ObjectGroupTokenArgs>) -> ToolResult {
+        run(|| { self.session().cancel_group_edit(args.token)?; Ok(json!({"cancelled":true})) })
+    }
+
+    #[tool(description = "Explicitly select the descendant objects of a native object group, including an inner group without selecting its ancestors. mode=replace/add/remove/toggle; include_hidden defaults false. Selection changes no source/history. UI: Object groups… → Select group.")]
+    fn select_object_group(&self, Parameters(args): Parameters<SelectObjectGroupArgs>) -> ToolResult {
+        run(|| {
+            let ids = self.session().select_object_group(args.group, parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?, args.include_hidden)?;
+            Ok(json!({"members":ids.into_iter().map(id_string).collect::<Vec<_>>()}))
+        })
+    }
+
+    #[tool(description = "Select one direct object or nested group explicitly, bypassing ancestor expansion. member is solid:<id>, entity:<id> or group:<id>. mode=replace/add/remove/toggle; include_hidden defaults false. UI: member row → Select.")]
+    fn select_object_group_member(&self, Parameters(args): Parameters<SelectObjectGroupMemberArgs>) -> ToolResult {
+        run(|| {
+            let ids = self.session().select_group_member(crate::session::groups::parse_member(&args.member)?, parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?, args.include_hidden)?;
+            Ok(json!({"members":ids.into_iter().map(id_string).collect::<Vec<_>>()}))
+        })
+    }
+
+    #[tool(description = "Temporarily bypass native object groups for ordinary object selection. false restores outermost-group selection. Shared session setting only; map source/history and current selection are preserved. Explicit group/member selection works in either setting. UI: Object groups… → Bypass groups.")]
+    fn set_group_selection_bypass(&self, Parameters(args): Parameters<GroupSelectionBypassArgs>) -> ToolResult {
+        run(|| { self.session().set_group_selection_bypass(Actor::Agent, args.bypass); Ok(json!({"bypass":args.bypass})) })
+    }
+
     #[tool(
-        description = "Change the selection, which the user sees highlighted and which other tools default to."
+        description = "Change the shared highlighted object selection. Native groups expand to their outermost group unless set_group_selection_bypass enables individual selection. Hidden peers stay hidden; explicitly requested hidden objects remain selectable. Use select_object_group for an inner group."
     )]
     fn select(&self, Parameters(args): Parameters<SelectArgs>) -> ToolResult {
         run(|| {
@@ -4869,7 +4984,7 @@ impl EditorServer {
                 other => return Err(format!("unknown mode {other:?}")),
             };
             let mut session = self.session();
-            session.select(&parse_ids(&args.ids)?, mode)?;
+            session.select_grouped(&parse_ids(&args.ids)?, mode)?;
             let selection: Vec<String> = session
                 .selection()
                 .iter()

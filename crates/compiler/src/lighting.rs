@@ -1,6 +1,8 @@
 use glam::DVec3;
 use map_core::Plane;
-use source_formats::bsp::{MAX_LIGHTING_BYTES, RgbExp32, TexInfo, WorldLight, world_light_kind};
+use source_formats::bsp::{
+    LightingKind, MAX_LIGHTING_BYTES, RgbExp32, TexInfo, WorldLight, world_light_kind,
+};
 
 use crate::map::MapEntity;
 mod bake;
@@ -140,8 +142,107 @@ fn number(entity: &MapEntity, name: &str) -> Result<f64, String> {
     Ok(value)
 }
 
+#[derive(Clone, Copy)]
+struct LightColor {
+    components: [f64; 3],
+    brightness: f64,
+}
+
+impl LightColor {
+    fn parse(value: &str, kind: LightingKind) -> Result<Self, String> {
+        let values: Vec<f64> = value
+            .split_whitespace()
+            .take(9)
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .map_err(|_| "Invalid point-light color/brightness")?;
+        let offset = usize::from(kind == LightingKind::Hdr && values.len() == 8) * 4;
+        let components = match values.len() {
+            1 => [values[0]; 3],
+            3 | 4 | 8 => [values[offset], values[offset + 1], values[offset + 2]],
+            _ => {
+                return Err(
+                    "Point light brightness needs one, three, four or eight numbers".into(),
+                );
+            }
+        };
+        let brightness = if values.len() >= 4 {
+            values[offset + 3]
+        } else {
+            255.0
+        };
+        Ok(Self {
+            components,
+            brightness,
+        })
+    }
+
+    fn intensity(self, gain: f64) -> DVec3 {
+        DVec3::from_array(
+            self.components
+                .map(|value| (value / 255.0).powf(2.2) * self.brightness * gain),
+        )
+    }
+}
+
+fn hdr_color(
+    entity: &MapEntity,
+    name: &str,
+    allow_sentinel: bool,
+) -> Result<Option<LightColor>, String> {
+    let Some(value) = property(entity, name).filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let color = LightColor::parse(value, LightingKind::Hdr)
+        .map_err(|error| format!("HDR light {name}: {error}"))?;
+    if color.components.iter().any(|value| !value.is_finite()) || !color.brightness.is_finite() {
+        return Err(format!(
+            "HDR light {name} color and brightness must be finite"
+        ));
+    }
+    if color.components.iter().any(|&value| value < 0.0) {
+        if allow_sentinel {
+            return Ok(None);
+        }
+        return Err(format!("HDR light {name} colors must be nonnegative"));
+    }
+    if color.brightness < 0.0 {
+        return Err(format!("HDR light {name} brightness must be nonnegative"));
+    }
+    Ok(Some(color))
+}
+
+fn hdr_scale(entity: &MapEntity, name: &str) -> Result<f64, String> {
+    let Some(value) = property(entity, name) else {
+        return Ok(1.0);
+    };
+    let value = value
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid HDR light {name}"))?;
+    if !value.is_finite() || value < 0.0 {
+        return Err(format!("HDR light {name} must be finite and nonnegative"));
+    }
+    Ok(value)
+}
+
+fn checked_intensity(intensity: DVec3) -> Result<DVec3, String> {
+    if !intensity.is_finite() || intensity.max_element() > f64::from(f32::MAX) {
+        return Err("Point light intensity exceeds native world-light limits".into());
+    }
+    Ok(intensity)
+}
+
 impl PointLight {
     pub fn from_entity(entity: &MapEntity, cluster: i32) -> Result<Self, String> {
+        Self::from_entity_kind(entity, cluster, LightingKind::Ldr)
+    }
+
+    pub fn from_entity_kind(
+        entity: &MapEntity,
+        cluster: i32,
+        kind: LightingKind,
+    ) -> Result<Self, String> {
         let origin = entity.origin.ok_or("Point light needs an origin")?;
         if !origin.is_finite() || origin.abs().max_element() > crate::map::MAX_COMPILE_COORD {
             return Err(
@@ -153,40 +254,38 @@ impl PointLight {
         if style.fract() != 0.0 || style > 63.0 || (style >= 32.0) != named {
             return Err("Point/spot light styles require an authored Appearance from 0 to 31 or a compiler-assigned named style from 32 to 63".into());
         }
-        let values: Vec<f64> = property(entity, "_light")
-            .ok_or("Point light needs a brightness value")?
-            .split_whitespace()
-            .take(9)
-            .map(str::parse)
-            .collect::<Result<_, _>>()
-            .map_err(|_| "Invalid point-light color/brightness")?;
-        let components = match values.len() {
-            1 => [values[0]; 3],
-            3 | 4 | 8 => [values[0], values[1], values[2]],
-            _ => {
-                return Err(
-                    "Point light brightness needs one, three, four or eight numbers".into(),
-                );
+        let color = match kind {
+            LightingKind::Ldr => {
+                let color = LightColor::parse(
+                    property(entity, "_light").ok_or("Point light needs a brightness value")?,
+                    kind,
+                )?;
+                if color
+                    .components
+                    .iter()
+                    .any(|value| !value.is_finite() || !(0.0..=255.0).contains(value))
+                    || !color.brightness.is_finite()
+                    || color.brightness < 0.0
+                {
+                    return Err(
+                        "Point light colors must be 0–255 with finite nonnegative brightness"
+                            .into(),
+                    );
+                }
+                color
             }
+            LightingKind::Hdr => match hdr_color(entity, "_lightHDR", true)? {
+                Some(color) => color,
+                None => hdr_color(entity, "_light", false)?
+                    .ok_or("HDR point light needs _lightHDR or _light brightness")?,
+            },
         };
-        let brightness = if values.len() >= 4 { values[3] } else { 255.0 };
-        if components
-            .iter()
-            .any(|value| !value.is_finite() || !(0.0..=255.0).contains(value))
-            || !brightness.is_finite()
-            || brightness < 0.0
-        {
-            return Err(
-                "Point light colors must be 0–255 with finite nonnegative brightness".into(),
-            );
-        }
         let falloff = falloff::Falloff::from_entity(entity)?;
-        let intensity = DVec3::from_array(
-            components.map(|value| (value / 255.0).powf(2.2) * brightness * falloff.gain),
-        );
-        if !intensity.is_finite() || intensity.max_element() > f64::from(f32::MAX) {
-            return Err("Point light intensity exceeds native world-light limits".into());
+        let mut intensity = color.intensity(falloff.gain);
+        if kind == LightingKind::Hdr {
+            intensity *= hdr_scale(entity, "_lightscaleHDR")?;
         }
+        let intensity = checked_intensity(intensity)?;
         Ok(Self {
             origin,
             style: style as u8,
@@ -413,5 +512,170 @@ impl Occluder {
             }
         }
         Ok((entering < leaving && leaving > 0.0 && entering < 1.0).then_some((entering, sky)))
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    fn entity(properties: &[(&str, &str)]) -> MapEntity {
+        MapEntity {
+            id: 10,
+            classname: "light".into(),
+            origin: Some(DVec3::new(0.0, 0.0, 100.0)),
+            brushes: Vec::new(),
+            properties: properties
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn ldr_keeps_first_tuple_and_ignores_hdr_fields() {
+        let reference = PointLight::from_entity(&entity(&[("_light", "255 0 0 120")]), 7).unwrap();
+        for fields in [
+            vec![
+                ("_light", "255 0 0 120 0 255 0 1020"),
+                ("_lightHDR", "not a color"),
+                ("_lightscaleHDR", "NaN"),
+            ],
+            vec![
+                ("_light", "255 0 0 120 NaN -1 inf -1"),
+                ("_lightHDR", "0 0 0 0"),
+                ("_lightscaleHDR", "-1"),
+            ],
+        ] {
+            let source = entity(&fields);
+            let legacy = PointLight::from_entity(&source, 7).unwrap();
+            let explicit = PointLight::from_entity_kind(&source, 7, LightingKind::Ldr).unwrap();
+            assert_eq!(legacy.world_light(), reference.world_light());
+            assert_eq!(explicit.world_light(), reference.world_light());
+            assert_eq!(legacy.intensity, DVec3::new(120.0, 0.0, 0.0));
+            assert_eq!(
+                encode_color(legacy.contribution(DVec3::ZERO, DVec3::Z).unwrap()).unwrap(),
+                RgbExp32 {
+                    rgb: [240, 0, 0],
+                    exponent: -1,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn hdr_selects_its_tuple_and_override_before_scaling_linear_radiance() {
+        for fields in [
+            vec![
+                ("_light", "255 0 0 120 0 255 0 1020"),
+                ("_lightscaleHDR", "3"),
+            ],
+            vec![
+                ("_light", "invalid ignored fallback"),
+                ("_lightHDR", "255 0 0 120 0 255 0 1020"),
+                ("_lightscaleHDR", "3"),
+            ],
+            vec![
+                ("_lightHDR", "NaN -1 inf -1 0 255 0 1020"),
+                ("_lightscaleHDR", "3"),
+            ],
+        ] {
+            let light =
+                PointLight::from_entity_kind(&entity(&fields), 7, LightingKind::Hdr).unwrap();
+            assert_eq!(light.intensity, DVec3::new(0.0, 3060.0, 0.0));
+            assert_eq!(light.world_light().intensity, [0.0, 12.0, 0.0]);
+            assert_eq!(
+                encode_color(light.contribution(DVec3::ZERO, DVec3::Z).unwrap()).unwrap(),
+                RgbExp32 {
+                    rgb: [0, 191, 0],
+                    exponent: 4,
+                }
+            );
+        }
+        let light = PointLight::from_entity_kind(
+            &entity(&[("_lightHDR", "128 255 0 1020"), ("_lightscaleHDR", "2")]),
+            0,
+            LightingKind::Hdr,
+        )
+        .unwrap();
+        assert!((light.intensity.x - 447.8202248727305).abs() < 1e-10);
+        assert_eq!(light.intensity.y, 2040.0);
+        assert_eq!(light.intensity.z, 0.0);
+        let light = PointLight::from_entity_kind(
+            &entity(&[("_lightHDR", "510 0 0 255")]),
+            0,
+            LightingKind::Hdr,
+        )
+        .unwrap();
+        assert!((light.intensity.x - 1171.672322096976).abs() < 1e-9);
+        for (value, expected) in [
+            ("255", DVec3::splat(255.0)),
+            ("255 0 255", DVec3::new(255.0, 0.0, 255.0)),
+        ] {
+            let light = PointLight::from_entity_kind(
+                &entity(&[("_lightHDR", value)]),
+                0,
+                LightingKind::Hdr,
+            )
+            .unwrap();
+            assert_eq!(light.intensity, expected);
+        }
+    }
+
+    #[test]
+    fn hdr_sentinels_fall_back_and_explicit_zero_stays_dark() {
+        for value in ["", "-1 -1 -1 1", "0 -1 255 1", "255 0 0 20 -1 -1 -1 1"] {
+            let source = entity(&[("_light", "255 0 0 120 0 0 255 510"), ("_lightHDR", value)]);
+            let light = PointLight::from_entity_kind(&source, 0, LightingKind::Hdr).unwrap();
+            assert_eq!(light.intensity, DVec3::new(0.0, 0.0, 510.0));
+        }
+        for fields in [
+            vec![("_lightHDR", "0 0 0 1020")],
+            vec![("_lightHDR", "255 255 255 0")],
+            vec![("_lightHDR", "255 255 255 1020"), ("_lightscaleHDR", "0")],
+        ] {
+            let mut source = entity(&fields);
+            source.properties.extend([
+                ("_light".into(), "255 255 255 200".into()),
+                ("style".into(), "32".into()),
+                ("targetname".into(), "switchable".into()),
+            ]);
+            let light = PointLight::from_entity_kind(&source, 7, LightingKind::Hdr).unwrap();
+            assert_eq!(light.intensity, DVec3::ZERO);
+            assert_eq!(light.world_light().intensity, [0.0; 3]);
+            assert_eq!(light.world_light().style, 32);
+            assert_eq!(light.world_light().cluster, 7);
+        }
+    }
+
+    #[test]
+    fn malformed_selected_hdr_values_identify_the_authored_field() {
+        for (key, value) in [
+            ("_lightHDR", "not a color"),
+            ("_lightHDR", "1 2"),
+            ("_lightHDR", "1 2 3 4 5"),
+            ("_lightHDR", "1 2 3 4 5 6 7 8 9"),
+            ("_lightHDR", "NaN 0 0 100"),
+            ("_lightHDR", "0 0 0 inf"),
+            ("_lightHDR", "255 0 0 -1"),
+            ("_lightHDR", "255 0 0 100 0 NaN 0 100"),
+            ("_lightscaleHDR", ""),
+            ("_lightscaleHDR", "invalid"),
+            ("_lightscaleHDR", "-1"),
+            ("_lightscaleHDR", "NaN"),
+            ("_lightscaleHDR", "inf"),
+            ("_light", "255 0 0 100 0 0 0 -1"),
+        ] {
+            let source = if key == "_light" {
+                entity(&[(key, value)])
+            } else {
+                entity(&[("_light", "255 255 255 200"), (key, value)])
+            };
+            let error = PointLight::from_entity_kind(&source, 0, LightingKind::Hdr).unwrap_err();
+            assert!(error.contains(key), "{key}={value}: {error}");
+        }
+        let source = entity(&[("_lightHDR", "255 0 0 1e40")]);
+        let error = PointLight::from_entity_kind(&source, 0, LightingKind::Hdr).unwrap_err();
+        assert!(error.contains("intensity"), "{error}");
     }
 }

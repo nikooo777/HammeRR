@@ -1,7 +1,7 @@
 use glam::DVec3;
-use source_formats::bsp::{WorldLight, world_light_kind};
+use source_formats::bsp::{LightingKind, WorldLight, world_light_kind};
 
-use super::{PointLight, number, property};
+use super::{PointLight, checked_intensity, hdr_color, hdr_scale, number, property};
 use crate::map::MapEntity;
 
 pub(super) const TRACE_LENGTH: f64 = crate::map::MAX_COMPILE_COORD * 4.0;
@@ -37,6 +37,14 @@ impl SkyLight {
         entity: &MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
+        Self::from_entity_kind(entity, targets, LightingKind::Ldr)
+    }
+
+    pub(super) fn from_entity_kind(
+        entity: &MapEntity,
+        targets: &map_core::light::Targets<'_>,
+        kind: LightingKind,
+    ) -> Result<Self, String> {
         if number(entity, "style")? != 0.0
             || property(entity, "targetname").is_some_and(|name| !name.is_empty())
             || property(entity, "pattern").is_some_and(|pattern| !pattern.is_empty())
@@ -67,18 +75,31 @@ impl SkyLight {
                 .into_iter()
                 .any(|field| key.eq_ignore_ascii_case(field))
         });
-        let point = PointLight::from_entity(&source, -1)?;
-        let ambient = if let Some(ambient) =
-            property(entity, "_ambient").filter(|value| !value.trim().is_empty())
-        {
-            let mut source = source.clone();
-            source
-                .properties
-                .retain(|(key, _)| !key.eq_ignore_ascii_case("_light"));
-            source.properties.push(("_light".into(), ambient.into()));
-            PointLight::from_entity(&source, -1)?.intensity
-        } else {
-            point.intensity * 0.5
+        let point = PointLight::from_entity_kind(&source, -1, kind)?;
+        let ambient = match kind {
+            LightingKind::Ldr => {
+                if let Some(ambient) =
+                    property(entity, "_ambient").filter(|value| !value.trim().is_empty())
+                {
+                    let mut source = source.clone();
+                    source
+                        .properties
+                        .retain(|(key, _)| !key.eq_ignore_ascii_case("_light"));
+                    source.properties.push(("_light".into(), ambient.into()));
+                    PointLight::from_entity(&source, -1)?.intensity
+                } else {
+                    point.intensity * 0.5
+                }
+            }
+            LightingKind::Hdr => {
+                let color = match hdr_color(entity, "_ambientHDR", true)? {
+                    Some(color) => Some(color),
+                    None => hdr_color(entity, "_ambient", true)?,
+                };
+                let ambient = color.map_or(point.intensity * 0.5, |color| color.intensity(1.0));
+                checked_intensity(ambient * hdr_scale(entity, "_AmbientScaleHDR")?)
+                    .map_err(|error| format!("HDR sky ambient: {error}"))?
+            }
         };
         let target = map_core::light::target(property(entity, "target"), targets)?;
         let direction = map_core::light::direction(
@@ -211,6 +232,156 @@ impl SkyLight {
 mod tests {
     use super::*;
     use crate::SkyQuality;
+
+    fn environment(properties: &[(&str, &str)]) -> MapEntity {
+        MapEntity {
+            id: 10,
+            classname: "light_environment".into(),
+            origin: None,
+            brushes: Vec::new(),
+            properties: properties
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn ldr_sky_keeps_legacy_sun_and_ambient_with_ignored_hdr_inputs() {
+        let targets = map_core::light::Targets::new();
+        let reference = SkyLight::from_entity(
+            &environment(&[("_light", "255 0 0 200"), ("_ambient", "0 255 0 20")]),
+            &targets,
+        )
+        .unwrap();
+        let source = environment(&[
+            ("_light", "255 0 0 200 0 0 255 510"),
+            ("_ambient", "0 255 0 20 255 0 255 60"),
+            ("_lightHDR", "invalid sun"),
+            ("_ambientHDR", "invalid ambient"),
+            ("_lightscaleHDR", "NaN"),
+            ("_AmbientScaleHDR", "-1"),
+        ]);
+        for light in [
+            SkyLight::from_entity(&source, &targets).unwrap(),
+            SkyLight::from_entity_kind(&source, &targets, LightingKind::Ldr).unwrap(),
+        ] {
+            assert_eq!(light.world_light(), reference.world_light());
+            assert_eq!(light.ambient_world_light(), reference.ambient_world_light());
+            assert_eq!(light.intensity, DVec3::new(200.0, 0.0, 0.0));
+            assert_eq!(light.ambient, DVec3::new(0.0, 20.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn hdr_sun_and_ambient_select_independent_colors_and_scales() {
+        let targets = map_core::light::Targets::new();
+        for fields in [
+            vec![
+                ("_lightHDR", "0 255 0 1020"),
+                ("_ambientHDR", "0 0 255 120"),
+                ("_ambient", "invalid ignored fallback"),
+            ],
+            vec![
+                ("_light", "255 0 0 200 0 255 0 1020"),
+                ("_ambientHDR", "255 0 0 10 0 0 255 120"),
+            ],
+            vec![
+                ("_light", "255 0 0 200 0 255 0 1020"),
+                ("_ambientHDR", "-1 -1 -1 1"),
+                ("_ambient", "255 0 0 10 0 0 255 120"),
+            ],
+        ] {
+            let mut source = environment(&fields);
+            source.properties.extend([
+                ("_lightscaleHDR".into(), "2".into()),
+                ("_AmbientScaleHDR".into(), "3".into()),
+            ]);
+            let light = SkyLight::from_entity_kind(&source, &targets, LightingKind::Hdr).unwrap();
+            assert_eq!(light.intensity, DVec3::new(0.0, 2040.0, 0.0));
+            assert_eq!(light.world_light().intensity, [0.0, 8.0, 0.0]);
+            assert_eq!(light.ambient, DVec3::new(0.0, 0.0, 360.0));
+            assert_eq!(
+                light.ambient_radiance(),
+                DVec3::new(0.0, 0.0, 360.0 / 255.0)
+            );
+            assert_eq!(
+                light.ambient_world_light().unwrap().intensity,
+                [0.0, 0.0, (360.0 / 255.0) as f32]
+            );
+        }
+    }
+
+    #[test]
+    fn hdr_missing_or_sentinel_ambient_falls_back_after_sun_scale() {
+        let targets = map_core::light::Targets::new();
+        for fields in [
+            vec![],
+            vec![("_ambientHDR", ""), ("_ambient", "")],
+            vec![("_ambientHDR", "-1 -1 -1 1")],
+            vec![("_ambientHDR", "0 -1 255 1"), ("_ambient", "-1 -1 -1 1")],
+        ] {
+            let mut source = environment(&fields);
+            source.properties.extend([
+                ("_light".into(), "255 0 0 200".into()),
+                ("_lightHDR".into(), "0 255 0 1020".into()),
+                ("_lightscaleHDR".into(), "2".into()),
+                ("_AmbientScaleHDR".into(), "3".into()),
+            ]);
+            let light = SkyLight::from_entity_kind(&source, &targets, LightingKind::Hdr).unwrap();
+            assert_eq!(light.intensity, DVec3::new(0.0, 2040.0, 0.0));
+            assert_eq!(light.ambient, DVec3::new(0.0, 3060.0, 0.0));
+            assert_eq!(light.ambient_radiance(), DVec3::new(0.0, 12.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn hdr_explicit_zero_ambient_overrides_the_sun_fallback() {
+        let targets = map_core::light::Targets::new();
+        for fields in [
+            vec![("_ambientHDR", "0")],
+            vec![("_ambientHDR", "255 255 255 0")],
+            vec![
+                ("_ambientHDR", "255 255 255 120"),
+                ("_AmbientScaleHDR", "0"),
+            ],
+        ] {
+            let mut source = environment(&fields);
+            source.properties.extend([
+                ("_lightHDR".into(), "255 0 0 1020".into()),
+                ("_ambient".into(), "0 255 0 200".into()),
+            ]);
+            let light = SkyLight::from_entity_kind(&source, &targets, LightingKind::Hdr).unwrap();
+            assert_eq!(light.intensity, DVec3::new(1020.0, 0.0, 0.0));
+            assert_eq!(light.ambient, DVec3::ZERO);
+            assert!(!light.has_ambient());
+            assert!(light.ambient_world_light().is_none());
+        }
+    }
+
+    #[test]
+    fn malformed_selected_hdr_ambient_identifies_the_authored_field() {
+        let targets = map_core::light::Targets::new();
+        for (key, value) in [
+            ("_ambientHDR", "not a color"),
+            ("_ambientHDR", "1 2"),
+            ("_ambientHDR", "NaN 0 0 100"),
+            ("_ambientHDR", "0 0 0 inf"),
+            ("_ambientHDR", "255 0 0 -1"),
+            ("_ambientHDR", "255 0 0 100 0 NaN 0 100"),
+            ("_ambient", "invalid fallback"),
+            ("_AmbientScaleHDR", ""),
+            ("_AmbientScaleHDR", "invalid"),
+            ("_AmbientScaleHDR", "-1"),
+            ("_AmbientScaleHDR", "NaN"),
+            ("_AmbientScaleHDR", "inf"),
+        ] {
+            let source = environment(&[("_lightHDR", "0 255 0 1020"), (key, value)]);
+            let error =
+                SkyLight::from_entity_kind(&source, &targets, LightingKind::Hdr).unwrap_err();
+            assert!(error.contains(key), "{key}={value}: {error}");
+        }
+    }
 
     #[test]
     fn sun_sampling_stays_in_its_angular_bound_and_preserves_central_brightness() {

@@ -75,6 +75,13 @@ fn malformed_static_prop_counts_references_and_values_reject_atomically() {
     bsp.set_records(&[Leaf::default(); 4]);
     bsp.set_static_props(&props).unwrap();
     let old = bsp.game_lumps.clone();
+    for name in [b"".as_slice(), b"\xff", b"line\nbreak", &[b'x'; 128]] {
+        let mut invalid = props.clone();
+        invalid.models[0].fill(0);
+        invalid.models[0][..name.len()].copy_from_slice(name);
+        assert!(bsp.set_static_props(&invalid).is_err());
+        assert_eq!(bsp.game_lumps, old);
+    }
     for invalid in [
         StaticProps {
             leaves: vec![4, 3],
@@ -194,5 +201,19 @@ fn model_physics_rejects_bad_checksums_lengths_counts_and_keys() {
         let mut invalid = bytes.clone();
         invalid[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         assert!(source_formats::mdl::validate_physics(&invalid, 17).is_err());
+    }
+    let key_start = bytes.len() - b"solid {}\0".len();
+    for keys in [b"".as_slice(), b"unterminated", b"one\0two\0", b"one\0\0"] {
+        let mut invalid = bytes[..key_start].to_vec();
+        invalid.extend_from_slice(keys);
+        assert!(source_formats::mdl::validate_physics(&invalid, 17).is_err());
+    }
+    for keys in [b"\0".as_slice(), b"\xff\0"] {
+        let mut opaque = bytes[..key_start].to_vec();
+        opaque.extend_from_slice(keys);
+        assert_eq!(
+            source_formats::mdl::validate_physics(&opaque, 17).unwrap(),
+            1
+        );
     }
 }

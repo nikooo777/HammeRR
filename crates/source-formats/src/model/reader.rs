@@ -1,3 +1,4 @@
+use std::ffi::CStr;
 use std::io;
 
 use super::invalid;
@@ -127,11 +128,9 @@ impl<'a> Reader<'a> {
     pub fn string(&self, start: usize) -> io::Result<String> {
         let available = self.data.len().saturating_sub(start).min(1025);
         let bytes = self.bytes(start, available)?;
-        let end = bytes
-            .iter()
-            .position(|&byte| byte == 0)
-            .ok_or_else(|| invalid("model string is missing its bounded terminator"))?;
-        std::str::from_utf8(&bytes[..end])
+        CStr::from_bytes_until_nul(bytes)
+            .map_err(|_| invalid("model string is missing its bounded terminator"))?
+            .to_str()
             .map(str::to_owned)
             .map_err(|_| invalid("model strings must be UTF-8"))
     }

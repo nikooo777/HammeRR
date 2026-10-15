@@ -4,6 +4,7 @@
 //! archives. Paths inside are lowercase with forward slashes.
 
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -37,17 +38,16 @@ fn invalid(message: impl Into<String>) -> io::Error {
 }
 
 struct Cursor<'a> {
-    data: &'a [u8],
-    pos: usize,
+    remaining: &'a [u8],
 }
 
 impl<'a> Cursor<'a> {
     fn take(&mut self, n: usize) -> io::Result<&'a [u8]> {
-        let bytes = self
-            .data
-            .get(self.pos..self.pos + n)
+        let (bytes, remaining) = self
+            .remaining
+            .split_at_checked(n)
             .ok_or_else(|| invalid("VPK directory tree is truncated"))?;
-        self.pos += n;
+        self.remaining = remaining;
         Ok(bytes)
     }
 
@@ -60,13 +60,10 @@ impl<'a> Cursor<'a> {
     }
 
     fn cstr(&mut self) -> io::Result<&'a str> {
-        let rest = &self.data[self.pos..];
-        let len = rest
-            .iter()
-            .position(|&b| b == 0)
-            .ok_or_else(|| invalid("unterminated string in VPK directory tree"))?;
-        self.pos += len + 1;
-        std::str::from_utf8(&rest[..len]).map_err(|_| invalid("non-UTF-8 path in VPK"))
+        let text = CStr::from_bytes_until_nul(self.remaining)
+            .map_err(|_| invalid("unterminated string in VPK directory tree"))?;
+        self.take(text.to_bytes_with_nul().len())?;
+        text.to_str().map_err(|_| invalid("non-UTF-8 path in VPK"))
     }
 }
 
@@ -126,7 +123,7 @@ impl Vpk {
     }
 
     fn parse_tree(tree: &[u8]) -> io::Result<HashMap<String, Entry>> {
-        let mut cur = Cursor { data: tree, pos: 0 };
+        let mut cur = Cursor { remaining: tree };
         let mut entries = HashMap::new();
         loop {
             let ext = cur.cstr()?;

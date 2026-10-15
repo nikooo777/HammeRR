@@ -52,6 +52,14 @@ cargo test -p source-formats --test ambient --test areas --test overlays --test 
 
 Checks embedded, dense legacy and indexed LDR/HDR ambient cubes, leaf aliases, sample positions, native area/areaportal/clip geometry, overlay projections/fades and malformed records. Overlay checks include packed render order, zero-face records, inactive face slots, negative fade sentinels and a bounded 1,024-record payload. The BSP test checks installed CS:S maps when available; use `CSS_DIR` to choose another installation. These format checks run without the editor or game.
 
+### Asset names and physics keys
+
+```sh
+cargo test -p source-formats --test malformed_assets --test static_props --test physics
+```
+
+Checks truncated VPK trees, UTF-8 names, terminated model names with opaque padding, physics key terminators and retained opaque key bytes. Rejected static-prop writes preserve existing game lumps.
+
 ### Compiler face provenance
 
 ```sh

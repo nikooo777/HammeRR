@@ -1425,17 +1425,29 @@ pub(crate) fn partition_texture_controls_share_preview_inheritance_keep_cancel_a
     assert_eq!(lock(&shared).partition_preview_token(), reviewed);
     window.set_texture_rotation("37".into());
     window.invoke_fit_partition_texture();
+    assert_ne!(lock(&shared).partition_preview_token(), reviewed);
+    assert!(window.get_message().starts_with("Top textures fitted."));
     assert!(window.get_ready());
     assert_ne!(window.get_texture_scale_u(), "-0.375");
     assert!(window.get_texture_scale_u().parse::<f64>().unwrap() < 0.0);
     assert_eq!(window.get_texture_rotation(), "37");
+    window.set_texture_shift_u("13.125".into());
+    window.set_texture_shift_v("-27.5".into());
     window.set_texture_scale_u("-0.375".into());
     window.set_texture_scale_v("0.625".into());
     window.invoke_preview_partition_texture();
+    assert!(
+        window
+            .get_message()
+            .starts_with("Top texture placement updated.")
+    );
+    let reviewed = lock(&shared).partition_preview_token();
     let scales = (window.get_texture_scale_u(), window.get_texture_scale_v());
     window.set_texture_justify_u(3);
     window.set_texture_justify_v(2);
     window.invoke_justify_partition_texture();
+    assert_ne!(lock(&shared).partition_preview_token(), reviewed);
+    assert!(window.get_message().starts_with("Top textures justified."));
     assert!(window.get_ready());
     assert_eq!(
         (window.get_texture_scale_u(), window.get_texture_scale_v()),

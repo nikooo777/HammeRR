@@ -376,6 +376,7 @@ impl Mapping {
                 .ok_or_else(|| invalid(format!("Entity {} has invalid angles", entity.id)))?
         } else if let Some(value) = entity.properties.get("angle") {
             let angle = value
+                .trim()
                 .parse::<f64>()
                 .ok()
                 .filter(|angle| angle.is_finite())
@@ -394,7 +395,7 @@ impl Mapping {
             angles.x = -entity
                 .properties
                 .get("pitch")
-                .and_then(|value| value.parse::<f64>().ok())
+                .and_then(|value| value.trim().parse::<f64>().ok())
                 .filter(|value| value.is_finite())
                 .ok_or_else(|| invalid("Light pitch must be finite"))?;
         }
@@ -1300,19 +1301,27 @@ mod tests {
     #[test]
     fn point_orientation_and_light_pitch_follow_world_rotation() {
         let mut document = Document::empty();
-        let point = document
+        let (point, legacy) = document
             .edit("setup", |tx| {
-                edit::create_entity(
+                let point = edit::create_entity(
                     tx,
                     "light_spot",
                     Some(DVec3::X * 64.0),
                     &[
                         ("angles".into(), "10 20 30".into()),
-                        ("pitch".into(), "-45".into()),
+                        ("pitch".into(), " -45 ".into()),
                         ("_light".into(), "255 180 90 400".into()),
                     ],
                     vec![],
-                )
+                )?;
+                let legacy = edit::create_entity(
+                    tx,
+                    "info_target",
+                    Some(DVec3::ZERO),
+                    &[("angle".into(), " 20 ".into())],
+                    vec![],
+                )?;
+                Ok((point, legacy))
             })
             .unwrap();
         let ObjectId::Entity(id) = point else {
@@ -1328,7 +1337,7 @@ mod tests {
             .edit("rotate", |tx| {
                 transform(
                     tx,
-                    &[point],
+                    &[point, legacy],
                     Transform {
                         rotation: DVec3::Z * 90.0,
                         ..Transform::default()
@@ -1357,6 +1366,17 @@ mod tests {
                 < 1e-10
         );
         assert_eq!(entity.properties.get("_light"), Some("255 180 90 400"));
+        let ObjectId::Entity(legacy) = legacy else {
+            panic!()
+        };
+        let legacy = document.entity(legacy).unwrap();
+        assert!(
+            orientation(legacy)
+                .dot(DQuat::from_rotation_z(110f64.to_radians()))
+                .abs()
+                > 1.0 - 1e-10
+        );
+        assert!(legacy.properties.get("angle").is_none());
     }
 
     #[test]

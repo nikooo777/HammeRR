@@ -6,11 +6,13 @@ the complete array records one Undo step.
 
 1. Select 1–16 objects and choose **Repeat array…** in the selection controls.
 2. Set **Additional copies**. This count excludes the original objects.
-3. Enter the world XYZ **Move step · units** and **Rotate step · °**. Copy 1 uses
-   one step, copy 2 uses two steps, and so on. Each copy starts from the originals.
+3. Choose **World** or **Source local** under **Step space**, then enter XYZ
+   **Move step · units** and **Rotate step · °** in that frame. Copy 1 uses one
+   step, copy 2 uses two steps, and so on. Each copy starts from the originals.
 4. Set **Fixed world pivot**. It initially uses the current transform pivot, or
    the selection center. Each copy rotates about this same point before its
-   world translation is added. For a ring, use a zero move step and a Z rotation.
+   translation in the chosen frame is added. For a ring, use a zero move step
+   and a Z rotation.
 5. Choose **Keep textures attached**, then **Preview array**. The viewport shows
    the copies; the dialog lists their generated names and internal-link counts.
 6. Review the geometry and names, then choose **Apply array**. All new top-level
@@ -18,6 +20,15 @@ the complete array records one Undo step.
    it. **Cancel**, Escape or closing the dialog discards its unapplied preview.
 
 ![Repeat array controls](images/repeat-array.png)
+
+**Source local** uses the same frame as local object transforms, taken from the
+first source in stable object-ID order: world brushes before entities, then the
+lowest numeric ID within each kind. Brushes supply their authored face frame;
+point entities supply their orientation, and usable models supply their model
+transform frame.
+The preview identifies this source. That original frame stays fixed for every
+copy, including mixed selections; later copies do not follow earlier copies'
+rotated axes. **Fixed world pivot** always stays in world coordinates.
 
 Names become unique `name_copyN` values. An occupied name gets a numeric suffix.
 Certain exact internal FGD properties, parent links and I/O targets or reference
@@ -43,10 +54,14 @@ entire operation. Saved face partitions stay attached to the originals.
 Invalid settings retain the last valid preview. Replacing the map, editing the
 source, changing selection or reloading entity definitions prevents stale Apply.
 Apply the array before saving or compiling; these operations use committed
-geometry. This first workflow supports fixed world translation/rotation steps.
-Local, scale and surface-sprinkle arrays are not available.
+geometry. World and source-local translation/rotation steps are supported. Scale
+and surface-sprinkle arrays are not available.
 
 MCP uses the same Session operations: inspect `get_repeat_array`, pass its latest
-`snapshot` to `preview_repeat_array`, then pass the resulting `preview.token` to
+`snapshot` to `preview_repeat_array` with `space: "world"` (default) or
+`space: "local"`, then pass the resulting `preview.token` to
 `apply_repeat_array` or `cancel_repeat_array`. `render_view` shows the shared
 preview; `get_objects` continues to inspect committed data.
+The preview exposes `space`, the fixed frame's column vectors in `basis`, and
+`frame_source` for local mode. Invalid space or frame requests keep the last valid
+preview.

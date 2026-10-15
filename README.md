@@ -83,7 +83,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Repeated placement |
 | --- |
 | ![Repeated placement array preview and controls](docs/images/repeat-array.png) |
-| Preview fixed translation and rotation arrays, then apply all copies in one Undo step. |
+| Repeat selections in world or source-local axes, then apply all copies in one Undo step. |
 
 [Brushes and transforms →](docs/brushes.md) · [Hollow, carve and clip →](docs/brush-tools.md)
 
@@ -331,7 +331,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Overlays |
 | --- |
 | ![Fitted overlay controls with material preview and source corners](docs/images/overlay-authoring.png) |
-| Fit surface markings to world/detail faces, preview their corners and compile materials, order and fades. |
+| Fit or refit surface markings on world/detail faces, preserving materials, order, fades and entity links. |
 
 [Overlays →](docs/overlays.md)
 

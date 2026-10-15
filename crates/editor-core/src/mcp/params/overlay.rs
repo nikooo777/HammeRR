@@ -20,6 +20,13 @@ pub struct OverlayTokenArgs {
     pub token: u64,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayRefitArgs {
+    pub snapshot: String,
+    pub id: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,6 +39,13 @@ mod tests {
         let mut missing = valid.clone();
         missing.as_object_mut().unwrap().remove("source");
         assert!(serde_json::from_value::<OverlayPreviewArgs>(missing).is_err());
+        let refit = json!({"snapshot":"current", "id":"entity:12"});
+        assert!(serde_json::from_value::<OverlayRefitArgs>(refit.clone()).is_ok());
+        for field in ["source", "material", "u", "BasisU", "sides"] {
+            let mut invalid = refit.clone();
+            invalid[field] = json!("replacement");
+            assert!(serde_json::from_value::<OverlayRefitArgs>(invalid).is_err());
+        }
         for field in ["BasisU", "BasisNormal", "uv0", "sides"] {
             let mut derived = valid.clone();
             derived[field] = json!("1 0 0");

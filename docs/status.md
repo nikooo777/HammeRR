@@ -22,7 +22,7 @@ HammeRR is in active development.
 | Overlapping selection | Alt+click and shared MCP operations cycle depth-ordered objects, brush owners and native groups, with model triangle picking and the same visibility rules as ordinary selection. The nearest 64 distinct hits are available; persistent selection filters and separate solid/group modes are planned. |
 | Polygon brushes | Convex and simple concave outlines, grid/exact corners, axis-aligned extrusion, materials and shared previews/Undo work. Oblique drawing planes and holes are planned. |
 | Surface placement | Shared floor/ceiling and picked-surface previews, mesh/terrain contact, normal alignment, offsets and one-step Undo work. Independent object settling, overlap resolution and physics placement are planned. |
-| Repeated placement | Fixed world translation/rotation arrays share previews, unique generated names, checked internal-reference remapping and one-step Undo. Uncertain internal links and named source sets with scripts or dynamic I/O reject; local/scale arrays and surface sprinkle are unavailable. |
+| Repeated placement | World and source-local translation/rotation arrays share previews, one captured original frame, unique generated names, checked internal-reference remapping and one-step Undo. Uncertain internal links and named source sets with scripts or dynamic I/O reject; scale arrays and surface sprinkle are unavailable. |
 | Hollow, carve and clip | Works for brushes. Terrain is rejected. |
 | Merge brushes | Guarded previews join 2–16 brushes into one convex brush, retaining outer face settings and one-step Undo. World brushes or children of one brush entity can merge; gaps, concave unions, mixed owners and terrain reject. |
 | Vertices, edges and faces | Brush component editing works. Terrain has separate vertex controls. |
@@ -52,7 +52,7 @@ HammeRR is in active development.
 | Cubemaps | Sample positions and sizes | Baked reflections |
 | Static props | Models, transforms, collision, skins, fading, named lighting origins; bounded [opaque LOD0 mesh shadows](prop-shadows.md) with native disabled-shadow flags, selected-material warnings and checked asset failures | Texture-alpha/translucent shadows, per-vertex/per-texel prop lighting, reflected prop sources, animated-prop shadows and exact placement in the BSP tree |
 | Terrain | World/func_detail power 2/3/4 surfaces, collision, matching full-edge and corner-only links, full/half-edge LOD masks/snapping, saved subdivided grids, authored border shading and shared vertex normals | Other fractional spans, half-edge cage subdivision, removed triangles |
-| Overlays | Fit new projections to one world/detail quad with owned previews, material browsing, corner guides and atomic Apply/Cancel; imported world/detail/terrain projections, render order, fades and named accessors | Existing-projection editing, multiple-face/terrain/model creation, corner handles, viewport material projection, geometry rebinding, transitions and decals |
+| Overlays | Fit new projections to one world/detail quad or explicitly refit an existing single-face projection on the same entity, with owned previews, material browsing, corner guides and atomic Apply/Cancel; imported world/detail/terrain projections, render order, fades and named accessors | New face bindings, multiple-face/terrain/model creation or refitting, corner handles, viewport material projection, geometry rebinding, transitions and decals |
 
 ## Next
 

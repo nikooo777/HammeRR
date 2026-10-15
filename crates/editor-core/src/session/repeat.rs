@@ -9,6 +9,7 @@ pub struct Preview {
     token: u64,
     sources: Vec<ObjectId>,
     options: repeat::Options,
+    local: bool,
     generation: u64,
     revision: u64,
     definitions: u64,
@@ -49,6 +50,9 @@ impl Session {
                 "translation": preview.options.translation.to_array(),
                 "rotation": preview.options.rotation.to_array(),
                 "pivot": preview.options.pivot.to_array(),
+                "space": if preview.local { "local" } else { "world" },
+                "basis": preview.options.basis.to_cols_array_2d(),
+                "frame_source": preview.local.then(|| preview.sources.iter().copied().min().map(id_string)).flatten(),
                 "texture_lock": preview.options.texture_lock,
                 "bounds": self.object_bounds_in(&preview.document, &objects).map(|(mins, maxs)| [mins.to_array(), maxs.to_array()]),
                 "copies": preview.result.copies.iter().map(|copy| json!({
@@ -70,7 +74,7 @@ impl Session {
             "snapshot": self.repeat_stamp(),
             "preview": preview,
             "limits": {"sources":repeat::MAX_SOURCES,"copies":repeat::MAX_COPIES,"objects_including_owned_brushes":repeat::MAX_OBJECTS,"sides":repeat::MAX_SIDES,"name_bytes":repeat::MAX_NAME_BYTES},
-            "transform_policy":"Copy n uses the original objects, n × world XYZ rotation about one fixed pivot, then n × world translation. Count excludes originals.",
+            "transform_policy":"Copy n uses the original objects, rotates by n × XYZ degrees in the chosen world or source-local frame about one fixed world pivot, then translates by n × the step in that same frame. Source local uses the first source in stable object-ID order (brushes before entities), with its existing transform frame captured once for every copy. Count excludes originals.",
             "reference_policy":"Unique source targetnames become name_copyN, with a collision suffix when needed. Certain exact internal FGD/I/O/parent references follow that copy; external links and procedural references remain unchanged. Shared names, ambiguous internal matches, wildcard captures of new names, overlay face-ID references and node IDs reject. Named source sets with scripts or dynamic I/O also reject.",
             "metadata_policy":"Object and owned-brush context notes copy with their existing authorship/observations and full map budgets. Saved partitions remain attached to originals. Other opaque custom metadata and embedded text stay verbatim; their semantics are not inferred or remapped.",
         })
@@ -107,10 +111,21 @@ impl Session {
         options: repeat::Options,
         snapshot: &str,
     ) -> Result<Value, String> {
+        self.preview_repeat_array_in_space(sources, options, false, snapshot)
+    }
+
+    pub fn preview_repeat_array_in_space(
+        &mut self,
+        sources: &[ObjectId],
+        mut options: repeat::Options,
+        local: bool,
+        snapshot: &str,
+    ) -> Result<Value, String> {
         if snapshot != self.repeat_stamp() {
             return Err("Map, selection or preview changed; inspect the repeat array again".into());
         }
         self.ensure_partitions_resolved()?;
+        options.basis = self.transform_basis(sources, local)?;
         let mut document = self.document.preview_snapshot();
         let result = document
             .edit("preview repeat array", |tx| {
@@ -134,6 +149,7 @@ impl Session {
             token: self.geometry.repeat.serial,
             sources: sources.to_vec(),
             options,
+            local,
             generation: self.document_generation,
             revision: self.document.revision(),
             definitions: self.definitions_serial,
@@ -196,6 +212,7 @@ pub(crate) mod tests {
             translation: DVec3::X * 32.0,
             rotation: DVec3::Z * 15.0,
             pivot: DVec3::ZERO,
+            basis: glam::DMat3::IDENTITY,
             texture_lock: true,
         }
     }
@@ -230,6 +247,245 @@ pub(crate) mod tests {
         assert_eq!(session.document.vmf(), &before);
         session.redo(Actor::Agent).unwrap();
         assert_eq!(session.document.vmf(), &expected);
+    }
+
+    #[test]
+    fn local_arrays_capture_one_source_frame_and_share_atomic_apply_for_both_actors() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, source) = fixture();
+            let ObjectId::Entity(id) = source else {
+                panic!()
+            };
+            let other = session
+                .edit(actor, "orient sources", |tx| {
+                    tx.entity_mut(id)?.properties.set("angles", "23 37 -11");
+                    edit::create_entity(
+                        tx,
+                        "info_target",
+                        Some(DVec3::new(3.5, -6.25, 9.125)),
+                        &[("angles".into(), "0 90 0".into())],
+                        Vec::new(),
+                    )
+                })
+                .unwrap();
+            let sources = [other, source];
+            session.select(&sources, SelectMode::Replace).unwrap();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let basis = session.transform_basis(&[source], true).unwrap();
+            let request = repeat::Options {
+                translation: DVec3::new(4.5, -2.25, 1.125),
+                rotation: DVec3::X * 90.0,
+                pivot: DVec3::new(1.25, -3.5, 2.125),
+                ..options()
+            };
+            let report = session
+                .preview_repeat_array_in_space(&sources, request, true, &session.repeat_stamp())
+                .unwrap();
+            assert_eq!(report["preview"]["space"], "local");
+            assert_eq!(report["preview"]["frame_source"], id_string(source));
+            assert_eq!(report["preview"]["basis"], json!(basis.to_cols_array_2d()));
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+            for copy in &session
+                .geometry
+                .repeat
+                .preview
+                .as_ref()
+                .unwrap()
+                .result
+                .copies
+            {
+                let ObjectId::Entity(id) = copy.objects[1] else {
+                    panic!()
+                };
+                let origin = session
+                    .render_document()
+                    .entity(id)
+                    .unwrap()
+                    .origin()
+                    .unwrap();
+                let local = basis.transpose() * (DVec3::X * 16.0 - request.pivot);
+                let rotated = match copy.index {
+                    1 => DVec3::new(local.x, -local.z, local.y),
+                    2 => DVec3::new(local.x, -local.y, -local.z),
+                    3 => DVec3::new(local.x, local.z, -local.y),
+                    _ => unreachable!(),
+                };
+                assert!(origin.abs_diff_eq(
+                    request.pivot + basis * (rotated + request.translation * f64::from(copy.index)),
+                    1e-8,
+                ));
+            }
+            let expected = session.render_document().vmf().clone();
+            session
+                .apply_repeat_array(actor, report["preview"]["token"].as_u64().unwrap())
+                .unwrap();
+            assert_eq!(session.document.vmf(), &expected);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &expected);
+        }
+    }
+
+    #[test]
+    fn invalid_local_updates_preserve_draft_and_world_default_stays_exact() {
+        let (mut session, source) = fixture();
+        let invalid = session
+            .edit(Actor::Agent, "invalid frame", |tx| {
+                [
+                    ("info_target", "angles", "garbage"),
+                    ("info_target", "angles", "NaN 0 0"),
+                    ("info_target", "angle", "garbage"),
+                    ("info_target", "angle", "NaN"),
+                    ("light_spot", "pitch", "garbage"),
+                    ("light_environment", "pitch", "NaN"),
+                ]
+                .into_iter()
+                .map(|(class, key, value)| {
+                    edit::create_entity(
+                        tx,
+                        class,
+                        Some(DVec3::ZERO),
+                        &[(key.into(), value.into())],
+                        Vec::new(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap();
+        let request = repeat::Options {
+            rotation: DVec3::ZERO,
+            ..options()
+        };
+        let report = session
+            .preview_repeat_array_in_space(&[source], request, true, &session.repeat_stamp())
+            .unwrap();
+        let preview = session.render_document().vmf().clone();
+        for &source in &invalid {
+            assert!(
+                session
+                    .preview_repeat_array_in_space(
+                        &[source],
+                        request,
+                        true,
+                        &session.repeat_stamp()
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.repeat_array(), report);
+            assert_eq!(session.render_document().vmf(), &preview);
+        }
+        assert!(
+            session
+                .preview_repeat_array_in_space(&[source], options(), true, "stale")
+                .is_err()
+        );
+        assert_eq!(session.repeat_array(), report);
+        assert_eq!(session.render_document().vmf(), &preview);
+        session
+            .cancel_repeat_array(report["preview"]["token"].as_u64().unwrap())
+            .unwrap();
+        for source in invalid {
+            let world = session
+                .preview_repeat_array(&[source], request, &session.repeat_stamp())
+                .unwrap();
+            assert_eq!(world["preview"]["space"], "world");
+            session
+                .cancel_repeat_array(world["preview"]["token"].as_u64().unwrap())
+                .unwrap();
+        }
+        let implicit = session
+            .preview_repeat_array(&[source], options(), &session.repeat_stamp())
+            .unwrap();
+        let expected = session.render_document().vmf().clone();
+        session
+            .cancel_repeat_array(implicit["preview"]["token"].as_u64().unwrap())
+            .unwrap();
+        let explicit = session
+            .preview_repeat_array_in_space(&[source], options(), false, &session.repeat_stamp())
+            .unwrap();
+        assert_eq!(explicit["preview"]["space"], "world");
+        assert_eq!(explicit["preview"]["frame_source"], Value::Null);
+        assert_eq!(session.render_document().vmf(), &expected);
+    }
+
+    #[test]
+    fn mixed_local_sources_use_the_existing_brush_frame_independent_of_argument_order() {
+        let (mut session, point) = fixture();
+        let brush = session
+            .edit(Actor::User, "oblique brush", |tx| {
+                let brush = edit::create_block(
+                    tx,
+                    DVec3::new(-3.125, 2.25, 1.5),
+                    DVec3::new(13.5, 9.75, 24.125),
+                    "brick/wall",
+                )?;
+                edit::transform(
+                    tx,
+                    &[brush],
+                    edit::Transform {
+                        rotation: DVec3::new(17.0, 29.0, -11.0),
+                        ..edit::Transform::default()
+                    },
+                )?;
+                Ok(brush)
+            })
+            .unwrap();
+        let basis = session.transform_basis(&[brush], true).unwrap();
+        let request = repeat::Options {
+            count: 1,
+            rotation: DVec3::ZERO,
+            ..options()
+        };
+        let report = session
+            .preview_repeat_array_in_space(&[point, brush], request, true, &session.repeat_stamp())
+            .unwrap();
+        assert_eq!(report["preview"]["frame_source"], id_string(brush));
+        assert_eq!(report["preview"]["basis"], json!(basis.to_cols_array_2d()));
+        let expected_point = session
+            .render_document()
+            .vmf()
+            .entities
+            .last()
+            .unwrap()
+            .origin()
+            .unwrap();
+        session
+            .cancel_repeat_array(report["preview"]["token"].as_u64().unwrap())
+            .unwrap();
+        let reversed = session
+            .preview_repeat_array_in_space(&[brush, point], request, true, &session.repeat_stamp())
+            .unwrap();
+        assert_eq!(reversed["preview"]["basis"], report["preview"]["basis"]);
+        let copies = session.geometry.repeat.preview.as_ref().unwrap();
+        let ObjectId::Solid(original) = brush else {
+            panic!()
+        };
+        let ObjectId::Solid(copy) = copies.result.copies[0].objects[0] else {
+            panic!()
+        };
+        let delta = basis * request.translation;
+        for (source, copied) in session
+            .document
+            .solid(original)
+            .unwrap()
+            .sides
+            .iter()
+            .zip(&copies.document.solid(copy).unwrap().sides)
+        {
+            for (before, after) in source.plane.0.into_iter().zip(copied.plane.0) {
+                assert!(after.abs_diff_eq(before + delta, 1e-8));
+            }
+        }
+        let ObjectId::Entity(copy) = copies.result.copies[0].objects[1] else {
+            panic!()
+        };
+        let actual_point = copies.document.entity(copy).unwrap().origin().unwrap();
+        assert!(actual_point.abs_diff_eq(expected_point, 1e-8));
+        assert!(actual_point.abs_diff_eq(DVec3::X * 16.0 + delta, 1e-8));
     }
 
     #[test]

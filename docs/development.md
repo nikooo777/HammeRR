@@ -380,7 +380,7 @@ cargo test -p editor-core session::repeat::tests
 python3 -B scripts/validate_repeat_array.py --binary target/debug/hammerr-headless --output /tmp/hammerr-repeat-array-check
 ```
 
-Checks nth-copy transforms from immutable originals, generated IDs/names, supported internal references, external-link preservation, copied notes and bounds. The private headless MCP script includes offscreen renders, source/history/camera preservation, invalid/stale tokens, competing previews, Undo/Redo and VMF save/reopen. The software UI test `repeat_ui::tests::repeat_controls_preview_apply_cancel_and_preserve_foreign_drafts` covers previewed-setting review and exact Cancel ownership; `HAMMERR_UI_SNAPSHOTS` saves `repeat-array.png`.
+Checks nth-copy world/source-local transforms from immutable originals, fixed captured frames, malformed orientation rejection, explicit/default world parity, generated IDs/names, supported internal references, external-link preservation, copied notes and bounds. The private headless MCP script includes offscreen renders, source/history/camera preservation, invalid/stale tokens, competing previews, Undo/Redo and VMF save/reopen. The software UI test `repeat_ui::tests::repeat_controls_preview_apply_cancel_and_preserve_foreign_drafts` covers previewed-setting review and exact Cancel ownership; `HAMMERR_UI_SNAPSHOTS` saves `repeat-array.png` with the source-local controls.
 
 ### 2D sky preview
 
@@ -586,9 +586,10 @@ python3 -B scripts/validate_overlay_authoring.py --binary target/debug/hammerr-h
 ```
 
 These checks cover real tilted world/detail corners, shared imported projection
-validation, ownership/review, stale source/selection guards, material browsing,
-Apply/Cancel/Undo and exact shared native output. `--render` captures the shared
-outline; `--runtime` compares a fully MCP-created floor projection with absent
+validation, same-binding refit with raw metadata and entity identity retained,
+ownership/review, stale source/selection guards, material browsing and read
+errors, Apply/Cancel/Undo and exact shared native output. `--render` captures the
+shared outline; `--runtime` compares a fully MCP-created floor projection with absent
 and faded cases on private displays, including runtime accessor lookup.
 
 ### Compile-region shell experiment

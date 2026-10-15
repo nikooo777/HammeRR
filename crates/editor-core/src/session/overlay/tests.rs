@@ -350,3 +350,173 @@ fn other_geometry_previews_block_overlay_changes_without_being_discarded() {
         assert_eq!(session.document.vmf(), &before);
     }
 }
+
+#[test]
+fn refit_existing_binding_shares_owned_review_and_updates_one_entity_atomically() {
+    for (actor, reviewer) in [(Actor::User, Actor::Agent), (Actor::Agent, Actor::User)] {
+        for detail in [false, true] {
+            let (_directory, mut session, source) = fixture(actor, detail);
+            let token = preview(&mut session, actor, source);
+            let created = session.apply_overlay(actor, token).unwrap()["created"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let ObjectId::Entity(id) = crate::identity::parse_id(&created).unwrap() else {
+                unreachable!()
+            };
+            let source_owner = session.document.owner_of_solid(source.solid).unwrap();
+            session
+                .edit(actor, "source moved; imported strings", |tx| {
+                    tx.entity_mut(id)?.properties.set("StartU", "-0.25000");
+                    tx.entity_mut(id)?
+                        .properties
+                        .set("material", "Materials/Test/Checker.VMT");
+                    edit::translate(tx, &[source_owner], DVec3::new(3.125, -2.375, 4.625), true)
+                })
+                .unwrap();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let initial = session.get_overlay_state();
+            assert_eq!(initial["selected_overlay"]["entity"], created);
+            assert!(initial["refit_error"].is_null());
+            let state = session
+                .preview_overlay_refit(actor, id, &session.overlay_stamp())
+                .unwrap();
+            let token = state["draft"]["token"].as_u64().unwrap();
+            assert_eq!(state["draft"]["operation"], "refit");
+            assert_eq!(state["draft"]["entity"], created);
+            assert_eq!(
+                state["draft"]["source"],
+                json!({"solid":source.solid,"side":source.side})
+            );
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert_eq!(session.selected_ids(), [ObjectId::Entity(id)]);
+            assert!(
+                session
+                    .preview_overlay_refit(actor, u32::MAX, &session.overlay_stamp())
+                    .is_err()
+            );
+            assert!(
+                session
+                    .preview_overlay_refit(actor, id, initial["snapshot"].as_str().unwrap())
+                    .is_err()
+            );
+            assert_eq!(session.get_overlay_state(), state);
+            assert!(session.apply_overlay(reviewer, token).is_err());
+            assert!(session.cancel_overlay(reviewer, token).is_err());
+            let reviewed = session.review_overlay(reviewer, token).unwrap();
+            assert_eq!(reviewed["draft"]["operation"], "refit");
+            assert_eq!(reviewed["draft"]["entity"], created);
+            let reviewed_token = reviewed["draft"]["token"].as_u64().unwrap();
+            let expected = overlay::fit_existing(&before, id).unwrap().1;
+            let result = session.apply_overlay(reviewer, reviewed_token).unwrap();
+            assert_eq!(result["operation"], "refit");
+            assert_eq!(result["updated"], created);
+            assert!(result["created"].is_null());
+            assert_eq!(session.document.vmf().entities.len(), before.entities.len());
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            assert_eq!(session.selected_ids(), [ObjectId::Entity(id)]);
+            let actual = session.document.entity(id).unwrap();
+            assert_eq!(overlay::parse(actual).unwrap(), expected);
+            assert_eq!(actual.properties.get("StartU"), Some("-0.25000"));
+            assert_eq!(
+                actual.properties.get("material"),
+                Some("Materials/Test/Checker.VMT")
+            );
+            let applied = session.document.vmf().clone();
+            session.undo(reviewer).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(reviewer).unwrap();
+            assert_eq!(session.document.vmf(), &applied);
+        }
+    }
+}
+
+#[test]
+fn rejected_multiside_hidden_and_nonquad_refits_preserve_the_last_valid_draft() {
+    for actor in [Actor::User, Actor::Agent] {
+        for case in 0..3 {
+            let (_directory, mut session, source) = fixture(actor, false);
+            let id = session
+                .edit(actor, "unsupported imported overlay", |tx| {
+                    let ObjectId::Solid(solid) = edit::create_block(
+                        tx,
+                        DVec3::new(-64.0, -64.0, 0.0),
+                        DVec3::new(64.0, 64.0, 16.0),
+                        "test/checker",
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    let brush = tx.solid_mut(solid)?;
+                    let side = brush
+                        .sides
+                        .iter()
+                        .find(|side| {
+                            map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99
+                        })
+                        .unwrap()
+                        .id;
+                    let other = brush
+                        .sides
+                        .iter()
+                        .find(|candidate| candidate.id != side)
+                        .unwrap()
+                        .id;
+                    let ObjectId::Entity(id) =
+                        overlay::create(tx, FaceId { solid, side }, request(source).options)?
+                    else {
+                        unreachable!()
+                    };
+                    match case {
+                        0 => tx
+                            .entity_mut(id)?
+                            .properties
+                            .set("sides", format!("{side} {other}")),
+                        1 => tx.entity_mut(id)?.hidden = true,
+                        2 => {
+                            tx.solid_mut(solid)?
+                                .sides
+                                .iter_mut()
+                                .find(|side| {
+                                    map_core::Plane::from_points(side.plane.0).unwrap().normal.x
+                                        > 0.99
+                                })
+                                .unwrap()
+                                .plane
+                                .0 = [
+                                DVec3::new(-64.0, 64.0, 0.0),
+                                DVec3::new(64.0, -64.0, 0.0),
+                                DVec3::new(64.0, -64.0, 16.0),
+                            ];
+                        }
+                        _ => unreachable!(),
+                    }
+                    Ok(id)
+                })
+                .unwrap();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let token = preview(&mut session, actor, source);
+            let valid = session.get_overlay_state();
+            let error = session
+                .preview_overlay_refit(actor, id, &session.overlay_stamp())
+                .unwrap_err();
+            assert!(
+                error.contains(match case {
+                    0 => "exactly one",
+                    1 => "visible info_overlay",
+                    2 => "quad face",
+                    _ => unreachable!(),
+                }),
+                "{error}"
+            );
+            assert_eq!(session.get_overlay_state(), valid);
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+            session.cancel_overlay(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+        }
+    }
+}

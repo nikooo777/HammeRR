@@ -110,7 +110,7 @@ To build the map, set the build options once, then compile:
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
-| Overlay authoring | `get_overlay_state`, `preview_overlay`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
+| Overlay authoring | `get_overlay_state`, `preview_overlay`, `preview_overlay_refit`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
@@ -397,11 +397,11 @@ The lowest brush ID supplies brush/editor metadata. Outer faces keep their origi
 
 ### Repeated placement
 
-Call `get_repeat_array`, then pass its `snapshot` to `preview_repeat_array` with `count` and optional `ids`, `translation`, `rotation`, `pivot` and `texture_lock`. IDs default to the selection; translation and rotation default to zero, pivot to the source center and texture lock to true. `count` is the number of additional copies. Copy n starts from the originals, rotates by n times the world XYZ degree step about the fixed pivot, then moves by n times the world XYZ translation step.
+Call `get_repeat_array`, then pass its `snapshot` to `preview_repeat_array` with `count` and optional `ids`, `space`, `translation`, `rotation`, `pivot` and `texture_lock`. IDs default to the selection; translation and rotation default to zero, pivot to the source center and texture lock to true. `count` is the number of additional copies. `space` is `world` (default) or `local`. Copy n starts from the originals, rotates by n times the XYZ degree step about the fixed world pivot, then moves by n times the translation step. Both steps use the chosen frame. Local mode captures the original source frame once, from the first object in stable ID order (world brushes before entities), and keeps those axes for every copy. `preview.space`, `basis` (column vectors) and `frame_source` expose that frame. Malformed effective source orientation rejects local previews without replacing a valid draft.
 
 Inspect `preview.copies`, generated names, copied entity fields and bounds, or render the shared draft. Pass its numeric `preview.token` to `apply_repeat_array` or `cancel_repeat_array`. Apply rechecks the complete result, selects the copies and adds one Undo step. Invalid requests retain the previous valid draft; stale tokens cannot apply or cancel replacements. `get_map_info.repeat_array` exposes the same state; `get_objects`, saving and compiling use committed geometry.
 
-Unique targetnames become `name_copyN` with collision suffixes. Supported exact internal FGD/I/O/parent references follow each copy; external links remain. Ambiguous names, uncertain internal references, internal wildcards, generated-name reference captures, overlays and numeric node/side references reject. Named source sets with scripts or dynamic I/O also reject. Design notes copy within their normal budgets; saved face partitions stay on originals. Limits are 16 sources, 64 additional copies, 256 generated objects including owned brushes, 8192 sides and 128 UTF-8 bytes per generated name. Only fixed world translation/rotation arrays are supported; see [Repeated placement](repeated-placement.md).
+Unique targetnames become `name_copyN` with collision suffixes. Supported exact internal FGD/I/O/parent references follow each copy; external links remain. Ambiguous names, uncertain internal references, internal wildcards, generated-name reference captures, overlays and numeric node/side references reject. Named source sets with scripts or dynamic I/O also reject. Design notes copy within their normal budgets; saved face partitions stay on originals. Limits are 16 sources, 64 additional copies, 256 generated objects including owned brushes, 8192 sides and 128 UTF-8 bytes per generated name. World and source-local translation/rotation arrays are supported; scale and surface sprinkle remain unavailable; see [Repeated placement](repeated-placement.md).
 
 ### 2D sky preview
 
@@ -528,10 +528,11 @@ See [Prefab library](prefabs.md).
 
 | Tool | Inputs and result |
 | --- | --- |
-| `get_overlay_state` | Current `snapshot`, eligible selected source or `selection_error`, and draft owner/token/validity, options, corners, basis and bounds. |
+| `get_overlay_state` | Current `snapshot`, eligible selected source or `selection_error`, eligible `selected_overlay` or `refit_error`, and draft operation/entity, owner/token/validity, options, corners, basis and bounds. |
 | `preview_overlay` | Latest `snapshot`, explicit `source:{solid,side}` and `material`; optional `targetname`, `render_order` (0–3), `u`/`v` endpoint pairs and `fade_min`/`fade_max` world distances. Fits a new owned draft without editing source/history/selection. |
+| `preview_overlay_refit` | Latest `snapshot` and optional overlay `id` (defaults to selection); previews refitting its one existing visible world/detail quad binding. Keeps identity, raw settings and metadata. |
 | `review_overlay` | A valid draft `token`; transfers ownership and issues a fresh token without editing the map. |
-| `apply_overlay` | Current owned `token`; creates and selects the entity in one Undo step. |
+| `apply_overlay` | Current owned `token`; one Undo step. `operation: "create"` returns `created`; `operation: "refit"` returns `updated` for the same entity. |
 | `cancel_overlay` | Matching owned `token`; discards only that draft, including a stale owned draft. |
 
 Creation supports one visible convex planar world or `func_detail` quad,
@@ -544,8 +545,10 @@ Map/selection changes stale Apply and Review. Invalid requests preserve valid
 drafts; replaced tokens cannot cancel their successors. Explicit sources work
 without changing face selection; humans can open **Overlay…** and review that
 draft directly. `render_view` shows the cyan outline; `preview_material` exposes
-the same material thumbnail. Projected viewport materials, editing an existing
-projection, terrain/model creation and automatic rebinding remain unavailable.
+the same material thumbnail. Refit changes only the existing projection/origin/side fields, preserving raw
+material/name/UV/order/fade strings, connections and metadata. Multiside and
+nonquad refits reject. Projected viewport materials, new face bindings,
+terrain/model creation or refitting and automatic rebinding remain unavailable.
 See [Overlays](overlays.md).
 
 ### Compile regions

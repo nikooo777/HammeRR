@@ -363,17 +363,14 @@ pub fn local_basis(doc: &Document, id: ObjectId) -> Option<glam::DMat3> {
         ObjectId::Entity(id) => {
             let entity = doc.entity(id)?;
             if entity.solids.is_empty() {
-                let mut angles = entity
-                    .properties
-                    .get("angles")
-                    .and_then(source_formats::vmf::parse_vec3)
-                    .unwrap_or(DVec3::ZERO);
+                let mut angles = match entity.properties.get("angles") {
+                    Some(value) => source_formats::vmf::parse_vec3(value)?,
+                    None => DVec3::ZERO,
+                };
                 if entity.properties.get("angles").is_none()
-                    && let Some(angle) = entity
-                        .properties
-                        .get("angle")
-                        .and_then(|value| value.parse::<f64>().ok())
+                    && let Some(value) = entity.properties.get("angle")
                 {
+                    let angle = value.trim().parse::<f64>().ok()?;
                     angles = match angle {
                         -1.0 => DVec3::new(-90.0, 0.0, 0.0),
                         -2.0 => DVec3::new(90.0, 0.0, 0.0),
@@ -381,11 +378,9 @@ pub fn local_basis(doc: &Document, id: ObjectId) -> Option<glam::DMat3> {
                     };
                 }
                 if matches!(entity.classname(), Some("light_spot" | "light_environment"))
-                    && let Some(pitch) = entity
-                        .properties
-                        .get("pitch")
-                        .and_then(|value| value.parse::<f64>().ok())
+                    && let Some(value) = entity.properties.get("pitch")
                 {
+                    let pitch = value.trim().parse::<f64>().ok()?;
                     angles.x = -pitch;
                 }
                 if !angles.is_finite() {
@@ -648,6 +643,62 @@ mod tests {
         assert!((maxs - mins).abs_diff_eq(DVec3::new(64.0, 32.0, 16.0), 1e-8));
         let (mins, maxs) = bounds_of(&doc, &[id]).unwrap();
         assert!((maxs - mins).x > 64.0);
+    }
+
+    #[test]
+    fn point_local_frames_reject_malformed_effective_orientation_fields() {
+        type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], Option<DVec3>);
+        let cases: &[Case<'_>] = &[
+            ("info_target", &[], Some(DVec3::X)),
+            ("info_target", &[("angles", "0 90 0")], Some(DVec3::Y)),
+            ("info_target", &[("angle", "90")], Some(DVec3::Y)),
+            ("info_target", &[("angle", " 90 ")], Some(DVec3::Y)),
+            ("info_target", &[("angle", "-1")], Some(DVec3::Z)),
+            ("info_target", &[("angle", "-2")], Some(DVec3::NEG_Z)),
+            (
+                "info_target",
+                &[("angles", "0 90 0"), ("angle", "garbage")],
+                Some(DVec3::Y),
+            ),
+            ("info_target", &[("pitch", "garbage")], Some(DVec3::X)),
+            ("light_spot", &[("pitch", "90")], Some(DVec3::Z)),
+            ("light_spot", &[("pitch", " 90 ")], Some(DVec3::Z)),
+            ("light_environment", &[("pitch", "-90")], Some(DVec3::NEG_Z)),
+            (
+                "info_target",
+                &[("angles", "garbage"), ("angle", "90")],
+                None,
+            ),
+            ("info_target", &[("angles", "0 90")], None),
+            ("info_target", &[("angles", "NaN 0 0")], None),
+            ("info_target", &[("angles", "0 inf 0")], None),
+            ("info_target", &[("angle", "garbage")], None),
+            ("info_target", &[("angle", "NaN")], None),
+            ("light_spot", &[("pitch", "garbage")], None),
+            ("light_environment", &[("pitch", "inf")], None),
+        ];
+        for &(class, properties, expected) in cases {
+            let mut document = Document::empty();
+            let properties = properties
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<Vec<_>>();
+            let id = document
+                .edit("point frame", |tx| {
+                    create_entity(tx, class, Some(DVec3::ZERO), &properties, Vec::new())
+                })
+                .unwrap();
+            let before = document.vmf().clone();
+            let actual = local_basis(&document, id);
+            match expected {
+                Some(expected) => assert!(
+                    actual.unwrap().x_axis.abs_diff_eq(expected, 1e-12),
+                    "{class} {properties:?}"
+                ),
+                None => assert!(actual.is_none(), "{class} {properties:?}"),
+            }
+            assert_eq!(document.vmf(), &before);
+        }
     }
 
     #[test]

@@ -23,6 +23,7 @@ def validate(args):
         tools = {tool["name"]: tool["inputSchema"] for tool in client.rpc("tools/list", {})["tools"]}
         check(all(name in tools for name in ["get_repeat_array", "preview_repeat_array", "apply_repeat_array", "cancel_repeat_array"]), "shared array tools")
         check(tools["preview_repeat_array"].get("additionalProperties") is False, "unknown preview fields rejected")
+        check("space" in tools["preview_repeat_array"]["properties"], "array space is exposed in MCP")
         brush = client.call("create_block", {"mins": [-16, -16, 0], "maxs": [16, 16, 24], "material": "dev/dev_measuregeneric01"})["id"]
         parent = client.call("create_entity", {"classname": "info_target", "origin": [0, 0, 32], "properties": {"targetname": "array_parent"}})["id"]
         child = client.call("create_entity", {"classname": "info_target", "origin": [32, 0, 32], "properties": {"targetname": "array_child", "parentname": "array_parent,attachment"}})["id"]
@@ -109,7 +110,65 @@ def validate(args):
         client.call("select", {"ids": [child]})
         client.call("apply_repeat_array", {"token": report["preview"]["token"]}, error=True)
         check(client.call("get_repeat_array")["preview"] is None, "selection change invalidates array")
-        results = {"checks": checks, "count": len(checks), "preview": replacement}
+
+        local_parent = client.call("create_entity", {"classname": "info_target", "origin": [10, 0, 7], "properties": {"targetname": "local_parent", "angles": "0 37 0"}})["id"]
+        local_child = client.call("create_entity", {"classname": "info_target", "origin": [3, -6, 9], "properties": {"targetname": "local_child", "parentname": "local_parent,attachment", "angles": "0 90 0"}})["id"]
+        local_sources = [local_child, local_parent]
+        client.call("select", {"ids": local_sources})
+        local_original = detail(client, local_sources)
+        local_history = client.call("get_map_info")["undo"]
+        local_camera = client.call("get_camera")
+        local_arguments = {"ids": local_sources, "count": 3, "translation": [4.5, -2.25, 1.125], "rotation": [90, 0, 0], "pivot": [0, 0, 0]}
+        local = preview(client, space="local", **local_arguments)
+        check(local["preview"]["space"] == "local" and local["preview"]["frame_source"] == local_parent, "local array uses lowest-ID original source despite request order")
+        angle = math.radians(37)
+        cosine, sine = math.cos(angle), math.sin(angle)
+        expected_basis = [[cosine, sine, 0], [-sine, cosine, 0], [0, 0, 1]]
+        check(all(math.isclose(a, b, abs_tol=1e-12) for actual, expected in zip(local["preview"]["basis"], expected_basis) for a, b in zip(actual, expected)), "reported source frame matches original entity orientation")
+        entities = {entity["id"]: entity for entity in local["preview"]["entities"]}
+        for copy in local["preview"]["copies"]:
+            index = copy["index"]
+            for copied_id, point in zip(copy["objects"], [[3, -6, 9], [10, 0, 7]]):
+                x, y, z = point
+                lx, ly = cosine * x + sine * y, -sine * x + cosine * y
+                rx, ry, rz = {1: (lx, -z, ly), 2: (lx, -ly, -z), 3: (lx, z, -ly)}[index]
+                rx += 4.5 * index
+                ry -= 2.25 * index
+                rz += 1.125 * index
+                expected = [cosine * rx - sine * ry, sine * rx + cosine * ry, rz]
+                check(all(math.isclose(a, b, abs_tol=1e-8) for a, b in zip(entities[copied_id]["origin"], expected)), f"local copy {index} uses fixed original axes and pivot")
+            copied_child = entities[copy["objects"][0]]
+            check(dict(copied_child["properties"])["parentname"] == f"local_parent_copy{index},attachment" and copy["remapped_references"] == 1, f"local copy {index} keeps internal parent remapping")
+        check(detail(client, local_sources) == local_original and client.call("get_map_info")["undo"] == local_history, "local preview preserves committed originals and history")
+        check(client.call("get_camera") == local_camera, "local preview preserves camera")
+        client.render(args.output / "repeat-array-local.png", camera=render_camera)
+        for space in ["source", "LOCAL", ""]:
+            client.call("preview_repeat_array", {"snapshot": local["snapshot"], "space": space, **local_arguments}, error=True)
+            check(client.call("get_repeat_array") == local, "invalid space preserves valid local draft")
+        world_default = preview(client, **local_arguments)
+        world_explicit = preview(client, space="world", **local_arguments)
+        check(world_default["preview"]["space"] == "world" and world_explicit["preview"]["frame_source"] is None, "world remains the default mode")
+        check(all(world_default["preview"][key] == world_explicit["preview"][key] for key in ["copies", "entities", "bounds", "basis"]), "explicit and default world previews are exact")
+        client.call("cancel_repeat_array", {"token": local["preview"]["token"]}, error=True)
+        check(client.call("get_repeat_array") == world_explicit, "old local token cannot discard replacement world draft")
+        local = preview(client, space="local", **local_arguments)
+        local_applied = client.call("apply_repeat_array", {"token": local["preview"]["token"]})
+        local_copies = detail(client, local_applied["objects"])
+        check(detail(client, local_sources) == local_original and len(local_copies) == 6, "local Apply retains originals and creates exact preview copies")
+        check(client.call("get_map_info")["undo"] == ["repeat array", *local_history], "local Apply records one Undo step")
+        client.call("undo")
+        check(detail(client, local_sources) == local_original and client.call("get_map_info")["undo"] == local_history, "local Undo removes the complete array")
+        client.call("redo")
+        check(detail(client, local_applied["objects"]) == local_copies, "local Redo restores complete array")
+        local_path = args.output / "repeat-array-local.vmf"
+        client.call("save_map", {"path": str(local_path)})
+        client.call("open_map", {"path": str(local_path), "discard_changes": True})
+        check(detail(client, local_applied["objects"]) == local_copies, "local array survives save and reopen")
+        stale = preview(client, ids=[local_parent], space="local", count=1, translation=[8, 0, 0])
+        client.call("set_entity_properties", {"id": local_parent, "set": {"angles": "0 61 0"}})
+        client.call("apply_repeat_array", {"token": stale["preview"]["token"]}, error=True)
+        check(client.call("get_repeat_array")["preview"] is None, "changed source orientation prevents stale local Apply")
+        results = {"checks": checks, "count": len(checks), "preview": replacement, "local_preview": local}
         (args.output / "validation.json").write_text(json.dumps(results, indent=2) + "\n")
         return len(checks)
     finally:

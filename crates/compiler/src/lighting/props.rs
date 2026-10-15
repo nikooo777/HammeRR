@@ -132,10 +132,17 @@ impl Assets<'_> {
 }
 
 fn needs_material_warning(material: &Material) -> bool {
-    !matches!(material.shader.as_str(), "vertexlitgeneric" | "unlitgeneric" | "lightmappedgeneric")
-        || material.translucent() || material.alpha_test()
-        || material.get("$alpha").is_some_and(|value| value.trim().parse::<f64>().is_ok_and(|alpha| alpha < 1.0))
-        || material.get("$additive").is_some_and(|value| value.trim() != "0")
+    !matches!(
+        material.shader.as_str(),
+        "vertexlitgeneric" | "unlitgeneric" | "lightmappedgeneric"
+    ) || material.translucent()
+        || material.alpha_test()
+        || material
+            .get("$alpha")
+            .is_some_and(|value| value.trim().parse::<f64>().is_ok_and(|alpha| alpha < 1.0))
+        || material
+            .get("$additive")
+            .is_some_and(|value| value.trim() != "0")
         || !material.blocks.is_empty()
 }
 

@@ -52,7 +52,15 @@ fn inward_pockets_preserve_volume_ownership_surfaces_metadata_and_exact_history(
                         let id = partitions[0].source.solid;
                         document
                             .edit("metadata", |tx| {
-                                let source = tx.solid_mut(id)?;
+                                let source = match partitions[0].owner {
+                                    ObjectId::Solid(_) => tx.solid_mut(id)?,
+                                    ObjectId::Entity(owner) => tx
+                                        .entity_mut(owner)?
+                                        .solids
+                                        .iter_mut()
+                                        .find(|solid| solid.id == id)
+                                        .unwrap(),
+                                };
                                 source.hidden = true;
                                 source.extra_properties.set("foreign_brush", "keep");
                                 source.extra.push(Node::block(

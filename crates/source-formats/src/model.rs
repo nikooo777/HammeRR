@@ -31,6 +31,30 @@ pub struct Part {
 }
 
 #[derive(Debug)]
+pub struct BodyVariant {
+    pub name: String,
+    pub parts: std::ops::Range<usize>,
+    pub bounds: Option<[[f32; 3]; 2]>,
+}
+
+#[derive(Debug)]
+pub struct BodyGroup {
+    pub name: String,
+    pub base: u32,
+    pub variants: Vec<BodyVariant>,
+}
+
+impl BodyGroup {
+    pub fn selected(&self, body: u32) -> usize {
+        if self.variants.len() <= 1 {
+            0
+        } else {
+            (body / self.base) as usize % self.variants.len()
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Model {
     pub header: ModelHeader,
     pub vertices: Vec<Vertex>,
@@ -41,6 +65,7 @@ pub struct Model {
     pub bounds: [[f32; 3]; 2],
     pub body_parts: usize,
     pub reference_bones: usize,
+    pub body_groups: Vec<BodyGroup>,
 }
 
 struct Mesh {
@@ -101,47 +126,87 @@ impl Model {
         let vertices = vvd::parse(vvd, header.checksum, reference.as_deref())?;
         let bodies = reader.table(0, 232, 236, 16, MAX_BODY_PARTS)?;
         let mut meshes = Vec::with_capacity(bodies.len);
-        let mut model_counts = Vec::with_capacity(bodies.len);
+        let mut body_groups = Vec::with_capacity(bodies.len);
         let mut total_meshes = 0;
+        let mut total_models = 0;
         for index in 0..bodies.len {
-            let models = reader.table(bodies.at(index)?, 4, 12, 148, MAX_MODELS)?;
-            model_counts.push(models.len);
-            let model = models.at(0)?;
-            let count = reader.count(model + 80, MAX_VERTICES)?;
-            let byte_offset = reader.count(model + 84, MAX_VERTICES * 48)?;
-            if !byte_offset.is_multiple_of(48) {
-                return Err(invalid("MDL model vertex offset is not aligned"));
+            let base = bodies.at(index)?;
+            let models = reader.table(base, 4, 12, 148, MAX_MODELS)?;
+            total_models += models.len;
+            if models.len == 0 || total_models > MAX_MODELS {
+                return Err(invalid("MDL body variants exceed their resource limit"));
             }
-            let first = byte_offset / 48;
-            if first + count > vertices.len() {
-                return Err(invalid("MDL model vertices exceed fixed-up VVD data"));
+            let value_base = reader.count(base + 8, i32::MAX as usize)? as u32;
+            if models.len > 1 && value_base == 0 {
+                return Err(invalid("MDL bodygroup base must be positive"));
             }
-            let parts = reader.table(model, 72, 76, 116, MAX_MESHES)?;
-            total_meshes += parts.len;
-            if total_meshes > MAX_MESHES {
-                return Err(invalid("MDL mesh count exceeds its resource limit"));
-            }
-            let mut model_meshes = Vec::with_capacity(parts.len);
-            for part in 0..parts.len {
-                let mesh = parts.at(part)?;
-                let material = reader.count(mesh, MAX_MATERIALS)?;
-                if material >= skin_refs {
-                    return Err(invalid("MDL mesh material is outside the skin table"));
+            let mut variants = Vec::with_capacity(models.len);
+            let mut body_meshes = Vec::with_capacity(models.len);
+            for variant in 0..models.len {
+                let model = models.at(variant)?;
+                let bytes = reader.bytes(model, 64)?;
+                let name = std::str::from_utf8(
+                    &bytes[..bytes
+                        .iter()
+                        .position(|&value| value == 0)
+                        .unwrap_or(bytes.len())],
+                )
+                .map_err(|_| invalid("MDL body variant names must be UTF-8"))?
+                .to_owned();
+                let count = reader.count(model + 80, MAX_VERTICES)?;
+                let byte_offset = reader.count(model + 84, MAX_VERTICES * 48)?;
+                if !byte_offset.is_multiple_of(48) {
+                    return Err(invalid("MDL model vertex offset is not aligned"));
                 }
-                let offset = reader.count(mesh + 12, count)?;
-                let size = reader.count(mesh + 8, count)?;
-                if offset + size > count {
-                    return Err(invalid("MDL mesh vertex range exceeds its model"));
+                let first = byte_offset / 48;
+                if first + count > vertices.len() {
+                    return Err(invalid("MDL model vertices exceed fixed-up VVD data"));
                 }
-                model_meshes.push(Mesh {
-                    material,
-                    first: first + offset,
-                    count: size,
+                let parts = reader.table(model, 72, 76, 116, MAX_MESHES)?;
+                total_meshes += parts.len;
+                if total_meshes > MAX_MESHES {
+                    return Err(invalid("MDL mesh count exceeds its resource limit"));
+                }
+                let mut model_meshes = Vec::with_capacity(parts.len);
+                for part in 0..parts.len {
+                    let mesh = parts.at(part)?;
+                    let material = reader.count(mesh, MAX_MATERIALS)?;
+                    if material >= skin_refs {
+                        return Err(invalid("MDL mesh material is outside the skin table"));
+                    }
+                    let offset = reader.count(mesh + 12, count)?;
+                    let size = reader.count(mesh + 8, count)?;
+                    if offset + size > count {
+                        return Err(invalid("MDL mesh vertex range exceeds its model"));
+                    }
+                    model_meshes.push(Mesh {
+                        material,
+                        first: first + offset,
+                        count: size,
+                    });
+                }
+                body_meshes.push(model_meshes);
+                variants.push(BodyVariant {
+                    name,
+                    parts: 0..0,
+                    bounds: None,
                 });
             }
-            meshes.push(model_meshes);
+            meshes.push(body_meshes);
+            body_groups.push(BodyGroup {
+                name: reader.string(reader.relative(base, 0)?)?,
+                base: value_base,
+                variants,
+            });
         }
-        let parts = vtx::parse(vtx, header.checksum, &meshes, &model_counts)?;
+        let geometry = vtx::parse(vtx, header.checksum, &meshes)?;
+        let parts = geometry.parts;
+        for (group, ranges) in body_groups.iter_mut().zip(geometry.models) {
+            for (variant, range) in group.variants.iter_mut().zip(ranges) {
+                variant.parts = range.clone();
+                variant.bounds = part_bounds(&vertices, &parts[range]);
+            }
+        }
         let mut mins = [f32::INFINITY; 3];
         let mut maxs = [f32::NEG_INFINITY; 3];
         let mut triangles = 0;
@@ -156,9 +221,9 @@ impl Model {
             }
         }
         if triangles == 0 {
-            return Err(invalid("MDL default body has no displayable triangles"));
+            return Err(invalid("MDL body variants have no displayable triangles"));
         }
-        Ok(Self {
+        let mut result = Self {
             header,
             vertices,
             parts,
@@ -168,13 +233,75 @@ impl Model {
             bounds: [mins, maxs],
             body_parts: bodies.len,
             reference_bones: reference.as_ref().map_or(0, Vec::len),
-        })
+            body_groups,
+        };
+        result.bounds = result.bounds_for_body(0).unwrap_or(result.bounds);
+        Ok(result)
+    }
+
+    pub fn parts_for_body(&self, body: u32) -> impl Iterator<Item = &Part> {
+        self.parts
+            .iter()
+            .take(if self.body_groups.is_empty() {
+                self.parts.len()
+            } else {
+                0
+            })
+            .chain(self.body_groups.iter().flat_map(move |group| {
+                self.parts[group.variants[group.selected(body)].parts.clone()].iter()
+            }))
+            .filter(|part| !part.indices.is_empty())
+    }
+
+    pub fn bounds_for_body(&self, body: u32) -> Option<[[f32; 3]; 2]> {
+        if self.body_groups.is_empty() {
+            return Some(self.bounds);
+        }
+        self.body_groups
+            .iter()
+            .filter_map(|group| group.variants[group.selected(body)].bounds)
+            .reduce(|a, b| {
+                [
+                    std::array::from_fn(|axis| a[0][axis].min(b[0][axis])),
+                    std::array::from_fn(|axis| a[1][axis].max(b[1][axis])),
+                ]
+            })
+    }
+
+    pub fn set_bodygroup(&self, body: u32, group: usize, variant: usize) -> io::Result<u32> {
+        let group = self
+            .body_groups
+            .get(group)
+            .ok_or_else(|| invalid("Bodygroup index is out of range"))?;
+        if variant >= group.variants.len() {
+            return Err(invalid("Bodygroup variant is out of range"));
+        }
+        let value = i64::from(body) - (group.selected(body) as i64) * i64::from(group.base)
+            + (variant as i64) * i64::from(group.base);
+        u32::try_from(value)
+            .ok()
+            .filter(|&value| value <= i32::MAX as u32)
+            .ok_or_else(|| invalid("Bodygroup value must fit a nonnegative native integer"))
     }
 
     pub fn memory_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.vertices.capacity() * std::mem::size_of::<Vertex>()
             + self.parts.capacity() * std::mem::size_of::<Part>()
+            + self.body_groups.capacity() * std::mem::size_of::<BodyGroup>()
+            + self
+                .body_groups
+                .iter()
+                .map(|group| {
+                    group.name.capacity()
+                        + group.variants.capacity() * std::mem::size_of::<BodyVariant>()
+                        + group
+                            .variants
+                            .iter()
+                            .map(|variant| variant.name.capacity())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
             + self
                 .parts
                 .iter()
@@ -195,4 +322,21 @@ impl Model {
                 .map(|skin| skin.capacity() * std::mem::size_of::<usize>())
                 .sum::<usize>()
     }
+}
+
+fn part_bounds(vertices: &[Vertex], parts: &[Part]) -> Option<[[f32; 3]; 2]> {
+    let mut low = [f32::INFINITY; 3];
+    let mut high = [f32::NEG_INFINITY; 3];
+    let mut present = false;
+    for part in parts {
+        for &index in &part.indices {
+            present = true;
+            let point = vertices[index as usize].position;
+            for axis in 0..3 {
+                low[axis] = low[axis].min(point[axis]);
+                high[axis] = high[axis].max(point[axis]);
+            }
+        }
+    }
+    present.then_some([low, high])
 }

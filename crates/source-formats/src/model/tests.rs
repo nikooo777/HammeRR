@@ -114,6 +114,61 @@ pub(crate) fn fixture() -> [Vec<u8>; 3] {
     [mdl, vvd, vtx]
 }
 
+pub(crate) fn body_fixture() -> [Vec<u8>; 3] {
+    let [mut mdl, vvd, mut vtx] = fixture();
+    let model = mdl[416..564].to_vec();
+    let mesh = mdl[576..692].to_vec();
+    mdl.resize(1600, 0);
+    put_int(&mut mdl, 76, 1600);
+    put_int(&mut mdl, 404, 2);
+    put_int(&mut mdl, 412, 624);
+    put_string(&mut mdl, 1024, "blank");
+    mdl[1172..1320].copy_from_slice(&model);
+    put_string(&mut mdl, 1172, "quad");
+    put_int(&mut mdl, 1248, 148);
+    mdl[1320..1436].copy_from_slice(&mesh);
+    put_int(&mut mdl, 1324, -148);
+    vtx.resize(201, 0);
+    for (offset, value) in [
+        (36, 2),
+        (40, 137),
+        (173, 1),
+        (177, 16),
+        (181, 1),
+        (185, -129),
+    ] {
+        put_int(&mut vtx, offset, value);
+    }
+    [mdl, vvd, vtx]
+}
+
+#[test]
+fn bodygroups_select_blank_and_visible_variants_with_native_integer_mapping() {
+    let [mdl, vvd, vtx] = body_fixture();
+    let model = Model::parse(&mdl, &vvd, &vtx).unwrap();
+    assert_eq!(model.body_groups.len(), 1);
+    assert_eq!(model.body_groups[0].variants.len(), 2);
+    assert_eq!(model.body_groups[0].variants[0].name, "blank");
+    assert_eq!(model.body_groups[0].variants[1].name, "quad");
+    assert_eq!(model.parts_for_body(0).count(), 0);
+    assert_eq!(
+        model.parts_for_body(1).next().unwrap().indices,
+        [0, 1, 2, 0, 2, 3]
+    );
+    assert_eq!(model.bounds_for_body(0), None);
+    assert_eq!(model.bounds_for_body(1), Some([[0.0; 3], [1.0, 1.0, 0.0]]));
+    assert_eq!(model.set_bodygroup(6, 0, 1).unwrap(), 7);
+    assert_eq!(model.set_bodygroup(7, 0, 0).unwrap(), 6);
+    assert!(model.set_bodygroup(0, 1, 0).is_err());
+    assert!(model.set_bodygroup(0, 0, 2).is_err());
+    let mut bad = mdl.clone();
+    put_int(&mut bad, 408, 0);
+    assert!(Model::parse(&bad, &vvd, &vtx).is_err());
+    let mut bad = vtx.clone();
+    put_int(&mut bad, 36, 3);
+    assert!(Model::parse(&mdl, &vvd, &bad).is_err());
+}
+
 #[test]
 fn static_models_decode_mesh_ranges_material_families_and_relative_names() {
     for version in [44, 48] {

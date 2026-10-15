@@ -10,6 +10,7 @@ fn asset() -> Arc<Asset> {
         materials: vec!["dev/test".into()],
         model: Model {
             reference_bones: 0,
+            body_groups: Vec::new(),
             header: ModelHeader {
                 checksum: 0,
                 flags: 16,
@@ -144,4 +145,64 @@ fn model_scene_uses_material_batches_normals_and_wire_geometry_without_a_helper_
             .iter()
             .all(|vertex| vertex.normal == [0.0, 0.0, 1.0])
     );
+}
+
+#[test]
+fn blank_bodygroups_keep_helpers_and_visible_variants_use_only_their_meshes() {
+    use source_formats::model::{BodyGroup, BodyVariant};
+    let mut asset = Arc::try_unwrap(asset()).unwrap();
+    asset.model.body_groups = vec![BodyGroup {
+        name: "Appearance".into(),
+        base: 1,
+        variants: vec![
+            BodyVariant {
+                name: "blank".into(),
+                parts: 0..0,
+                bounds: None,
+            },
+            BodyVariant {
+                name: "quad".into(),
+                parts: 0..1,
+                bounds: Some(asset.model.bounds),
+            },
+        ],
+    }];
+    let asset = Arc::new(asset);
+    let mut entity = Entity::new(7, "prop_dynamic");
+    entity.properties.set("origin", "0 0 32");
+    let blank = Instance::new(&entity, asset.clone()).unwrap();
+    assert!(!blank.has_geometry());
+    assert_eq!(
+        blank.bounds(),
+        map_core::query::entity_bounds(&entity).unwrap()
+    );
+    let ray = Ray {
+        origin: DVec3::new(0.0, 0.0, 100.0),
+        direction: DVec3::NEG_Z,
+    };
+    assert!(blank.pick(&ray).is_none());
+    let mut vmf = map_core::Document::empty().vmf().clone();
+    vmf.entities.push(entity.clone());
+    let fs = GameFs {
+        game_dir: Default::default(),
+        base_dir: Default::default(),
+        mounts: Vec::new(),
+    };
+    let mut materials = crate::MaterialLibrary::default();
+    let scene = crate::SceneMesh::build_with_models(
+        &vmf,
+        &fs,
+        &mut materials,
+        &Default::default(),
+        &Default::default(),
+        &[],
+        &[blank],
+    );
+    assert_eq!(scene.stats.model_entities, 0);
+    assert_eq!(scene.vertices.len(), 24);
+    entity.properties.set("body", "1");
+    let visible = Instance::new(&entity, asset).unwrap();
+    assert!(visible.has_geometry());
+    assert!(visible.pick(&ray).is_some());
+    assert!(visible.bounds().1.x > 8.0);
 }

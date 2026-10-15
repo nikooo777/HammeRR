@@ -19,6 +19,40 @@ fn css_gameinfo() -> Option<PathBuf> {
 }
 
 #[test]
+fn decodes_css_bodygroup_variants() {
+    let Some(gameinfo) = css_gameinfo() else {
+        return;
+    };
+    let fs = GameFs::from_gameinfo(gameinfo).unwrap();
+    let path = "models/kleiner";
+    let mdl = fs.read(&format!("{path}.mdl")).unwrap().unwrap();
+    let vvd = fs.read(&format!("{path}.vvd")).unwrap().unwrap();
+    let vtx = fs.read(&format!("{path}.dx90.vtx")).unwrap().unwrap();
+    let model = source_formats::model::Model::parse(&mdl, &vvd, &vtx).unwrap();
+    let group = model
+        .body_groups
+        .iter()
+        .position(|group| group.name == "clipboard")
+        .unwrap();
+    assert_eq!(model.body_groups[group].variants.len(), 2);
+    let body = model.set_bodygroup(0, group, 1).unwrap();
+    let triangles = |body| {
+        model
+            .parts_for_body(body)
+            .map(|part| part.indices.len() / 3)
+            .sum::<usize>()
+    };
+    assert!(triangles(body) > triangles(0));
+    assert!(model.body_groups[group].variants[0].bounds.is_none());
+    assert!(model.body_groups[group].variants[1].bounds.is_some());
+    eprintln!(
+        "Kleiner: body{body}, {} → {} triangles",
+        triangles(0),
+        triangles(body)
+    );
+}
+
+#[test]
 fn decodes_css_reference_pose_model_geometry() {
     let Some(gameinfo) = css_gameinfo() else {
         return;

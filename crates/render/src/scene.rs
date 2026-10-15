@@ -417,7 +417,7 @@ impl Builder<'_> {
         if let Some(instance) = self
             .models
             .iter()
-            .find(|instance| instance.id == ObjectId::Entity(entity.id))
+            .find(|instance| instance.id == ObjectId::Entity(entity.id) && instance.has_geometry())
         {
             self.add_model(instance, selected);
             return;
@@ -629,7 +629,7 @@ impl Builder<'_> {
                 smoothing: 0,
             });
         }
-        for part in &model.parts {
+        for part in model.parts_for_body(instance.body) {
             let material_index = model.skins[instance.skin][part.material];
             let material = self.material(&instance.asset.materials[material_index]);
             self.indices[material].extend(part.indices.iter().map(|&index| first + index));

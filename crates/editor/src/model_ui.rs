@@ -27,10 +27,29 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
         Ok(report) => {
             let asset = &report["asset"];
             window.set_pose_info(if asset["pose"] == "reference" {
-                format!("Reference pose · {} bones · body 0 · LOD 0. Animation, other bodygroups and scaling remain planned.",asset["reference_bones"]).into()
+                format!("Reference pose · {} bones · body {} · LOD 0. Animation and scaling remain planned.",asset["reference_bones"],asset["body"]).into()
             } else {
-                "Static model · body 0 · LOD 0. Other bodygroups and scaling remain planned.".into()
+                format!("Static model · body {} · LOD 0. Scaling remains planned.",asset["body"]).into()
             });
+            window.set_bodygroups(slint::ModelRc::new(slint::VecModel::from(
+                asset["bodygroups"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|group| group["variants"].as_array().unwrap().len() > 1)
+                    .map(|group| {
+                        format!(
+                                    "{} · {}",
+                                    group["label"].as_str().unwrap(),
+                                    group["variants"][group["selected"].as_u64().unwrap() as usize]
+                                        ["label"]
+                                        .as_str()
+                                        .unwrap()
+                                )
+                        .into()
+                    })
+                    .collect::<Vec<slint::SharedString>>(),
+            )));
             window.set_model_path(asset["path"].as_str().unwrap_or_default().into());
             window.set_geometry(
                 format!(
@@ -81,6 +100,8 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
                 error.into()
             } else if report["hidden"].as_bool() == Some(true) {
                 "This entity is hidden.".into()
+            } else if report["helper"] == true {
+                "Selected bodygroups have no mesh; an editor helper is shown.".into()
             } else {
                 "Model details are read-only. Reload models after changing model files.".into()
             });
@@ -90,6 +111,7 @@ fn refresh(window: &ModelWindow, session: &Session, target: Option<(u32, u64)>) 
             window.set_skin_info("".into());
             window.set_bounds("".into());
             window.set_pose_info("".into());
+            window.set_bodygroups(Default::default());
             window.set_materials(Default::default());
             window.set_message(error.into());
         }

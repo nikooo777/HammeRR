@@ -176,6 +176,8 @@ pub struct Instance {
     pub origin: DVec3,
     pub rotation: DQuat,
     pub skin: usize,
+    pub body: u32,
+    helper_bounds: (DVec3, DVec3),
 }
 
 impl Instance {
@@ -198,12 +200,20 @@ impl Instance {
         {
             return Err("Scaled model previews remain unsupported".into());
         }
-        if entity
-            .properties
-            .get("body")
-            .is_some_and(|value| value.parse::<u32>().ok() != Some(0))
+        let body = entity.properties.get("body").map_or(Ok(0), |value| {
+            value
+                .parse::<u32>()
+                .map_err(|_| "Model body must be a nonnegative native integer")
+        })?;
+        if body > i32::MAX as u32 {
+            return Err("Model body must fit a nonnegative native integer".into());
+        }
+        if body != 0
+            && entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
         {
-            return Err("Model previews currently use body 0".into());
+            return Err("Static props require body 0; use prop_dynamic for bodygroups".into());
         }
         let skin = entity.properties.get("skin").map_or(Ok(0), |value| {
             value
@@ -242,6 +252,9 @@ impl Instance {
             origin,
             rotation: DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z),
             skin,
+            body,
+            helper_bounds: map_core::query::entity_bounds(entity)
+                .unwrap_or_else(|| map_core::query::point_entity_bounds(origin)),
         };
         let (mins, maxs) = instance.bounds();
         if !mins.is_finite()
@@ -261,8 +274,14 @@ impl Instance {
         self.bounds_in_basis(DMat3::IDENTITY)
     }
 
+    pub fn has_geometry(&self) -> bool {
+        self.asset.model.bounds_for_body(self.body).is_some()
+    }
+
     pub fn bounds_in_basis(&self, basis: DMat3) -> (DVec3, DVec3) {
-        let [mins, maxs] = self.asset.model.bounds;
+        let Some([mins, maxs]) = self.asset.model.bounds_for_body(self.body) else {
+            return transform_bounds(self.helper_bounds, |point| basis.transpose() * point);
+        };
         let mut low = DVec3::splat(f64::INFINITY);
         let mut high = DVec3::splat(f64::NEG_INFINITY);
         for x in [mins[0], maxs[0]] {
@@ -278,6 +297,7 @@ impl Instance {
     }
 
     pub fn pick(&self, ray: &Ray) -> Option<Hit> {
+        let bounds = self.asset.model.bounds_for_body(self.body)?;
         if !ray.origin.is_finite() {
             return None;
         }
@@ -293,13 +313,13 @@ impl Instance {
         let model = &self.asset.model;
         if !map_core::query::ray_intersects_bounds(
             &ray,
-            DVec3::from_array(model.bounds[0].map(f64::from)),
-            DVec3::from_array(model.bounds[1].map(f64::from)),
+            DVec3::from_array(bounds[0].map(f64::from)),
+            DVec3::from_array(bounds[1].map(f64::from)),
         ) {
             return None;
         }
         let mut nearest: Option<f64> = None;
-        for part in &model.parts {
+        for part in model.parts_for_body(self.body) {
             for indices in part.indices.as_chunks::<3>().0 {
                 let points = std::array::from_fn(|axis| {
                     DVec3::from_array(
@@ -324,4 +344,19 @@ impl Instance {
             point: world_ray.origin + world_ray.direction * distance,
         })
     }
+}
+
+fn transform_bounds(bounds: (DVec3, DVec3), transform: impl Fn(DVec3) -> DVec3) -> (DVec3, DVec3) {
+    let mut low = DVec3::splat(f64::INFINITY);
+    let mut high = DVec3::splat(f64::NEG_INFINITY);
+    for x in [bounds.0.x, bounds.1.x] {
+        for y in [bounds.0.y, bounds.1.y] {
+            for z in [bounds.0.z, bounds.1.z] {
+                let point = transform(DVec3::new(x, y, z));
+                low = low.min(point);
+                high = high.max(point);
+            }
+        }
+    }
+    (low, high)
 }

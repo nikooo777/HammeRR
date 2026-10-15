@@ -1690,6 +1690,7 @@ impl Session {
             let ids = models
                 .instances
                 .iter()
+                .filter(|instance| instance.has_geometry())
                 .map(|instance| instance.id)
                 .collect::<HashSet<_>>();
             let ordinary = query::pick_with_entity_filter(

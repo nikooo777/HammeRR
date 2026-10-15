@@ -3887,7 +3887,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             match result {
                 Ok(()) => {
-                    if !controller.window.get_path().is_empty() {
+                    if !controller.window.get_path().is_empty()
+                        && !controller.window.get_can_apply()
+                    {
                         controller.window.invoke_preview_model();
                     }
                     let _ = controller.window.show();

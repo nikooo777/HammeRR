@@ -1,11 +1,12 @@
-import {Button, ComboBox, LineEdit, ListView, SpinBox} from "std-widgets.slint";
+import {Button, ComboBox, LineEdit, ListView, ScrollView, SpinBox, TextEdit} from "std-widgets.slint";
 
 export struct ModelChoiceRow { path:string, name:string, folder:string }
+export struct ModelBodygroupRow { index:int, label:string, choices:[string], selected:int }
 
 export component ModelBrowserWindow inherits Window {
     title:"Choose model — HammeRR";
     preferred-width:960px;
-    preferred-height:690px;
+    preferred-height:min(900px,690px + root.bodygroups.length*58px);
     min-width:800px;
     min-height:630px;
     in-out property <string> query;
@@ -14,6 +15,8 @@ export component ModelBrowserWindow inherits Window {
     in property <[ModelChoiceRow]> rows;
     in-out property <string> path;
     in-out property <int> skin;
+    in-out property <int> body;
+    in property <[ModelBodygroupRow]> bodygroups;
     in property <int> skin-count:1;
     in property <image> preview;
     in property <bool> has-preview;
@@ -24,13 +27,17 @@ export component ModelBrowserWindow inherits Window {
     in property <string> geometry;
     in property <string> dimensions;
     in property <string> materials;
+    in property <int> material-count;
+    in-out property <bool> show-materials;
     in property <string> message;
     callback search();
     callback group-changed();
     callback page(int);
     callback choose(string);
     callback preview-model();
+    callback bodygroup-changed(int,int);
     callback invalidate();
+    callback resize-details();
     callback apply();
     callback cancel();
     forward-focus:dialog-focus;
@@ -74,15 +81,28 @@ export component ModelBrowserWindow inherits Window {
                         if root.has-preview:Image {width:parent.width;height:parent.height;source:root.preview;image-fit:contain;}
                         if !root.has-preview:Text {width:parent.width;height:parent.height;text:"Select a model to preview it";horizontal-alignment:center;vertical-alignment:center;color:#aab2bf;}
                     }
-                    HorizontalLayout {
+                    if root.skin-count > 1:HorizontalLayout {
                         spacing:8px;
                         Text {text:"Skin";vertical-alignment:center;}
                         SpinBox {value<=>root.skin;minimum:0;maximum:max(0,root.skin-count - 1);edited=>{root.preview-model();}}
-                        Text {text:"\{root.skin-count} available · starts at 0";vertical-alignment:center;color:#aab2bf;horizontal-stretch:1;}
+                        Text {text:"\{root.skin-count} skins";vertical-alignment:center;color:#aab2bf;horizontal-stretch:1;}
+                    }
+                    if root.skin-count <= 1:Text {text:"Default skin";color:#aab2bf;}
+                    if root.bodygroups.length > 0:ScrollView {
+                        height:min(130px,root.bodygroups.length*58px);
+                        VerticalLayout {
+                            spacing:8px;
+                            for group in root.bodygroups:VerticalLayout {
+                                spacing:4px;
+                                Text {text:group.label;color:#b6c0ce;}
+                                ComboBox {model:group.choices;current-index:group.selected;selected=>{root.bodygroup-changed(group.index,self.current-index);}}
+                            }
+                        }
                     }
                     Text {text:root.geometry;wrap:word-wrap;}
                     Text {text:root.dimensions;wrap:word-wrap;color:#b6c0ce;}
-                    Text {text:root.materials;wrap:word-wrap;color:#9aa5b5;font-size:12px;max-height:60px;overflow:elide;}
+                    if root.material-count > 0:Button {text:root.show-materials ? "Hide materials" : "Show materials (\{root.material-count})";clicked=>{root.show-materials=!root.show-materials;root.resize-details();}}
+                    if root.show-materials:TextEdit {text:root.materials;read-only:true;height:80px;}
                 }
             }
             HorizontalLayout {
@@ -95,7 +115,7 @@ export component ModelBrowserWindow inherits Window {
                 spacing:8px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}
                 Rectangle {horizontal-stretch:1;}
-                Text {text:"Body 0 · scale 1";vertical-alignment:center;color:#8e99aa;font-size:12px;}
+                Text {text:"Scale 1";vertical-alignment:center;color:#8e99aa;font-size:12px;}
                 Button {text:"Use model";enabled:root.can-apply;clicked=>{root.apply();}}
             }
         }

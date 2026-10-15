@@ -8,6 +8,7 @@ mod helpers;
 pub mod materials;
 pub mod models;
 pub mod scene;
+pub mod sky;
 
 pub use camera::{Camera, Projection};
 pub use gpu::{

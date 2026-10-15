@@ -67,6 +67,7 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub batches: Vec<Batch>,
@@ -907,6 +908,7 @@ impl SceneMesh {
             indices.extend(list);
         }
         Self {
+            skybox: vmf.world.properties.get("skyname").filter(|name| !name.trim().is_empty()).map(|name| builder.library.skybox(fs, name)),
             vertices: builder.vertices,
             indices,
             batches,

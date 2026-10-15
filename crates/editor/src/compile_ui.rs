@@ -911,10 +911,9 @@ mod tests {
         .unwrap();
         let (directory, game, _) = crate::game::tests::fixture(true);
         let mut session = Session::new(Ok(game));
-        session.replace_document(
-            map_core::Document::new(crate::test_assets::room()),
-            Some(directory.path().join("room.vmf")),
-        );
+        let path = directory.path().join("room.vmf");
+        std::fs::write(&path, crate::test_assets::room().write(&Default::default())).unwrap();
+        session.open(Actor::User, &path, false).unwrap();
         let shared = Arc::new(Mutex::new(session));
         let controller = Controller::new(&shared).unwrap();
         controller.refresh(&lock(&shared));

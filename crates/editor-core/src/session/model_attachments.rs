@@ -32,6 +32,16 @@ pub(super) fn report(
     })
 }
 
+impl State {
+    pub(super) fn materials_reloaded(&mut self, previous: u64, current: u64) {
+        if let Some(guide) = &mut self.guide
+            && guide.scene == previous
+        {
+            guide.scene = current;
+        }
+    }
+}
+
 impl Session {
     fn model_attachment(&self, entity: u32, index: usize) -> Result<Value, String> {
         if !std::ptr::eq(self.render_document(), &self.document) {

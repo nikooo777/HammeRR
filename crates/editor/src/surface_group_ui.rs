@@ -40,7 +40,7 @@ pub struct Controller {
     target: Rc<RefCell<Option<Target>>>,
 }
 
-fn refresh_material(window: &SurfaceGroupWindow, session: &mut Session) {
+fn refresh_material(window: &SurfaceGroupWindow, session: &Session) {
     window.set_preview_material(window.get_material());
     window.set_material_preview(
         session
@@ -120,7 +120,7 @@ impl Controller {
         });
         window.on_load_material({
             let (window, shared) = (window.as_weak(), shared.clone());
-            move || refresh_material(&window.unwrap(), &mut lock(&shared))
+            move || refresh_material(&window.unwrap(), &lock(&shared))
         });
         for preview in [true, false] {
             let (weak, shared, target) = (window.as_weak(), shared.clone(), target.clone());
@@ -138,7 +138,7 @@ impl Controller {
                         Err(error) => window.set_message(error.into()),
                     }
                 }
-                refresh_material(&window, &mut session);
+                refresh_material(&window, &session);
             };
             if preview {
                 window.on_preview_edit(action);
@@ -218,6 +218,10 @@ impl Controller {
         self.window.set_material(material.into());
         refresh_material(&self.window, session);
         self.refresh(session);
+    }
+
+    pub fn refresh_material(&self, session: &Session) {
+        refresh_material(&self.window, session);
     }
 
     pub fn refresh(&self, session: &Session) {

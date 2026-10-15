@@ -40,7 +40,7 @@ fn query(window: &MaterialReplaceWindow) -> Query {
     }
 }
 
-fn refresh_images(window: &MaterialReplaceWindow, session: &mut Session) {
+fn refresh_images(window: &MaterialReplaceWindow, session: &Session) {
     for (replacement, material) in [
         (false, window.get_source()),
         (true, window.get_replacement()),
@@ -130,7 +130,7 @@ impl Controller {
                     }
                     Err(error) => window.set_message(error.into()),
                 }
-                refresh_images(&window, &mut session);
+                refresh_images(&window, &session);
                 refresh(&window, &session, &target);
             }
         });
@@ -200,7 +200,7 @@ impl Controller {
                     }
                     Err(error) => window.set_message(error.into()),
                 }
-                refresh_images(&window, &mut session);
+                refresh_images(&window, &session);
                 refresh(&window, &session, &target);
             };
             if preview {
@@ -254,6 +254,10 @@ impl Controller {
         }
         refresh_images(&self.window, session);
         refresh(&self.window, session, &target);
+    }
+
+    pub fn refresh_materials(&self, session: &Session) {
+        refresh_images(&self.window, session);
     }
 
     pub fn refresh(&self, session: &Session) {

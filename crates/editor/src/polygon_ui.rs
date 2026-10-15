@@ -455,7 +455,7 @@ impl Controller {
         }
     }
 
-    fn refresh_material(&self, session: &mut Session) {
+    pub fn refresh_material(&self, session: &Session) {
         self.window.set_material_image(
             session
                 .material_preview(&self.window.get_material())

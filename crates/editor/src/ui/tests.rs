@@ -192,7 +192,15 @@ pub(crate) fn texture_brush_controls_preview_apply_and_cancel_without_desktop_in
         },
     )))
     .unwrap();
-    let mut state = Session::new(Err("no assets needed".into()));
+    let (assets, game) = crate::test_assets::game();
+    let materials = assets.path().join("materials/metal");
+    std::fs::create_dir(&materials).unwrap();
+    std::fs::write(
+        materials.join("sample.vmt"),
+        "LightmappedGeneric { $basetexture test/checker }",
+    )
+    .unwrap();
+    let mut state = Session::new(Ok(game));
     state
         .create_block(
             Actor::Agent,
@@ -227,6 +235,7 @@ pub(crate) fn texture_brush_controls_preview_apply_and_cancel_without_desktop_in
         solid: source,
         side,
     };
+    state.build_scene();
     state.sample_face_texture(face).unwrap();
     state.select_faces(&[face], SelectMode::Replace).unwrap();
     state.set_camera(render::Camera::planar(
@@ -249,6 +258,52 @@ pub(crate) fn texture_brush_controls_preview_apply_and_cancel_without_desktop_in
         session::paint::Operation::Projection
     );
     assert_eq!(app.get_texture_sample_material(), "metal/sample");
+    let source = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).document().undo_labels().count();
+    let initial_image = app.get_texture_sample_preview().to_rgba8().unwrap();
+    let texture = assets.path().join("materials/test/checker.vtf");
+    let original = std::fs::read(&texture).unwrap();
+    let mut changed = original.clone();
+    for pixel in changed[80..].as_chunks_mut::<4>().0 {
+        pixel.copy_from_slice(&[15, 30, 240, 255]);
+    }
+    std::fs::write(&texture, changed).unwrap();
+    lock(&shared).reload_material_assets(Actor::Agent);
+    refresh_texture_brush_sample(&app, &mut lock(&shared));
+    assert_eq!(
+        app.get_texture_sample_preview()
+            .to_rgba8()
+            .unwrap()
+            .as_bytes(),
+        initial_image.as_bytes()
+    );
+    refresh_texture_brush_sample_assets(&app, &lock(&shared));
+    assert_eq!(app.get_texture_sample_material(), "metal/sample");
+    assert_ne!(
+        app.get_texture_sample_preview()
+            .to_rgba8()
+            .unwrap()
+            .as_bytes(),
+        initial_image.as_bytes()
+    );
+    std::fs::write(&texture, b"broken VTF").unwrap();
+    lock(&shared).reload_material_assets(Actor::User);
+    refresh_texture_brush_sample_assets(&app, &lock(&shared));
+    assert_eq!(app.get_texture_sample_material(), "metal/sample");
+    assert_eq!(app.get_texture_sample_preview().size().width, 0);
+    std::fs::write(&texture, original).unwrap();
+    lock(&shared).reload_material_assets(Actor::Agent);
+    refresh_texture_brush_sample_assets(&app, &lock(&shared));
+    assert_eq!(
+        app.get_texture_sample_preview()
+            .to_rgba8()
+            .unwrap()
+            .as_bytes(),
+        initial_image.as_bytes()
+    );
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+
     for apply in [false, true] {
         let mut state = lock(&shared);
         let before = state.document().vmf().clone();
@@ -6704,4 +6759,76 @@ pub(crate) fn property_controls_preserve_imported_values_and_show_inherited_defa
     assert_eq!(row("custom_key").value, "keep me");
     assert_eq!(row("custom_key").type_name, "string");
     assert!(entity.properties.get("_light").is_none());
+}
+
+#[test]
+pub(crate) fn material_reload_button_replaces_failed_cached_previews_without_source_edits() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let (directory, game) = crate::test_assets::game();
+    let mut session = Session::new(Ok(game));
+    session
+        .edit(Actor::User, "remove fixture sky", |tx| {
+            tx.world_properties_mut().set("skyname", "");
+            Ok(())
+        })
+        .unwrap();
+    session
+        .create_block(
+            Actor::User,
+            DVec3::ZERO,
+            DVec3::splat(64.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    session.build_scene();
+    let source = session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(session));
+    let window = MaterialWindow::new().unwrap();
+    window.set_material("test/checker".into());
+    materials::bind_material_reload(&window, shared.clone());
+    refresh_material_catalog(&window, &mut lock(&shared));
+    refresh_material_window(&window, &mut lock(&shared));
+    assert!(window.get_available());
+    window
+        .window()
+        .set_size(slint::PhysicalSize::new(1000, 760));
+    window.show().unwrap();
+    assert_dialog_button_visible(&window, "Reload material assets");
+    let texture = directory.path().join("materials/test/checker.vtf");
+    let original_texture = std::fs::read(&texture).unwrap();
+    std::fs::write(&texture, b"broken VTF").unwrap();
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &window,
+        "Reload material assets",
+    )
+    .next()
+    .unwrap()
+    .invoke_accessible_default_action();
+    assert!(!window.get_available());
+    assert!(window.get_detail().contains("checker.vtf"));
+    assert!(window.get_reload_status().contains("test/checker:"));
+    std::fs::write(&texture, original_texture).unwrap();
+    lock(&shared).reload_material_assets(Actor::Agent);
+    assert!(!materials::review_material_choice(
+        &window,
+        &mut lock(&shared)
+    ));
+    assert!(window.get_available());
+    assert!(window.get_detail().contains("Review the refreshed preview"));
+    assert!(materials::review_material_choice(
+        &window,
+        &mut lock(&shared)
+    ));
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    refresh_material_window(&window, &mut lock(&shared));
+    save_ui_snapshot(window.window(), "material-reload");
+    window.hide().unwrap();
 }

@@ -63,6 +63,16 @@ struct Choice {
     report: Value,
 }
 
+impl State {
+    pub(super) fn materials_reloaded(&mut self, previous: u64, current: u64) {
+        if let Some(draft) = &mut self.draft
+            && draft.scene == previous
+        {
+            draft.scene = current;
+        }
+    }
+}
+
 impl Session {
     fn sound_catalog(&mut self) -> Result<&catalog::Catalog, String> {
         if self.sounds.catalog.is_none() {

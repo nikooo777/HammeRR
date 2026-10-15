@@ -31,6 +31,16 @@ fn folder(path: &str) -> &str {
     path.rsplit_once('/').map_or("models", |(folder, _)| folder)
 }
 
+impl State {
+    pub(super) fn materials_reloaded(&mut self, previous: u64, current: u64) {
+        if let Some(draft) = &mut self.draft
+            && draft.scene == previous
+        {
+            draft.scene = current;
+        }
+    }
+}
+
 impl Session {
     pub fn browse_models(
         &mut self,

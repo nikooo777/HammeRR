@@ -110,6 +110,7 @@ struct Ui {
     extrusion_material_target: Option<(Option<u64>, u64)>,
     primitive_material_target: Option<(Option<u64>, u64)>,
     seen_definitions: u64,
+    seen_materials: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -333,6 +334,7 @@ pub(super) fn run(
         extrusion_material_target: None,
         primitive_material_target: None,
         seen_definitions: 0,
+        seen_materials: 0,
     }));
 
     app.window().on_close_requested({
@@ -647,6 +649,7 @@ pub(super) fn run(
                 .unwrap()
                 .clone_strong();
             components_ui::refresh(&window, &lock(&session_of(&ui)));
+            components_ui::refresh_material_previews(&window, &lock(&session_of(&ui)));
             window.set_aspect(
                 (app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0))
                     .max(0.01),
@@ -2168,6 +2171,41 @@ pub(super) fn run(
                 {
                     ui.brush_drag = None;
                 }
+                if session.materials().generation() != ui.seen_materials {
+                    ui.seen_materials = session.materials().generation();
+                    refresh_material_preview(&app, &mut session);
+                    refresh_texture_brush_sample_assets(&app, &session);
+                    if let Some(window) = &ui.primitive_window
+                        && window.window().is_visible()
+                    {
+                        primitive_ui::refresh(window, &mut session);
+                    }
+                    if let Some(window) = &ui.components_window
+                        && window.window().is_visible()
+                    {
+                        components_ui::refresh_material_previews(window, &session);
+                    }
+                    if let Some(window) = &ui.surface_window
+                        && window.window().is_visible()
+                    {
+                        materials::refresh_surface_material(window, &session);
+                    }
+                    if let Some(controller) = &ui.surface_group
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh_material(&session);
+                    }
+                    if let Some(controller) = &ui.material_replace
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh_materials(&session);
+                    }
+                    if let Some(controller) = &ui.polygon
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh_material(&session);
+                    }
+                }
                 if session.definitions_serial() != ui.seen_definitions {
                     ui.seen_definitions = session.definitions_serial();
                     if let Some(window) = &ui.entity_window {
@@ -2189,7 +2227,20 @@ pub(super) fn run(
                     ui.brush_drag = None;
                     ui.seen_scene = session.scene_serial();
                     let mesh = session.build_scene();
-                    app.set_preview_error(mesh.issue_summary().into());
+                    let mut preview_error = mesh.issue_summary();
+                    if let Some(report) = session.material_reload_report()
+                        && report.failed > 0
+                    {
+                        if !preview_error.is_empty() {
+                            preview_error.push('\n');
+                        }
+                        preview_error.push_str(&report.summary);
+                        if let Some(failure) = report.failures.first() {
+                            preview_error
+                                .push_str(&format!(" · {}: {}", failure.material, failure.error));
+                        }
+                    }
+                    app.set_preview_error(preview_error.into());
                     ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
                     if let Some(controller) = &ui.volume
                         && controller.window.window().is_visible()
@@ -2345,6 +2396,7 @@ pub(super) fn run(
                         && window.window().is_visible()
                     {
                         refresh_material_catalog(window, &mut session);
+                        refresh_material_window(window, &mut session);
                     }
                     app.set_show_tools(session.view().tool_textures);
                     app.set_sky_preview(session.view().sky_preview);
@@ -2622,5 +2674,6 @@ pub(crate) mod tests;
 
 pub(crate) use entities::property_row;
 pub(crate) use materials::{
-    common_face_number, preview_image, refresh_material_catalog, refresh_material_window,
+    bind_material_reload, common_face_number, preview_image, refresh_material_catalog,
+    refresh_material_window, review_material_choice,
 };

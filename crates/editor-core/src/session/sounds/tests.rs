@@ -26,6 +26,7 @@ fn sound_choices_share_catalog_guards_cached_reads_and_atomic_undo() {
     );
     session.choose_sound(token, "Test.Rain", 1).unwrap();
     assert!(session.choose_sound(token, "Test.Rain", 99).is_err());
+    session.reload_material_assets(Actor::Agent);
     assert_eq!(session.current_sound_choice()["sound"]["variant"], 1);
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.document().undo_labels().count(), history);
@@ -68,6 +69,7 @@ fn sound_choices_share_catalog_guards_cached_reads_and_atomic_undo() {
     assert_eq!(session.document().vmf(), &source);
     std::fs::write(directory.path().join("sound/ambient/one.wav"), wave()).unwrap();
     session.reload_sound_assets();
+    session.reload_material_assets(Actor::User);
     assert_eq!(session.current_sound_choice()["valid"], false);
     session.cancel_sound_choice(token).unwrap();
 }

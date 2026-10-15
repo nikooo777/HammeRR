@@ -17,8 +17,7 @@ Click a thumbnail to preview it, then **Use material**. **Cancel** keeps the pre
 The selected preview reports material syntax, patch-include and texture-read
 errors. A broken preferred editor texture is reported rather than replaced with
 another image. **Check map… → Run checks** identifies affected faces. Repair
-the asset and rerun checks; cached viewport assets may require restarting the
-editor because general material reloading is not implemented.
+the asset, use **Reload material assets**, then rerun checks.
 
 A content-directory read failure shows **Material catalog unavailable** and
 clears the old choices. Repair the directory or link, then edit the search field
@@ -28,6 +27,30 @@ to retry. A failed scan is not saved as an empty catalog.
 - Recently applied materials last for the current session.
 
 ![Material thumbnails, categories and favorites](images/material-browser.png)
+
+## Reload changed materials
+
+Refresh edited VMT/VTF files without reopening the map.
+
+1. Save the changed material or texture files in content already mounted by the editor.
+2. Click **Browse materials…** to open the material picker, then **Reload material assets**.
+3. Review the reload summary and any unavailable-preview details. Thumbnails, viewport textures, model textures and cached sky faces refresh, and the catalog includes added or removed material names.
+4. Repair any reported asset files and click **Reload material assets** again. Use **Check map… → Run checks** or **Compile** to check their effect on the map.
+
+![Material picker with reload controls and asset diagnostics](images/material-reload.png)
+
+The report retains the first 100 unavailable-preview details and the full count.
+An unavailable preview does not by itself mean a material is invalid for
+compilation: valid tool or untextured materials can have no display texture.
+Unreadable display assets replace stale images with the missing-texture fallback.
+
+Reload leaves map data, selection, camera, Undo history and draft geometry
+unchanged. View-dependent review guards can require another review before Apply.
+It refreshes cached materials and the catalog through existing mounts; it does
+not watch files, remount content or archives, reload model geometry or particles,
+or refresh a running game's asset cache. Model textures refresh at their cached
+resolved material paths. If adding a previously missing material changes which
+model material path should be chosen, use **Reload models** too.
 
 ## Edit face textures
 

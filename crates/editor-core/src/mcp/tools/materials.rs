@@ -3,6 +3,14 @@ use super::super::*;
 #[tool_router(router = materials_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Reload cached VMT/VTF display assets from existing mounts, including sky faces, and rescan the material catalog. Retains material IDs, authored source/history/camera and active geometry preview documents; refreshes desktop and offscreen GPU textures. Viewport-dependent snapshots may require renewed review. Returns unavailable-preview details (first 100) and total count; unavailable assets replace stale textures with the missing fallback. Valid untextured/tool materials may have no display texture. Does not remount archives or watch files. UI: Choose Material → Reload material assets."
+    )]
+    pub(in crate::mcp) fn reload_material_assets(&self) -> ToolResult {
+        let report = self.session().reload_material_assets(Actor::Agent);
+        ok(json!(report))
+    }
+
+    #[tool(
         description = "Preview rigid surface placement of selected or explicit object ids together. method=floor (default) or ceiling casts vertically and preserves XY; method=ray uses ray_origin/ray_direction and centers the selection tangentially at the hit. Optional align rotates the first object's local up to the geometric normal; offset is normal distance, texture_lock defaults to current settings. Supports actual brush/terrain/model geometry and helper bounds for unsupported point assets. Returns owned token and contact/transform details; no source/history edit. Finish other geometry previews first. UI: Place on surface…."
     )]
     pub(in crate::mcp) fn preview_surface_placement(

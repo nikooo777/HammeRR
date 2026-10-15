@@ -586,6 +586,8 @@ export component MaterialWindow inherits Window {
     in property <int> total;
     in property <string> catalog-label;
     in property <string> favorites-status;
+    in property <string> reload-status;
+    in-out property <string> asset-generation;
     in property <bool> favorite;
     in property <image> preview;
     in property <string> detail;
@@ -594,6 +596,7 @@ export component MaterialWindow inherits Window {
     callback preview-material();
     callback use-material();
     callback toggle-favorite();
+    callback reload-material-assets();
     callback cancel();
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
@@ -664,10 +667,15 @@ export component MaterialWindow inherits Window {
                     Rectangle { vertical-stretch: 1; }
                 }
             }
+            if root.reload-status != "": ScrollView {
+                height: 70px;
+                Text { text: root.reload-status; wrap: word-wrap; vertical-alignment: top; }
+            }
             LineEdit { text <=> root.material; placeholder-text: "Material path"; accepted => { root.preview-material(); } }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Reload material assets"; clicked => { root.reload-material-assets(); } }
                 Button { text: "Use material"; enabled: root.material != ""; clicked => { root.use-material(); } }
             }
         }
@@ -1202,7 +1210,7 @@ export component ChecksWindow inherits Window {
                 }
                 Button { text: "Run checks"; clicked => { root.run-checks(); } }
             }
-            if root.stale: Text { text: "Map or definitions changed. Run checks again before selecting or repairing an issue."; color: #efa47c; wrap: word-wrap; }
+            if root.stale: Text { text: "Results are out of date. Run checks again before selecting or repairing an issue."; color: #efa47c; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 LineEdit { text <=> root.query; placeholder-text: "Search issues…"; edited => { root.page = 0; root.filter(); } }

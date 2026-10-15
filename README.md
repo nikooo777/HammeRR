@@ -113,6 +113,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Material thumbnails, categories and favorites](docs/images/material-browser.png) | ![A sampled wood floor painted across stair treads](docs/images/texture-strokes.png) |
 | Thumbnails, search, categories, materials used in the map, recent materials and favorites. | Sample a face, then brush its material or its whole projection across other faces. |
 
+| Material reload |
+| --- |
+| ![Material reload controls and asset diagnostics](docs/images/material-reload.png) |
+| Refresh changed textures and material choices without reopening the map. |
+
 | Texture wrapping | One texture across many faces |
 | --- | --- |
 | ![A texture continued around a faceted column](docs/images/connected-wrapping-viewport.png) | ![One texture fitted across adjoining faces](docs/images/grouped-textures-viewport.png) |

@@ -234,18 +234,26 @@ pub(super) fn refresh_texture_brush_sample(app: &AppWindow, session: &mut Sessio
         .map(|sample| sample.material.to_ascii_lowercase())
         .unwrap_or_default();
     if app.get_texture_sample_material().as_str() != material {
-        let preview = if material.is_empty() {
-            slint::Image::default()
-        } else {
-            session
-                .material_preview(&material)
-                .ok()
-                .map(|preview| preview_image(&preview))
-                .unwrap_or_default()
-        };
-        app.set_texture_sample_material(material.into());
-        app.set_texture_sample_preview(preview);
+        refresh_texture_brush_sample_assets(app, session);
     }
+}
+
+pub(super) fn refresh_texture_brush_sample_assets(app: &AppWindow, session: &Session) {
+    let material = session
+        .surface_sample()
+        .map(|sample| sample.material.to_ascii_lowercase())
+        .unwrap_or_default();
+    let preview = if material.is_empty() {
+        slint::Image::default()
+    } else {
+        session
+            .material_preview(&material)
+            .ok()
+            .map(|preview| preview_image(&preview))
+            .unwrap_or_default()
+    };
+    app.set_texture_sample_material(material.into());
+    app.set_texture_sample_preview(preview);
 }
 
 pub(super) fn refresh_terrain_controls(app: &AppWindow, session: &Session) {

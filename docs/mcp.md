@@ -323,3 +323,15 @@ Skeletal models use composed default bone transforms, inverse bind matrices and 
 5. Call `clear_model_attachment` with the captured `token`. Foreign/replaced tokens fail without removing the replacement.
 
 Attachment inspection uses the same checked default bone pose as model rendering. It does not evaluate animation, IK, procedural or included-model virtual attachments, and does not parent or move map entities. The decoder permits at most 1024 local attachments per model as a HammeRR resource cap.
+
+### Sound exploration and audition
+
+1. `browse_sounds` searches mounted WAV/MP3 paths and names from the active sound-script manifest. Optional `query`, `group` (`all`, `files`, `scripts`, `used`, `folder:…`, `script:…`), `offset` and `limit` (1–100) match the human browser. Results include groups, variant counts, ambiguity and catalog warnings.
+2. `inspect_sound` takes `value` and optional zero-based `variant` (default 0). It returns native script metadata, source wave/path, codec/size and known source rate/channels/duration. It does not initialize audio or graphics.
+3. `begin_sound_choice` takes entity `id`, a writable FGD sound `key` (for example `ambient_generic.message`) and optional `resume`. `choose_sound` takes its owned `token`, `value` and optional `variant`. `get_sound_choice` checks a token; omit it to discover the active or stale token. These operations preserve source/history/camera/selection and do not autoplay.
+4. `apply_sound_choice` writes the captured field in one Undo step; `cancel_sound_choice` clears only its captured token, including stale choices. Script choices write the script name, while `variant` selects audition only. Opening the same human field resumes a valid agent-prepared choice; unseen changes require review at human Apply. Finish geometry previews before browsing.
+5. `set_sound_preview_volume` sets shared next-preview volume from 0 to 1. It leaves game volume and current playback unchanged. `get_sound_preview` returns that setting and the current playback token/state.
+6. `render_sound_preview` takes `value`, optional `variant` and optional `volume` (shared volume by default). It returns metadata and an MCP `audio/wav` content block containing the same bounded PCM audition as human **Play**. It does not use local speakers. `play_sound_preview` uses local audio and returns an owned token; `stop_sound_preview` stops only that token. Failed preparation and foreign stops preserve existing playback. Finished/failed playback retains its token for cleanup.
+7. `reload_sound_assets` clears the catalog, invalidates pending choices and stops playback. The human equivalent is **Reload sounds**.
+
+Audio helpers require FFmpeg/ffplay. Input files are limited to 16 MiB, output to 2 MiB/ten seconds/stereo 44.1 kHz, and decoding to five seconds. Paths stay relative to mounted sound content; script loading and traversal are bounded. Previews do not simulate native channel mixing, sound level, pitch/random ranges, DSP, distance, looping, sentences/voice or soundscapes. See [Sounds](sounds.md) for catalog limits and supported scope.

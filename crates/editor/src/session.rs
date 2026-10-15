@@ -42,6 +42,7 @@ pub mod pointfiles;
 pub mod primitives;
 mod recovery;
 pub mod saved_views;
+pub mod sounds;
 pub mod statistics;
 mod surfaces;
 pub mod terrain_handles;
@@ -128,6 +129,7 @@ pub enum SelectMode {
 
 pub struct Session {
     model_browser: model_browser::State,
+    sounds: sounds::State,
     model_attachments: model_attachments::State,
     models: std::cell::RefCell<render::models::Library>,
     game: Arc<GameFs>,
@@ -246,6 +248,7 @@ impl Session {
             terrain_strokes: terrain_strokes::State::default(),
             models: std::cell::RefCell::default(),
             model_browser: model_browser::State::default(),
+            sounds: sounds::State::default(),
             model_attachments: model_attachments::State::default(),
             terrain_handles: terrain_handles::State::default(),
             surface_sample: None,
@@ -1677,6 +1680,7 @@ impl Session {
 
     pub fn shutdown(&mut self) {
         self.closing = true;
+        self.shutdown_sound_preview();
         self.cancel_compile_on_shutdown();
         self.game_run = None;
     }

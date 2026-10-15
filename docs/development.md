@@ -281,3 +281,11 @@ python3 -B scripts/validate_model_attachments.py --output /tmp/hammerr-model-att
 ```
 
 Checks real named attachment positions under Source entity rotation, shared guide renders and clearing, source/history preservation, camera framing, invalid/stale/foreign tokens, hidden entities, geometry-preview guards and save/reopen. Format and renderer fixtures independently check parent composition without inverse binds and native world-aligned orientation. The software model-details test exercises attachment choice, guides, framing, reload and ownership-preserving Cancel.
+
+### Sound exploration
+
+```sh
+python3 -B scripts/validate_sounds.py --output /tmp/hammerr-sounds-check
+```
+
+Requires FFmpeg/ffplay. Uses `SDL_AUDIODRIVER=dummy` for silent playback checks; it does not use the desktop or speakers. Checks real WAV/MP3 files and manifest wave variants, PCM export and volume amplitude, ten-second bounds, playback ownership, invalid/stale/replaced choices, unchanged source/history/camera, Apply/Undo/reopen and native entity sound names through both compile paths. Core fixtures cover malformed manifests, ambiguous names, nesting/path/chunk guards, oversized-file rejection before allocation and cached draft reads with fresh Apply validation. The software UI check exercises search, variants, shared volume, resumed/changed choices, Apply and foreign Cancel.

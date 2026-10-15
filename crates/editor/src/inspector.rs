@@ -15,6 +15,7 @@ pub enum Control {
     Color,
     Material,
     Model,
+    Sound,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,6 +64,7 @@ pub fn title(classname: &str) -> String {
         "light_spot" => "Spotlight".into(),
         "light_environment" => "Sunlight".into(),
         "light_dynamic" => "Dynamic light".into(),
+        "ambient_generic" => "Ambient sound".into(),
         "info_player_terrorist" => "Terrorist spawn".into(),
         "info_player_counterterrorist" => "Counter-terrorist spawn".into(),
         "func_detail" => "Detail brushes".into(),
@@ -243,6 +245,10 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             }
         }
         "material" | "decal" => result.control = Control::Material,
+        "sound" => {
+            result.control = Control::Sound;
+            result.advanced = false;
+        }
         _ if lower == "model" => result.control = Control::Model,
         _ if lower == "material" => result.control = Control::Material,
         _ => {}

@@ -171,6 +171,21 @@ impl Session {
                 }
             }
         }
+        if self.working_region_enabled() {
+            let document = self.render_document();
+            hidden.extend(
+                document
+                    .vmf()
+                    .solids()
+                    .filter(|solid| !self.working_solid_visible(document, solid.id))
+                    .flat_map(|solid| {
+                        solid.sides.iter().map(move |side| FaceId {
+                            solid: solid.id,
+                            side: side.id,
+                        })
+                    }),
+            );
+        }
         hidden
     }
 

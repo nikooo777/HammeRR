@@ -125,7 +125,7 @@ impl Session {
             ndc.y as f32,
             pointer.size.0 as f32 / pointer.size.1 as f32,
         );
-        let hidden = self.hidden_tool_brushes();
+        let hidden = self.hidden_brushes_for(false);
         let hit = query::pick_face(
             &self.document,
             &query::Ray {
@@ -141,6 +141,9 @@ impl Session {
     }
 
     pub fn append_clip_points(&self, mesh: &mut render::SceneMesh) {
+        if !self.working_selection_visible() {
+            return;
+        }
         let Some(draft) = &self.clip_points else {
             return;
         };

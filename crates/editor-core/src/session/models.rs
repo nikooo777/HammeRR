@@ -254,11 +254,17 @@ impl Session {
         rule: map_core::region::Match,
         faces: bool,
     ) -> map_core::region::Selection {
-        let hidden = self.hidden_tool_brushes();
+        let hidden = self.hidden_brushes_for(false);
+        let evaluation = self.working_evaluation(&self.document);
         let bounds = if faces {
             BTreeMap::new()
         } else {
-            self.model_bounds_in(&self.document)
+            evaluation
+                .models
+                .instances
+                .iter()
+                .map(|instance| (instance.id, instance.bounds()))
+                .collect()
         };
         let mut matches = region.select_with_entity_bounds(
             &self.document,
@@ -266,6 +272,9 @@ impl Session {
             faces,
             |solid| !hidden.contains(&solid.id),
             |entity| {
+                if !evaluation.objects.contains(&ObjectId::Entity(entity.id)) {
+                    return None;
+                }
                 bounds
                     .get(&ObjectId::Entity(entity.id))
                     .copied()

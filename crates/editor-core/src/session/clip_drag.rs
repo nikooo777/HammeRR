@@ -131,6 +131,9 @@ impl Session {
     }
 
     pub fn clip_guide(&self) -> Option<Guide> {
+        if !self.working_selection_visible() {
+            return None;
+        }
         let mode = self.clip_handles.mode?;
         let preview = self.geometry.clip_preview.as_ref()?;
         let center = (preview.bounds[0] + preview.bounds[1]) * 0.5;

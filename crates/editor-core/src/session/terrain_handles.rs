@@ -66,6 +66,11 @@ impl Drag {
 }
 
 impl Session {
+    pub(super) fn working_region_cancel_terrain_drag(&mut self) {
+        if let Some(active) = &mut self.terrain_handles.active {
+            active.drag = None;
+        }
+    }
     fn checked_terrain_move(&self, token: u64) -> Result<&Move, String> {
         let active = self
             .terrain_handles

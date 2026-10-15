@@ -64,6 +64,7 @@ pub mod terrain_strokes;
 pub mod terrain_triangles;
 pub mod terrain_vertices;
 pub mod volume;
+pub mod working_region;
 pub use clipping::ClipPreview;
 #[cfg(test)]
 use compilation::CompileResult;
@@ -193,6 +194,7 @@ pub struct Session {
     property_draft: Option<PropertyDraft>,
     management_serial: u64,
     visibility_restore: Option<management::VisibilityRestore>,
+    working_region: working_region::State,
     area_rule: map_core::region::Match,
     area_mode: SelectMode,
     interaction_epoch: u64,
@@ -302,6 +304,7 @@ impl Session {
             property_draft: None,
             management_serial: 0,
             visibility_restore: None,
+            working_region: working_region::State::default(),
             area_rule: map_core::region::Match::Intersecting,
             area_mode: SelectMode::Replace,
             interaction_epoch: 0,
@@ -1132,6 +1135,7 @@ impl Session {
         self.property_draft = None;
         self.management_serial += 1;
         self.visibility_restore = None;
+        self.working_region = working_region::State::default();
         self.cancel_connection_edit();
         self.cancel_entity_rename();
         self.camera = Camera::from_vmf(document.vmf()).unwrap_or_else(|| {
@@ -1376,6 +1380,7 @@ impl Session {
                 .geometry
                 .clip_preview
                 .as_ref()
+                .filter(|_| self.working_selection_visible())
                 .map(|preview| render::ClipGuide {
                     normal: preview.plane.normal.as_vec3(),
                     distance: preview.plane.dist as f32,
@@ -1784,7 +1789,8 @@ impl Session {
         if self.face_mode {
             query::pick_face(document, ray, |s| !hidden.contains(&s.id))
         } else {
-            let models = self.model_instances(document);
+            let evaluation = self.working_evaluation(document);
+            let models = &evaluation.models;
             let ids = models
                 .instances
                 .iter()
@@ -1795,7 +1801,10 @@ impl Session {
                 document,
                 ray,
                 |solid| !hidden.contains(&solid.id),
-                |entity| !ids.contains(&ObjectId::Entity(entity.id)),
+                |entity| {
+                    !ids.contains(&ObjectId::Entity(entity.id))
+                        && evaluation.objects.contains(&ObjectId::Entity(entity.id))
+                },
             );
             ordinary
                 .into_iter()
@@ -1803,6 +1812,7 @@ impl Session {
                     models
                         .instances
                         .iter()
+                        .filter(|instance| evaluation.objects.contains(&instance.id))
                         .filter_map(|instance| instance.pick(ray)),
                 )
                 .min_by(|a, b| a.distance.total_cmp(&b.distance))
@@ -1810,7 +1820,15 @@ impl Session {
     }
 
     fn hidden_tool_brushes(&mut self) -> HashSet<u32> {
-        let document = self.geometry.document(&self.document);
+        self.hidden_brushes_for(true)
+    }
+
+    fn hidden_brushes_for(&mut self, render: bool) -> HashSet<u32> {
+        let document = if render {
+            self.geometry.document(&self.document)
+        } else {
+            &self.document
+        };
         let mut hidden = HashSet::new();
         if !self.view.tool_textures {
             let (materials, game) = (&mut self.materials, &self.game);
@@ -1823,6 +1841,21 @@ impl Session {
                     hidden.insert(solid.id);
                 }
             }
+        }
+        if self.working_region.enabled {
+            let document = if render {
+                self.geometry.document(&self.document)
+            } else {
+                &self.document
+            };
+            let evaluation = self.working_evaluation(document);
+            hidden.extend(
+                document
+                    .vmf()
+                    .solids()
+                    .filter(|solid| !evaluation.solids.contains(&solid.id))
+                    .map(|solid| solid.id),
+            );
         }
         hidden
     }
@@ -1959,15 +1992,15 @@ impl Session {
         } else {
             HashSet::new()
         };
-        let models = self.model_instances(document);
-        let mut mesh = SceneMesh::build_with_models(
+        let evaluation = self.working_evaluation(document);
+        let mut mesh = SceneMesh::build_with_models_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
-            &selected,
-            &selected_faces,
+            (&selected, &selected_faces),
             &overlays,
-            &models.instances,
+            &evaluation.models.instances,
+            |id| evaluation.objects.contains(&id),
         );
         if let Some(points) = self.pointfile_points() {
             mesh.set_leak_path(points);

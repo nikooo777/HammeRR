@@ -17,3 +17,5 @@ mod recovery;
 mod selection;
 mod terrain;
 mod view;
+
+mod working_region;

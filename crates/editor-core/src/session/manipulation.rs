@@ -417,6 +417,9 @@ impl Session {
     }
 
     pub fn transform_guide(&self) -> Option<Guide> {
+        if !self.working_selection_visible() {
+            return None;
+        }
         if self.face_mode
             || self.clip_tool
             || self.spatial.draw_block

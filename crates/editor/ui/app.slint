@@ -1,3 +1,4 @@
+export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
 export { OverlayWindow, OverlayTargetRow } from "overlay.slint";
@@ -1740,6 +1741,9 @@ export component AppWindow inherits Window {
     in property <bool> compile-cancellable;
     callback build-status();
     callback compile-region();
+    callback working-region();
+    callback clear-working-region();
+    in property <bool> working-region-active;
     in property <string> compile-region-label: "Compile region…";
     callback cancel-build();
     in property <bool> launching;
@@ -2047,6 +2051,7 @@ export component AppWindow inherits Window {
 
                 ToolbarSeparator { }
 
+                Button { text: "Working region…"; clicked => { root.working-region(); } }
                 CheckBox {
                     text: "Tool textures";
                     checked <=> root.show-tools;
@@ -2074,6 +2079,15 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.working-region-active: Rectangle {
+            height: 38px; background: #28313c;
+            HorizontalLayout {
+                padding: 5px; padding-left: 14px; spacing: 12px;
+                Text { text: "Working region active · editor view only"; color: #f2c487; vertical-alignment: center; horizontal-stretch: 1; }
+                Button { text: "Working region…"; clicked => { root.working-region(); } }
+                Button { text: "Clear working region"; clicked => { root.clear-working-region(); } }
+            }
+        }
         if root.compile-label != "": Rectangle {
             height: 40px;
             background: #20252e;

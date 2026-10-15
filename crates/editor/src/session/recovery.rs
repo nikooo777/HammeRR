@@ -83,6 +83,7 @@ fn path_key(path: &Path) -> String {
 
 impl Session {
     pub fn configure_recovery(&mut self, directory: Result<PathBuf, String>) {
+        self.configure_build_recipes(directory.clone());
         self.configure_material_favorites(directory.clone());
         let store = match directory {
             Ok(directory) => Store { directory },

@@ -2,11 +2,14 @@ use super::*;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
+mod recipes;
+
 #[derive(Default)]
 pub struct State {
     serial: u64,
     job: Option<Job>,
     options: compiler::Options,
+    recipes: recipes::State,
 }
 
 struct Job {
@@ -15,6 +18,7 @@ struct Job {
     path: PathBuf,
     snapshot: Snapshot,
     options: compiler::Options,
+    recipe: Option<recipes::Identity>,
     started: Instant,
     finished: Option<Duration>,
     status: &'static str,
@@ -113,7 +117,7 @@ impl Session {
             .map(|(count, label)| json!({"bounces": count, "label": label}))
             .collect::<Vec<_>>();
         json!({"smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
-            "editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
+            "recipe":self.compilation.recipes.active,"editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
     pub fn set_compile_settings(&mut self, actor: Actor, lighting: &str) -> Result<Value, String> {
@@ -206,6 +210,7 @@ impl Session {
         }
         if options != self.compilation.options {
             self.compilation.options = options;
+            self.compilation.recipes.active = None;
             self.log(
                 actor,
                 format!(
@@ -263,6 +268,7 @@ impl Session {
                 revision: self.document.revision(),
             },
             options: self.compilation.options,
+            recipe: self.compilation.recipes.active.clone(),
             started: Instant::now(),
             finished: None,
             status: "running",
@@ -379,7 +385,7 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "settings":{"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "recipe":job.recipe,"settings":{"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
         });
         let launch = match self.launch_readiness() {

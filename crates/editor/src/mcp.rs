@@ -2642,6 +2642,28 @@ pub struct CompileArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SaveBuildRecipeArgs {
+    pub name: String,
+    /// Omit to create; supply a custom recipe ID to replace with current settings.
+    pub replace_id: Option<String>,
+    /// Registry revision from get_build_recipes; rejects concurrent recipe edits.
+    pub revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct BuildRecipeIdArgs {
+    pub id: String,
+    pub revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RenameBuildRecipeArgs {
+    pub id: String,
+    pub name: String,
+    pub revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileSettingsArgs {
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.
     pub smoothing_angle: Option<u8>,
@@ -3377,6 +3399,60 @@ impl EditorServer {
     )]
     fn get_compile_settings(&self) -> ToolResult {
         ok(self.session().compile_settings())
+    }
+
+    #[tool(
+        description = "Inspect built-in Fast preview/Final lighting and up to 32 custom build recipes, their exact supported compiler settings, active recipe identity, registry revision, storage errors and frozen-job rules. Does not build or change the map."
+    )]
+    fn get_build_recipes(&self) -> ToolResult {
+        ok(self.session().build_recipes())
+    }
+
+    #[tool(
+        description = "Save current shared compiler settings as a named custom recipe, or replace an existing custom recipe with replace_id. Names are unique ignoring case and at most 80 UTF-8 bytes. Built-ins are immutable. Atomic bounded persistence leaves preferences unchanged on failure. Active builds block edits; VMF and undo remain unchanged."
+    )]
+    fn save_build_recipe(&self, Parameters(args): Parameters<SaveBuildRecipeArgs>) -> ToolResult {
+        run(|| {
+            self.session().save_build_recipe(
+                Actor::Agent,
+                &args.name,
+                args.replace_id.as_deref(),
+                args.revision,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Rename an existing custom build recipe without changing its settings. Built-ins are immutable; active builds block edits. Existing jobs retain their captured name. Optional revision rejects stale edits; VMF and undo remain unchanged."
+    )]
+    fn rename_build_recipe(
+        &self,
+        Parameters(args): Parameters<RenameBuildRecipeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .rename_build_recipe(Actor::Agent, &args.id, &args.name, args.revision)
+        })
+    }
+
+    #[tool(
+        description = "Delete an existing custom build recipe. Current compiler settings and completed job provenance remain unchanged; deleting the active recipe clears its current label. Built-ins cannot be deleted; active builds block edits. Optional revision rejects stale edits; VMF and undo remain unchanged."
+    )]
+    fn delete_build_recipe(&self, Parameters(args): Parameters<BuildRecipeIdArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .delete_build_recipe(Actor::Agent, &args.id, args.revision)
+        })
+    }
+
+    #[tool(
+        description = "Apply all settings from a built-in or custom recipe through shared Session build settings. Does not start a build. Active builds block applying; different values stale prior output. Final lighting selects Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45-degree smoothing; it retains the experimental compiler's limits. Optional revision rejects stale edits; VMF and undo remain unchanged."
+    )]
+    fn apply_build_recipe(&self, Parameters(args): Parameters<BuildRecipeIdArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .apply_build_recipe(Actor::Agent, &args.id, args.revision)
+        })
     }
 
     #[tool(

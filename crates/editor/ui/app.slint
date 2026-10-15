@@ -664,7 +664,8 @@ export component MaterialWindow inherits Window {
 export component TerrainWindow inherits Window {
     title: "Edit terrain";
     preferred-width: 520px;
-    preferred-height: root.operation-index == 8 ? 540px : root.operation-index == 10 ? 480px : root.operation-index == 6 || root.operation-index == 7 ? 470px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 760px;
+    out property <length> operation-height: root.operation-index == 11 ? 470px : root.operation-index == 8 ? 540px : root.operation-index == 10 ? 480px : root.operation-index == 6 || root.operation-index == 7 ? 470px : root.operation-index == 0 || root.operation-index >= 6 ? 380px : 760px;
+    preferred-height: root.operation-height;
     in property <string> selection-label;
     in property <string> message;
     in property <bool> stale;
@@ -707,6 +708,7 @@ export component TerrainWindow inherits Window {
     callback cancel();
     callback pick-center();
     callback draw-stroke();
+    callback move-handles();
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape {root.cancel(); accept} else {reject} }
@@ -723,13 +725,15 @@ export component TerrainWindow inherits Window {
                 HorizontalLayout {
                     spacing:8px;
                     Text {text:"X";vertical-alignment:center;}
-                    LineEdit {text <=> root.vertex-x;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
+                    LineEdit {preferred-width:100px;min-width:0px;horizontal-stretch:1;text <=> root.vertex-x;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
                     Text {text:"Y";vertical-alignment:center;}
-                    LineEdit {text <=> root.vertex-y;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
+                    LineEdit {preferred-width:100px;min-width:0px;horizontal-stretch:1;text <=> root.vertex-y;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
                     Text {text:"Z";vertical-alignment:center;}
-                    LineEdit {text <=> root.vertex-z;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
+                    LineEdit {preferred-width:100px;min-width:0px;horizontal-stretch:1;text <=> root.vertex-z;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
                 }
                 Text {text:"Moves only the retained vertex selection by exact world coordinates. X/Y reshape the terrain sideways; Z changes height. Each offset can be −4096 to 4096 units. Neighboring triangles follow their shared vertices.";wrap:word-wrap;color:#b6bac3;}
+                Button {text:"Move with handles…";enabled:root.mask-available && !root.stale;clicked=>{root.move-handles();}}
+                Text {text:"Drag an axis or plane, then review with Apply or Cancel. Handles follow the editor's grid snapping.";wrap:word-wrap;color:#b6bac3;font-size:12px;}
             }
             if root.operation-index >= 1 && root.operation-index <= 7: VerticalLayout {
                 spacing: 4px;
@@ -1773,6 +1777,8 @@ export component AppWindow inherits Window {
     callback cancel-terrain-center-pick();
     in property <bool> terrain-stroking;
     callback cancel-terrain-stroke();
+    in property <bool> terrain-handling;
+    callback cancel-terrain-handles();
     in property <bool> can-remove-terrain;
     in property <string> terrain-creation-error;
     callback replace-materials();
@@ -2278,6 +2284,10 @@ export component AppWindow inherits Window {
                             if root.terrain-stroking: VerticalLayout {
                                 Text {text:"Drag on selected terrain, then release to review. Escape cancels.";wrap:word-wrap;color:#91b9e9;}
                                 Button {text:"Cancel stroke";clicked=>{root.cancel-terrain-stroke();}}
+                            }
+                            if root.terrain-handling: VerticalLayout {
+                                Text {text:"Move selected terrain vertices";wrap:word-wrap;color:#a7adb8;}
+                                Button {text:"Cancel terrain move";clicked=>{root.cancel-terrain-handles();}}
                             }
                             if !root.can-remove-terrain: VerticalLayout {
                                 spacing: 6px;

@@ -15,6 +15,7 @@ struct Target {
     preview: Option<u64>,
     mask_token: Option<u64>,
     stroke: Option<u64>,
+    handles: Option<u64>,
 }
 
 impl Target {
@@ -29,6 +30,9 @@ impl Target {
     }
 
     fn cancel(&mut self, session: &mut Session) {
+        if let Some(token) = self.handles.take() {
+            let _ = session.cancel_terrain_move_handles(token);
+        }
         if let Some(token) = self.stroke.take() {
             let _ = session.cancel_terrain_stroke(token);
         }
@@ -184,6 +188,13 @@ fn sync_sliders(window: &TerrainWindow) {
     }
 }
 
+fn resize(window: &TerrainWindow) {
+    window.window().set_size(slint::LogicalSize::new(
+        520.0,
+        window.get_operation_height(),
+    ));
+}
+
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = TerrainWindow::new()?;
@@ -191,6 +202,38 @@ impl Controller {
         let picking = Rc::new(Cell::new(false));
         let stroking = Rc::new(Cell::new(false));
         let dragging = Rc::new(Cell::new(false));
+        window.on_move_handles({
+            let (window, shared, target, picking, dragging) = (
+                window.as_weak(),
+                shared.clone(),
+                target.clone(),
+                picking.clone(),
+                dragging.clone(),
+            );
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                if let Some(target) = target.borrow_mut().as_mut() {
+                    let result = target.check(&session).and_then(|_| {
+                        let mask = target
+                            .mask_token
+                            .ok_or("Retain terrain vertices before using handles")?;
+                        target.cancel(&mut session);
+                        session.enable_terrain_move_handles(Actor::User, &target.faces, mask)
+                    });
+                    match result {
+                        Ok(token) => {
+                            target.handles = Some(token);
+                            picking.set(false);
+                            dragging.set(false);
+                            window.set_ready(false);
+                            let _ = window.hide();
+                        }
+                        Err(error) => window.set_message(error.into()),
+                    }
+                }
+            }
+        });
         window.on_draw_stroke({
             let (window, shared, target, stroking, dragging, picking) = (
                 window.as_weak(),
@@ -263,6 +306,7 @@ impl Controller {
                 }
                 let window = window.unwrap();
                 sync_sliders(&window);
+                resize(&window);
                 window.set_ready(false);
                 window.set_message("Preview the edited terrain before applying.".into());
             }
@@ -408,6 +452,7 @@ impl Controller {
         self.window.set_center_y(format!("{:.3}", center.y).into());
         self.window.set_center_z(format!("{:.3}", center.z).into());
         self.window.set_operation_index(0);
+        resize(&self.window);
         self.window.set_vertex_x("0".into());
         self.window.set_vertex_y("0".into());
         self.window.set_vertex_z("0".into());
@@ -506,6 +551,7 @@ impl Controller {
             preview: None,
             mask_token: mask.map(|mask| mask.token),
             stroke: None,
+            handles: None,
         });
         self.window.set_message(
             "Choose an operation and preview the result. Cancel leaves the map unchanged.".into(),
@@ -559,6 +605,87 @@ impl Controller {
             .set_message("Brush center selected. Preview the new edit before applying.".into());
         self.picking.set(false);
         Ok(hit.point)
+    }
+
+    pub fn is_handling(&self) -> bool {
+        self.target
+            .borrow()
+            .as_ref()
+            .is_some_and(|target| target.handles.is_some())
+    }
+
+    pub fn handle_dragging(&self) -> bool {
+        self.is_handling() && self.dragging.get()
+    }
+
+    pub fn release_handle(&self) {
+        self.dragging.set(false);
+    }
+
+    pub fn begin_handle(
+        &self,
+        session: &mut Session,
+        pointer: crate::session::Pointer,
+    ) -> Result<(), String> {
+        let target = self.target.borrow();
+        let target = target.as_ref().ok_or("Reopen terrain editing")?;
+        target.check(session)?;
+        let token = target.handles.ok_or("Enable terrain handles first")?;
+        let handle = session
+            .pick_terrain_move_handle(pointer)
+            .ok_or("Drag a terrain axis or plane, or cancel the move")?;
+        session.begin_terrain_move_drag(token, handle, Some(pointer))?;
+        self.dragging.set(true);
+        Ok(())
+    }
+
+    pub fn update_handle(
+        &self,
+        session: &mut Session,
+        pointer: crate::session::Pointer,
+    ) -> Result<(), String> {
+        let target = self.target.borrow();
+        let target = target.as_ref().ok_or("Reopen terrain editing")?;
+        target.check(session)?;
+        session.update_terrain_move_drag(
+            Actor::User,
+            target.handles.ok_or("Enable terrain handles first")?,
+            Some(pointer),
+            None,
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_handle(&self, session: &mut Session) -> Result<(), String> {
+        let mut target = self.target.borrow_mut();
+        let target = target.as_mut().ok_or("Reopen terrain editing")?;
+        target.check(session)?;
+        let token = target.handles.ok_or("Enable terrain handles first")?;
+        let offset = session.terrain_move_offset(token)?;
+        target.preview = Some(session.finish_terrain_move_drag(token)?);
+        target.handles = None;
+        self.dragging.set(false);
+        self.window.set_vertex_x(offset.x.to_string().into());
+        self.window.set_vertex_y(offset.y.to_string().into());
+        self.window.set_vertex_z(offset.z.to_string().into());
+        self.window.set_ready(true);
+        self.window.set_message(
+            "Move preview ready. Apply keeps one Undo step; Cancel discards it.".into(),
+        );
+        let _ = self.window.show();
+        Ok(())
+    }
+
+    pub fn cancel_handles(&self, session: &mut Session, show: bool) {
+        if let Some(target) = self.target.borrow_mut().as_mut() {
+            target.cancel(session);
+        }
+        self.dragging.set(false);
+        self.window.set_ready(false);
+        self.window.set_message("Terrain move cancelled.".into());
+        if show {
+            let _ = self.window.show();
+        }
     }
 
     pub fn is_stroking(&self) -> bool {
@@ -623,6 +750,8 @@ impl Controller {
                 .and_then(|_| {
                     if let Some(token) = target.stroke {
                         session.check_terrain_stroke_token(token)
+                    } else if let Some(token) = target.handles {
+                        session.check_terrain_move_token(token)
                     } else {
                         Ok(())
                     }

@@ -41,6 +41,7 @@ mod recovery;
 pub mod saved_views;
 pub mod statistics;
 mod surfaces;
+pub mod terrain_handles;
 pub mod terrain_strokes;
 pub mod terrain_triangles;
 pub mod terrain_vertices;
@@ -135,6 +136,7 @@ pub struct Session {
     terrain_triangle_highlight: Option<terrain_triangles::Highlight>,
     terrain_triangle_serial: u64,
     terrain_strokes: terrain_strokes::State,
+    terrain_handles: terrain_handles::State,
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
     checks: checks::State,
@@ -236,6 +238,7 @@ impl Session {
             terrain_triangle_highlight: None,
             terrain_triangle_serial: 0,
             terrain_strokes: terrain_strokes::State::default(),
+            terrain_handles: terrain_handles::State::default(),
             surface_sample: None,
             recovery: recovery::State::default(),
             checks: checks::State::default(),
@@ -1279,7 +1282,8 @@ impl Session {
                 bounds: preview.bounds.map(|point| point.as_vec3()),
             }),
             transform_handles: self
-                .clip_guide()
+                .terrain_move_guide()
+                .or_else(|| self.clip_guide())
                 .or_else(|| self.component_guide())
                 .or_else(|| self.transform_guide()),
             area_preview: self.area_preview.as_ref().map(|preview| render::AreaGuide {

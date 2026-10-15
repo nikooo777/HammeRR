@@ -245,3 +245,9 @@ python3 -B scripts/validate_terrain_vertex_moves.py --output /tmp/hammerr-terrai
 ```
 
 Checks exact lateral/vertical sample moves on rotated powers 2–4, untouched neighbors/alpha/flags, zero no-ops, invalid-coordinate and unknown-argument guards, preview/source/history ownership, masks and triangle unions, Cancel/Undo/Redo/reopen, native XYZ reconstruction and exact foreground/background builds. Core tests cover metadata/absent rows; software UI drives the exact-offset controls. The stroke check also confirms that stationary updates retain the existing preview token.
+
+```sh
+python3 -B scripts/validate_terrain_handles.py --output /tmp/hammerr-terrain-handles-check
+```
+
+Checks all seven numeric handle constraints on rotated powers 2–4, shared snapping, unchanged neighbors/source/history, invalid updates, pointer hit-testing and resized viewport guards, owned review, one-step Undo, foreign preview preservation and save/reopen. Session tests cover axis/plane/screen pointer movement in all four projections; software UI tests exercise compact resizing, handle review and silent cancellation. The numeric vertex-move check covers native XYZ output from the shared preview operation.

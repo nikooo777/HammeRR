@@ -325,6 +325,7 @@ unfinished. Ordinary brush-entity pivot and compiler physics limits apply.
 - Connected water with the same height and material forms one region.
 - If the map has no `water_lod_control`, one is added to the BSP with distances of 1,000 and 2,000. Existing controls are kept.
 - With engine physics, water also gets fluid bodies: objects float.
+- [Compile regions](compile-regions.md#include-a-water-volume) support fully contained structural world water; crossing volumes stop the build and preserve previous output.
 - Sloped or enclosed tops and conflicting overlapping liquids fail with a diagnostic. Hidden water is left out. Water inside detail brushes or brush entities is reported as unsupported.
 
 Not yet: depth-specific and below-water materials, currents and custom damping.

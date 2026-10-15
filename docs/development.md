@@ -522,6 +522,7 @@ cargo test -p editor-core --features mcp --lib session::compile_region::tests
 cargo test -p editor --bin editor compile_region_ui::tests
 python3 -B scripts/validate_compile_cordons.py --binary target/debug/hammerr-headless --output /tmp/hammerr-cordon-check
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-check --render --runtime
+python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-water-check --water --runtime
 ```
 
 Compiler regressions cover native legacy/plural parsing, disabled identity,
@@ -532,6 +533,9 @@ workflow checks exact synchronous/background output, filtering across independen
 consumers, saved metadata and preserved source/history/selection. `--render`
 captures an offscreen region guide; `--runtime` uses a private display with
 `-insecure` and `sv_lan 1` for boundary traces and grounded player/prop contact.
+`--water` adds a contained world pool, crossing-volume publication guards,
+native fluid counters and a 60-second buoyancy observation above which the
+boundary traces remain dry. Water in detail/model brushes remains rejected.
 The cordon script separately checks invalid imports and retained prior output.
 Use fresh output directories. Neither script sends desktop input.
 

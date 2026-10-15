@@ -15,6 +15,7 @@ export component CompileRegionWindow inherits Window {
     in property <bool> can-review;
     in property <string> committed;
     in property <string> message;
+    in property <string> scope-help;
     callback edited();
     callback use-bounds();
     callback review();
@@ -60,7 +61,7 @@ export component CompileRegionWindow inherits Window {
                 Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
             }
             Text { text: "Orange lines show the region. Source geometry stays visible and editable. Preview changes nothing until Apply."; wrap: word-wrap; color: #bac2ce; }
-            Text { text: "Region builds add a solid boundary and can hide full-map leaks. Terrain, water, overlays, areaportals and occluders require a full-map build."; wrap: word-wrap; color: #f2c487; }
+            Text { text: root.scope-help; wrap: word-wrap; color: #f2c487; }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

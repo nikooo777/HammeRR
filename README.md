@@ -219,7 +219,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Compile regions |
 | --- |
 | ![Orange compile-region bounds inside the full source map](docs/images/compile-region-preview.png) |
-| Build a sealed part of a brush map with saved bounds, shared previews and Undo. |
+| Build a sealed part of a brush map, including contained world water, with saved bounds and shared previews. |
 
 [Compile and play →](docs/compile-and-play.md)
 

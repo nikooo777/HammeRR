@@ -38,6 +38,10 @@ fn definition_json(value: Option<Definition>) -> Value {
 }
 
 impl Session {
+    pub fn compile_region_build_scope(&self) -> Value {
+        build_configuration(self.document.vmf())
+    }
+
     pub fn compile_region_label(&self) -> &'static str {
         match compile_region::active(self.document.vmf()) {
             Ok(Some(_)) => "Region build…",
@@ -58,11 +62,12 @@ impl Session {
     pub fn compile_region_state(&self) -> Value {
         let [mins, maxs] = self.volume_selection_bounds();
         json!({
-            "build_scope_label":self.compile_region_label(),"build_scope":build_configuration(self.document.vmf()),"snapshot":self.compile_region_stamp(), "committed":configuration(self.document.vmf()),
+            "build_scope_label":self.compile_region_label(),"build_scope":self.compile_region_build_scope(),"snapshot":self.compile_region_stamp(), "committed":configuration(self.document.vmf()),
             "draft":self.compile_region.draft.as_ref().map(|draft| json!({"token":draft.token,"clear":draft.definition.is_none(),"region":definition_json(draft.definition),"valid":draft.generation==self.document_generation && draft.revision==self.document.revision()})),
             "suggested_bounds":{"mins":mins.to_array(),"maxs":maxs.to_array()},
             "limits":{"minimum_extent":compile_region::MIN_EXTENT,"coordinate":compile_region::MAX_COORDINATE,"shell_thickness":compile_region::SHELL_THICKNESS},
-            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals and the sun remain. Terrain, retained water and consumed region helpers are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
+            "help":"Region builds add a solid boundary and can hide full-map leaks. Water must fit completely inside the region and belong to the world. Terrain, slime, water in entities, overlays, areaportals and occluders require a full-map build.",
+            "policy":"Intersecting world/detail brushes and included brush models stay whole. Point entities use origins; brush entities use resolved pivots; originless globals and the sun remain. Water must be fully contained and structural world geometry. Terrain, slime, detail/model water and consumed region helpers are unsupported. Region builds mask full-map leaks; disable the region for a full-map check. Unapplied drafts never affect builds."
         })
     }
 

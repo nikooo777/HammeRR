@@ -129,7 +129,14 @@ pub(super) fn bake(
                     let bounce = gather(normal, &directions, &mut |direction| {
                         stats.rays += 1;
                         let hit = surfaces
-                            .trace(origin, direction, cone, ctx.shadows, ctx.prop_shadows, budget)?
+                            .trace(
+                                origin,
+                                direction,
+                                cone,
+                                ctx.shadows,
+                                ctx.prop_shadows,
+                                budget,
+                            )?
                             .filter(|hit| !hit.sky && hit.front);
                         match hit {
                             Some(hit)

@@ -11,7 +11,7 @@ are rejected before the map changes.
 3. Under **Source brushes**, check the brushes to join. At least two must remain checked.
 4. Click **Preview merge**. The viewport shows the single result, and the summary lists its brush ID and outer face count.
 5. Click **Apply merge** to replace the source brushes. One **Undo** restores them all.
-6. Use **Discard preview** to keep choosing sources, or **Cancel** to close without applying. Escape also cancels.
+6. Use **Discard preview** to keep choosing the same source candidates, including captured child subsets of large brush entities, or **Cancel** to close without applying. Escape also cancels.
 
 ![Merge brush sources, preview summary and Apply controls](images/brush-merging.png)
 

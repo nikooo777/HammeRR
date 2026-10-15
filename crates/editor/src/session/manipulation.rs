@@ -847,7 +847,7 @@ impl Session {
         if preview.faces {
             self.select_faces(&preview.matches.faces, preview.mode)?;
         } else {
-            self.select(&preview.matches.objects, preview.mode)?;
+            self.select_grouped(&preview.matches.objects, preview.mode)?;
         }
         Ok(preview.matches)
     }

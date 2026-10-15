@@ -117,7 +117,7 @@ impl Session {
         if preview.spec.faces {
             self.select_faces(&preview.matches.faces, preview.spec.mode)?;
         } else {
-            self.select(&preview.matches.objects, preview.spec.mode)?;
+            self.select_grouped(&preview.matches.objects, preview.spec.mode)?;
         }
         self.log(
             actor,

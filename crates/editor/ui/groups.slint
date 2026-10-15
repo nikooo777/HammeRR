@@ -1,0 +1,156 @@
+import { Button, CheckBox, ComboBox, LineEdit, ListView } from "std-widgets.slint";
+
+export struct ObjectGroupRow { id: string, label: string, detail: string }
+export struct ObjectGroupMemberRow { id: string, label: string, detail: string }
+
+export component ObjectGroupsWindow inherits Window {
+    title: "Object groups - HammeRR";
+    preferred-width: 1080px;
+    preferred-height: 780px;
+    in property <[ObjectGroupRow]> groups;
+    in property <[ObjectGroupMemberRow]> members;
+    in property <string> selected;
+    in property <bool> available: true;
+    in property <bool> editing;
+    in property <bool> ungrouping;
+    in property <bool> ready;
+    in property <bool> previous;
+    in property <bool> next;
+    in property <bool> member-previous;
+    in property <bool> member-next;
+    in property <string> page-label;
+    in property <string> member-page-label;
+    in property <string> summary;
+    in property <string> parent-label;
+    in property <string> message;
+    in-out property <string> group-name;
+    in-out property <bool> bypass;
+    in-out property <bool> include-hidden;
+    in-out property <int> selection-mode;
+    callback choose(string);
+    callback page(int);
+    callback member-page(int);
+    callback begin-new();
+    callback begin-edit();
+    callback begin-ungroup();
+    callback name-changed();
+    callback add-selection();
+    callback add-chosen-group();
+    callback chosen-parent();
+    callback root-parent();
+    callback remove-member(string);
+    callback select-member(string);
+    callback select-group();
+    callback bypass-changed();
+    callback apply();
+    callback cancel();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
+        VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+            Text { text: "Object groups"; font-size: 24px; font-weight: 600; }
+            Text { text: "Keep objects together. Nested groups retain their own membership when you group or ungroup."; wrap: word-wrap; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 12px;
+                CheckBox { text: "Bypass groups"; checked <=> root.bypass; toggled => { root.bypass-changed(); } }
+                Text { text: root.bypass ? "Viewport picks individual objects" : "Viewport picks the outermost group"; vertical-alignment: center; color: #bac2ce; }
+                Rectangle { horizontal-stretch: 1; }
+                CheckBox { text: "Include hidden members"; checked <=> root.include-hidden; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "New from selection"; enabled: root.available && !root.editing; clicked => { root.begin-new(); } }
+                Button { text: "Edit group"; enabled: root.available && !root.editing && root.selected != ""; clicked => { root.begin-edit(); } }
+                Button { text: "Ungroup…"; enabled: root.available && !root.editing && root.selected != ""; clicked => { root.begin-ungroup(); } }
+            }
+            HorizontalLayout {
+                spacing: 16px;
+                VerticalLayout {
+                    width: 340px;
+                    spacing: 8px;
+                    Text { text: "Groups"; font-weight: 600; }
+                    ListView {
+                        min-height: 160px;
+                        for group in root.groups: VerticalLayout {
+                            spacing: 3px;
+                            padding-bottom: 8px;
+                            Button { text: (root.selected == group.id ? "● " : "") + group.label; clicked => { root.choose(group.id); } }
+                            Text { text: group.detail; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: "Previous"; enabled: root.previous; clicked => { root.page(-1); } }
+                        Text { text: root.page-label; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { text: "Next"; enabled: root.next; clicked => { root.page(1); } }
+                    }
+                    ComboBox { model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle selection"]; current-index <=> root.selection-mode; }
+                    Button { text: "Select group"; enabled: root.available && root.selected != ""; clicked => { root.select-group(); } }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 8px;
+                    Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
+                    if root.editing && !root.ungrouping: HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Group name"; vertical-alignment: center; }
+                        LineEdit { text <=> root.group-name; placeholder-text: "Courtyard props"; horizontal-stretch: 1; edited => { root.name-changed(); } }
+                    }
+                    if root.editing && !root.ungrouping: VerticalLayout {
+                        spacing: 6px;
+                        Text { text: "Parent group: " + root.parent-label; wrap: word-wrap; color: #bac2ce; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button { text: "Use chosen parent"; enabled: root.selected != ""; clicked => { root.chosen-parent(); } }
+                            Button { text: "Make root"; clicked => { root.root-parent(); } }
+                        }
+                    }
+                    Text { text: "Direct members"; font-weight: 600; }
+                    ListView {
+                        min-height: 140px;
+                        for member in root.members: HorizontalLayout {
+                            spacing: 8px;
+                            padding-bottom: 8px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                Text { text: member.label; wrap: word-wrap; }
+                                Text { text: member.detail; color: #bac2ce; font-size: 12px; wrap: word-wrap; }
+                            }
+                            Button { text: "Select"; clicked => { root.select-member(member.id); } }
+                            if root.editing && !root.ungrouping: Button { text: "Remove"; clicked => { root.remove-member(member.id); } }
+                        }
+                    }
+                    if !root.editing: HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: "Previous members"; enabled: root.member-previous; clicked => { root.member-page(-1); } }
+                        Text { text: root.member-page-label; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { text: "Next members"; enabled: root.member-next; clicked => { root.member-page(1); } }
+                    }
+                    if root.editing && !root.ungrouping: HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Add current selection"; clicked => { root.add-selection(); } }
+                        Button { text: "Add chosen group"; enabled: root.selected != ""; clicked => { root.add-chosen-group(); } }
+                    }
+                }
+            }
+            if root.editing: Text {
+                text: root.ungrouping ? "Ungroup removes only this group. Its direct members move to its parent; nested groups remain intact." : "Choose a group on the left to add it or use it as the parent. Removed members return to the edited group's previous parent.";
+                wrap: word-wrap;
+                color: #bac2ce;
+            }
+            Text { text: root.message; wrap: word-wrap; color: #bac2ce; min-height: 36px; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+                Rectangle { horizontal-stretch: 1; }
+                if root.editing: Button { text: "Cancel"; clicked => { root.cancel(); } }
+                if root.editing: Button { text: root.ungrouping ? "Ungroup" : "Apply group"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

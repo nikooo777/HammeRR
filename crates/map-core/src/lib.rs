@@ -11,6 +11,7 @@ pub mod displacement;
 pub mod document;
 pub mod edit;
 pub mod hollow;
+pub mod groups;
 pub mod light;
 pub mod partition_metadata;
 pub mod picking;

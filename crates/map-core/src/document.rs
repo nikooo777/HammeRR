@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 use crate::context::{self, Metadata, Scope};
 use source_formats::keyvalues::Node;
 
-use source_formats::vmf::{Entity, Properties, Solid, Vmf, World};
+use source_formats::vmf::{Entity, Group, Properties, Solid, Vmf, World};
 
 /// A selectable top-level object. Brushes inside a brush entity belong to
 /// their entity and are addressed through it.
@@ -72,6 +72,7 @@ pub struct Step {
     changes: Vec<Change>,
     world: Option<(Properties, Properties)>,
     extra: Option<(Vec<Node>, Vec<Node>)>,
+    groups: Option<(Vec<Group>, Vec<Group>)>,
 }
 
 impl Step {
@@ -285,6 +286,7 @@ impl Document {
             touched: Vec::new(),
             world: None,
             extra: None,
+            groups: None,
         };
         let result = f(&mut tx).and_then(|value| tx.remove_deleted_context().map(|()| value));
         match result {
@@ -302,6 +304,9 @@ impl Document {
     /// Returns the undone step.
     pub fn undo(&mut self) -> Option<&Step> {
         let step = self.undo.pop()?;
+        if let Some((before, _)) = &step.groups {
+            self.vmf.world.groups = before.clone();
+        }
         if let Some((before, _)) = &step.extra {
             self.vmf.extra = before.clone();
             self.context_cache.take();
@@ -321,6 +326,9 @@ impl Document {
     /// Returns the redone step.
     pub fn redo(&mut self) -> Option<&Step> {
         let step = self.redo.pop()?;
+        if let Some((_, after)) = &step.groups {
+            self.vmf.world.groups = after.clone();
+        }
         if let Some((_, after)) = &step.extra {
             self.vmf.extra = after.clone();
             self.context_cache.take();
@@ -394,9 +402,17 @@ pub struct Transaction<'a> {
     touched: Vec<(ObjectId, State)>,
     world: Option<Properties>,
     extra: Option<Vec<Node>>,
+    groups: Option<Vec<Group>>,
 }
 
 impl Transaction<'_> {
+    pub(crate) fn groups_mut(&mut self) -> &mut Vec<Group> {
+        self.doc.context_fingerprint.take();
+        self.groups
+            .get_or_insert_with(|| self.doc.vmf.world.groups.clone());
+        &mut self.doc.vmf.world.groups
+    }
+
     pub fn world_properties_mut(&mut self) -> &mut Properties {
         self.doc.context_fingerprint.take();
         self.world
@@ -592,7 +608,11 @@ impl Transaction<'_> {
             .extra
             .filter(|before| before != &doc.vmf.extra)
             .map(|before| (before, doc.vmf.extra.clone()));
-        if changes.is_empty() && world.is_none() && extra.is_none() {
+        let groups = self
+            .groups
+            .filter(|before| before != &doc.vmf.world.groups)
+            .map(|before| (before, doc.vmf.world.groups.clone()));
+        if changes.is_empty() && world.is_none() && extra.is_none() && groups.is_none() {
             return;
         }
         doc.undo.push(Step {
@@ -600,6 +620,7 @@ impl Transaction<'_> {
             changes,
             world,
             extra,
+            groups,
         });
         doc.redo.clear();
         doc.revision += 1;
@@ -608,6 +629,9 @@ impl Transaction<'_> {
     fn rollback(self) {
         (self.doc.next_object_id, self.doc.next_side_id) = self.start_ids;
         self.doc.context_fingerprint.take();
+        if let Some(groups) = self.groups {
+            self.doc.vmf.world.groups = groups;
+        }
         if let Some(extra) = self.extra {
             self.doc.vmf.extra = extra;
             self.doc.context_cache.take();

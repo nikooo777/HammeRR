@@ -59,6 +59,39 @@ struct Geometry {
 }
 
 impl Geometry {
+    fn occlusion(&mut self, map: &Map, control: &crate::Control) -> Result<bsp::Occlusion, String> {
+        let mut data = bsp::Occlusion::default();
+        for definition in &map.occluders {
+            control.checkpoint()?;
+            let first_polygon = index(data.polygons.len(), "occluder polygon")?;
+            for polygon in &definition.polygons {
+                control.checkpoint()?;
+                if data.polygons.len() >= bsp::MAX_OCCLUSION_POLYGONS
+                    || data.vertex_indices.len() + polygon.winding.0.len() > bsp::MAX_OCCLUSION_VERTEX_INDICES
+                {
+                    return Err("Occlusion geometry exceeds HammeRR's polygon or vertex-index allocation cap".into());
+                }
+                data.polygons.push(bsp::OccluderPolygon {
+                    first_vertex_index: index(data.vertex_indices.len(), "occluder vertex index")?,
+                    vertex_count: index(polygon.winding.0.len(), "occluder polygon vertex")?,
+                    plane: index(polygon.plane, "occluder plane")?,
+                });
+                for &point in &polygon.winding.0 {
+                    data.vertex_indices.push(i32::from(self.vertex(point)?));
+                }
+            }
+            data.occluders.push(bsp::Occluder {
+                flags: definition.flags,
+                first_polygon,
+                polygon_count: index(definition.polygons.len(), "occluder polygon count")?,
+                mins: definition.mins.as_vec3().to_array(),
+                maxs: definition.maxs.as_vec3().to_array(),
+                area: definition.area,
+            });
+        }
+        Ok(data)
+    }
+
     fn vertex(&mut self, point: DVec3) -> Result<u16, String> {
         let key = vertex_key(point);
         if let Some(&id) = self.by_vertex.get(&key) {
@@ -417,7 +450,9 @@ pub fn build(
     bsp.set_records(&water.records);
     bsp.set_area_data(&areas.data)
         .map_err(|error| error.to_string())?;
+    let occlusion = geometry.occlusion(map, control)?;
     bsp.set_values(lump::VERTEXES, &geometry.vertices);
+    bsp.set_occlusion(&occlusion).map_err(|error| error.to_string())?;
     bsp.set_records(&geometry.edges);
     bsp.set_values(lump::SURFEDGES, &geometry.surfedges);
     bsp.set_values(lump::LEAFFACES, &all_leaf_faces);
@@ -429,8 +464,6 @@ pub fn build(
     bsp.set_values(lump::LEAFMINDISTTOWATER, &water_distances);
     bsp.set_values(lump::LEAF_AMBIENT_INDEX, &vec![[0u16; 2]; leaves.len()]);
     bsp.set_values(lump::MAP_FLAGS, &[0i32]);
-    bsp.set_values(lump::OCCLUSION, &[0i32; 3]);
-    bsp.lumps[lump::OCCLUSION].version = 2;
     bsp.lumps[lump::VISIBILITY] = Lump {
         data: visibility.data.clone(),
         ..Lump::default()

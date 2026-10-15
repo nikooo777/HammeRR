@@ -180,7 +180,7 @@ impl VisibilityMode {
                 "Quickly builds conservative visible and audible sets. Some hidden areas remain visible."
             }
             Self::Detailed => {
-                "Clips sight volumes through portal paths to remove hidden areas. Uses up to eight CPU workers on larger maps, with conservative fallbacks. Original hint priority, occluders and broader map coverage remain unfinished."
+                "Clips sight volumes through portal paths to remove hidden areas. Uses up to eight CPU workers on larger maps, with conservative fallbacks. Broader map coverage and native occluder runtime behavior remain under validation."
             }
         }
     }
@@ -325,6 +325,9 @@ pub struct Stats {
     pub faces: usize,
     pub models: usize,
     pub cubemap_samples: usize,
+    pub occluders: usize,
+    pub occluder_polygons: usize,
+    pub occluder_vertex_refs: usize,
     pub static_props: usize,
     pub static_prop_models: usize,
     pub static_prop_leaf_refs: usize,
@@ -537,6 +540,10 @@ fn build(
     }
     control.advance(Stage::Areas)?;
     let areas = areas::build(&mut map, &tree, &portals, control)?;
+    map::occluders::assign_areas(&mut map, &tree, &portals, &areas, &mut output.report, control)?;
+    if output.report.has_errors() {
+        return Ok(());
+    }
     output.stats.areas = areas.data.areas.len().saturating_sub(1);
     output.stats.areaportals = map.area_portals.len();
     output.stats.areaportal_windows = map
@@ -583,7 +590,7 @@ fn build(
     output.report.diagnostics.push(Diagnostic::info(
         match options.visibility {
             VisibilityMode::Fast => "Visibility uses conservative portal bounds; choose Detailed for portal separator clipping",
-            VisibilityMode::Detailed => "Visibility uses bounded portal separator clipping and source-cluster tasks; hint priority and occluders remain unfinished",
+            VisibilityMode::Detailed => "Visibility uses bounded portal separator clipping and source-cluster tasks",
         },
         None,
         None,
@@ -661,6 +668,11 @@ fn build(
         control,
     )?;
     let mut bsp = emission.bsp;
+    if let Some(data) = bsp.occlusion().map_err(|error| error.to_string())? {
+        output.stats.occluders = data.occluders.len();
+        output.stats.occluder_polygons = data.polygons.len();
+        output.stats.occluder_vertex_refs = data.vertex_indices.len();
+    }
     if let Some(data) = bsp.overlay_data().map_err(|error| error.to_string())? {
         output.stats.overlays = data.overlays.len();
         output.stats.overlay_face_refs = data

@@ -281,7 +281,7 @@ With **CS:S engine physics**:
 
 For brush entities, use **Faces · materials & textures** to assign different physical surfaces to individual faces, or switch **Selection** to **Objects** and apply one material across the entity. A model with a single property also records that property on its native body.
 
-Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings are checked before and after native serialization. This preserves the primary `$surfaceprop`; blended secondary properties are unfinished. Blended secondary surface properties, material density, compiler-derived brush-model masses, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
+Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings preserve the primary `$surfaceprop` and are checked before and after native serialization. Blended secondary properties, material density, compiler-derived brush-model masses, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
 
 ### Brush entities and pivots
 

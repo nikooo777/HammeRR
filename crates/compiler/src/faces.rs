@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use glam::DVec3;
-use source_formats::bsp::TexInfo;
+use source_formats::bsp::{TexInfo, contents, surf};
 
 use crate::Control;
 use crate::map::Map;
@@ -62,7 +62,7 @@ fn subdivide(
     let material = map
         .materials
         .get(map.texdata[map.texinfos.infos[face.texinfo].texdata as usize]);
-    if !material.lit() {
+    if !material.lit() || map.texinfos.infos[face.texinfo].flags & surf::NOLIGHT != 0 {
         output.push(face);
         return Ok(());
     }
@@ -138,7 +138,14 @@ pub fn build_with_smoothing(
     retained_points: &mut usize,
 ) -> Result<Vec<Face>, String> {
     control.checkpoint()?;
-    type Group = (Option<usize>, usize, usize, u32, Arc<[usize]>);
+    type Group = (
+        Option<usize>,
+        usize,
+        usize,
+        u32,
+        Arc<[usize]>,
+        Option<usize>,
+    );
     let mut groups: BTreeMap<Group, Vec<Face>> = BTreeMap::new();
     let mut provenance_work = 0;
     for &brush_index in &map.entities[entity].brushes {
@@ -149,45 +156,89 @@ pub fn build_with_smoothing(
                 continue;
             };
             let source_sides: Arc<[u32]> = side.source_id.into_iter().collect::<Vec<_>>().into();
-            let mut pending = vec![(0, winding.clone(), None)];
-            while let Some((index, winding, on_node)) = pending.pop() {
+            let mut pending = vec![(0, winding.clone(), None, side.plane, side.texinfo, false)];
+            if entity == 0
+                && brush.structural()
+                && let Some(&bottom) = map.water_bottom_texinfos.get(&side.texinfo)
+            {
+                let mut reversed = winding.clone();
+                reversed.0.reverse();
+                pending.push((0, reversed, None, side.plane ^ 1, bottom, true));
+            }
+            while let Some((index, winding, on_node, face_plane, texinfo, below_water)) =
+                pending.pop()
+            {
                 control.checkpoint()?;
                 let node = &tree.nodes[index];
                 match node.split {
-                    Some((plane, children)) if side.plane & !1 == plane => {
-                        let front = side.plane & 1 == 0;
+                    Some((plane, children)) if face_plane & !1 == plane => {
+                        let front = face_plane & 1 == 0;
                         let attached = if entity != 0 || brush.structural() {
                             Some(index)
                         } else {
                             on_node
                         };
-                        pending.push((children[usize::from(!front)], winding, attached));
+                        pending.push((
+                            children[usize::from(!front)],
+                            winding,
+                            attached,
+                            face_plane,
+                            texinfo,
+                            below_water,
+                        ));
                     }
                     Some((plane, children)) => {
                         let plane = map.planes.get(plane);
                         let (front, back) = winding.split(plane.normal, plane.dist);
                         for (child, half) in children.into_iter().zip([front, back]) {
                             if let Some(half) = half {
-                                pending.push((child, half, on_node));
+                                pending.push((
+                                    child,
+                                    half,
+                                    on_node,
+                                    face_plane,
+                                    texinfo,
+                                    below_water,
+                                ));
                             }
                         }
                     }
                     None if !node.solid() && winding.area() > ON_EPSILON * ON_EPSILON => {
+                        if below_water {
+                            let outside =
+                                winding.center() - map.planes.get(face_plane).normal * ON_EPSILON;
+                            let outside = &tree.nodes[tree.leaf_at(outside, &map.planes)];
+                            if node.contents & contents::WATER == 0
+                                || outside.solid()
+                                || outside.contents & contents::WATER != 0
+                            {
+                                continue;
+                            }
+                        }
                         groups
                             .entry((
                                 on_node,
-                                side.plane,
-                                side.texinfo,
+                                face_plane,
+                                texinfo,
                                 side.smoothing_groups,
-                                map.overlays.membership(side.source_id),
+                                map.overlays.membership(if below_water {
+                                    None
+                                } else {
+                                    side.source_id
+                                }),
+                                below_water.then_some(side.texinfo),
                             ))
                             .or_default()
                             .push(Face {
                                 smoothing_source: None,
-                                source_sides: source_sides.clone(),
+                                source_sides: if below_water {
+                                    Arc::from([])
+                                } else {
+                                    source_sides.clone()
+                                },
                                 displacement: None,
-                                plane: side.plane,
-                                texinfo: side.texinfo,
+                                plane: face_plane,
+                                texinfo,
                                 smoothing_groups: side.smoothing_groups,
                                 winding,
                                 node: on_node,

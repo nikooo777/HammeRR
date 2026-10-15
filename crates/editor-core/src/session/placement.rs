@@ -101,6 +101,52 @@ fn object_id(id: ObjectId) -> String {
     }
 }
 
+fn precise_corner(solid: &Solid, component: &Component, approximate: DVec3) -> Option<DVec3> {
+    let mut sides = component.sides.clone();
+    sides.sort_unstable();
+    let planes = sides
+        .iter()
+        .map(|id| {
+            let side = solid.sides.iter().find(|side| side.id == *id)?;
+            Some((map_core::Plane::from_points(side.plane.0)?, side.plane.0[1]))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let reference = planes.first()?.1;
+    let mut best = None;
+    let mut largest = 0.0;
+    for (a, first) in planes.iter().enumerate() {
+        for (b, second) in planes.iter().enumerate().skip(a + 1) {
+            for (c, third) in planes.iter().enumerate().skip(b + 1) {
+                let [na, nb, nc] = [first.0.normal, second.0.normal, third.0.normal];
+                let determinant = na.dot(nb.cross(nc));
+                if !determinant.is_finite() || determinant.abs() <= largest {
+                    continue;
+                }
+                largest = determinant.abs();
+                best = Some([a, b, c]);
+            }
+        }
+    }
+    let indices = best?;
+    let [na, nb, nc] = indices.map(|index| planes[index].0.normal);
+    let determinant = na.dot(nb.cross(nc));
+    let distances = indices.map(|index| planes[index].0.normal.dot(planes[index].1 - reference));
+    let point = reference
+        + (distances[0] * nb.cross(nc) + distances[1] * nc.cross(na) + distances[2] * na.cross(nb))
+            / determinant;
+    if !point.is_finite() || !point.abs_diff_eq(approximate, map_core::plane::ON_EPSILON) {
+        return None;
+    }
+    for (plane, origin) in planes {
+        let scale = (plane.normal.abs() * (point.abs() + origin.abs())).element_sum();
+        let error = CORNER_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale;
+        if plane.normal.dot(point - origin).abs() > error {
+            return None;
+        }
+    }
+    Some(point)
+}
+
 fn push(points: &mut Vec<SupportPoint>, point: DVec3, helper_offset: DVec3) -> Result<(), String> {
     if points.len() >= MAX_POINTS || !point.is_finite() || !helper_offset.is_finite() {
         return Err("Surface placement exceeds one million finite support points".into());
@@ -172,7 +218,9 @@ impl Session {
         if indices.len() != 1 {
             return Err("Choose exactly one real source corner, rather than a face or edge".into());
         }
-        Ok(Some(topology.vertices[indices[0]].position))
+        precise_corner(solid, component, topology.vertices[indices[0]].position)
+            .map(Some)
+            .ok_or("Source corner planes have no finite intersection".into())
     }
 
     fn corner_translation_bounds(&self, owner: ObjectId, delta: DVec3) -> Result<(), String> {
@@ -410,8 +458,12 @@ impl Session {
             let source = self.placement_source_corner(ids, options)?.unwrap();
             let ray = ray.ok_or("Supply a ray or pick a target corner in the viewport")?;
             let surface = self.placement_surface(ids, ray, true)?;
-            let (target, position) = query::face_corner(&self.document, &surface.hit)
+            let (target, approximate) = query::face_corner(&self.document, &surface.hit)
                 .ok_or("The first visible hit must be an unambiguous flat brush face")?;
+            let (_, solid) = subobject::solid(&self.document, target.solid)
+                .map_err(|error| error.to_string())?;
+            let position = precise_corner(solid, &target, approximate)
+                .ok_or("Target corner planes have no finite intersection")?;
             let mut delta = position - source;
             for axis in 0..3 {
                 let scale = source[axis]

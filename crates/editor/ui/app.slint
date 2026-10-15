@@ -1790,6 +1790,8 @@ export component AppWindow inherits Window {
     changed transform-preview-values => { if root.has-transform-preview { root.refresh-transform-values(); } }
     changed has-transform-preview => { if root.has-transform-preview { root.refresh-transform-values(); } }
     in-out property <bool> show-tools: true;
+    in-out property <bool> sky-preview: false;
+    in-out property <string> sky-preview-status: "Set world skyname to select a 2D sky";
     in-out property <bool> show-leak: true;
     in-out property <int> surface-view;
     in-out property <int> smoothing-view-group: 1;
@@ -2349,6 +2351,16 @@ export component AppWindow inherits Window {
                         model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
                         current-index <=> root.surface-view;
                         selected => { root.surface-view-changed(); }
+                    }
+                    CheckBox {
+                        text: "2D sky preview";
+                        checked <=> root.sky-preview;
+                        toggled => { root.options-changed(); }
+                    }
+                    if root.sky-preview: Text {
+                        text: root.sky-preview-status + "\nPerspective · Textured · Tool textures";
+                        color: #aeb9c8;
+                        wrap: word-wrap;
                     }
                     if root.surface-view == 4: HorizontalLayout {
                         Text { text: "Highlight group"; color: #c8ccd4; vertical-alignment: center; }

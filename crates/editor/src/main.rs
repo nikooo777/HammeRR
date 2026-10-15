@@ -4258,6 +4258,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut session = lock(&shared);
             let mut view = session.view();
             view.tool_textures = app.get_show_tools();
+            view.sky_preview = app.get_sky_preview();
             view.leak_path = app.get_show_leak();
             session.set_view(view);
         }
@@ -4943,6 +4944,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         refresh_surface_dialog(window, &mut session, target);
                     }
                     app.set_show_tools(session.view().tool_textures);
+                    app.set_sky_preview(session.view().sky_preview);
+                    app.set_sky_preview_status(session.skybox_preview().map_or_else(|| "Set world skyname to select a 2D sky".to_owned(), |skybox| skybox.summary()).into());
                     app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
@@ -5010,6 +5013,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         refresh_material_catalog(window, &mut session);
                     }
                     app.set_show_tools(session.view().tool_textures);
+                    app.set_sky_preview(session.view().sky_preview);
+                    app.set_sky_preview_status(session.skybox_preview().map_or_else(|| "Set world skyname to select a 2D sky".to_owned(), |skybox| skybox.summary()).into());
                     app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);

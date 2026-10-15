@@ -205,6 +205,7 @@ pub struct ViewOptions {
     pub surface: SurfaceView,
     pub smoothing_group: u32,
     pub tool_textures: bool,
+    pub sky_preview: bool,
     pub leak_path: bool,
     pub grid_visible: bool,
     pub grid_size: f32,
@@ -223,6 +224,7 @@ impl Default for ViewOptions {
             surface: SurfaceView::Textured,
             smoothing_group: 1,
             tool_textures: true,
+            sky_preview: false,
             leak_path: true,
             grid_visible: true,
             grid_size: 16.0,
@@ -242,12 +244,14 @@ struct DrawBatch {
     batch: Batch,
     tool: bool,
     helper: bool,
+    sky: bool,
 }
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
+    skybox: Option<wgpu::BindGroup>,
     opaque: Vec<DrawBatch>,
     translucent: Vec<DrawBatch>,
     lines: Option<(wgpu::Buffer, u32)>,
@@ -264,6 +268,10 @@ pub struct Renderer {
     opaque_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
+    sky_layout: wgpu::BindGroupLayout,
+    sky_sampler: wgpu::Sampler,
+    skyboxes: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
     /// Bind groups by [`MaterialId`], uploaded on first use.
     materials: Vec<Option<wgpu::BindGroup>>,
     white: wgpu::Texture,
@@ -276,6 +284,7 @@ impl Renderer {
     /// Material IDs are local to a library; clear bindings when replacing it.
     pub fn clear_materials(&mut self) {
         self.materials.clear();
+        self.skyboxes.clear();
     }
 
     pub fn new(ctx: &GpuContext) -> Self {
@@ -339,17 +348,46 @@ impl Renderer {
             ..Default::default()
         });
 
+        let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("2D sky"),
+            entries: &[
+                texture_entry(0), texture_entry(1), texture_entry(2),
+                texture_entry(3), texture_entry(4), texture_entry(5),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                uniform_entry(7, wgpu::ShaderStages::FRAGMENT),
+            ],
+        });
+        let sky_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("2D sky edges"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("2D sky"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&sky_layout)],
+            immediate_size: 0,
+        });
+        let sky_shader = device.create_shader_module(wgpu::include_wgsl!("sky.wgsl"));
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("map"),
             bind_group_layouts: &[Some(&globals_layout), Some(&material_layout)],
             immediate_size: 0,
         });
-        let pipeline = |label, blend, depth_write| {
+        let pipeline = |label, blend, depth_write, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
-                layout: Some(&layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some("vs_main"),
                     compilation_options: Default::default(),
                     buffers: &[Some(wgpu::VertexBufferLayout {
@@ -381,7 +419,7 @@ impl Renderer {
                 }),
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some("fs_main"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
@@ -394,9 +432,10 @@ impl Renderer {
                 cache: None,
             })
         };
-        let opaque_pipeline = pipeline("opaque", None, true);
+        let opaque_pipeline = pipeline("opaque", None, true, &layout, &shader);
+        let sky_pipeline = pipeline("2D sky", None, true, &sky_pipeline_layout, &sky_shader);
         let translucent_pipeline =
-            pipeline("translucent", Some(wgpu::BlendState::ALPHA_BLENDING), false);
+            pipeline("translucent", Some(wgpu::BlendState::ALPHA_BLENDING), false, &layout, &shader);
 
         let line_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lines"),
@@ -451,6 +490,10 @@ impl Renderer {
             opaque_pipeline,
             translucent_pipeline,
             line_pipeline,
+            sky_pipeline,
+            sky_layout,
+            sky_sampler,
+            skyboxes: std::collections::HashMap::new(),
             materials: Vec::new(),
             white: solid_texture(ctx, [255, 255, 255, 255]),
             missing: checkerboard_texture(ctx),
@@ -534,6 +577,7 @@ impl Renderer {
             let draw = DrawBatch {
                 batch,
                 tool: info.tool,
+                sky: info.sky,
                 helper: batch.material == MaterialLibrary::EDITOR || info.helper.is_some(),
             };
             if info.translucent {
@@ -542,7 +586,15 @@ impl Renderer {
                 opaque.push(draw);
             }
         }
+        let skybox = mesh.skybox.as_ref().filter(|skybox| skybox.ready()).and_then(|skybox| {
+            if !self.skyboxes.contains_key(&skybox.name) {
+                let binding = self.sky_bind_group(ctx, skybox);
+                self.skyboxes.insert(skybox.name.clone(), binding);
+            }
+            self.skyboxes.get(&skybox.name).cloned().flatten()
+        });
         GpuScene {
+            skybox,
             vertices,
             indices,
             opaque,
@@ -552,6 +604,25 @@ impl Renderer {
             wire_lines,
             tool_wire_lines,
         }
+    }
+
+    fn sky_bind_group(&self, ctx: &GpuContext, skybox: &crate::sky::Skybox) -> Option<wgpu::BindGroup> {
+        let textures = skybox.faces.iter().map(|face| upload_vtf(ctx, face.texture.as_ref()?))
+            .collect::<Option<Vec<_>>>()?;
+        let views = textures.iter().map(|texture| texture.create_view(&Default::default())).collect::<Vec<_>>();
+        let mut entries = views.iter().enumerate().map(|(binding, view)| wgpu::BindGroupEntry {
+            binding: binding as u32,
+            resource: wgpu::BindingResource::TextureView(view),
+        }).collect::<Vec<_>>();
+        entries.push(wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.sky_sampler) });
+        let transforms = skybox.faces.each_ref().map(|face| face.transform);
+        let params = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sky texture transforms"), contents: bytemuck::cast_slice(&transforms), usage: wgpu::BufferUsages::UNIFORM,
+        });
+        entries.push(wgpu::BindGroupEntry { binding: 7, resource: params.as_entire_binding() });
+        Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&skybox.name), layout: &self.sky_layout, entries: &entries,
+        }))
     }
 
     fn ensure_material(&mut self, ctx: &GpuContext, library: &MaterialLibrary, id: MaterialId) {
@@ -755,6 +826,16 @@ impl Renderer {
                     let Some(Some(material)) = self.materials.get(draw.batch.material) else {
                         continue;
                     };
+                    if draw.sky && options.sky_preview && options.surface == SurfaceView::Textured
+                        && camera.projection == crate::Projection::Perspective
+                        && let Some(skybox) = &scene.skybox
+                    {
+                        pass.set_pipeline(&self.sky_pipeline);
+                        pass.set_bind_group(1, skybox, &[]);
+                        let batch = draw.batch;
+                        pass.draw_indexed(batch.first_index..batch.first_index + batch.index_count, 0, 0..1);
+                        continue;
+                    }
                     pass.set_pipeline(if options.surface == SurfaceView::Textured || draw.helper {
                         pipeline
                     } else {
@@ -1039,14 +1120,15 @@ fn checkerboard_texture(ctx: &GpuContext) -> wgpu::Texture {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn surface_shader_parses_and_validates_without_a_gpu() {
+    fn surface_and_sky_shaders_parse_and_validate_without_a_gpu() {
         use wgpu::naga::{front::wgsl, valid};
 
-        let source = include_str!("shader.wgsl");
-        let module = wgsl::parse_str(source)
-            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
-        valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::empty())
-            .validate(&module)
-            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+        for source in [include_str!("shader.wgsl"), include_str!("sky.wgsl")] {
+            let module = wgsl::parse_str(source)
+                .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+            valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::empty())
+                .validate(&module)
+                .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+        }
     }
 }

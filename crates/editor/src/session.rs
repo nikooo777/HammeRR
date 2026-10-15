@@ -1300,6 +1300,14 @@ impl Session {
         self.camera = camera;
     }
 
+    pub fn skybox_preview(&mut self) -> Option<Arc<render::sky::Skybox>> {
+        let name = self.document.vmf().world.properties.get("skyname")?.trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some(self.materials.skybox(&self.game, name))
+    }
+
     pub fn view(&self) -> ViewOptions {
         ViewOptions {
             grid_size: self.spatial.grid_size as f32,
@@ -2020,6 +2028,27 @@ impl Session {
 mod tests {
     use super::*;
     use crate::test_assets::room;
+    #[test]
+    fn sky_preview_tracks_world_settings_and_undo_without_view_history() {
+        let mut session = Session::new(Err("no mounted assets".into()));
+        let before = session.document.vmf().clone();
+        let original = session.skybox_preview().unwrap();
+        assert!(!original.ready());
+        let serial = session.view_serial();
+        session.set_view(ViewOptions { sky_preview: true, ..session.view() });
+        assert!(session.view().sky_preview);
+        assert!(session.view_serial() > serial);
+        assert_eq!(&before, session.document.vmf());
+        assert_eq!(session.document.undo_labels().count(), 0);
+        session.begin_property_edit(PropertyTarget::World).unwrap();
+        let token = session.property_draft().unwrap().token;
+        session.update_property_edit(token, vec![PropertyChange::Set { key: "skyname".into(), value: "other_sky".into() }]).unwrap();
+        session.commit_property_edit(Actor::Agent, token).unwrap();
+        assert_eq!(session.skybox_preview().unwrap().name, "other_sky");
+        session.undo(Actor::Agent).unwrap();
+        assert!(Arc::ptr_eq(&original, &session.skybox_preview().unwrap()));
+        assert!(session.view().sky_preview);
+    }
     #[test]
     fn face_selection_previews_cancellation_and_undo_are_shared_and_atomic() {
         let mut session = Session::new(Err("no assets needed".into()));

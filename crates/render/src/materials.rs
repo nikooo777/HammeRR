@@ -1,6 +1,7 @@
 //! CPU-side material loading: VMT parameters plus the textures to display.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use source_formats::gamefs::GameFs;
 use source_formats::vmt::{Material, texture_path};
@@ -25,6 +26,7 @@ pub struct MaterialInfo {
     pub alpha_test: bool,
     pub translucent: bool,
     pub tool: bool,
+    pub sky: bool,
     /// Neither the VMT nor its texture could be found.
     pub missing: bool,
     pub(crate) helper: Option<&'static HelperMaterial>,
@@ -54,6 +56,8 @@ impl MaterialInfo {
             alpha_test: material.as_ref().is_some_and(Material::alpha_test),
             translucent: material.as_ref().is_some_and(Material::translucent),
             tool: material.as_ref().is_some_and(Material::is_tool),
+            sky: material.as_ref().is_some_and(|material| material.compile_semantics().surface & source_formats::bsp::surf::SKY != 0)
+                || matches!(name.as_str(), "tools/toolsskybox" | "tools/toolsskybox2d"),
             name,
             base,
             blend,
@@ -74,6 +78,7 @@ impl MaterialInfo {
             alpha_test: false,
             translucent: false,
             tool: false,
+            sky: false,
             missing: false,
         }
     }
@@ -88,6 +93,7 @@ pub type MaterialId = usize;
 pub struct MaterialLibrary {
     materials: Vec<MaterialInfo>,
     by_name: HashMap<String, MaterialId>,
+    skyboxes: HashMap<String, Arc<crate::sky::Skybox>>,
 }
 
 impl Default for MaterialLibrary {
@@ -95,11 +101,17 @@ impl Default for MaterialLibrary {
         Self {
             materials: vec![MaterialInfo::untextured(Self::EDITOR_NAME)],
             by_name: HashMap::from([(Self::EDITOR_NAME.to_owned(), Self::EDITOR)]),
+            skyboxes: HashMap::new(),
         }
     }
 }
 
 impl MaterialLibrary {
+    pub fn skybox(&mut self, fs: &GameFs, name: &str) -> Arc<crate::sky::Skybox> {
+        let name = name.trim().to_ascii_lowercase();
+        self.skyboxes.entry(name.clone()).or_insert_with(|| Arc::new(crate::sky::Skybox::load(fs, &name))).clone()
+    }
+
     /// Flat white, tinted by vertex color: entity boxes and other helpers.
     pub const EDITOR: MaterialId = 0;
     const EDITOR_NAME: &str = "__editor/flat";

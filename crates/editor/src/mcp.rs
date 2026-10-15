@@ -1824,8 +1824,16 @@ pub struct FavoriteMaterialArgs {
     pub favorite: bool,
 }
 
+fn skybox_state(session: &mut Session) -> Value {
+    let Some(skybox) = session.skybox_preview() else {
+        return json!({"name":null,"ready":false,"summary":"Set world skyname to select a 2D sky"});
+    };
+    json!({"name":skybox.name,"ready":skybox.ready(),"summary":skybox.summary(),
+        "faces":skybox.faces.iter().zip(render::sky::SUFFIXES).map(|(face, suffix)| json!({"suffix":suffix,"material":face.material,"issue":face.issue,"size":face.texture.as_ref().map(|texture| [texture.width,texture.height])})).collect::<Vec<_>>()})
+}
+
 fn view_state(view: ViewOptions) -> Value {
-    json!({"tool_textures":view.tool_textures,"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
@@ -2312,6 +2320,8 @@ pub struct StepsArgs {
 pub struct SetViewArgs {
     /// Draw clip, trigger, nodraw and skybox brushes.
     pub tool_textures: Option<bool>,
+    /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six LDR faces.
+    pub sky_preview: Option<bool>,
     /// Show the current compilation's leak path through geometry.
     pub leak_path: Option<bool>,
     /// textured, flat, wireframe, lightmap_density, or smoothing_groups; works in every projection.
@@ -2329,6 +2339,8 @@ pub struct RenderArgs {
     pub height: Option<u32>,
     /// Draw tool brushes (nodraw, clip, trigger, skybox). Defaults to the editor setting.
     pub tool_textures: Option<bool>,
+    /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six LDR faces.
+    pub sky_preview: Option<bool>,
     pub leak_path: Option<bool>,
     /// Optional viewport mode override; does not change the user's view.
     pub surface: Option<String>,
@@ -4468,6 +4480,7 @@ impl EditorServer {
         let rendering = self.rendering_status();
         let mut session = self.session();
         session.poll_game();
+        let skybox = skybox_state(&mut session);
         let doc = session.document();
         let vmf = doc.vmf();
         let point_entities = vmf.entities.iter().filter(|e| e.solids.is_empty()).count();
@@ -4496,6 +4509,7 @@ impl EditorServer {
             "hollow": session.hollow_state(),
             "leak": session.leak().map(|leak| json!({"entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>()})),
             "view": view_state(session.view()),
+            "skybox": skybox,
             "spatial": session.spatial(),
             "block_preview": bounds_json(session.block_preview()),
             "clipping": clip_state(&session),
@@ -7955,7 +7969,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set shared viewport visibility and mode in any projection: textured, flat, wireframe, lightmap_density or smoothing_groups. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. Helpers, selection and tool filters remain active. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
+        description = "Set shared viewport visibility and mode in any projection: textured, flat, wireframe, lightmap_density or smoothing_groups. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. Helpers, selection and tool filters remain active. sky_preview resolves world skyname as six mounted LDR skybox faces on sky surfaces in perspective Textured views with Tool textures enabled; unavailable faces retain the tool surface. No 3D sky-camera transform, fog, HDR or material animation. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
     )]
     fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
@@ -7972,6 +7986,9 @@ impl EditorServer {
             }
             if let Some(leak) = args.leak_path {
                 view.leak_path = leak;
+            }
+            if let Some(sky) = args.sky_preview {
+                view.sky_preview = sky;
             }
             session.set_view(view);
             Ok(view_state(view))
@@ -8057,13 +8074,17 @@ impl EditorServer {
         if let Some(leak) = args.leak_path {
             view.leak_path = leak;
         }
+        if let Some(sky) = args.sky_preview {
+            view.sky_preview = sky;
+        }
         let png = match self.render_png(&camera, size, view) {
             Ok(png) => png,
             Err(error) => return fail(error),
         };
         let data = base64::engine::general_purpose::STANDARD.encode(png);
-        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1,
-            "view": { "tool_textures": view.tool_textures, "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
+        let skybox = skybox_state(&mut self.session());
+        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox,
+            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
                 "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),

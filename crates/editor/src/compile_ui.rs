@@ -908,7 +908,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let (directory, game, _) = crate::game::tests::fixture(true);
+        let (directory, game, _) = crate::test_assets::game_process(true);
         let mut session = Session::new(Ok(game));
         let path = directory.path().join("room.vmf");
         std::fs::write(&path, crate::test_assets::room().write(&Default::default())).unwrap();

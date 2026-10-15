@@ -9,30 +9,52 @@
 | `crates/source-formats` | Valve file formats (VMF, BSP, VPK, VMT, VTF, FGD, MDL, KeyValues) and the game filesystem. |
 | `crates/map-core` | Geometry, terrain, the undoable map document, edits and picking. |
 | `crates/render` | The wgpu renderer, materials, camera and offscreen snapshots. |
-| `crates/editor` | The Slint UI, the shared editing session and the MCP server. |
+| `crates/editor-core` | The shared editing session, application runtime, optional MCP server and `hammerr-headless`. No Slint dependency. |
+| `crates/editor` | The Slint UI, desktop startup and software UI tests. |
 | `crates/compiler` | The native VMF-to-BSP compiler, `hammerr-compile` and the `hammerr-physics` helper. |
 | `scripts/` | End-to-end validation scripts. |
 | `docs/` | This manual and its screenshots. |
 
 The editor UI and the MCP server call the same session operations, so every feature behaves identically for people and agents. New features need both a UI control and an MCP tool.
 
-Shared session locking and compile/game workers live in `editor/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. UI controllers and MCP call these application helpers directly. MCP tool groups and parameters live under `editor/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/`.
+Shared session locking and compile/game workers live in `editor-core/src/runtime.rs`; object-ID parsing and formatting live in `identity.rs`. Both executables use `startup::Application` for content mounting, recovery and shutdown. MCP tool groups and parameters live under `editor-core/src/mcp/`, while desktop composition and feature bindings live under `editor/src/ui/` and the feature-specific UI modules.
+
+`Session` owns geometry-preview state through `session/previews.rs`. Rendering, picking and tool-texture filtering share its displayed-document selector. Feature modules validate replacement drafts before clearing competitors through the coordinator; their own payloads and ownership tokens remain local.
 
 ## Build and test
 
 ```sh
-cargo build --release -p editor -p compiler
+cargo build --release -p editor -p editor-core -p compiler
 cargo test --workspace
 ```
 
 Builds use a lot of memory. On smaller machines, limit parallel jobs with `-j`.
 
+For application changes that do not need the UI, build and test without compiling Slint:
+
+```sh
+cargo test -p editor-core --no-default-features --lib
+cargo test -p editor-core --features mcp --lib
+cargo build -p editor-core --features mcp --bin hammerr-headless
+```
+
+The optional `test-support` feature exposes shared fixtures for desktop tests. It is not needed to run either program. `editor --headless` remains compatible with the standalone target.
+
+On the development desktop, serialize Cargo work with eight jobs and a 24 GiB memory limit:
+
+```sh
+mkdir -p target
+systemd-run --user --scope --quiet -p MemoryMax=24G -p MemorySwapMax=0 \
+  env CARGO_BUILD_JOBS=8 flock target/hammerr-cargo.lock \
+  cargo test -p editor-core --no-default-features --lib
+```
+
 ### Content paths and safe saves
 
 ```sh
 cargo test -p source-formats --lib gamefs::tests
-cargo test -p editor recovery::tests
-cargo test -p editor recipe_persistence_roundtrips_and_retries_failed_writes_atomically
+cargo test -p editor-core recovery::tests
+cargo test -p editor-core recipe_persistence_roundtrips_and_retries_failed_writes_atomically
 cargo test -p map-core --lib displacement::
 ```
 
@@ -85,15 +107,16 @@ Checks imported projection fields, overlay-aware face merging, final native face
 The `scripts/validate_<name>.py` scripts drive the editor through MCP and check features end to end. They need only Python 3.
 
 ```sh
-cargo build -p editor -p compiler
-python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
+cargo build -p editor-core -p compiler --features editor-core/mcp
+python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 ```
 
-- By default each script starts its own `target/debug/editor --headless`. Use `--binary` to choose another build.
+- Scripts share `DEFAULT_BINARY` in `validate_face_lighting.py` and start a private `target/debug/hammerr-headless` session. Use `--binary` to choose another build, including `target/debug/editor` for desktop compatibility.
 - Results go to `--output`: fixture maps, renders where relevant, and a JSON report. Use a new directory for each run.
 
 | Area | Scripts |
 | --- | --- |
+| Application startup and shutdown | `headless` (edit/history, save/reopen, compile, lazy graphics and exit recovery; `--desktop-binary` compares both executable tool inventories, and `--baseline` compares a saved `tools/list` array sorted by name) |
 | Viewing and selection | `view_modes`, `saved_views`, `sky_preview`, `volume_selection`, `paint_selection`, `map_statistics`, `pointfiles` |
 | Brushes and transforms | `geometry_tools`, `texture_lock_modes`, `brush_reflection`, `brush_shear`, `transform_display`, `precision_cycles`, `polygon_brushes`, `surface_placement`, `repeat_array` |
 | Hollow, carve, merge and clip | `hollow`, `carving`, `carve_many`, `merge`, `clip_handles` |
@@ -334,8 +357,8 @@ Checks concave extrusion, unchanged source/history/camera during preview, invali
 
 ```sh
 cargo test -p map-core merge::
-cargo test -p editor merge
-python3 -B scripts/validate_merge.py --binary target/debug/editor --output /tmp/hammerr-merge-check --render
+cargo test -p editor-core -p editor merge
+python3 -B scripts/validate_merge.py --binary target/debug/hammerr-headless --output /tmp/hammerr-merge-check --render
 ```
 
 Checks complete convex unions, deterministic outer-face/metadata inheritance, world/entity ownership, unrelated children, gap/concavity/cavity rejection, preview replacement, exact Undo/Redo and VMF reopen. The headless MCP script also checks fractional tiled unions and compiles a sealed room with a merged floor. `--render` adds preview/Apply pixel agreement and restoration after Discard. The software UI test `merge_controls_keep_sources_and_share_preview_discard_cancel_apply` writes `brush-merging.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory.
@@ -344,8 +367,8 @@ Checks complete convex unions, deterministic outer-face/metadata inheritance, wo
 
 ```sh
 cargo test -p map-core repeat::tests
-cargo test -p editor session::repeat::tests
-python3 -B scripts/validate_repeat_array.py --binary target/debug/editor --output /tmp/hammerr-repeat-array-check
+cargo test -p editor-core session::repeat::tests
+python3 -B scripts/validate_repeat_array.py --binary target/debug/hammerr-headless --output /tmp/hammerr-repeat-array-check
 ```
 
 Checks nth-copy transforms from immutable originals, generated IDs/names, supported internal references, external-link preservation, copied notes and bounds. The private headless MCP script includes offscreen renders, source/history/camera preservation, invalid/stale tokens, competing previews, Undo/Redo and VMF save/reopen. The software UI test `repeat_ui::tests::repeat_controls_preview_apply_cancel_and_preserve_foreign_drafts` covers previewed-setting review and exact Cancel ownership; `HAMMERR_UI_SNAPSHOTS` saves `repeat-array.png`.
@@ -356,8 +379,8 @@ Checks nth-copy transforms from immutable originals, generated IDs/names, suppor
 cargo test -p render sky::tests
 cargo test -p render surface_and_sky_shaders_parse_and_validate_without_a_gpu
 cargo test -p render sky::tests -- --ignored
-cargo test -p editor sky_preview_tracks_world_settings_and_undo_without_view_history
-python3 -B scripts/validate_sky_preview.py --binary target/debug/editor --gameinfo /path/to/cstrike/gameinfo.txt --sky sky_dust --output /tmp/hammerr-sky-preview-check
+cargo test -p editor-core sky_preview_tracks_world_settings_and_undo_without_view_history
+python3 -B scripts/validate_sky_preview.py --binary target/debug/hammerr-headless --gameinfo /path/to/cstrike/gameinfo.txt --sky sky_dust --output /tmp/hammerr-sky-preview-check
 ```
 
 CPU tests check six-face loading, VMT patches, dimensions, LDR selection, supported transforms and reported failures. The explicitly ignored GPU tests check cardinal/quadrant orientation, camera translation, depth/occlusion, fallback and unchanged view modes/filters. The MCP script always performs offscreen image checks, temporary and shared view settings, picking, world-setting Undo and save/reopen. Repeat with `--sky sky_day01_09` to cover stock vertical scaling. `--url` uses the preserved-map workflow described above; private headless sessions are the default.
@@ -365,24 +388,24 @@ CPU tests check six-face loading, VMT patches, dimensions, LDR selection, suppor
 ### Recent maps and build recipes
 
 ```sh
-cargo test -p editor recent_maps::tests
-cargo test -p editor session::recent::tests
-cargo test -p editor session::compilation::recipes::tests
-python3 -B scripts/validate_recent_maps.py --binary target/debug/editor --output /tmp/hammerr-recent-maps-check
-python3 -B scripts/validate_build_recipes.py --binary target/debug/editor --output /tmp/hammerr-build-recipes-check
+cargo test -p editor-core recent_maps::tests
+cargo test -p editor-core session::recent::tests
+cargo test -p editor-core session::compilation::recipes::tests
+python3 -B scripts/validate_recent_maps.py --binary target/debug/hammerr-headless --output /tmp/hammerr-recent-maps-check
+python3 -B scripts/validate_build_recipes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-build-recipes-check
 ```
 
 Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible six-field build context, incompatible content, restart and storage repair. Remove/clear preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
 
-Recipe checks cover immutable presets, bounded custom CRUD/apply, stale revisions, manual-value provenance invalidation, active/cancelling job guards, frozen completed-job names, output freshness, corrupt/oversized storage, conflict detection and atomic failure/retry. The headless script isolates recipe/recovery storage and verifies native compilation plus persistence across restart. Its output directory must not already exist; optional `--gameinfo` chooses a fixture game installation. Rebuild the editor before script validation when code changed; Cargo tests alone do not refresh the executable.
+Recipe checks cover immutable presets, bounded custom CRUD/apply, stale revisions, manual-value provenance invalidation, active/cancelling job guards, frozen completed-job names, output freshness, corrupt/oversized storage, conflict detection and atomic failure/retry. The headless script isolates recipe/recovery storage and verifies native compilation plus persistence across restart. Its output directory must not already exist; optional `--gameinfo` chooses a fixture game installation. Rebuild the selected executable before script validation when code changed; Cargo tests alone do not refresh the executable.
 
 Software UI tests `recent_map_controls_share_reopen_and_guard_discard_remove_clear_and_cancel` and `recipe_controls_share_crud_apply_cancel_and_job_guards` exercise the same Session operations and write `recent-maps.png` and `build-recipes.png` under `HAMMERR_UI_SNAPSHOTS`. They use the private testing backend without desktop input. These preference checks do not launch the game.
 
 ### Prop shadows and native occluders
 
 ```sh
-python3 -B scripts/validate_prop_shadows.py --binary target/debug/editor --output /tmp/hammerr-prop-shadows-check
-python3 -B scripts/validate_occluders.py --binary target/debug/editor --output /tmp/hammerr-occluders-check
+python3 -B scripts/validate_prop_shadows.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prop-shadows-check
+python3 -B scripts/validate_occluders.py --binary target/debug/hammerr-headless --output /tmp/hammerr-occluders-check
 ```
 
 The prop fixture mounts synthetic bounded model companions, compares actual BSP light samples through both compile paths, checks shadow flags and selected-material warnings, and verifies malformed-asset failure preserves output/source/history. Compiler `prop_shadows`, `direct_lighting`, `static_props` and `bounced_lighting` integration tests cover lighting interaction and probe relocation outside a closed prop; `prop_occlusion` unit tests check before/on/behind-source indirect rays. Source-format checks cover bounded patch-material includes.
@@ -394,9 +417,9 @@ The occluder fixture checks native polygon planes/global vertices, dense entity 
 ```sh
 cargo test -p source-formats --lib bounded_tests
 cargo test -p map-core --lib transfer::tests
-cargo test -p editor clipboard
-python3 -B scripts/validate_clipboard.py --binary target/debug/editor --output /tmp/hammerr-clipboard-check
-python3 -B scripts/validate_clipboard_native.py --binary target/debug/editor --output /tmp/hammerr-clipboard-native-check
+cargo test -p editor-core -p editor clipboard
+python3 -B scripts/validate_clipboard.py --binary target/debug/hammerr-headless --output /tmp/hammerr-clipboard-check
+python3 -B scripts/validate_clipboard_native.py --binary target/debug/hammerr-headless --output /tmp/hammerr-clipboard-native-check
 ```
 
 Core checks cover detached source/destination identity collisions, exact internal references, external policies, texture placement, groups, owned-brush notes, terrain, native round trips and atomic history. Parser checks bound nesting/nodes before typed conversion. Session/UI checks cover publication failure before Cut, unchanged-map name receipts, invalid import retention, stale/foreign previews and parameter review; `HAMMERR_UI_SNAPSHOTS` writes `clipboard-paste.png` through the software testing backend.
@@ -406,10 +429,10 @@ The default validator uses two private stdio Sessions and exported text, with so
 ### Occluder runtime fixture
 
 ```sh
-python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-fixture
-python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-client --runtime
-python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-inactive --runtime --start-inactive
-python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-islands --runtime --multi-brush
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/hammerr-headless --output /tmp/hammerr-occluder-fixture
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/hammerr-headless --output /tmp/hammerr-occluder-client --runtime
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/hammerr-headless --output /tmp/hammerr-occluder-inactive --runtime --start-inactive
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/hammerr-headless --output /tmp/hammerr-occluder-islands --runtime --multi-brush
 ```
 
 The default checks a sealed lit fixture, native occluder records and identical foreground/background builds. `--runtime` launches CS:S with `-insecure` and `sv_lan 1` on a private headless Cage display, and confirms the post-map LAN value. This installed client still requires Steam running to spawn a local player. `--start-inactive` checks the native inactive flag and inverse sequence. `--multi-brush` checks separated strips sharing one index, with side-prop culling and an unchanged center-gap prop. It observes initial/Deactivate/Activate/Toggle netprops and compares stable prop-culling frames. Server loading alone does not establish client culling. Use a fresh output directory for each run.
@@ -419,9 +442,9 @@ The default checks a sealed lit fixture, native occluder records and identical f
 
 ```sh
 cargo test -p map-core layers::tests
-cargo test -p editor session::layers::tests
+cargo test -p editor-core session::layers::tests
 cargo test -p editor layers_ui::tests
-python3 -B scripts/validate_layers.py --binary target/debug/editor --output /tmp/hammerr-layers-check
+python3 -B scripts/validate_layers.py --binary target/debug/hammerr-headless --output /tmp/hammerr-layers-check
 ```
 
 Core checks cover nested record/member transactions, reparenting/deletion,
@@ -438,8 +461,8 @@ or touch the desktop clipboard.
 ### Moving brush contact
 
 ```sh
-python3 -B scripts/validate_moving_contact.py --binary target/debug/editor --output /tmp/hammerr-moving-contact-check
-python3 -B scripts/validate_moving_contact.py --binary target/debug/editor --output /tmp/hammerr-moving-contact-client --runtime
+python3 -B scripts/validate_moving_contact.py --binary target/debug/hammerr-headless --output /tmp/hammerr-moving-contact-check
+python3 -B scripts/validate_moving_contact.py --binary target/debug/hammerr-headless --output /tmp/hammerr-moving-contact-client --runtime
 ```
 
 The default authors a linear platform, physics crate and endpoint connections
@@ -456,9 +479,9 @@ desktop input or focus changes.
 ```sh
 cargo test -p compiler --lib physics::tests
 cargo test -p compiler --test physics
-python3 -B scripts/validate_physics_surfaces.py --binary target/debug/editor --output /tmp/hammerr-model-surfaces-check --brush-model
-python3 -B scripts/validate_physics_surfaces.py --binary target/debug/editor --output /tmp/hammerr-model-surfaces-client --brush-model --runtime
-python3 -B scripts/validate_physics_surfaces.py --binary target/debug/editor --output /tmp/hammerr-mixed-model-surfaces-client --mixed-model --runtime
+python3 -B scripts/validate_physics_surfaces.py --binary target/debug/hammerr-headless --output /tmp/hammerr-model-surfaces-check --brush-model
+python3 -B scripts/validate_physics_surfaces.py --binary target/debug/hammerr-headless --output /tmp/hammerr-model-surfaces-client --brush-model --runtime
+python3 -B scripts/validate_physics_surfaces.py --binary target/debug/hammerr-headless --output /tmp/hammerr-mixed-model-surfaces-client --mixed-model --runtime
 ```
 
 The model variants assign one VMT property across a tilted `func_brush` or only
@@ -473,9 +496,10 @@ roles and native serialization/reload. Use a fresh output directory per run.
 ### Prefab library
 
 ```sh
+cargo test -p editor-core prefabs
 mkdir -p /tmp/hammerr-prefab-ui
 HAMMERR_UI_SNAPSHOTS=/tmp/hammerr-prefab-ui cargo test -p editor --bin editor prefabs
-python3 -B scripts/validate_prefabs.py --binary target/debug/editor --output /tmp/hammerr-prefab-check
+python3 -B scripts/validate_prefabs.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prefab-check
 ```
 
 Storage checks cover atomic unique creation, filename scope, stale metadata,
@@ -492,7 +516,7 @@ clipboard or game launch.
 
 ```sh
 cargo test -p compiler --test cordons
-python3 -B scripts/validate_compile_cordons.py --binary target/debug/editor --output /tmp/hammerr-cordon-check
+python3 -B scripts/validate_compile_cordons.py --binary target/debug/hammerr-headless --output /tmp/hammerr-cordon-check
 ```
 
 Compiler regressions cover legacy/plural records, active/disabled flags,
@@ -505,8 +529,8 @@ input is needed.
 ### Compile-region shell experiment
 
 ```sh
-python3 -B scripts/probe_compile_region_shell.py --binary target/debug/editor --output /tmp/hammerr-region-shell
-python3 -B scripts/probe_compile_region_shell.py --binary target/debug/editor --output /tmp/hammerr-region-shell-client --runtime
+python3 -B scripts/probe_compile_region_shell.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-shell
+python3 -B scripts/probe_compile_region_shell.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-shell-client --runtime
 ```
 
 This disposable MCP prototype copies intersecting whole world brushes and
@@ -524,8 +548,8 @@ an experiment for the planned compiler path. Use a fresh output directory.
 ```sh
 cargo test -p compiler --lib visibility
 cargo test -p compiler --test material_failures
-cargo test -p editor --bin editor malformed_materials
-python3 -B scripts/validate_material_failures.py --binary target/debug/editor --output /tmp/hammerr-material-errors
+cargo test -p editor-core --lib malformed_materials
+python3 -B scripts/validate_material_failures.py --binary target/debug/hammerr-headless --output /tmp/hammerr-material-errors
 ```
 
 Visibility checks require real clipping beyond 128 vertices, small-edge
@@ -546,7 +570,7 @@ pixels too. Retain the exact BSP checks and inspect the native captures.
 ### Content discovery and terrain preview errors
 
 ```sh
-python3 -B scripts/validate_content_errors.py --binary target/debug/editor --output /tmp/hammerr-content-errors --render
+python3 -B scripts/validate_content_errors.py --binary target/debug/hammerr-headless --output /tmp/hammerr-content-errors --render
 ```
 
 The private headless fixture uses isolated content mounts and deliberate

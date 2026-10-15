@@ -2,13 +2,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from validate_face_lighting import ROOT
+from validate_face_lighting import DEFAULT_BINARY, ROOT
 from validate_native_runtime import private_compositor
 
 
 def main():
     parser = argparse.ArgumentParser(description="Check native clipboard transfer on a private headless Wayland display.")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output = args.output.resolve()

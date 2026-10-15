@@ -4,7 +4,7 @@ import re
 import struct
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client
+from validate_face_lighting import DEFAULT_BINARY, Client
 from validate_terrain_lod import build
 from validate_visibility import ROOM
 
@@ -147,7 +147,7 @@ def validate(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, default=Path("/tmp/hammerr-model-tints"))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)

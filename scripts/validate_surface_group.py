@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_material_replacement import preserved_map
 
 
@@ -207,7 +207,7 @@ def main():
         description="Validate grouped fitting and view projection over MCP; HTTP requires a clean idle map with empty history."
     )
     parser.add_argument("--url")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     output = args.output.resolve()

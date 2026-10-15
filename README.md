@@ -24,7 +24,7 @@ HammeRR opens and saves Hammer's VMF files, renders your map with the game's own
 You need Linux, Rust 1.92 or newer, a Vulkan graphics driver, and Counter-Strike: Source installed through Steam.
 
 ```sh
-cargo build --release -p editor -p compiler
+cargo build --release -p editor -p editor-core -p compiler
 ./target/release/editor path/to/map.vmf
 ```
 
@@ -38,7 +38,7 @@ While the editor runs, it serves MCP at `http://127.0.0.1:7377/mcp`. Point your 
 { "mcpServers": { "hammerr": { "url": "http://127.0.0.1:7377/mcp" } } }
 ```
 
-The agent works in your session: its edits appear live and land in your undo history, and it can set up a preview for you to approve. It can render any view to check its own work, then compile the map and launch the game. To give an agent a private session without a window, run the editor with `--headless`.
+The agent works in your session: its edits appear live and land in your undo history, and it can set up a preview for you to approve. It can render any view to check its own work, then compile the map and launch the game. Run `hammerr-headless` for a private session without a window.
 
 | Built by an agent | Checked by the agent |
 | --- | --- |

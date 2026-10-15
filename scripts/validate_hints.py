@@ -8,7 +8,7 @@ from pathlib import Path
 
 import validate_native_runtime as runtime
 from validate_compile_jobs import wait_job
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_portal_flow import compare_captures
 from validate_visibility import ROOM, bit, cluster_at, visibility
 
@@ -188,7 +188,7 @@ def worker(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, default=Path("/tmp/hammerr-hints"))
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)

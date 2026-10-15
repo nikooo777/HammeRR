@@ -13,16 +13,17 @@
 ## Build
 
 ```sh
-cargo build --release -p editor -p compiler
+cargo build --release -p editor -p editor-core -p compiler
 ```
 
-This produces three programs in `target/release/`:
+This produces four programs in `target/release/`:
 
 | Program | Purpose |
 | --- | --- |
 | `editor` | The map editor, including its MCP server for AI agents. |
+| `hammerr-headless` | The same editing session and stdio MCP tools, with a GUI-independent build. See [Without a window](mcp.md#without-a-window). |
 | `hammerr-compile` | The standalone map compiler. |
-| `hammerr-physics` | A helper used when building maps with CS:S engine physics. Keep it in the same folder as the other two. |
+| `hammerr-physics` | A helper used when building maps with CS:S engine physics. Keep it in the same folder as the other programs. |
 
 ## Launch
 

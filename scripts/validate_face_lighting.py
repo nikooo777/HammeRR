@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_BINARY = ROOT / "target/debug/hammerr-headless"
 
 
 class Client:
@@ -504,7 +505,7 @@ def main():
     parser.add_argument(
         "--url", help="Existing editor MCP URL; otherwise launch a headless process"
     )
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument(
         "--output",
         type=Path,

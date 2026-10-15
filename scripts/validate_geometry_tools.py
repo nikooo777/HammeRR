@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from validate_component_picking import screen
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_material_replacement import preserved_map
 
 
@@ -321,7 +321,7 @@ def main():
         description="Validate component handles and three-point cuts over MCP."
     )
     parser.add_argument("--url")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     output = args.output.resolve()

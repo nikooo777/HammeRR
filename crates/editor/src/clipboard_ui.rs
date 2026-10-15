@@ -356,7 +356,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let (mut session, id, _) = crate::session::clipboard::tests::fixture();
+        let (mut session, id, _) = crate::test_assets::clipboard();
         session
             .capture_clipboard(Actor::User, &[id], &session.clipboard_stamp(), false, true)
             .unwrap();

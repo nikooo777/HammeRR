@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from validate_compile_jobs import wait_job
-from validate_face_lighting import ROOT, Client
+from validate_face_lighting import DEFAULT_BINARY, Client
 
 
 def validate(binary, output, gameinfo):
@@ -150,7 +150,7 @@ def validate(binary, output, gameinfo):
 
 def main():
     parser = argparse.ArgumentParser(description="Validate named build recipes through isolated headless MCP sessions.")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--gameinfo", type=Path)
     args = parser.parse_args()

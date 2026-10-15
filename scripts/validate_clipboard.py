@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_terrain_lod import build
 from validate_visibility import ROOM
 
@@ -148,7 +148,7 @@ def validate(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--native", action="store_true", help="Requires an isolated clipboard-capable test display")
     args = parser.parse_args()

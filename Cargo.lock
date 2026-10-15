@@ -1220,22 +1220,37 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 name = "editor"
 version = "0.1.0"
 dependencies = [
- "arboard",
- "axum",
- "base64",
  "compiler",
+ "editor-core",
  "glam",
  "i-slint-backend-testing",
  "map-core",
  "png",
  "render",
  "rfd",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "source-formats",
+ "tempfile",
+]
+
+[[package]]
+name = "editor-core"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "axum",
+ "base64",
+ "compiler",
+ "glam",
+ "map-core",
+ "png",
+ "render",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
- "slint",
- "slint-build",
  "source-formats",
  "tempfile",
  "tokio",

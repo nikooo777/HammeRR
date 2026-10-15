@@ -10,7 +10,7 @@ from pathlib import Path
 import validate_native_runtime as runtime
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_visibility import ROOM
 
 OBSERVER = runtime.OBSERVER.replace(
@@ -231,7 +231,7 @@ def validate(client, output):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument(
         "--output", type=Path, default=Path("/tmp/hammerr-static-props")
     )

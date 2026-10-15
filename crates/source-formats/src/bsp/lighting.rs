@@ -6,6 +6,9 @@ use super::{Bsp, Face, Lump, Record, TexInfo, invalid, lump, surf};
 
 pub const MAX_LIGHTING_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_WORLD_LIGHTS: usize = 8192;
+/// Per-channel allocation budget for the supported 56-byte face layout.
+pub const MAX_LIGHTING_FACES: usize = 65_536;
+const HDR_FACE_VERSION: i32 = 1;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
@@ -68,6 +71,20 @@ pub enum LightingKind {
 }
 
 impl LightingKind {
+    fn faces(self) -> usize {
+        match self {
+            Self::Ldr => lump::FACES,
+            Self::Hdr => lump::FACES_HDR,
+        }
+    }
+
+    fn face_version(self) -> i32 {
+        match self {
+            Self::Ldr => Face::VERSION,
+            Self::Hdr => HDR_FACE_VERSION,
+        }
+    }
+
     fn samples(self) -> usize {
         match self {
             Self::Ldr => lump::LIGHTING,
@@ -99,6 +116,33 @@ pub struct FaceLighting<'a> {
 }
 
 impl Bsp {
+    /// Reads only the requested face channel, accepting known 56-byte versions 0 and 1.
+    pub fn lighting_faces(&self, kind: LightingKind) -> io::Result<Vec<Face>> {
+        let index = kind.faces();
+        let record = &self.lumps[index];
+        if ![Face::VERSION, HDR_FACE_VERSION].contains(&record.version) || record.fourcc != [0; 4] {
+            return Err(invalid("unsupported lighting-face lump metadata"));
+        }
+        let bytes = self.checked(index, size_of::<Face>())?;
+        if bytes.len() / size_of::<Face>() > MAX_LIGHTING_FACES {
+            return Err(invalid("lighting-face count exceeds the allocation budget"));
+        }
+        Ok(bytemuck::pod_collect_to_vec(bytes))
+    }
+
+    /// Writes legacy LDR version 0 or native HDR version 1 without changing the other channel.
+    pub fn set_lighting_faces(&mut self, kind: LightingKind, faces: &[Face]) -> io::Result<()> {
+        if faces.len() > MAX_LIGHTING_FACES {
+            return Err(invalid("lighting-face count exceeds the allocation budget"));
+        }
+        self.lumps[kind.faces()] = Lump {
+            version: kind.face_version(),
+            fourcc: [0; 4],
+            data: bytemuck::cast_slice(faces).to_vec(),
+        };
+        Ok(())
+    }
+
     pub fn lighting(&self, kind: LightingKind) -> io::Result<Option<Lighting<'_>>> {
         let index = kind.samples();
         let record = &self.lumps[index];

@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use source_formats::bsp::{
-    self, Brush, BrushSide, Bsp, Cubemap, Edge, Face, Leaf, LeafWaterData, LightingKind, Model,
-    Node, Plane, TexData, TexInfo, VisibilityKind,
+    self, Brush, BrushSide, Bsp, Cubemap, Edge, Leaf, LeafWaterData, LightingKind, Model, Node,
+    Plane, TexData, TexInfo, VisibilityKind,
 };
 
 fn maps_dir() -> Option<PathBuf> {
@@ -25,7 +25,7 @@ fn check(bsp: &Bsp) -> Result<(), String> {
     let planes = bsp.records::<Plane>().map_err(e)?;
     let texdata = bsp.records::<TexData>().map_err(e)?;
     let texinfo = bsp.records::<TexInfo>().map_err(e)?;
-    let faces = bsp.records::<Face>().map_err(e)?;
+    let faces = bsp.lighting_faces(LightingKind::Ldr).map_err(e)?;
     if let Some(overlays) = bsp.overlay_data().map_err(e)? {
         let mut copy = bsp.clone();
         copy.set_overlay_data(&overlays).map_err(e)?;
@@ -63,7 +63,7 @@ fn check(bsp: &Bsp) -> Result<(), String> {
         let quad = bsp.displacement_quad(0).map_err(e)?;
         displacements.positions(0, quad).map_err(e)?;
     }
-    let hdr_faces: Vec<Face> = bsp.values(bsp::lump::FACES_HDR).map_err(e)?;
+    let hdr_faces = bsp.lighting_faces(LightingKind::Hdr).map_err(e)?;
     for kind in [LightingKind::Ldr, LightingKind::Hdr] {
         bsp.world_lights(kind).map_err(e)?;
         if let Some(ambient) = bsp.leaf_ambient(kind).map_err(e)? {
@@ -255,7 +255,10 @@ fn stock_maps_decode_and_round_trip() {
             Ok(_) => failures.push(format!("{name}: rewrite differs")),
             Err(error) => failures.push(format!("{name}: rewrite unreadable: {error}")),
         }
-        let faces = bsp.records::<Face>().map(|f| f.len()).unwrap_or(0);
+        let faces = bsp
+            .lighting_faces(LightingKind::Ldr)
+            .map(|f| f.len())
+            .unwrap_or(0);
         let props = bsp.game_lump(*b"sprp").map(|g| g.version);
         eprintln!(
             "{name}: v{} leafs v{} faces {faces} static props v{props:?}",

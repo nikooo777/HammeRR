@@ -35,8 +35,8 @@ pub use displacements::{
     MAX_DISPLACEMENT_TRIANGLES, MAX_DISPLACEMENT_VERTICES, MAX_DISPLACEMENTS,
 };
 pub use lighting::{
-    FaceLighting, Lighting, LightingKind, MAX_LIGHTING_BYTES, MAX_WORLD_LIGHTS, RgbExp32,
-    WorldLight, world_light_kind,
+    FaceLighting, Lighting, LightingKind, MAX_LIGHTING_BYTES, MAX_LIGHTING_FACES, MAX_WORLD_LIGHTS,
+    RgbExp32, WorldLight, world_light_kind,
 };
 pub use physics::{
     CollisionHeader, MAX_COLLISION_BYTES, MAX_PHYSICS_BYTES, MAX_PHYSICS_KEY_BYTES,

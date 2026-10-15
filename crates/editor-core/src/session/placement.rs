@@ -392,12 +392,11 @@ impl Session {
             let (target, position) = query::face_corner(&self.document, &surface.hit)
                 .ok_or("The first visible hit must be an unambiguous flat brush face")?;
             let mut delta = position - source;
-            let scale = source
-                .abs()
-                .max_element()
-                .max(position.abs().max_element())
-                .max(self.spatial.grid_size);
             for axis in 0..3 {
+                let scale = source[axis]
+                    .abs()
+                    .max(position[axis].abs())
+                    .max(self.spatial.grid_size);
                 if delta[axis].abs() <= CORNER_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale {
                     delta[axis] = 0.0;
                 }

@@ -1,0 +1,151 @@
+import {Button,CheckBox,ComboBox,LineEdit,ListView,SpinBox} from "std-widgets.slint";
+export struct LayerRow {id:string,label:string,detail:string,color:color}
+export component LayersWindow inherits Window {
+    title:"Layers - HammeRR";
+    preferred-width:1040px;
+    preferred-height:780px;
+    in property <[LayerRow]> layers;
+    in property <[string]> members;
+    in property <[string]> parents;
+    in property <string> selected;
+    in property <string> summary;
+    in property <string> message;
+    in property <string> page-label;
+    in property <string> member-label;
+    in property <bool> previous;
+    in property <bool> next;
+    in property <bool> member-previous;
+    in property <bool> member-next;
+    in property <bool> editing;
+    in property <bool> deleting;
+    in-out property <bool> ready;
+    in-out property <string> query;
+    in-out property <string> layer-name;
+    in-out property <int> red:70;
+    in-out property <int> green:160;
+    in-out property <int> blue:220;
+    in-out property <int> parent-index;
+    in-out property <bool> recursive:true;
+    in-out property <bool> include-hidden;
+    in-out property <int> selection-mode;
+    callback choose(string);
+    callback search();
+    callback page(int);
+    callback member-page(int);
+    callback begin(int);
+    callback selection(int);
+    callback remove(string);
+    callback review();
+    callback apply();
+    callback cancel();
+    callback close-dialog();
+    callback select-members();
+    callback visibility(string);
+    forward-focus:keys;
+    keys:=FocusScope {
+        width:parent.width;height:parent.height;
+        key-pressed(event)=>{if event.text==Key.Escape {root.close-dialog();accept}else{reject}}
+        VerticalLayout {
+            padding:22px;spacing:12px;
+            Text {text:"Layers";font-size:24px;font-weight:600;}
+            Text {text:"Organize a map into named, colored layers. Objects can belong to several layers.";color:#bac2ce;wrap:word-wrap;}
+            HorizontalLayout {
+                spacing:8px;
+                Button {text:"New layer";enabled:!root.editing;clicked=>{root.begin(0);}}
+                Button {text:"Edit layer";enabled:!root.editing&&root.selected!="";clicked=>{root.begin(1);}}
+                Button {text:"Delete layer…";enabled:!root.editing&&root.selected!="";clicked=>{root.begin(2);}}
+            }
+            HorizontalLayout {
+                spacing:20px;
+                VerticalLayout {
+                    width:330px;spacing:8px;
+                    LineEdit {text<=>root.query;placeholder-text:"Find a layer by name or ID";enabled:!root.editing;edited=>{root.search();}}
+                    ListView {
+                        min-height:260px;
+                        for layer in root.layers: HorizontalLayout {
+                            spacing:8px;padding-bottom:7px;
+                            Rectangle {width:8px;background:layer.color;}
+                            VerticalLayout {
+                                horizontal-stretch:1;spacing:3px;
+                                Button {text:(root.selected==layer.id?"● ":"")+layer.label;enabled:!root.editing;clicked=>{root.choose(layer.id);}}
+                                Text {text:layer.detail;wrap:word-wrap;color:#bac2ce;font-size:12px;}
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing:6px;
+                        Button {text:"Previous";enabled:root.previous&&!root.editing;clicked=>{root.page(-1);}}
+                        Text {text:root.page-label;vertical-alignment:center;horizontal-stretch:1;}
+                        Button {text:"Next";enabled:root.next&&!root.editing;clicked=>{root.page(1);}}
+                    }
+                    CheckBox {text:"Include child layers";checked<=>root.recursive;}
+                    CheckBox {text:"Select hidden members too";checked<=>root.include-hidden;}
+                    ComboBox {model:["Replace selection","Add to selection","Remove from selection","Toggle selection"];current-index<=>root.selection-mode;}
+                    Button {text:"Select members";enabled:root.selected!="";clicked=>{root.select-members();}}
+                    HorizontalLayout {
+                        spacing:6px;
+                        Button {text:"Hide members";enabled:!root.editing&&root.selected!="";clicked=>{root.visibility("hide");}}
+                        Button {text:"Show members";enabled:!root.editing&&root.selected!="";clicked=>{root.visibility("show");}}
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch:1;spacing:10px;
+                    Text {text:root.summary;wrap:word-wrap;font-weight:600;}
+                    if root.editing&&!root.deleting: VerticalLayout {
+                        spacing:8px;
+                        Text {text:"Layer name";}
+                        LineEdit {text<=>root.layer-name;placeholder-text:"Architecture";edited=>{root.ready=false;}}
+                        Text {text:"Layer color · RGB";}
+                        HorizontalLayout {
+                            spacing:6px;
+                            Text {text:"R";vertical-alignment:center;}
+                            SpinBox {minimum:0;maximum:255;value<=>root.red;edited=>{root.ready=false;}}
+                            Text {text:"G";vertical-alignment:center;}
+                            SpinBox {minimum:0;maximum:255;value<=>root.green;edited=>{root.ready=false;}}
+                            Text {text:"B";vertical-alignment:center;}
+                            SpinBox {minimum:0;maximum:255;value<=>root.blue;edited=>{root.ready=false;}}
+                            Rectangle {width:30px;background:rgb(root.red,root.green,root.blue);}
+                        }
+                        Text {text:"Parent layer";}
+                        ComboBox {model:root.parents;current-index<=>root.parent-index;selected(value)=>{root.ready=false;}}
+                    }
+                    if root.deleting: Text {text:"Delete this layer's record and memberships. Child layers move to its parent. All map objects remain.";wrap:word-wrap;color:#ffce84;}
+                    Text {text:root.member-label;font-weight:600;wrap:word-wrap;}
+                    ListView {
+                        min-height:120px;
+                        for member in root.members: HorizontalLayout {
+                            spacing:8px;padding-bottom:5px;
+                            Text {text:member;horizontal-stretch:1;vertical-alignment:center;}
+                            if root.editing&&!root.deleting: Button {text:"Remove";clicked=>{root.remove(member);}}
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing:6px;
+                        Button {text:"Previous members";enabled:root.member-previous;clicked=>{root.member-page(-1);}}
+                        Rectangle {horizontal-stretch:1;}
+                        Button {text:"Next members";enabled:root.member-next;clicked=>{root.member-page(1);}}
+                    }
+                    if root.editing&&!root.deleting: VerticalLayout {
+                        spacing:6px;
+                        Button {text:"Use current selection";clicked=>{root.selection(0);}}
+                        HorizontalLayout {
+                            spacing:6px;
+                            Button {text:"Add current selection";clicked=>{root.selection(1);}}
+                            Button {text:"Remove current selection";clicked=>{root.selection(2);}}
+                        }
+                    }
+                }
+            }
+            Text {text:"Hide also omits members from builds. A layer link on an entity-owned brush selects or hides the whole entity. Use Faces mode to assign individual owned brushes.";wrap:word-wrap;color:#bac2ce;font-size:12px;}
+            Text {text:root.message;wrap:word-wrap;color:#bac2ce;min-height:40px;}
+            HorizontalLayout {
+                spacing:8px;
+                Button {text:"Close";clicked=>{root.close-dialog();}}
+                Rectangle {horizontal-stretch:1;}
+                if root.editing: Button {text:"Cancel";clicked=>{root.cancel();}}
+                if root.editing&&!root.deleting: Button {text:"Review changes";clicked=>{root.review();}}
+                if root.editing: Button {text:root.deleting?"Delete layer":"Apply changes";enabled:root.ready;clicked=>{root.apply();}}
+            }
+        }
+    }
+}

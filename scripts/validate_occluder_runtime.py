@@ -1,10 +1,7 @@
 import argparse
 import json
-import os
 import re
-import signal
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -53,25 +50,32 @@ def fixture(args):
             ("logic_script", [-128, -128, 64], {"targetname": "hammerr_observer", "vscripts": "hammerr_observer.nut", "thinkfunction": "HammeRRThink"}),
         ]:
             client.call("create_entity", {"classname": classname, "origin": origin, "properties": properties})
-        occluder(client, [-2, -96, 0], [2, 96, 192], "1")
+        active = "0" if args.start_inactive else "1"
+        if args.multi_brush:
+            for y in [-64, 64]:
+                client.call("create_entity", {"classname": "prop_static", "origin": [96, y, 8], "properties": {"model": "models/props_junk/wood_crate001a.mdl", "solid": "0"}})
+            brushes = [client.call("create_block", {"mins": low, "maxs": high, "material": "tools/toolsoccluder"})["id"] for low, high in [([-2, -96, 0], [2, -24, 192]), ([-2, 24, 0], [2, 96, 192])]]
+            client.call("tie_to_entity", {"ids": brushes, "classname": "func_occluder", "properties": {"targetname": "visibility_screen", "StartActive": active}})
+        else:
+            occluder(client, [-2, -96, 0], [2, 96, 192], active)
         client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "none"})
         client.call("save_map", {"path": str(args.output / "occluder-runtime.vmf")})
         path, stats = build(client, args.output, "occluder-runtime")
         records = native_occlusion(path.read_bytes())[0]
-        assert len(records) == stats["occluders"] == 1 and records[0][0] == 0
-        assert stats["static_props"] == 1 and stats["brushes"] == 6
+        assert len(records) == stats["occluders"] == 1 and records[0][0] == int(args.start_inactive)
+        assert stats["static_props"] == (3 if args.multi_brush else 1) and stats["brushes"] == 6
+        assert records[0][2] == (12 if args.multi_brush else 6)
         (args.output / "compile.json").write_text(json.dumps(stats, indent=2) + "\n")
         return path
     finally:
         client.close()
 
 
-def capture_states(output, errors):
+def capture_states(output, errors, expected):
     try:
         captured = set()
         deadline = time.monotonic() + 43
         log = output / "cstrike/hammerr-runtime.log"
-        expected = [1, 0, 1, 0, 1]
         while time.monotonic() < deadline and len(captured) < len(expected):
             if log.exists():
                 states = re.findall(r"HAMMERR_OCCLUDER (\d+) (\d+) (\d+)", log.read_text(errors="replace"))
@@ -97,24 +101,28 @@ def pixels(path):
     return width, height, body
 
 
-def difference(first, second):
+def difference(first, second, region=(400, 280, 880, 680)):
     width, height, a = pixels(first)
     other_width, other_height, b = pixels(second)
     assert (width, height) == (other_width, other_height) == (1280, 720)
     changed = 0
-    for y in range(280, 680):
-        for x in range(400, 880):
+    left, top, right, bottom = region
+    for y in range(top, bottom):
+        for x in range(left, right):
             offset = (y * width + x) * 3
             changed += any(abs(a[offset + channel] - b[offset + channel]) > 12 for channel in range(3))
     return changed
 
 
 def worker(args):
+    expected = [0, 1, 0, 1, 0] if args.start_inactive else [1, 0, 1, 0, 1]
     runtime.OBSERVER = OBSERVER
+    if args.start_inactive:
+        runtime.OBSERVER = OBSERVER.replace('next == 1 ? "Deactivate" : next == 2 ? "Activate"', 'next == 1 ? "Activate" : next == 2 ? "Deactivate"')
     args.observe_seconds = 39
     args.ground_z = 64
     errors = []
-    capture = threading.Thread(target=capture_states, args=(args.output, errors), daemon=True)
+    capture = threading.Thread(target=capture_states, args=(args.output, errors, expected), daemon=True)
     capture.start()
     runtime.worker(args)
     capture.join(timeout=8)
@@ -127,7 +135,10 @@ def worker(args):
     toggled = difference(args.output / "phase-3.ppm", args.output / "phase-4.ppm")
     assert deactivated > 300 and toggled > 300, (deactivated, toggled, active_repeat)
     assert active_repeat < min(deactivated, toggled) // 4, (active_repeat, deactivated, toggled)
-    result = {"initial_active": True, "deactivate_activate_toggle": True, "runtime_index": 0, "occlusion_enabled": True, "deactivated_changed_pixels": deactivated, "toggled_changed_pixels": toggled, "active_repeat_changed_pixels": active_repeat, "insecure": True, "sv_lan": True}
+    gap_changes = difference(args.output / "phase-1.ppm", args.output / "phase-2.ppm", (600, 530, 680, 625)) if args.multi_brush else None
+    if args.multi_brush:
+        assert gap_changes == 0, gap_changes
+    result = {"multi_brush": args.multi_brush, "gap_changed_pixels": gap_changes, "initial_active": not args.start_inactive, "deactivate_activate_toggle": True, "runtime_index": 0, "occlusion_enabled": True, "deactivated_changed_pixels": deactivated, "toggled_changed_pixels": toggled, "active_repeat_changed_pixels": active_repeat, "insecure": True, "sv_lan": True}
     (args.output / "occlusion-runtime.json").write_text(json.dumps(result, indent=2) + "\n")
 
 
@@ -136,6 +147,8 @@ def main():
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
+    parser.add_argument("--multi-brush", action="store_true", help="Check two separated strips with a visible center gap prop")
+    parser.add_argument("--start-inactive", action="store_true", help="Check initial native inactive state and the inverse input sequence")
     parser.add_argument("--runtime",action="store_true",help="Also check client culling in a private sv_lan 1 server")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
@@ -150,29 +163,12 @@ def main():
     if not args.runtime:
         print(json.dumps({"compiled_occluder_fixture":True,"output":str(args.output),"runtime_checked":False}))
         return
-    output = args.output / "runtime"
-    output.mkdir()
-    private_runtime = output / "wayland"
-    private_runtime.mkdir(mode=0o700)
-    environment = {**os.environ, "WLR_BACKENDS": "headless", "WLR_HEADLESS_OUTPUTS": "1", "WLR_RENDERER": "pixman", "XDG_RUNTIME_DIR": str(private_runtime), "SDL_AUDIODRIVER": "dummy"}
-    environment.pop("DISPLAY", None)
-    environment.pop("WAYLAND_DISPLAY", None)
-    command = ["cage", "--", sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--bsp", str(bsp), "--output", str(output), "--game-dir", str(args.game_dir)]
-    with (output / "compositor.log").open("w") as stream:
-        process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
-        try:
-            result = process.wait(timeout=65)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid,signal.SIGKILL)
-                process.wait()
-            raise
-    if result:
-        print((output / "compositor.log").read_text())
-        raise SystemExit(result)
+    flags = []
+    if args.start_inactive:
+        flags.append("--start-inactive")
+    if args.multi_brush:
+        flags.append("--multi-brush")
+    output = runtime.private_display(Path(__file__), args, bsp, flags)
     print((output / "occlusion-runtime.json").read_text())
 
 

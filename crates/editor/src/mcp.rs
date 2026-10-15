@@ -2129,6 +2129,56 @@ pub struct PasteArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersArgs {
+    pub query: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+    pub selected: Option<u32>,
+    pub member_offset: Option<usize>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BeginLayerArgs {
+    pub id: Option<u32>,
+    pub delete: Option<bool>,
+    pub snapshot: String,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayerTokenArgs {
+    pub token: u64,
+    pub version: u64,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateLayerArgs {
+    pub token: u64,
+    pub version: u64,
+    pub name: String,
+    pub color: [u8; 3],
+    pub parent: Option<u32>,
+    pub members: Vec<String>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayerSelectionArgs {
+    pub id: u32,
+    pub snapshot: String,
+    pub recursive: Option<bool>,
+    pub include_hidden: Option<bool>,
+    pub mode: Option<String>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayerVisibilityArgs {
+    pub id: u32,
+    pub snapshot: String,
+    pub recursive: Option<bool>,
+    pub action: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EntityArgs {
     /// Entity id; defaults to the single selected entity.
     pub id: Option<String>,
@@ -6250,7 +6300,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the detached object clipboard, current snapshot/content revision, counts, external links, bounds, Cut-name restoration availability and owned paste preview. Does not read the system clipboard. UI: Paste…. Copy/Cut capture committed objects; paste stays detached across map replacement. Limits: 16 sources, 256 objects including owned brushes, 8192 sides, 256 groups, 8 MiB text and 64 nesting levels. Manual visgroups, saved partitions, numeric/uncertain/script-driven links reject. Private Hammer clipboard formats are not implemented.",
+        description = "Inspect the detached object clipboard, current snapshot/content revision, counts, external links, bounds, Cut-name restoration availability and owned paste preview. Does not read the system clipboard. UI: Paste…. Copy/Cut capture committed objects; paste stays detached across map replacement. Limits: 16 sources, 256 objects including owned brushes, 8192 sides, 256 groups, 8 MiB text and 64 nesting levels. Native layer ancestors and memberships transfer with fresh independent IDs. Saved partitions and numeric/uncertain/script-driven links reject. Private Hammer clipboard formats are not implemented.",
         annotations(read_only_hint = true)
     )]
     fn get_clipboard(&self) -> ToolResult {
@@ -6318,7 +6368,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview the detached clipboard in the current map using get_clipboard.snapshot. Omitted/zero offset pastes in place; offset uses world XYZ. Allocates fresh object/side/group IDs, preserves nested groups and object notes, and remaps exact internal references to unique names. External links reject unless keep_external_links:true; inspect payload.external_links first. restore_cut_names is permitted only for an unchanged same-map Cut; otherwise unique names apply. render_view/topology share the draft; saving and compiling use committed geometry. Invalid requests keep the last valid preview. UI: Paste… → Preview paste."
+        description = "Preview the detached clipboard in the current map using get_clipboard.snapshot. Omitted/zero offset pastes in place; offset uses world XYZ. Allocates fresh object/side/group/layer IDs, preserves nested groups and layers and object notes, and remaps exact internal references to unique names. External links reject unless keep_external_links:true; inspect payload.external_links first. restore_cut_names is permitted only for an unchanged same-map Cut; otherwise unique names apply. render_view/topology share the draft; saving and compiling use committed geometry. Invalid requests keep the last valid preview. UI: Paste… → Preview paste."
     )]
     fn preview_paste(&self, Parameters(args): Parameters<PasteArgs>) -> ToolResult {
         run(|| {
@@ -6350,6 +6400,98 @@ impl EditorServer {
     )]
     fn cancel_paste(&self, Parameters(args): Parameters<RepeatArrayTokenArgs>) -> ToolResult {
         run(|| self.session().cancel_paste(args.token))
+    }
+
+    #[tool(
+        description = "Inspect native map layers (VMF visgroups), hierarchy, colors, direct memberships, whole-object selection counts and the current versioned draft. Query/offset/limit page records (default64/max128); selected and member_offset inspect direct members, including owned-brush IDs and owners. parent_choices includes the bounded full parent set. Read-only, no map changes. Layer IDs have an independent namespace. UI: Layers…. Automatic categories and separate editor-only filters are unavailable.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_layers(&self, Parameters(args): Parameters<LayersArgs>) -> ToolResult {
+        run(|| {
+            Ok(self.session().layer_report(
+                args.query.as_deref().unwrap_or_default(),
+                args.offset.unwrap_or(0),
+                args.limit.unwrap_or(64),
+                args.selected,
+                args.member_offset.unwrap_or(0),
+            ))
+        })
+    }
+
+    #[tool(
+        description = "Begin a versioned owned layer edit from get_layers.snapshot. Omit id to create with current selection as members; id edits existing native name/color/parent/direct members. delete:true stages deletion, preserving objects and promoting child layers. No map changes until Apply. UI: Layers… → New layer / Edit layer / Delete layer…."
+    )]
+    fn begin_layer_edit(&self, Parameters(args): Parameters<BeginLayerArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .begin_layer_edit(args.id, args.delete.unwrap_or(false), &args.snapshot)
+        })
+    }
+
+    #[tool(
+        description = "Replace the complete layer draft fields using its latest token and version: name, RGB color, optional parent (omit/null for root), and full direct member IDs. Whole objects and entity-owned solid IDs are supported; Faces-mode UI selection targets owning brushes. Memberships in other layers remain. Returns incremented version and valid/error. Invalid fields do not mutate the map. UI: Layers… → Review changes."
+    )]
+    fn update_layer_edit(&self, Parameters(args): Parameters<UpdateLayerArgs>) -> ToolResult {
+        run(|| {
+            self.session().update_layer_edit(
+                args.token,
+                args.version,
+                args.name,
+                args.color,
+                args.parent,
+                parse_ids(&args.members)?,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Apply the latest owned layer token/version as one Undo step, checking map generation/revision. Records and memberships change atomically, with independent monotonic native IDs and preserved unknown metadata. Deletion removes only that layer's memberships and promotes children. Stale/replaced drafts reject. UI: Layers… → Apply changes / Delete layer."
+    )]
+    fn apply_layer_edit(&self, Parameters(args): Parameters<LayerTokenArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .apply_layer_edit(Actor::Agent, args.token, args.version)
+        })
+    }
+
+    #[tool(
+        description = "Cancel the exact owned layer token/version. A stale window cannot discard a replacement or newer version. No map/history changes. UI: Layers… → Cancel, Escape or close."
+    )]
+    fn cancel_layer_edit(&self, Parameters(args): Parameters<LayerTokenArgs>) -> ToolResult {
+        run(|| self.session().cancel_layer_edit(args.token, args.version))
+    }
+
+    #[tool(
+        description = "Select exact layer members through shared Session selection, with get_layers.snapshot. recursive defaults true, include_hidden false, mode replace/add/remove/toggle. Owned-brush hits select their whole entity; this explicit scope does not expand physical groups. UI: Layers… → Select members."
+    )]
+    fn select_layer_members(&self, Parameters(args): Parameters<LayerSelectionArgs>) -> ToolResult {
+        run(|| {
+            self.session().select_layer_members(
+                args.id,
+                args.recursive.unwrap_or(true),
+                args.include_hidden.unwrap_or(false),
+                parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?,
+                &args.snapshot,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Hide or show layer members through the same undoable object-visibility operation as other tools. Uses get_layers.snapshot; action hide/show and recursive (defaulttrue). Hiding also omits objects from compilation. Owned-brush matches act on their whole entity. This is not an independent editor-only layer filter. UI: Layers… → Hide members / Show members."
+    )]
+    fn set_layer_visibility(
+        &self,
+        Parameters(args): Parameters<LayerVisibilityArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().set_layer_visibility(
+                Actor::Agent,
+                args.id,
+                args.recursive.unwrap_or(true),
+                &args.action,
+                &args.snapshot,
+            )
+        })
     }
 
     #[tool(

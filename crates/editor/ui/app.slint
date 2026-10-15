@@ -18,6 +18,7 @@ export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 export {PlacementWindow} from "placement.slint";
 export {PolygonWindow,PolygonCorner} from "polygon.slint";
 export {RepeatWindow} from "repeat.slint";
+export {LayersWindow,LayerRow} from "layers.slint";
 export {ObjectGroupsWindow, ObjectGroupRow, ObjectGroupMemberRow} from "groups.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "std-widgets.slint";
 
@@ -1881,6 +1882,7 @@ export component AppWindow inherits Window {
     callback cut-objects();
     callback paste-objects();
     callback object-groups();
+    callback layers();
     callback cancel-surface-pick();
     callback material-changed();
     callback pick-color(key: string);
@@ -2419,7 +2421,11 @@ export component AppWindow inherits Window {
                             }
                         }
                     Button { text: "Select a volume…"; clicked => { root.select-volume(); } }
-                    Button { text: "Object groups…"; clicked => { root.object-groups(); } }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button { text: "Object groups…"; clicked => { root.object-groups(); } }
+                        Button { text: "Layers…"; clicked => { root.layers(); } }
+                    }
 
                     HorizontalLayout {
                         spacing: 6px;

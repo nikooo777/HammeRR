@@ -182,6 +182,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Paste placement and link handling](docs/images/clipboard-paste.png) |
 | Transfer brushes and entities between maps with previewed placement, groups, notes and checked links. |
 
+| Layers |
+| --- |
+| ![Nested layers with color and membership controls](docs/images/layers.png) |
+| Organize objects into colored layers, select their members and control map visibility. |
+
 | Object groups |
 | --- |
 | ![Nested object groups and membership controls](docs/images/object-groups.png) |

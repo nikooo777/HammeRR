@@ -91,6 +91,7 @@ To build the map, set the build options once, then compile:
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
+| Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
 | Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
 | Repeated placement | `get_repeat_array`, `preview_repeat_array`, `apply_repeat_array`, `cancel_repeat_array` |
@@ -416,11 +417,11 @@ Custom recipes use `build-recipes.json` in recovery storage; `HAMMERR_BUILD_RECI
 
 Existing synchronous and background compile results expose `prop_shadow_props`, `prop_shadow_models`, `prop_shadow_triangles`, `prop_shadow_disabled` and `prop_shadow_work`, also shown in **Build details…**. Direct LDR uses supported opaque LOD0 prop meshes for direct, sky, bounce and ambient occlusion, honoring native `disableshadows`. Material approximations generate warnings; missing or invalid required companions fail without replacing prior output. No new setting or tool is required. See [Static-prop shadows](prop-shadows.md).
 
-Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. One visible convex brush per helper must fit one unambiguous world area. Native records and activation indices are emitted; runtime culling and input transitions remain unverified. See [Occluders](occluders.md).
+Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous world area. Pairwise world bounds must be separated on an axis by more than 0.01 units; touching/overlapping bounds require separate entities until CSG support. Combined limits are 256 input sides/polygons and 4096 polygon vertices. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
 
 ### Cut, copy and paste
 
-`get_clipboard` returns the current `snapshot`, detached `payload`, owned paste `preview`, `can_restore_cut_names`, format and bounds. Inspection never reads the system clipboard. Copy/import preserves geometry, camera, selection and map Undo. Payloads survive source edits, Undo and map replacement. Whole VMF text transfers only objects, required native groups and attached object notes; world settings, map notes, regions and cameras stay local.
+`get_clipboard` returns the current `snapshot`, detached `payload`, owned paste `preview`, `can_restore_cut_names`, format and bounds. Inspection never reads the system clipboard. Copy/import preserves geometry, camera, selection and map Undo. Payloads survive source edits, Undo and map replacement. Whole VMF text transfers only objects, required native groups/layers and attached object notes; world settings, map notes, regions and cameras stay local.
 
 | Tool | Arguments and behavior |
 | --- | --- |
@@ -435,4 +436,42 @@ Create `func_occluder` through the existing brush-entity operations, set `StartA
 
 Original-name restoration requires the exact unchanged post-Cut revision, document generation, entity definitions and clipboard content. Opening another map, Undo or another map edit disables it; imported data cannot manufacture a receipt. Cancel affects only the paste preview, leaving a completed Cut in Undo.
 
-Limits: 16 top-level sources, 256 objects including owned brushes, 8192 sides, 256 groups, 256 sides per brush, 8 MiB text, 64 nesting levels, 131072 KeyValues nodes and ±65536 authoring coordinates. Manual visgroups and saved partitions on copied brushes reject. Native clipboard support is UTF-8 VMF text through the available platform backend; private Hammer formats are unsupported. Use response export/import between independent headless sessions. See [Cut, copy and paste](clipboard.md).
+Limits: 16 top-level sources, 256 objects including owned brushes, 8192 sides, 256 groups, 256 sides per brush, 8 MiB text, 64 nesting levels, 131072 KeyValues nodes and ±65536 authoring coordinates. Up to 256 required layers and their native memberships transfer with fresh independent IDs, reported in `visgroup_ids`; destination layers are never merged by name or number. Saved partitions and direct layer links on physical group records reject. Native clipboard support is UTF-8 VMF text through the available platform backend; private Hammer formats are unsupported. Use response export/import between independent headless sessions. See [Cut, copy and paste](clipboard.md).
+
+
+### Native layers
+
+`get_layers` inspects the native hierarchy, names, RGB colors, direct memberships
+and whole-object selection counts. `query`, `offset` and `limit` page records
+(default 64, maximum 128). `selected` plus `member_offset` pages 128 direct
+members with raw `id`, whole-object `owner` and inherited hidden state.
+`parent_choices` lists all bounded native parent choices. Inspection is read-only.
+
+| Tool | Arguments and behavior |
+| --- | --- |
+| `begin_layer_edit` | Latest `snapshot`, optional layer `id`; omit it to create from current selection. `delete: true` stages deletion of an existing layer. |
+| `update_layer_edit` | Exact draft `token` and `version`, complete `name`, RGB `color`, optional/null root `parent` and full direct `members`. Returns a new version and `valid`/`error`. Whole entity and owned-brush solid IDs are supported. |
+| `apply_layer_edit` | Latest owned `token`/`version`; one atomic Undo step for record and membership changes. Map replacement or revision changes reject. |
+| `cancel_layer_edit` | Exact `token`/`version`; older windows cannot erase replacement or newer agent drafts. |
+| `select_layer_members` | Latest `snapshot`, layer `id`, `recursive` (true), `include_hidden` (false), `mode` replace/add/remove/toggle. Resolves owned-brush hits to whole entities without expanding physical groups. |
+| `set_layer_visibility` | Latest `snapshot`, layer `id`, `recursive` (true) and `action` hide/show. Uses shared undoable map visibility, including compiler omission. Owned-brush hits affect whole entities. |
+
+Deleting a layer promotes its children and preserves all objects and unrelated
+memberships. IDs use an independent monotonic namespace; imported unsigned IDs,
+including zero, remain addressable. Limits are 2,048 records, 64 nesting levels,
+32,768 distinct memberships and 8,192 members in one edit. New names contain
+1–128 characters without controls, quotes or surrounding whitespace. Unknown
+layer metadata is retained within an 8 MiB / 131,072-node / 64-level budget.
+Malformed graphs and direct layer links on physical group records reject.
+Automatic categories and separate editor-only filters are unavailable.
+See [Layers](layers.md).
+
+
+### Moving brush contact
+
+Create `func_movelinear` with `tie_to_entity` and set `movedir`, `movedistance`,
+`speed` and `startposition` through shared entity properties. Connections expose
+Open/Close, SetPosition/SetSpeed and OnFullyOpen/OnFullyClosed. Engine physics
+supports vertical platform contact with `prop_physics`; rotating/blocking
+contacts and broader moving-body behavior remain unfinished. See
+[Moving platforms](compile-and-play.md#moving-platforms).

@@ -10,6 +10,7 @@ mod groups_ui;
 mod hollow_ui;
 mod inspector;
 mod interaction;
+mod layers_ui;
 mod lighting_ui;
 mod management_ui;
 mod material_favorites;
@@ -192,6 +193,7 @@ struct Ui {
     repeat: Option<repeat_ui::Controller>,
     clipboard: Option<clipboard_ui::Controller>,
     object_groups: Option<groups_ui::Controller>,
+    layers: Option<layers_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -3254,6 +3256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         repeat: None,
         clipboard: None,
         object_groups: None,
+        layers: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -4122,6 +4125,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             if let Err(error) = ui.object_groups.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_layers({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.layers.is_none() {
+                match layers_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.layers = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.layers.as_ref().unwrap().show(&lock(&ui.session)) {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -5320,6 +5341,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     statistics_ui::refresh_changed(window, &lock(&ui.session));
                 }
                 if let Some(controller) = &ui.object_groups
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.layers
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

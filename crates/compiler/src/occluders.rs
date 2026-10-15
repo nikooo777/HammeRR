@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use glam::DVec3;
+use map_core::BrushGeometry;
 use source_formats::bsp::{MAX_OCCLUDERS, OCCLUDER_INACTIVE, contents, surf};
-use source_formats::vmf::Entity;
+use source_formats::vmf::{Entity, Solid};
 
 use super::{Map, MapEntity, origins, support};
 use crate::areas::Areas;
@@ -12,6 +13,7 @@ use crate::tree::Tree;
 use crate::winding::{Side, Winding};
 use crate::{Control, Diagnostic, Report};
 
+const MAX_BRUSHES_PER_OCCLUDER: usize = 16;
 const MAX_POLYGONS_PER_OCCLUDER: usize = 256;
 const MAX_VERTICES_PER_OCCLUDER: usize = 4096;
 const MAX_AREA_WORK: usize = 4_000_000;
@@ -53,9 +55,12 @@ impl Map<'_> {
         if solids.is_empty() && !entity.solids.is_empty() {
             return Ok(());
         }
-        if solids.len() != 1 || self.occluders.len() >= MAX_OCCLUDERS {
+        if solids.is_empty()
+            || solids.len() > MAX_BRUSHES_PER_OCCLUDER
+            || self.occluders.len() >= MAX_OCCLUDERS
+        {
             report.diagnostics.push(Diagnostic::error(
-                "Occluders currently require one visible convex brush per entity, with at most 1024 entities (the CS:S network index limit)",
+                "Occluders require 1–16 visible convex brushes per entity, with at most 1024 entities (the CS:S network index limit)",
                 Some(object), entity.origin(),
             ));
             return Ok(());
@@ -79,96 +84,119 @@ impl Map<'_> {
             ));
             return Ok(());
         }
-        let solid = solids[0];
-        if solid.sides.len() > MAX_POLYGONS_PER_OCCLUDER {
+        if solids.iter().map(|solid| solid.sides.len()).sum::<usize>() > MAX_POLYGONS_PER_OCCLUDER {
             report.diagnostics.push(Diagnostic::error(
-                "Occluder input exceeds HammeRR's 256-side per-entity budget",
+                "Occluder input exceeds HammeRR's combined 256-side per-entity budget",
                 Some(object),
                 entity.origin(),
             ));
             return Ok(());
         }
-        if solid.sides.iter().any(|side| side.displacement.is_some())
-            || self.origin_material(solid, control)?
-        {
-            report.diagnostics.push(Diagnostic::error(
-                "Occluders require ordinary convex brush geometry without terrain or origin materials",
-                Some(object), entity.origin(),
-            ));
-            return Ok(());
-        }
-        let Some(geometry) = origins::checked_geometry(solid, report) else {
-            return Ok(());
-        };
-        if geometry.faces.len() > MAX_POLYGONS_PER_OCCLUDER
-            || geometry
+        let mut geometries: Vec<(&Solid, BrushGeometry)> = Vec::new();
+        let mut face_count = 0;
+        let mut vertex_count = 0;
+        for solid in solids {
+            control.checkpoint()?;
+            if solid.sides.iter().any(|side| side.displacement.is_some())
+                || self.origin_material(solid, control)?
+            {
+                report.diagnostics.push(Diagnostic::error(
+                    "Occluders require ordinary convex brush geometry without terrain or origin materials",
+                    Some(object),entity.origin(),
+                ));
+                return Ok(());
+            }
+            let Some(geometry) = origins::checked_geometry(solid, report) else {
+                return Ok(());
+            };
+            face_count += geometry.faces.len();
+            vertex_count += geometry
                 .faces
                 .iter()
                 .map(|face| face.vertices.len())
-                .sum::<usize>()
-                > MAX_VERTICES_PER_OCCLUDER
-        {
-            report.diagnostics.push(Diagnostic::error(
-                "Occluder geometry exceeds HammeRR's per-entity budget of 256 polygons or 4096 polygon vertices",
-                Some(object), Some(geometry.center()),
-            ));
-            return Ok(());
+                .sum::<usize>();
+            if face_count > MAX_POLYGONS_PER_OCCLUDER || vertex_count > MAX_VERTICES_PER_OCCLUDER {
+                report.diagnostics.push(Diagnostic::error(
+                    "Occluder geometry exceeds HammeRR's combined per-entity budget of 256 polygons or 4096 polygon vertices",
+                    Some(object),Some(geometry.center()),
+                ));
+                return Ok(());
+            }
+            for (_, other) in &geometries {
+                let separated = (geometry.maxs + DVec3::splat(crate::winding::ON_EPSILON))
+                    .cmplt(other.mins)
+                    .any()
+                    || (other.maxs + DVec3::splat(crate::winding::ON_EPSILON))
+                        .cmplt(geometry.mins)
+                        .any();
+                if !separated {
+                    report.diagnostics.push(Diagnostic::error(
+                        "Occluder brush bounds touch or overlap; use separated bounds or separate func_occluder entities until occluder CSG is supported",
+                        Some(object),Some(geometry.center()),
+                    ));
+                    return Ok(());
+                }
+            }
+            geometries.push((solid, geometry));
         }
         let mut polygons = Vec::new();
-        for face in &geometry.faces {
-            control.checkpoint()?;
-            let side = &solid.sides[face.side];
-            let material = self.materials.load(&side.material);
-            let info = self.materials.get(material);
-            if !info.found {
-                report.diagnostics.push(Diagnostic::error(
+        for (solid, geometry) in &geometries {
+            for face in &geometry.faces {
+                control.checkpoint()?;
+                let side = &solid.sides[face.side];
+                let material = self.materials.load(&side.material);
+                let info = self.materials.get(material);
+                if !info.found {
+                    report.diagnostics.push(Diagnostic::error(
                     format!("Occluder material {} could not be loaded; mount its game content so its nodraw and trigger flags can be checked", side.material),
                     Some(object), Some(geometry.center()),
                 ));
-                return Ok(());
-            }
-            if info.hint || info.skip || !info.unsupported_flags.is_empty() {
-                report.diagnostics.push(Diagnostic::error(
+                    return Ok(());
+                }
+                if info.hint || info.skip || !info.unsupported_flags.is_empty() {
+                    report.diagnostics.push(Diagnostic::error(
                     "Occluder sides cannot use hint, skip or unsupported compile flags; use tools/toolsoccluder and tools/toolsnodraw",
                     Some(object), Some(geometry.center()),
                 ));
-                return Ok(());
-            }
-            if info.surface & surf::NODRAW != 0 && info.surface & surf::TRIGGER == 0 {
-                continue;
-            }
-            let Some(plane) = support::find_authored(&mut self.planes, &geometry, face, control)?
-            else {
-                report.diagnostics.push(Diagnostic::error(
-                    "Cannot preserve the occluder's native plane support; simplify its brush",
-                    Some(object),
-                    Some(geometry.center()),
-                ));
-                return Ok(());
-            };
-            if self.planes.len() > super::bevels::MAX_PLANES {
-                report.diagnostics.push(Diagnostic::error(
-                    "Occluder exceeds the shared BSP plane limit; simplify map geometry",
-                    Some(object),
-                    Some(geometry.center()),
-                ));
-                return Ok(());
-            }
-            let winding = Winding(face.vertices.iter().copied().map(stored_vertex).collect());
-            if winding.is_tiny() || winding.normal().dot(self.planes.get(plane).normal) < 0.99 {
-                report.diagnostics.push(Diagnostic::error(
+                    return Ok(());
+                }
+                if info.surface & surf::NODRAW != 0 && info.surface & surf::TRIGGER == 0 {
+                    continue;
+                }
+                let Some(plane) =
+                    support::find_authored(&mut self.planes, geometry, face, control)?
+                else {
+                    report.diagnostics.push(Diagnostic::error(
+                        "Cannot preserve the occluder's native plane support; simplify its brush",
+                        Some(object),
+                        Some(geometry.center()),
+                    ));
+                    return Ok(());
+                };
+                if self.planes.len() > super::bevels::MAX_PLANES {
+                    report.diagnostics.push(Diagnostic::error(
+                        "Occluder exceeds the shared BSP plane limit; simplify map geometry",
+                        Some(object),
+                        Some(geometry.center()),
+                    ));
+                    return Ok(());
+                }
+                let winding = Winding(face.vertices.iter().copied().map(stored_vertex).collect());
+                if winding.is_tiny() || winding.normal().dot(self.planes.get(plane).normal) < 0.99 {
+                    report.diagnostics.push(Diagnostic::error(
                     "Occluder face collapses after native vertex rounding; enlarge or simplify its brush",
                     Some(object), Some(geometry.center()),
                 ));
-                return Ok(());
+                    return Ok(());
+                }
+                polygons.push(Polygon { plane, winding });
             }
-            polygons.push(Polygon { plane, winding });
         }
         if polygons.is_empty() {
             report.diagnostics.push(Diagnostic::error(
                 "Occluder has no active faces; apply tools/toolsoccluder to at least one side",
                 Some(object),
-                Some(geometry.center()),
+                entity.origin(),
             ));
             return Ok(());
         }
@@ -324,7 +352,7 @@ pub(crate) fn assign_areas(
     }
     if !report.has_errors() {
         report.diagnostics.push(Diagnostic::info(
-            format!("Compiled {} fixed-world occluders; CS:S renderer culling and input transitions still need runtime validation", map.occluders.len()),
+            format!("Compiled {} fixed-world occluders with Activate/Deactivate/Toggle inputs; keep helpers within one visibility area", map.occluders.len()),
             None, None,
         ));
     }

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import resource
+import signal
 import shutil
 import subprocess
 import sys
@@ -285,6 +286,44 @@ def check_positions(results, fluid):
         abs(a - b)
         for a, b in zip(engine["prop_positions"][-1], engine["prop_positions"][-2])
     ) < (2.0 if fluid else 0.1)
+
+
+
+def private_display(script, args, bsp, extra_flags=()):
+    output = args.output / "runtime"
+    output.mkdir()
+    private_runtime = output / "wayland"
+    private_runtime.mkdir(mode=0o700)
+    environment = {
+        **os.environ,
+        "WLR_BACKENDS": "headless",
+        "WLR_HEADLESS_OUTPUTS": "1",
+        "WLR_RENDERER": "pixman",
+        "XDG_RUNTIME_DIR": str(private_runtime),
+        "SDL_AUDIODRIVER": "dummy",
+    }
+    environment.pop("DISPLAY", None)
+    environment.pop("WAYLAND_DISPLAY", None)
+    command = [
+        "cage", "--", sys.executable, "-B", str(script.resolve()), "--worker",
+        "--binary", str(args.binary), "--bsp", str(bsp), "--output", str(output),
+        "--game-dir", str(args.game_dir), *extra_flags,
+    ]
+    with (output / "compositor.log").open("w") as stream:
+        process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            result = process.wait(timeout=65)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+    if result:
+        raise RuntimeError((output / "compositor.log").read_text())
+    return output
 
 
 def main():

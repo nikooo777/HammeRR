@@ -91,7 +91,7 @@ def validate(client, output):
     client.call("start_compile", {"path": str(background)})
     job = wait_job(client)
     check(job["status"] == "completed" and job["result"]["stats"]["occluders"] == 1 and background.read_bytes() == data, "Background Session/MCP build produces identical native records")
-    check(any("runtime validation" in item["message"] for item in built["diagnostics"]), "Build details retain the unverified renderer-culling boundary")
+    check(any("Activate/Deactivate/Toggle" in item["message"] for item in built["diagnostics"]), "Build details explain supported runtime inputs")
     client.call("set_object_visibility", {"ids": [screen], "action": "hide"})
     hidden = output / "hidden.bsp"
     hidden_result = client.call("compile_map", {"path": str(hidden)})
@@ -123,6 +123,17 @@ def validate(client, output):
     failure = json.loads(failed["content"][0]["text"])
     check(any(item["object"] == spanning and "spans 2 visibility areas" in item["message"] for item in failure["diagnostics"]), "Occluder crossing an areaportal is rejected with an actionable area diagnostic")
     check(previous.read_bytes() == b"previous successful build", "Area validation failure preserves previous output")
+    room(client)
+    brushes = [client.call("create_block", {"mins": low, "maxs": high, "material": "tools/toolsoccluder"})["id"] for low, high in [([-2, -96, 0], [2, -24, 192]), ([-2, 24, 0], [2, 96, 192])]]
+    islands = client.call("tie_to_entity", {"ids": brushes, "classname": "func_occluder", "properties": {"targetname": "islands", "StartActive": "1"}})["id"]
+    before = detail(client, [islands])
+    undo = client.call("get_map_info")["undo"]
+    from validate_terrain_lod import build
+    path, stats = build(client, output, "occluder-islands")
+    native, polygons, indices = native_occlusion(path.read_bytes())
+    check(stats["occluders"] == len(native) == 1 and len(polygons) == 12 and len(indices) == 48, "Separated helper brushes share one index with their actual polygon islands")
+    check(native[0][3:9] == (-2, -96, 0, 2, 96, 192) and stats["brushes"] == 6, "Combined bounds do not become collision or render geometry")
+    check(detail(client, [islands]) == before and client.call("get_map_info")["undo"] == undo, "Multi-brush compilation preserves authored geometry and history")
     return checks
 
 

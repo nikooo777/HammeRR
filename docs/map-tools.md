@@ -17,6 +17,8 @@ Select or frame a single result, or all matches including those on later pages. 
 
 ![Object report with filters, selection modes and visibility actions](images/object-report.png)
 
+[Layers…](layers.md) organizes objects into named, colored nested layers with scoped selection and the same map visibility controls.
+
 ## Map statistics
 
 **Map statistics…** counts brush sides, world and entity brushes, point and brush entities, connections, materials, model references and terrain. Hidden objects are included, and the numbers update as the map changes.

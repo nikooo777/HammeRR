@@ -5,6 +5,7 @@ use map_core::{
     BrushGeometry, DisplacementMesh, ObjectId,
     edit::Transform,
     query::{self, Ray, SurfaceHit},
+    subobject::{self, Component},
 };
 use serde_json::{Value, json};
 use source_formats::vmf::Solid;
@@ -12,6 +13,7 @@ use source_formats::vmf::Solid;
 use super::{Actor, Session};
 
 const MAX_POINTS: usize = 1_000_000;
+const CORNER_SNAP_ROUNDOFF_ULPS: f64 = 4.0;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod fixtures;
@@ -24,6 +26,7 @@ pub enum Method {
     Floor,
     Ceiling,
     Ray,
+    BrushCorner,
 }
 
 impl Method {
@@ -32,7 +35,8 @@ impl Method {
             "floor" => Ok(Self::Floor),
             "ceiling" => Ok(Self::Ceiling),
             "ray" => Ok(Self::Ray),
-            _ => Err("Choose floor, ceiling or ray placement".into()),
+            "brush_corner" => Ok(Self::BrushCorner),
+            _ => Err("Choose floor, ceiling, ray or brush_corner placement".into()),
         }
     }
     pub fn name(self) -> &'static str {
@@ -40,15 +44,17 @@ impl Method {
             Self::Floor => "floor",
             Self::Ceiling => "ceiling",
             Self::Ray => "ray",
+            Self::BrushCorner => "brush_corner",
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Options {
     pub align: bool,
     pub offset: f64,
     pub texture_lock: bool,
+    pub source_corner: Option<Component>,
 }
 
 #[derive(Default)]
@@ -65,6 +71,7 @@ struct Draft {
     ids: Vec<ObjectId>,
     options: Options,
     plan: Option<Plan>,
+    source_position: Option<DVec3>,
 }
 
 struct Plan {
@@ -73,6 +80,13 @@ struct Plan {
     transform: Transform,
     support_points: usize,
     contact: f64,
+    corner: Option<CornerSnap>,
+}
+
+struct CornerSnap {
+    source: DVec3,
+    target: Component,
+    position: DVec3,
 }
 
 struct SupportPoint {
@@ -122,6 +136,79 @@ fn solid_points(points: &mut Vec<SupportPoint>, solid: &Solid) -> Result<(), Str
 }
 
 impl Session {
+    fn placement_source_corner(
+        &mut self,
+        ids: &[ObjectId],
+        options: &Options,
+    ) -> Result<Option<DVec3>, String> {
+        let Some(component) = &options.source_corner else {
+            return Ok(None);
+        };
+        if !(3..=subobject::MAX_SIDES).contains(&component.sides.len()) {
+            return Err("A source corner needs 3–64 unique incident face IDs".into());
+        }
+        if ids.len() != 1 || options.align || options.offset != 0.0 {
+            return Err(
+                "Corner snapping needs one selected owner, zero offset and no alignment".into(),
+            );
+        }
+        let hidden = self.hidden_brushes_for(false);
+        let (owner, solid) =
+            subobject::solid(&self.document, component.solid).map_err(|error| error.to_string())?;
+        if ids[0] != owner
+            || hidden.contains(&solid.id)
+            || solid.hidden
+            || matches!(owner, ObjectId::Entity(id) if self.document.entity(id).is_none_or(|entity| entity.hidden))
+            || solid.sides.iter().any(|side| side.displacement.is_some())
+        {
+            return Err(
+                "Choose a visible flat source brush corner belonging to the selected owner".into(),
+            );
+        }
+        let topology = subobject::topology(solid).map_err(|error| error.to_string())?;
+        let indices = topology
+            .resolve(&component.sides)
+            .map_err(|error| error.to_string())?;
+        if indices.len() != 1 {
+            return Err("Choose exactly one real source corner, rather than a face or edge".into());
+        }
+        Ok(Some(topology.vertices[indices[0]].position))
+    }
+
+    fn corner_translation_bounds(&self, owner: ObjectId, delta: DVec3) -> Result<(), String> {
+        let brushes = match owner {
+            ObjectId::Solid(id) => {
+                std::slice::from_ref(self.document.solid(id).ok_or("Source brush is missing")?)
+            }
+            ObjectId::Entity(id) => self
+                .document
+                .entity(id)
+                .ok_or("Source owner is missing")?
+                .solids
+                .as_slice(),
+        };
+        for brush in brushes {
+            let geometry = BrushGeometry::from_solid(brush).map_err(|error| error.to_string())?;
+            let terrain = if brush.sides.iter().any(|side| side.displacement.is_some()) {
+                Some(
+                    query::solid_bounds(brush)
+                        .ok_or("Source owner has unresolved terrain bounds")?,
+                )
+            } else {
+                None
+            };
+            for (mins, maxs) in std::iter::once((geometry.mins, geometry.maxs)).chain(terrain) {
+                for point in [mins + delta, maxs + delta] {
+                    if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT
+                    {
+                        return Err("Corner snapping would move part of the selected owner outside ±65536 units".into());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn placement_context(&self) -> Result<(), String> {
         let own = self.placement.draft.as_ref().is_some_and(|draft| {
             self.surface_transform_owner() == Some(draft.token)
@@ -221,7 +308,12 @@ impl Session {
         Ok(points)
     }
 
-    fn placement_surface(&mut self, ids: &[ObjectId], ray: Ray) -> Result<SurfaceHit, String> {
+    fn placement_surface(
+        &mut self,
+        ids: &[ObjectId],
+        ray: Ray,
+        reject_ambiguous: bool,
+    ) -> Result<SurfaceHit, String> {
         let direction = ray
             .direction
             .try_normalize()
@@ -251,6 +343,15 @@ impl Session {
         let ordinary = query::pick_surface(&self.document, &ray, |solid| {
             !solids.contains(&solid.id) && !hidden.contains(&solid.id)
         });
+        if reject_ambiguous
+            && ordinary.is_none()
+            && query::pick_face(&self.document, &ray, |solid| {
+                !solids.contains(&solid.id) && !hidden.contains(&solid.id)
+            })
+            .is_some()
+        {
+            return Err("The first visible brush hit has ambiguous or invalid geometry".into());
+        }
         ordinary
             .into_iter()
             .chain(
@@ -273,10 +374,53 @@ impl Session {
         ids: &[ObjectId],
         method: Method,
         ray: Option<Ray>,
-        options: Options,
+        options: &Options,
     ) -> Result<Plan, String> {
         if !options.offset.is_finite() || options.offset.abs() > 65536.0 {
             return Err("Surface offset must be finite and within ±65536 units".into());
+        }
+        if (method == Method::BrushCorner) != options.source_corner.is_some() {
+            return Err(
+                "brush_corner placement requires source_corner; other methods do not accept it"
+                    .into(),
+            );
+        }
+        if method == Method::BrushCorner {
+            let source = self.placement_source_corner(ids, options)?.unwrap();
+            let ray = ray.ok_or("Supply a ray or pick a target corner in the viewport")?;
+            let surface = self.placement_surface(ids, ray, true)?;
+            let (target, position) = query::face_corner(&self.document, &surface.hit)
+                .ok_or("The first visible hit must be an unambiguous flat brush face")?;
+            let mut delta = position - source;
+            let scale = source
+                .abs()
+                .max_element()
+                .max(position.abs().max_element())
+                .max(self.spatial.grid_size);
+            for axis in 0..3 {
+                if delta[axis].abs() <= CORNER_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale {
+                    delta[axis] = 0.0;
+                }
+            }
+            self.corner_translation_bounds(ids[0], delta)?;
+            return Ok(Plan {
+                method,
+                surface,
+                support_points: 1,
+                contact: 0.0,
+                transform: Transform {
+                    translation: delta,
+                    pivot: source,
+                    texture_lock: options.texture_lock,
+                    texture_scale_lock: self.transform_tool.texture_scale_lock,
+                    ..Transform::default()
+                },
+                corner: Some(CornerSnap {
+                    source,
+                    target,
+                    position,
+                }),
+            });
         }
         if method != Method::Ray && ray.is_some() {
             return Err("Ray coordinates are only used for picked-surface placement".into());
@@ -301,8 +445,9 @@ impl Session {
                 origin: DVec3::new(pivot.x, pivot.y, low.z - 0.01),
                 direction: DVec3::Z,
             },
+            Method::BrushCorner => unreachable!(),
         };
-        let surface = self.placement_surface(ids, ray)?;
+        let surface = self.placement_surface(ids, ray, false)?;
         let normal = surface.normal;
         let up = self.transform_basis(ids, true)?.z_axis;
         let rotation = if options.align {
@@ -345,6 +490,7 @@ impl Session {
             transform,
             support_points: points.len(),
             contact,
+            corner: None,
         })
     }
 
@@ -356,6 +502,7 @@ impl Session {
         plan: Plan,
         token: u64,
     ) -> Result<Value, String> {
+        let source_position = plan.corner.as_ref().map(|corner| corner.source);
         self.preview_surface_transform(actor, &ids, plan.transform, plan.transform.pivot, token)?;
         self.placement.serial = token;
         self.placement.draft = Some(Draft {
@@ -366,6 +513,7 @@ impl Session {
             ids,
             options,
             plan: Some(plan),
+            source_position,
         });
         Ok(self.surface_placement())
     }
@@ -385,7 +533,7 @@ impl Session {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let plan = self.plan_placement(&ids, method, ray, options)?;
+        let plan = self.plan_placement(&ids, method, ray, &options)?;
         self.install_placement(actor, ids, options, plan, self.placement.serial + 1)
     }
 
@@ -395,7 +543,10 @@ impl Session {
         options: Options,
     ) -> Result<Value, String> {
         self.placement_context()?;
-        self.placement_points(ids)?;
+        let source_position = self.placement_source_corner(ids, &options)?;
+        if source_position.is_none() {
+            self.placement_points(ids)?;
+        }
         if !options.offset.is_finite() || options.offset.abs() > 65536.0 {
             return Err("Surface offset must be finite and within ±65536 units".into());
         }
@@ -421,6 +572,7 @@ impl Session {
             ids,
             options,
             plan: None,
+            source_position,
         });
         self.view_serial += 1;
         Ok(self.surface_placement())
@@ -458,8 +610,13 @@ impl Session {
         if draft.plan.is_some() {
             return Err("Start Pick surface again to choose another target".into());
         }
-        let (ids, options) = (draft.ids.clone(), draft.options);
-        let plan = self.plan_placement(&ids, Method::Ray, Some(ray), options)?;
+        let (ids, options) = (draft.ids.clone(), draft.options.clone());
+        let method = if options.source_corner.is_some() {
+            Method::BrushCorner
+        } else {
+            Method::Ray
+        };
+        let plan = self.plan_placement(&ids, method, Some(ray), &options)?;
         self.install_placement(actor, ids, options, plan, token)
     }
 
@@ -468,8 +625,8 @@ impl Session {
             return json!({"token":null,"valid":false,"picking":false});
         };
         let error = self.checked_placement(draft.token).err();
-        let plan=draft.plan.as_ref().map(|plan|json!({"method":plan.method.name(),"target":object_id(plan.surface.hit.object),"solid":plan.surface.hit.solid,"side":plan.surface.hit.side,"point":plan.surface.hit.point.to_array(),"normal":plan.surface.normal.to_array(),"pivot":plan.transform.pivot.to_array(),"translation":plan.transform.translation.to_array(),"rotation":plan.transform.rotation.to_array(),"contact_offset":plan.contact,"support_points":plan.support_points}));
-        json!({"token":draft.token,"valid":error.is_none(),"picking":draft.plan.is_none() && error.is_none(),"ids":draft.ids.iter().copied().map(object_id).collect::<Vec<_>>(),"offset":draft.options.offset,"align":draft.options.align,"texture_lock":draft.options.texture_lock,"plan":plan,"error":error})
+        let plan=draft.plan.as_ref().map(|plan|json!({"method":plan.method.name(),"target":object_id(plan.surface.hit.object),"solid":plan.surface.hit.solid,"side":plan.surface.hit.side,"point":plan.surface.hit.point.to_array(),"normal":plan.surface.normal.to_array(),"pivot":plan.transform.pivot.to_array(),"translation":plan.transform.translation.to_array(),"rotation":plan.transform.rotation.to_array(),"contact_offset":plan.corner.is_none().then_some(plan.contact),"corner":plan.corner.as_ref().map(|corner|json!({"source":corner.source.to_array(),"target":super::components::component_json(&corner.target),"position":corner.position.to_array()})),"support_points":plan.support_points}));
+        json!({"token":draft.token,"valid":error.is_none(),"picking":draft.plan.is_none() && error.is_none(),"method":if draft.options.source_corner.is_some(){"brush_corner"}else{draft.plan.as_ref().map_or("ray",|plan|plan.method.name())},"source_corner":draft.options.source_corner.as_ref().map(super::components::component_json),"source_position":draft.source_position.map(|point|point.to_array()),"ids":draft.ids.iter().copied().map(object_id).collect::<Vec<_>>(),"offset":draft.options.offset,"align":draft.options.align,"texture_lock":draft.options.texture_lock,"plan":plan,"error":error})
     }
 
     pub fn cancel_surface_placement(&mut self, token: u64) -> Result<(), String> {
@@ -509,7 +666,28 @@ impl Session {
         let Some(plan) = &draft.plan else {
             return;
         };
-        if !self.working_object_visible(self.render_document(), plan.surface.hit.object) {
+        if !self.working_object_visible(self.render_document(), plan.surface.hit.object)
+            || (plan.corner.is_some() && !self.working_selection_visible())
+        {
+            return;
+        }
+        if let Some(corner) = &plan.corner {
+            for position in [corner.source, corner.position] {
+                for axis in [DVec3::X, DVec3::Y, DVec3::Z] {
+                    for point in [position - axis * 3.0, position + axis * 3.0] {
+                        mesh.lines.push(render::scene::LineVertex {
+                            position: point.as_vec3().to_array(),
+                            color: [255, 220, 95, 255],
+                        });
+                    }
+                }
+            }
+            for point in [corner.source, corner.position] {
+                mesh.lines.push(render::scene::LineVertex {
+                    position: point.as_vec3().to_array(),
+                    color: [255, 220, 95, 255],
+                });
+            }
             return;
         }
         let point = plan.surface.hit.point;

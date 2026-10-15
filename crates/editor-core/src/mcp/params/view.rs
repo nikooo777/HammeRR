@@ -234,6 +234,8 @@ pub struct SurfacePlacementPickArgs {
 #[serde(deny_unknown_fields)]
 pub struct BeginSurfacePlacementPickArgs {
     pub ids: Option<Vec<String>>,
+    pub method: Option<String>,
+    pub source_corner: Option<SurfaceCornerRef>,
     #[serde(default)]
     pub align: bool,
     pub offset: Option<f64>,

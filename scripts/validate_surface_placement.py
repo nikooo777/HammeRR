@@ -17,11 +17,52 @@ def bounds(client, entity):
     return client.call("inspect_entity_model", {"id": entity})["world_bounds"]
 
 
+def validate_corner_snap(client, output):
+    source = client.call("create_block", {"mins": [-70.25, -80.75, 48.3], "maxs": [-54.25, -64.75, 64.3]})["id"]
+    solid = int(source.split(":")[1])
+    client.call("select", {"ids": [source]})
+    client.call("transform_objects", {"rotation": [0, 0, 17]})
+    vertex = client.call("get_brush_components", {"solids": [solid]})["brushes"][0]["vertices"][0]
+    corner = {"solid": solid, "sides": vertex["sides"]}
+    original = client.call("get_objects", {"ids": [source]})
+    history = client.call("get_map_info")["undo"]
+    arguments = {"ids": [source], "method": "brush_corner", "source_corner": corner, "ray_origin": [-128, -128, 100], "ray_direction": [0, 0, -1]}
+    report = client.call("preview_surface_placement", arguments)
+    assert report["source_corner"] == corner and report["plan"]["contact_offset"] is None
+    target = report["plan"]["corner"]["position"]
+    for actual, expected in zip(target, [-272, -272, 0]):
+        close(actual, expected)
+    preview = client.call("get_brush_components", {"solids": [solid]})["brushes"][0]["vertices"]
+    moved = next(vertex for vertex in preview if vertex["sides"] == corner["sides"])
+    for actual, expected in zip(moved["position"], target):
+        close(actual, expected)
+    assert client.call("get_objects", {"ids": [source]}) == original
+    assert client.call("get_map_info")["undo"] == history
+    for invalid in [{"align": True}, {"offset": 1}, {"method": "ray"}, {"source_corner": None}, {"source_corner": {"solid": solid, "sides": corner["sides"][:2]}}]:
+        client.call("preview_surface_placement", arguments | invalid, error=True)
+        assert client.call("get_surface_placement")["token"] == report["token"]
+    client.render(output / "vertex-snap.png", camera={"position": [-180, -140, 110], "look_at": [-260, -260, 10]})
+    client.call("apply_surface_placement", {"token": report["token"]})
+    assert len(client.call("get_map_info")["undo"]) == len(history) + 1
+    aligned = client.call("preview_surface_placement", arguments)
+    assert aligned["plan"]["translation"] == [0, 0, 0]
+    client.call("apply_surface_placement", {"token": aligned["token"]})
+    assert len(client.call("get_map_info")["undo"]) == len(history) + 1
+    client.call("undo")
+    assert client.call("get_objects", {"ids": [source]}) == original
+    armed = client.call("begin_surface_placement_pick", {"ids": [source], "method": "brush_corner", "source_corner": corner})
+    assert armed["picking"] and armed["method"] == "brush_corner"
+    client.call("cancel_surface_placement", {"token": armed["token"]})
+    client.call("delete_objects", {"ids": [source]})
+    return report
+
+
 def validate(args):
     client = Client(None, args.binary, args.output)
     try:
         for low, high in ROOM:
             client.call("create_block", {"mins": low, "maxs": high})
+        corner_snap = validate_corner_snap(client, args.output)
         client.call(
             "create_entity",
             {"classname": "info_player_terrorist", "origin": [-192, -192, 8]},
@@ -163,7 +204,7 @@ def validate(args):
         close(terrain_hit["plan"]["contact_offset"], 3)
         client.call("cancel_surface_placement", {"token": terrain_hit["token"]})
         (args.output / "validation.json").write_text(
-            json.dumps({"floor": floor, "ceiling": ceiling, "wall": wall, "model": model_hit, "terrain": terrain_hit, "stats": stats}, indent=2) + "\n"
+            json.dumps({"corner_snap": corner_snap, "floor": floor, "ceiling": ceiling, "wall": wall, "model": model_hit, "terrain": terrain_hit, "stats": stats}, indent=2) + "\n"
         )
     finally:
         client.close()

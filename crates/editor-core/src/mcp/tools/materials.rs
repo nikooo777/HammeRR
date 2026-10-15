@@ -11,7 +11,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview rigid surface placement of selected or explicit object ids together. method=floor (default) or ceiling casts vertically and preserves XY; method=ray uses ray_origin/ray_direction and centers the selection tangentially at the hit. Optional align rotates the first object's local up to the geometric normal; offset is normal distance, texture_lock defaults to current settings. Supports actual brush/terrain/model geometry and helper bounds for unsupported point assets. Returns owned token and contact/transform details; no source/history edit. Finish other geometry previews first. UI: Place on surface…."
+        description = "Preview rigid surface placement of selected or explicit object ids together. method=floor (default) or ceiling casts vertically and preserves XY; method=ray uses ray_origin/ray_direction and centers the selection tangentially at the hit. Optional align rotates the first object's local up to the geometric normal; offset is normal distance, texture_lock defaults to current settings. Supports actual brush/terrain/model geometry and helper bounds for unsupported point assets. Returns owned token and contact/transform details; no source/history edit. method=brush_corner requires exactly one moving brush owner and explicit source_corner {solid,sides} from a real topology vertex; uses the ray to choose the nearest real corner of the first visible flat brush face. Translates only, preserving texture policy; align=true/nonzero offset, model/terrain/ambiguous targets reject without replacing a valid plan. Inspect source_position and plan.corner identities/positions before Apply. Finish other geometry previews first. UI: Place on surface… → Snap selected corner."
     )]
     pub(in crate::mcp) fn preview_surface_placement(
         &self,
@@ -32,6 +32,12 @@ impl EditorServer {
                 _ => return Err("Supply both ray_origin and ray_direction".into()),
             };
             let options = crate::session::placement::Options {
+                source_corner: args
+                    .source_corner
+                    .map(|corner| map_core::subobject::Component {
+                        solid: corner.solid,
+                        sides: corner.sides,
+                    }),
                 align: args.align,
                 offset: args.offset.unwrap_or(0.0),
                 texture_lock: args
@@ -43,7 +49,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Arm shared viewport surface picking for selected/explicit ids, optional align, normal offset and texture_lock. Returns owned token without editing source/history. The next pick_surface_placement supplies the ray; missed/invalid hits keep picking active. UI: Place on surface… → Pick surface."
+        description = "Arm shared viewport surface picking for selected/explicit ids, optional align, normal offset and texture_lock. Returns owned token without editing source/history. The next pick_surface_placement supplies the ray; missed/invalid hits keep picking active. method=brush_corner plus explicit source_corner {solid,sides} arms exact corner snapping; ray is the default method. Corner snapping needs one brush owner, zero offset and no alignment. UI: Place on surface… → Pick surface or Snap selected corner → Pick target corner."
     )]
     pub(in crate::mcp) fn begin_surface_placement_pick(
         &self,
@@ -52,7 +58,19 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let method = args.method.as_deref().unwrap_or("ray");
+            if !matches!(method, "ray" | "brush_corner")
+                || (method == "brush_corner") != args.source_corner.is_some()
+            {
+                return Err("Choose ray without source_corner, or brush_corner with an explicit source_corner".into());
+            }
             let options = crate::session::placement::Options {
+                source_corner: args
+                    .source_corner
+                    .map(|corner| map_core::subobject::Component {
+                        solid: corner.solid,
+                        sides: corner.sides,
+                    }),
                 align: args.align,
                 offset: args.offset.unwrap_or(0.0),
                 texture_lock: args
@@ -64,7 +82,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Complete owned surface picking with a world origin/direction ray. Excludes selected objects and hidden/tool-filtered targets, uses geometric brush/terrain/model normals and installs the same transform preview as the viewport click. No source/history edit."
+        description = "Complete owned surface picking with a world origin/direction ray. Excludes selected objects and hidden/tool-filtered targets, uses geometric brush/terrain/model normals and installs the same transform preview as the viewport click. In brush_corner mode only the first visible flat brush face is supported; nearest face corner uses incident-side identity to break equal-distance ties. Unsupported hits keep picking active. No source/history edit."
     )]
     pub(in crate::mcp) fn pick_surface_placement(
         &self,

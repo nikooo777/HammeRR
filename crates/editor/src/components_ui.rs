@@ -1111,6 +1111,53 @@ pub fn choose_partition_texture(
     Ok(())
 }
 
+pub fn place_partition_texture(
+    window: &ComponentsWindow,
+    session: &mut Session,
+    target: &PartitionMaterialTarget,
+    fit: bool,
+) -> Result<(), String> {
+    if target != &partition_material_target(session)
+        || window.get_token().parse::<u64>().ok() != target.0
+    {
+        return Err(
+            "Map, preview or highlighted pieces changed; choose texture placement again".into(),
+        );
+    }
+    if window.get_top_material() != window.get_top_material_baseline() {
+        return Err("Preview the planned top material before changing placement".into());
+    }
+    if !texture_inputs_match(window) {
+        return Err("Preview texture placement before fitting or justifying".into());
+    }
+    let justify = if fit {
+        [None, None]
+    } else {
+        [
+            window.get_texture_justify_u(),
+            window.get_texture_justify_v(),
+        ]
+        .map(|value| match value {
+            1 => Some(map_core::surface::Justify::Start),
+            2 => Some(map_core::surface::Justify::Center),
+            3 => Some(map_core::surface::Justify::End),
+            _ => None,
+        })
+    };
+    session.place_component_partition_texture(
+        target.0.ok_or("Stage a partition first")?,
+        &target.2,
+        fit,
+        justify,
+    )?;
+    refresh(window, session);
+    window.set_message(
+        "Top texture placement updated. Review the preview, then Keep, preview geometry or Cancel."
+            .into(),
+    );
+    Ok(())
+}
+
 pub type PartitionMaterialTarget = (
     Option<u64>,
     u64,
@@ -1270,6 +1317,28 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
                 choose_partition_texture(&window, &mut session, &target, Some(texture))
             });
             if let Err(error) = result {
+                window.set_message(error.into());
+            }
+        }
+    });
+    window.on_fit_partition_texture({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let target = partition_material_target(&session);
+            if let Err(error) = place_partition_texture(&window, &mut session, &target, true) {
+                window.set_message(error.into());
+            }
+        }
+    });
+    window.on_justify_partition_texture({
+        let (window, shared) = (window.as_weak(), shared.clone());
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            let target = partition_material_target(&session);
+            if let Err(error) = place_partition_texture(&window, &mut session, &target, false) {
                 window.set_message(error.into());
             }
         }

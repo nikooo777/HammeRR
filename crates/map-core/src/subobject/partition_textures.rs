@@ -56,6 +56,32 @@ impl PartitionTexture {
         })
     }
 
+    pub fn place(
+        &self,
+        source: &Side,
+        points: &[DVec3],
+        dimensions: [u32; 2],
+        fit: bool,
+        justify: [Option<crate::surface::Justify>; 2],
+    ) -> Result<Self, EditError> {
+        let projection = crate::surface::placed_projection(
+            &self.project(source)?,
+            points,
+            fit.then_some(dimensions),
+            [
+                justify[0].map(|value| (value, dimensions[0])),
+                justify[1].map(|value| (value, dimensions[1])),
+            ],
+        )?;
+        let texture = Self {
+            shift: [projection.u.offset, projection.v.offset],
+            scale: [projection.u.scale, projection.v.scale],
+            rotation: projection.rotation,
+        };
+        texture.validate()?;
+        Ok(texture)
+    }
+
     pub(super) fn apply(
         &self,
         source: &Side,

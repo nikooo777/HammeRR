@@ -88,7 +88,13 @@ Enable **Top texture placement** to shift, scale or rotate the texture of the hi
 - scale in world units per texel (negative values mirror the texture);
 - rotation in degrees.
 
-Click **Preview placement** to see it on the flat face. **Use source placement** reverts. The placement is applied when you raise or extrude.
+1. Highlight the pieces to change and enable **Top texture placement**.
+2. Enter shifts, scales or rotation, then click **Preview placement**.
+3. Click **Fit each piece** to map one texture tile over each highlighted piece’s projected bounds. This uses each piece’s material dimensions and preserves its current rotation and mirroring.
+4. To keep the scale and move the texture, choose **Horizontal** (**Left**, **Center** or **Right**) and/or **Vertical** (**Top**, **Center** or **Bottom**), then click **Preview justification**. **Keep horizontal** and **Keep vertical** leave that direction unchanged.
+5. Review the flat preview. **Use source placement** restores inheritance. **Keep flat pieces** saves the plan; raising or extruding applies it to the tops. **Cancel** discards changes in the current draft.
+
+Fit and justification work independently on the actual corners of each chosen piece, including adjusted cuts, triangles and pentagons. Preview pending numeric or material changes before fitting or justifying. Unavailable texture dimensions leave the current preview intact. Return to flat before editing a placement.
 
 | Placement controls | Different placements on two pieces |
 | --- | --- |
@@ -115,4 +121,4 @@ Finish an open partition (keep, apply or cancel it) before saving, compiling or 
 - Ridges need two four-cornered pieces. Other shapes can be kept or extruded.
 - One batch handles 16 source brushes, 32 extruded pieces and 256 generated planes.
 - A map can store divisions on up to 64 faces, using up to 64 KiB of data.
-- Not yet available: inward extrusion, free-form dividing lines, and per-piece texture axes, fit and justification.
+- Not yet available: inward extrusion, free-form dividing lines, and per-piece texture axes.

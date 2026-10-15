@@ -281,47 +281,18 @@ pub(crate) fn update(
             axis.scale = scale;
         }
     }
-    if let Some(size) = edit.fit {
-        for (axis, pixels) in [(&mut side.u_axis, size[0]), (&mut side.v_axis, size[1])] {
-            let (lo, hi) = points
-                .iter()
-                .map(|point| point.dot(axis.axis))
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), value| {
-                    (lo.min(value), hi.max(value))
-                });
-            if !lo.is_finite() || hi - lo < 1e-8 {
-                return Err(invalid("texture axis does not span the face"));
-            }
-            let sign = axis.scale.signum();
-            axis.scale = sign * (hi - lo) / f64::from(pixels);
-            axis.offset = if sign > 0.0 {
-                -lo / axis.scale
-            } else {
-                -hi / axis.scale
-            };
-        }
-    }
-    for (axis, justify) in [
-        (&mut side.u_axis, edit.justify_u),
-        (&mut side.v_axis, edit.justify_v),
-    ] {
-        if let Some((placement, pixels)) = justify {
-            if pixels == 0 {
-                return Err(invalid("texture dimensions must be positive"));
-            }
-            let (lo, hi) = points
-                .iter()
-                .map(|point| point.dot(axis.axis) / axis.scale + axis.offset)
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), value| {
-                    (lo.min(value), hi.max(value))
-                });
-            axis.offset += match placement {
-                Justify::Start => -lo,
-                Justify::Center => (f64::from(pixels) - lo - hi) * 0.5,
-                Justify::End => f64::from(pixels) - hi,
-            };
-        }
-    }
+    let projection = placed_projection(
+        &Projection {
+            u: side.u_axis,
+            v: side.v_axis,
+            rotation: side.rotation,
+        },
+        points,
+        edit.fit,
+        [edit.justify_u, edit.justify_v],
+    )?;
+    side.u_axis = projection.u;
+    side.v_axis = projection.v;
     if !side.u_axis.axis.is_finite()
         || !side.v_axis.axis.is_finite()
         || !side.u_axis.offset.is_finite()
@@ -343,6 +314,65 @@ pub(crate) fn update(
         ));
     }
     Ok(())
+}
+
+pub fn placed_projection(
+    projection: &Projection,
+    points: &[DVec3],
+    fit: Option<[u32; 2]>,
+    justify: [Option<(Justify, u32)>; 2],
+) -> Result<Projection, EditError> {
+    if fit.is_none() && justify.iter().all(Option::is_none) {
+        return Ok(projection.clone());
+    }
+    if points.len() < 3 || points.iter().any(|point| !point.is_finite()) {
+        return Err(invalid("Texture placement needs a finite polygon loop"));
+    }
+    if fit.is_some_and(|size| size.contains(&0))
+        || justify.iter().flatten().any(|(_, pixels)| *pixels == 0)
+    {
+        return Err(invalid("texture dimensions must be positive"));
+    }
+    let mut result = projection.clone();
+    for (index, axis) in [&mut result.u, &mut result.v].into_iter().enumerate() {
+        if fit.is_none() && justify[index].is_none() {
+            continue;
+        }
+        let (lo, hi) = points
+            .iter()
+            .map(|point| point.dot(axis.axis))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), value| {
+                (lo.min(value), hi.max(value))
+            });
+        if !lo.is_finite() || !hi.is_finite() || hi - lo < 1e-8 {
+            return Err(invalid("texture axis does not span the face"));
+        }
+        if let Some(size) = fit {
+            let sign = axis.scale.signum();
+            axis.scale = sign * (hi - lo) / f64::from(size[index]);
+            axis.offset = if sign > 0.0 {
+                -lo / axis.scale
+            } else {
+                -hi / axis.scale
+            };
+        }
+        if !axis.scale.is_finite() || axis.scale.abs() < 1e-8 || !axis.offset.is_finite() {
+            return Err(invalid(
+                "texture projection must have finite axes and nonzero scales",
+            ));
+        }
+        if let Some((placement, pixels)) = justify[index] {
+            let a = lo / axis.scale + axis.offset;
+            let b = hi / axis.scale + axis.offset;
+            let (lo, hi) = (a.min(b), a.max(b));
+            axis.offset += match placement {
+                Justify::Start => -lo,
+                Justify::Center => (f64::from(pixels) - lo - hi) * 0.5,
+                Justify::End => f64::from(pixels) - hi,
+            };
+        }
+    }
+    Ok(result)
 }
 
 pub fn edit_faces(

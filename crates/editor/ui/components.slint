@@ -45,6 +45,10 @@ export component ComponentsWindow inherits Window {
     in property <string> top-texture-summary;
     callback preview-partition-texture();
     callback inherit-partition-texture();
+    callback fit-partition-texture();
+    callback justify-partition-texture();
+    in-out property <int> texture-justify-u;
+    in-out property <int> texture-justify-v;
     callback choose-texture-rotation(float);
     in property <bool> cut-is-midpoint;
     in-out property <bool> show-cut-settings;
@@ -348,6 +352,19 @@ export component ComponentsWindow inherits Window {
                                     Button { text: "Preview placement"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.preview-partition-texture(); } }
                                     Button { text: "Use source placement"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.inherit-partition-texture(); } }
                                 }
+                                Button { text: "Fit each piece"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.fit-partition-texture(); } }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Horizontal"; width: 80px; vertical-alignment: center; color: #aeb9c8; }
+                                    ComboBox { horizontal-stretch: 1; model: ["Keep horizontal", "Left", "Center", "Right"]; current-index <=> root.texture-justify-u; accessible-label: "Horizontal justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Vertical"; width: 80px; vertical-alignment: center; color: #aeb9c8; }
+                                    ComboBox { horizontal-stretch: 1; model: ["Keep vertical", "Top", "Center", "Bottom"]; current-index <=> root.texture-justify-v; accessible-label: "Vertical justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; }
+                                }
+                                Button { text: "Preview justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets && (root.texture-justify-u > 0 || root.texture-justify-v > 0); clicked => { root.justify-partition-texture(); } }
+                                Text { text: "Fit and justification use each piece's bounds and material dimensions. Preview numeric changes first."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                                 Text { text: "Changes highlighted tops. Negative scales mirror the texture. Keep at corners attaches placement when raising or extruding."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                             }
                             CheckBox { text: "Adjust dividing edge"; checked <=> root.show-cut-settings; }

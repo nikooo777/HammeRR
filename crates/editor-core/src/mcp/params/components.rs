@@ -150,6 +150,33 @@ pub(in crate::mcp) struct PartitionTextureArgs {
     pub(in crate::mcp) texture: Option<PartitionTextureSpec>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::mcp) enum PartitionTextureJustify {
+    Start,
+    Center,
+    End,
+}
+
+impl From<PartitionTextureJustify> for map_core::surface::Justify {
+    fn from(value: PartitionTextureJustify) -> Self {
+        match value {
+            PartitionTextureJustify::Start => Self::Start,
+            PartitionTextureJustify::Center => Self::Center,
+            PartitionTextureJustify::End => Self::End,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(in crate::mcp) struct PlacePartitionTextureArgs {
+    pub(in crate::mcp) token: String,
+    pub(in crate::mcp) partitions: Vec<crate::session::components::PartitionRef>,
+    pub(in crate::mcp) fit: Option<bool>,
+    pub(in crate::mcp) justify_u: Option<PartitionTextureJustify>,
+    pub(in crate::mcp) justify_v: Option<PartitionTextureJustify>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct ExtrudePartitionArgs {
     pub(in crate::mcp) token: String,

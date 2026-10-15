@@ -236,4 +236,31 @@ pub(crate) mod tests {
         assert!(session.apply_repeat_array(Actor::User, token).is_err());
         assert!(session.repeat.preview.is_none());
     }
+
+    #[test]
+    fn hollow_replaces_repeat_only_after_validation_and_survives_old_array_cancel() {
+        let mut session = Session::new(Err("No game".into()));
+        let source = session.edit(Actor::User, "source", |tx| edit::create_block(tx, DVec3::ZERO, DVec3::splat(128.0), "brick/wall")).unwrap();
+        session.select(&[source], SelectMode::Replace).unwrap();
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let token = preview(&mut session, source);
+        let array = session.render_document().vmf().clone();
+        let invalid = map_core::hollow::Spec { thickness: 0.0, outward: false, open_faces: Default::default() };
+        assert!(session.preview_hollow(&[source], invalid, &session.hollow_stamp()).is_err());
+        assert_eq!(session.repeat_array()["preview"]["token"], token);
+        assert_eq!(session.render_document().vmf(), &array);
+        let valid = map_core::hollow::Spec { thickness: 16.0, outward: false, open_faces: Default::default() };
+        session.preview_hollow(&[source], valid, &session.hollow_stamp()).unwrap();
+        let hollow = session.render_document().vmf().clone();
+        assert_ne!(hollow, array);
+        assert!(session.repeat.preview.is_none());
+        assert!(session.cancel_repeat_array(token).is_err());
+        assert!(session.apply_repeat_array(Actor::User, token).is_err());
+        assert_eq!(session.render_document().vmf(), &hollow);
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+        session.clear_hollow_preview();
+        assert_eq!(session.render_document().vmf(), &before);
+    }
 }

@@ -317,6 +317,104 @@ fn corner_snap_owner_overflow_rejects_before_replacing_a_valid_plan() {
 }
 
 #[test]
+fn corner_snap_rejects_partial_owned_terrain_bounds_without_replacing_a_valid_plan() {
+    for nonfinite in [false, true] {
+        let (mut session, selected) = fixture();
+        let ObjectId::Solid(solid) = selected else {
+            unreachable!()
+        };
+        let (owner, source_solid, terrain_solid) = session
+            .edit(Actor::User, "mixed owner terrain", |tx| {
+                let source = map_core::edit::block_solid(
+                    tx,
+                    DVec3::new(32.0, 32.0, 32.0),
+                    DVec3::new(48.0, 48.0, 48.0),
+                    "brick/test",
+                )?;
+                let mut terrain = map_core::edit::block_solid(
+                    tx,
+                    DVec3::new(64.0, 32.0, 32.0),
+                    DVec3::new(80.0, 48.0, 48.0),
+                    "brick/test",
+                )?;
+                let geometry = BrushGeometry::from_solid(&terrain).unwrap();
+                for (index, face) in geometry.faces.iter().take(2).enumerate() {
+                    let mut info = source_formats::vmf::DispInfo {
+                        power: 2,
+                        start_position: face.vertices[0],
+                        flags: None,
+                        elevation: 0.0,
+                        subdivided: false,
+                        normals: None,
+                        distances: None,
+                        offsets: None,
+                        offset_normals: None,
+                        alphas: None,
+                        triangle_tags: None,
+                        allowed_verts: None,
+                        extra_properties: Default::default(),
+                        extra: Vec::new(),
+                    };
+                    if index == 1 {
+                        if nonfinite {
+                            info.elevation = f64::INFINITY;
+                        } else {
+                            info.offsets = Some(vec![vec![DVec3::ZERO; 4]; 5]);
+                        }
+                    }
+                    terrain.sides[face.side].displacement = Some(info);
+                }
+                terrain.hidden = true;
+                let ids = (source.id, terrain.id);
+                let owner = map_core::edit::create_entity(
+                    tx,
+                    "func_detail",
+                    None,
+                    &[],
+                    vec![source, terrain],
+                )?;
+                Ok((owner, ids.0, ids.1))
+            })
+            .unwrap();
+        let (_, terrain) = subobject::solid(session.document(), terrain_solid).unwrap();
+        assert!(query::solid_bounds(terrain).is_some());
+        let invalid_options = corner_options(&session, source_solid);
+        let valid_options = corner_options(&session, solid);
+        let ray = Ray {
+            origin: DVec3::new(-200.0, -200.0, 100.0),
+            direction: DVec3::NEG_Z,
+        };
+        let good = session
+            .preview_surface_placement(
+                Actor::User,
+                &[selected],
+                Method::BrushCorner,
+                Some(ray),
+                valid_options,
+            )
+            .unwrap();
+        let source = session.document().vmf().clone();
+        let preview = session.render_document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let error = session
+            .preview_surface_placement(
+                Actor::Agent,
+                &[owner],
+                Method::BrushCorner,
+                Some(ray),
+                invalid_options,
+            )
+            .unwrap_err();
+        assert!(error.contains("terrain face"), "{error}");
+        assert_eq!(session.surface_placement(), good);
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.render_document().vmf(), &preview);
+        assert_eq!(session.document().undo_labels().count(), history);
+        assert_eq!(session.selected_ids(), [selected]);
+    }
+}
+
+#[test]
 fn corner_snap_keeps_tiny_real_axis_moves_independent_of_other_axis_magnitude() {
     let mut session = Session::new(Err("No assets needed".into()));
     session

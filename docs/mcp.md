@@ -552,6 +552,9 @@ Disable regions for full-map leak checks. Globally disabled imported plural
 metadata retains full-map behavior even with enabled children. Explicit Clear
 is required before replacing imported plural/multiple records. See
 [Compile regions](compile-regions.md).
+For plural imports containing additional disabled boxes, a valid `build_scope`
+can coexist with `committed.error`. Compilation works, while
+`frame_compile_region` and the saved viewport guide remain unavailable.
 
 ### Material asset errors
 

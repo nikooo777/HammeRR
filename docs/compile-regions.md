@@ -92,5 +92,8 @@ pending draft stale. Preview it again before applying.
 - Imported legacy cordons and a single enabled box under active plural cordons
   can compile. Plural or multiple records need **Preview clear** and
   **Apply region** before authoring a replacement. Clearing is undoable.
+- A plural record containing extra disabled boxes can build its one active
+  region, but its viewport guide and **Frame region** are unavailable until
+  a replacement single region is authored.
 - Unapplied drafts never affect compilation. Region settings belong to the
   VMF, independently of named build recipes.

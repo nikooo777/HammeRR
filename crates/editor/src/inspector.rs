@@ -14,6 +14,7 @@ pub enum Control {
     Vector,
     Color,
     Material,
+    Model,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,6 +132,8 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
                 | "style"
                 | "spawnflags"
                 | "material"
+                | "model"
+                | "skin"
         ),
         read_only: property.is_some_and(|property| property.read_only),
         choices: Vec::new(),
@@ -240,6 +243,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             }
         }
         "material" | "decal" => result.control = Control::Material,
+        _ if lower == "model" => result.control = Control::Model,
         _ if lower == "material" => result.control = Control::Material,
         _ => {}
     }

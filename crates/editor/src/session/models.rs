@@ -111,6 +111,7 @@ impl Session {
 
     pub fn refresh_model_assets(&mut self, actor: Actor) {
         self.models.get_mut().clear();
+        self.model_browser.catalog = None;
         self.scene_serial += 1;
         self.view_serial += 1;
         self.log(actor, "reloaded model assets");

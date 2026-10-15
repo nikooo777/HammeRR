@@ -1,0 +1,244 @@
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+use glam::DVec3;
+use render::{Camera, MaterialLibrary, SceneMesh, models::Instance};
+use serde_json::{Value, json};
+use source_formats::vmf::Entity;
+
+use super::{Actor, Session};
+
+#[cfg(test)]
+mod tests;
+
+#[derive(Default)]
+pub struct State {
+    pub(super) catalog: Option<Vec<String>>,
+    serial: u64,
+    draft: Option<Draft>,
+}
+
+struct Draft {
+    token: u64,
+    entity: u32,
+    generation: u64,
+    revision: u64,
+    definitions: u64,
+    scene: u64,
+    choice: Option<(String, usize)>,
+}
+
+fn folder(path: &str) -> &str {
+    path.rsplit_once('/').map_or("models", |(folder, _)| folder)
+}
+
+impl Session {
+    pub fn browse_models(
+        &mut self,
+        query: &str,
+        group: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Value, String> {
+        if query.len() > 256 || group.len() > 1024 || !(1..=100).contains(&limit) {
+            return Err("Use a query up to 256 bytes and a page of 1 to 100 models".into());
+        }
+        let names = self
+            .model_browser
+            .catalog
+            .get_or_insert_with(|| self.game.list("models", ".mdl"));
+        let used = self
+            .document
+            .vmf()
+            .entities
+            .iter()
+            .filter_map(|entity| entity.properties.get("model"))
+            .filter_map(|path| render::models::model_path(path).ok())
+            .collect::<BTreeSet<_>>();
+        let query = query.to_ascii_lowercase();
+        let words = query.split_whitespace().collect::<Vec<_>>();
+        let matching = names
+            .iter()
+            .filter(|name| words.iter().all(|word| name.contains(word)))
+            .collect::<Vec<_>>();
+        let mut folders = BTreeMap::<&str, usize>::new();
+        for name in &matching {
+            *folders.entry(folder(name)).or_default() += 1;
+        }
+        let mut groups = vec![
+            json!({"id":"all","label":"All models","count":matching.len()}),
+            json!({"id":"used","label":"Used in this map","count":matching.iter().filter(|name| used.contains(name.as_str())).count()}),
+        ];
+        groups.extend(folders.iter().map(|(path, count)| {
+            json!({"id":format!("folder:{path}"),"label":path.strip_prefix("models/").unwrap_or(path),"count":count})
+        }));
+        if group != "all"
+            && group != "used"
+            && !group.starts_with("folder:models/")
+            && group != "folder:models"
+        {
+            return Err("Choose all, used or a folder:models/... group".into());
+        }
+        let rows = matching
+            .into_iter()
+            .filter(|path| match group {
+                "all" => true,
+                "used" => used.contains(path.as_str()),
+                _ => group.strip_prefix("folder:") == Some(folder(path)),
+            })
+            .collect::<Vec<_>>();
+        let entries = rows.iter().skip(offset).take(limit).map(|path| {
+            json!({"path":path,"name":path.rsplit('/').next().unwrap_or(path),"folder":folder(path),"used":used.contains(path.as_str())})
+        }).collect::<Vec<_>>();
+        Ok(
+            json!({"groups":groups,"entries":entries,"total":rows.len(),"offset":offset,"limit":limit}),
+        )
+    }
+
+    fn checked_model_choice(&self, token: u64) -> Result<&Draft, String> {
+        let draft = self
+            .model_browser
+            .draft
+            .as_ref()
+            .filter(|draft| draft.token == token)
+            .ok_or("Model choice was closed or replaced")?;
+        if draft.generation != self.document_generation
+            || draft.revision != self.document.revision()
+            || draft.definitions != self.definitions_serial
+            || draft.scene != self.scene_serial
+            || !std::ptr::eq(self.render_document(), &self.document)
+        {
+            return Err(
+                "Map, selection or geometry preview changed; reopen the model browser".into(),
+            );
+        }
+        Ok(draft)
+    }
+
+    pub fn begin_model_choice(&mut self, entity: u32) -> Result<Value, String> {
+        if !std::ptr::eq(self.render_document(), &self.document) {
+            return Err("Apply or cancel the active geometry preview first".into());
+        }
+        let target = self
+            .document
+            .entity(entity)
+            .ok_or("Model entity is missing")?;
+        let model_property = target
+            .classname()
+            .and_then(|name| self.definitions.class(name))
+            .and_then(|class| class.property("model"));
+        if !target.solids.is_empty()
+            || !(target.properties.get("model").is_some()
+                || model_property.is_some_and(|property| property.kind == "studio"))
+        {
+            return Err("Select a point entity with a World Model property".into());
+        }
+        self.model_browser.serial += 1;
+        let token = self.model_browser.serial;
+        self.model_browser.draft = Some(Draft {
+            token,
+            entity,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+            definitions: self.definitions_serial,
+            scene: self.scene_serial,
+            choice: None,
+        });
+        self.view_serial += 1;
+        Ok(
+            json!({"token":token,"entity":format!("entity:{entity}"),"path":target.properties.get("model"),"skin":target.properties.get("skin").and_then(|value|value.parse::<usize>().ok()).unwrap_or(0)}),
+        )
+    }
+
+    pub fn choose_model(&mut self, token: u64, path: &str, skin: usize) -> Result<Value, String> {
+        let id = self.checked_model_choice(token)?.entity;
+        let asset = self.models.borrow_mut().get(&self.game, path)?;
+        let mut entity = self
+            .document
+            .entity(id)
+            .ok_or("Model entity is missing")?
+            .clone();
+        entity.properties.set("model", &asset.path);
+        entity.properties.set("skin", skin.to_string());
+        Instance::new(&entity, asset.clone())?;
+        let report = self.inspect_model(&asset.path, skin)?;
+        self.model_browser.draft.as_mut().unwrap().choice = Some((asset.path.clone(), skin));
+        self.view_serial += 1;
+        Ok(json!({"token":token,"entity":format!("entity:{id}"),"asset":report}))
+    }
+
+    pub fn model_choice(&self, token: u64) -> Result<Value, String> {
+        let draft = self.checked_model_choice(token)?;
+        let asset = draft
+            .choice
+            .as_ref()
+            .map(|(path, skin)| self.inspect_model(path, *skin))
+            .transpose()?;
+        Ok(json!({"token":token,"entity":format!("entity:{}",draft.entity),"asset":asset}))
+    }
+
+    pub fn cancel_model_choice(&mut self, token: u64) -> Result<(), String> {
+        if self
+            .model_browser
+            .draft
+            .as_ref()
+            .is_none_or(|draft| draft.token != token)
+        {
+            return Err("Model choice was closed or replaced".into());
+        }
+        self.model_browser.draft = None;
+        self.view_serial += 1;
+        Ok(())
+    }
+
+    pub fn apply_model_choice(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
+        let draft = self.checked_model_choice(token)?;
+        let id = draft.entity;
+        let (path, skin) = draft
+            .choice
+            .clone()
+            .ok_or("Choose a supported model first")?;
+        self.choose_model(token, &path, skin)?;
+        self.set_entity_properties(
+            actor,
+            id,
+            &[
+                ("model".into(), Some(path.clone())),
+                ("skin".into(), Some(skin.to_string())),
+            ],
+        )?;
+        self.model_browser.draft = None;
+        Ok(json!({"entity":format!("entity:{id}"),"path":path,"skin":skin}))
+    }
+
+    pub fn model_preview_scene(
+        &self,
+        path: &str,
+        skin: usize,
+        aspect: f32,
+    ) -> Result<(SceneMesh, MaterialLibrary, Camera), String> {
+        let asset = self.models.borrow_mut().get(&self.game, path)?;
+        let mut entity = Entity::new(1, "prop_static");
+        entity.properties.set("origin", "0 0 0");
+        entity.properties.set("skin", skin.to_string());
+        let instance = Instance::new(&entity, asset)?;
+        let (low, high) = instance.bounds();
+        let camera = Camera::looking_at(
+            ((low + high) * 0.5 + DVec3::new(-1.0, -1.0, 0.65)).as_vec3(),
+            ((low + high) * 0.5).as_vec3(),
+        )
+        .frame_bounds(low.as_vec3(), high.as_vec3(), aspect);
+        let mut vmf = map_core::Document::empty().vmf().clone();
+        vmf.entities.push(entity);
+        let mut materials = MaterialLibrary::default();
+        let mesh = SceneMesh::build_with_models(
+            &vmf,
+            &self.game,
+            &mut materials,
+            &HashSet::new(),
+            &HashSet::new(),
+            &[],
+            &[instance],
+        );
+        Ok((mesh, materials, camera))
+    }
+}

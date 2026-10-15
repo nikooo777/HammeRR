@@ -14,6 +14,8 @@ mod material_favorites;
 mod material_replace_ui;
 mod materials;
 mod mcp;
+mod model_browser_ui;
+mod model_preview;
 mod model_ui;
 mod pointfile_ui;
 mod primitive_ui;
@@ -171,6 +173,7 @@ struct Ui {
     seen_rename: (u64, u64, u64),
     color_window: Option<ColorWindow>,
     model: Option<model_ui::Controller>,
+    model_browser: Option<model_browser_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -1265,6 +1268,7 @@ fn property_row(field: inspector::Field) -> KeyValue {
         Control::Vector => "vector",
         Control::Color => "color",
         Control::Material => "material",
+        Control::Model => "model",
     };
     KeyValue {
         key: field.key.into(),
@@ -3148,6 +3152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seen_rename: (0, 0, 0),
         color_window: None,
         model: None,
+        model_browser: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -3858,6 +3863,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.on_browse_material({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |key| show_material_window(&app.unwrap(), &ui, &key)
+    });
+    app.on_browse_model({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().model_browser.is_none() {
+                match model_browser_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().model_browser = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.model_browser.as_ref().unwrap();
+            let result = {
+                let mut session = lock(&shared);
+                single_selected_entity(&session)
+                    .ok_or("Select a model entity".to_owned())
+                    .and_then(|id| controller.initialize(&mut session, id))
+            };
+            match result {
+                Ok(()) => {
+                    if !controller.window.get_path().is_empty() {
+                        controller.window.invoke_preview_model();
+                    }
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
     });
     app.on_material_changed({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -4611,6 +4648,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         controller.refresh(&session);
                     }
+                    if let Some(controller) = &ui.model_browser
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.lighting
                         && controller.window.window().is_visible()
                     {
@@ -4646,6 +4688,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.viewport.redraw();
                     refresh_spatial(&app, &session);
                     refresh_texture_brush_sample(&app, &mut session);
+                    if let Some(controller) = &ui.model_browser
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.volume
                         && controller.window.window().is_visible()
                     {

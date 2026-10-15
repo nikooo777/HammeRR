@@ -34,6 +34,7 @@ mod favorites;
 pub mod hollowing;
 mod management;
 pub mod material_search;
+pub mod model_browser;
 pub mod models;
 pub mod paint;
 pub mod pointfiles;
@@ -125,6 +126,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    model_browser: model_browser::State,
     models: std::cell::RefCell<render::models::Library>,
     game: Arc<GameFs>,
     game_error: Option<String>,
@@ -241,6 +243,7 @@ impl Session {
             terrain_triangle_serial: 0,
             terrain_strokes: terrain_strokes::State::default(),
             models: std::cell::RefCell::default(),
+            model_browser: model_browser::State::default(),
             terrain_handles: terrain_handles::State::default(),
             surface_sample: None,
             recovery: recovery::State::default(),

@@ -1052,6 +1052,7 @@ fn definitions_json(session: &Session) -> Value {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetPropertiesArgs {
     /// Entity id ('entity:<n>'); defaults to the single selected entity.
     pub id: Option<String>,
@@ -1997,6 +1998,42 @@ pub struct InspectModelArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowseModelsArgs {
+    pub query: Option<String>,
+    /// all, used, or folder:models/... from groups.
+    pub group: Option<String>,
+    pub offset: Option<usize>,
+    /// 1 to 100, default 60. Listing does not decode model meshes.
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChooseModelArgs {
+    pub token: u64,
+    pub path: String,
+    pub skin: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelChoiceTokenArgs {
+    pub token: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenderModelArgs {
+    pub path: String,
+    pub skin: Option<usize>,
+    /// 64 to 1024, default 640.
+    pub width: Option<u32>,
+    /// 64 to 1024, default 400.
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnectionArgs {
     pub id: Option<String>,
     /// Omit to add a connection; otherwise use the zero-based outgoing index.
@@ -2509,6 +2546,7 @@ struct OffscreenState {
 pub struct EditorServer {
     session: SharedSession,
     offscreen: Arc<Mutex<OffscreenState>>,
+    model_renderer: Arc<Mutex<crate::model_preview::PreviewRenderer>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -2516,6 +2554,7 @@ impl EditorServer {
     pub fn new(session: SharedSession, ctx: Option<GpuContext>) -> Self {
         Self {
             session,
+            model_renderer: Arc::default(),
             offscreen: Arc::new(Mutex::new(OffscreenState {
                 renderer: ctx.map(Offscreen::new),
                 error: None,
@@ -4643,6 +4682,110 @@ impl EditorServer {
     fn reload_model_assets(&self) -> ToolResult {
         self.session().refresh_model_assets(Actor::Agent);
         ok(json!({"reloaded":true}))
+    }
+
+    #[tool(
+        description = "Browse mounted model paths without decoding meshes. Search words match names/folders; groups include all, used and exact folders. Shared with World Model → Browse….",
+        annotations(read_only_hint = true)
+    )]
+    fn browse_models(&self, Parameters(args): Parameters<BrowseModelsArgs>) -> ToolResult {
+        run(|| {
+            self.session().browse_models(
+                args.query.as_deref().unwrap_or(""),
+                args.group.as_deref().unwrap_or("all"),
+                args.offset.unwrap_or(0),
+                args.limit.unwrap_or(60),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Begin an isolated model choice for a point entity's World Model field, including an empty field. Returns an owned token; replaces only the previous model choice. Does not change source, selection, camera or geometry previews. Finish active geometry previews first."
+    )]
+    fn begin_model_choice(&self, Parameters(args): Parameters<EntityArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let id = single_entity(&session, args.id.as_deref())?;
+            session.begin_model_choice(id)
+        })
+    }
+
+    #[tool(
+        description = "Choose a supported static model and zero-based skin in an owned model-choice draft. Validates the captured entity pose, asset and skin without changing source/history/camera. Returns CPU asset details; render_model_preview provides the browser image."
+    )]
+    fn choose_model(&self, Parameters(args): Parameters<ChooseModelArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .choose_model(args.token, &args.path, args.skin.unwrap_or(0))
+        })
+    }
+
+    #[tool(
+        description = "Inspect an owned model choice and check that map, selection, definitions and geometry-preview guards still match.",
+        annotations(read_only_hint = true)
+    )]
+    fn get_model_choice(&self, Parameters(args): Parameters<ModelChoiceTokenArgs>) -> ToolResult {
+        run(|| self.session().model_choice(args.token))
+    }
+
+    #[tool(
+        description = "Apply the owned model choice's path and skin together through the shared entity operation, as one Undo step. Rejects stale/replaced drafts. UI: Use model."
+    )]
+    fn apply_model_choice(&self, Parameters(args): Parameters<ModelChoiceTokenArgs>) -> ToolResult {
+        run(|| self.session().apply_model_choice(Actor::Agent, args.token))
+    }
+
+    #[tool(
+        description = "Cancel only the model choice with this token, including a stale draft. Does not touch another model choice or geometry preview. UI: Cancel / Escape."
+    )]
+    fn cancel_model_choice(
+        &self,
+        Parameters(args): Parameters<ModelChoiceTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().cancel_model_choice(args.token)?;
+            Ok(json!({"cancelled":true}))
+        })
+    }
+
+    #[tool(
+        description = "Render the browser's isolated model/skin preview as a PNG using the same Session scene, camera framing and renderer as the UI. Does not replace the active map, selection, camera or render_view cache. GPU initializes lazily; CPU inspection works without it. Static body0/LOD0/scale1; 64–1024 pixels per side.",
+        annotations(read_only_hint = true)
+    )]
+    fn render_model_preview(&self, Parameters(args): Parameters<RenderModelArgs>) -> ToolResult {
+        let width = args.width.unwrap_or(640);
+        let height = args.height.unwrap_or(400);
+        let skin = args.skin.unwrap_or(0);
+        let result = (|| {
+            let mut renderer = self
+                .model_renderer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let session = self.session();
+            let pixels = renderer.render(&session, &args.path, skin, width, height)?;
+            let report = session.inspect_model(&args.path, skin)?;
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .and_then(|mut writer| writer.write_image_data(&pixels))
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>((report, bytes))
+        })();
+        match result {
+            Ok((report, bytes)) => Ok(CallToolResult::success(vec![
+                ContentBlock::text(
+                    json!({"asset":report,"width":width,"height":height}).to_string(),
+                ),
+                ContentBlock::image(
+                    base64::engine::general_purpose::STANDARD.encode(bytes),
+                    "image/png",
+                ),
+            ])),
+            Err(error) => fail(error),
+        }
     }
 
     #[tool(

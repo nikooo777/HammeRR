@@ -292,3 +292,14 @@ Source, mask, camera, viewport-size, visibility and grid changes guard the gestu
 - Existing `create_entity`, `set_entity_properties`, transforms, `pick_at_pixel`, `raycast`, camera focus and `render_view` author, inspect and view the same model instances as the editor. Loaded meshes replace helper-box picking; model bounds drive framing and shared selection/transform bounds. Marquee/volume tests retain helper bounds for now.
 - `reload_model_assets` clears the bounded CPU model cache and refreshes geometry/picks after model-file changes, without editing source/history. It refreshes MDL/VVD/VTX data and material search paths; existing VMT/VTF texture content remains cached.
 - UI: model entity → **World Model**, **Position**, **Rotation**, **Skin**, **Model details… → Reload models / Cancel**. Files are limited to 64 MiB each; the cache holds at most 128 entries/256 MiB, and a scene has at most one million model vertices/six million indices. These are HammeRR resource caps.
+
+Model selection uses the same Session draft as **World Model → Browse…**:
+
+1. Call `browse_models` with optional `query`, `group` (`all`, `used` or `folder:models/...`), `offset` and `limit` (1–100). Listings do not decode meshes.
+2. Call `begin_model_choice` with an entity `id`, then `choose_model` with its `token`, a model `path` and optional zero-based `skin`. The draft validates the entity pose without changing source, selection or camera.
+3. Call `render_model_preview` with `path`, `skin` and optional `width`/`height` (64–1024; defaults 640×400) for the browser’s isolated image. `get_model_choice` inspects the guarded draft. Rendering remains lazy and does not replace the active map render cache.
+4. Call `apply_model_choice` with `token` to apply model/skin together in one Undo step, or `cancel_model_choice` to clear only that owned choice. Finish geometry previews before opening a choice. Map, selection, definitions and geometry-preview changes reject stale choices. Cancellation also accepts an owned stale choice.
+
+The browser targets a single point entity’s `model` and `skin`; other model-reference fields and property drafts retain their existing text operations. `reload_model_assets` also refreshes the path catalog. Unsupported assets remain listed and return a clear error when chosen.
+
+`set_entity_properties` accepts `id`, `set` and `remove`; unknown argument names are rejected. Use `set: {"skin": "5"}` to edit a property.

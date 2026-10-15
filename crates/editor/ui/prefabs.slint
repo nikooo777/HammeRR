@@ -1,0 +1,112 @@
+import {Button,CheckBox,LineEdit,ListView} from "std-widgets.slint";
+export struct PrefabRow {name:string,detail:string}
+export component PrefabsWindow inherits Window {
+    title:"Prefab library - HammeRR";
+    preferred-width:1000px;preferred-height:690px;
+    in property <[PrefabRow]> entries;
+    in property <string> selected;
+    in property <string> page-label;
+    in property <string> detail;
+    in property <string> directory;
+    in property <string> message;
+    in property <bool> previous;
+    in property <bool> next;
+    in property <bool> saving;
+    in property <bool> deleting;
+    in property <bool> can-save;
+    in property <bool> can-preview;
+    in-out property <string> query;
+    in-out property <string> prefab-name;
+    in-out property <string> center-x:"0";
+    in-out property <string> center-y:"0";
+    in-out property <string> center-z:"0";
+    in-out property <bool> keep-external;
+    callback choose(string);
+    callback search();
+    callback page(int);
+    callback refresh();
+    callback begin-save();
+    callback save();
+    callback begin-delete();
+    callback delete();
+    callback preview();
+    callback cancel();
+    callback close-dialog();
+    forward-focus:keys;
+    keys:=FocusScope {
+        width:parent.width;height:parent.height;
+        key-pressed(event)=>{if event.text==Key.Escape {if root.saving||root.deleting {root.cancel();}else{root.close-dialog();}accept}else{reject}}
+        VerticalLayout {
+            padding:22px;spacing:12px;
+            Text {text:"Prefab library";font-size:24px;font-weight:600;}
+            Text {text:"Reuse brush and entity assemblies. Review placement in the map before applying.";wrap:word-wrap;color:#bac2ce;}
+            HorizontalLayout {
+                spacing:8px;
+                Button {text:"Save selection…";enabled:root.can-save&&!root.saving&&!root.deleting;clicked=>{root.begin-save();}}
+                Button {text:"Refresh library";enabled:!root.saving&&!root.deleting;clicked=>{root.refresh();}}
+                Rectangle {horizontal-stretch:1;}
+                Button {text:"Delete prefab…";enabled:root.selected!=""&&!root.saving&&!root.deleting;clicked=>{root.begin-delete();}}
+            }
+            HorizontalLayout {
+                spacing:20px;
+                VerticalLayout {
+                    width:320px;spacing:8px;
+                    LineEdit {text<=>root.query;placeholder-text:"Find a prefab";enabled:!root.saving&&!root.deleting;edited=>{root.search();}}
+                    ListView {
+                        min-height:220px;
+                        for entry in root.entries: VerticalLayout {
+                            padding-bottom:8px;spacing:4px;
+                            Button {text:(root.selected==entry.name?"● ":"")+entry.name;enabled:!root.saving&&!root.deleting;clicked=>{root.choose(entry.name);}}
+                            Text {text:entry.detail;font-size:12px;color:#bac2ce;}
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing:6px;
+                        Button {text:"Previous";enabled:root.previous&&!root.saving&&!root.deleting;clicked=>{root.page(-1);}}
+                        Text {text:root.page-label;horizontal-stretch:1;vertical-alignment:center;}
+                        Button {text:"Next";enabled:root.next&&!root.saving&&!root.deleting;clicked=>{root.page(1);}}
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch:1;spacing:10px;
+                    Text {text:root.saving?"Save the current selection":root.deleting?"Delete “"+root.selected+"”?":root.selected==""?"Choose an assembly":root.selected;font-size:18px;font-weight:600;wrap:word-wrap;}
+                    if root.saving: VerticalLayout {
+                        spacing:8px;
+                        Text {text:"Prefab name";}
+                        LineEdit {text<=>root.prefab-name;placeholder-text:"Corridor lights";}
+                        Text {text:"Captures committed whole objects, groups, layers, supported links and object notes. Existing files are never overwritten.";wrap:word-wrap;color:#bac2ce;}
+                    }
+                    if root.deleting: Text {text:"Removes this VMF from the library. Placed copies stay in the map. Library deletion is not part of map Undo.";wrap:word-wrap;color:#ffce84;}
+                    if !root.saving&&!root.deleting: VerticalLayout {
+                        spacing:12px;
+                        Text {text:root.detail;wrap:word-wrap;color:#bac2ce;}
+                        Text {text:"Placement center · world units";font-weight:600;}
+                        HorizontalLayout {
+                            spacing:8px;
+                            Text {text:"X";vertical-alignment:center;}
+                            LineEdit {text<=>root.center-x;input-type:decimal;}
+                            Text {text:"Y";vertical-alignment:center;}
+                            LineEdit {text<=>root.center-y;input-type:decimal;}
+                            Text {text:"Z";vertical-alignment:center;}
+                            LineEdit {text<=>root.center-z;input-type:decimal;}
+                        }
+                        CheckBox {text:"Keep external links by name";checked<=>root.keep-external;}
+                        Button {text:"Preview placement…";enabled:root.can-preview;clicked=>{root.preview();}}
+                        Text {text:"Opens the shared Paste review. Apply records one Undo step; Cancel discards the placement. Names and native IDs are remapped safely.";wrap:word-wrap;color:#bac2ce;}
+                    }
+                    Rectangle {vertical-stretch:1;}
+                }
+            }
+            Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:#919aaa;font-size:12px;}
+            Text {text:root.message;wrap:word-wrap;color:#bac2ce;min-height:36px;}
+            HorizontalLayout {
+                spacing:8px;
+                Button {text:"Close";clicked=>{root.close-dialog();}}
+                Rectangle {horizontal-stretch:1;}
+                if root.saving||root.deleting: Button {text:"Cancel";clicked=>{root.cancel();}}
+                if root.saving: Button {text:"Save prefab";enabled:root.prefab-name!="";clicked=>{root.save();}}
+                if root.deleting: Button {text:"Delete prefab";clicked=>{root.delete();}}
+            }
+        }
+    }
+}

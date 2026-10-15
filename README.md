@@ -182,6 +182,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Paste placement and link handling](docs/images/clipboard-paste.png) |
 | Transfer brushes and entities between maps with previewed placement, groups, notes and checked links. |
 
+| Prefab library |
+| --- |
+| ![Reusable assemblies and placement controls](docs/images/prefab-library.png) |
+| Save brush and entity assemblies, then place them across maps with checked previews and links. |
+
 | Layers |
 | --- |
 | ![Nested layers with color and membership controls](docs/images/layers.png) |

@@ -91,6 +91,7 @@ To build the map, set the build options once, then compile:
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
+| Prefab library | `get_prefabs`, `save_prefab`, `preview_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
 | Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
 | Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
@@ -475,3 +476,30 @@ Open/Close, SetPosition/SetSpeed and OnFullyOpen/OnFullyClosed. Engine physics
 supports vertical platform contact with `prop_physics`; rotating/blocking
 contacts and broader moving-body behavior remain unfinished. See
 [Moving platforms](compile-and-play.md#moving-platforms).
+
+### Prefab library
+
+`get_prefabs` lists named portable VMFs with `query`, `offset` and `limit`
+(default/max 64); `selected` decodes one assembly's counts, authored bounds and
+outgoing links. Inspection changes no map, clipboard or history. The response
+reports the storage folder, limits and a `snapshot` binding library file metadata
+to the current map/selection/clipboard state.
+
+| Tool | Arguments and behavior |
+| --- | --- |
+| `save_prefab` | Latest `snapshot`, new `name` and optional whole-object `ids` (selection by default). Captures before atomically creating a new file. Never overwrites; map/history/clipboard stay unchanged. |
+| `preview_prefab` | Latest `snapshot`, `name`, optional world `position` (bounds center; defaults to zero) and `keep_external_links` (false). Privately validates before changing clipboard/preview state. Returns `paste.preview.token` for existing `apply_paste` / `cancel_paste`; rendering uses that same draft. |
+| `delete_prefab` | Latest `snapshot` and exact `name`. Removes only its library VMF, separately from map Undo. Placed copies and loaded detached paste drafts remain usable. |
+
+Placement retains clipboard name/reference/ID checks, native group/layer remapping,
+terrain and object notes. Cut-name restoration is always disabled. Source files,
+geometry and map history stay unchanged until Apply; failed loads/placements
+retain the prior clipboard and draft. Assets remain external references.
+
+Limits: 128 VMFs, 8 MiB each, 64 MiB total, 512 scanned directory entries and
+1–80 UTF-8-byte names using letters/numbers/spaces/dashes/underscores. The usual
+clipboard geometry/reference limits apply. `HAMMERR_PREFABS_DIR` overrides the
+normal recovery/state folder's `prefabs` child. External writers are uncoordinated;
+changed file metadata or Session state invalidates stale requests. Direct library
+replacement/renaming, private formats and referenced instances are unavailable.
+See [Prefab library](prefabs.md).

@@ -24,6 +24,8 @@ mod model_ui;
 mod placement_ui;
 mod pointfile_ui;
 mod polygon_ui;
+mod prefabs;
+mod prefabs_ui;
 mod primitive_ui;
 mod recent_maps;
 mod recent_maps_ui;
@@ -194,6 +196,7 @@ struct Ui {
     clipboard: Option<clipboard_ui::Controller>,
     object_groups: Option<groups_ui::Controller>,
     layers: Option<layers_ui::Controller>,
+    prefabs: Option<prefabs_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
     material_target: Option<(u32, String, u64)>,
@@ -3257,6 +3260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         clipboard: None,
         object_groups: None,
         layers: None,
+        prefabs: None,
         color_target: None,
         material_window: None,
         material_target: None,
@@ -4143,6 +4147,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             if let Err(error) = ui.layers.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_prefabs({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.prefabs.is_none() {
+                match prefabs_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.prefabs = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.prefabs.as_ref().unwrap().show(&lock(&ui.session)) {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -5348,6 +5370,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(controller) = &ui.layers
                     && controller.window.window().is_visible()
                 {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.prefabs {
                     controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.saved_views

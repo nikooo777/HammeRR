@@ -44,6 +44,7 @@ pub mod models;
 pub mod paint;
 pub mod placement;
 pub mod pointfiles;
+pub mod prefabs;
 pub mod primitives;
 mod recent;
 mod recovery;
@@ -137,6 +138,7 @@ pub enum SelectMode {
 pub struct Session {
     groups: groups::State,
     layers: layers::State,
+    prefabs: prefabs::State,
     model_browser: model_browser::State,
     sounds: sounds::State,
     placement: placement::State,
@@ -250,6 +252,7 @@ impl Session {
         Self {
             groups: groups::State::default(),
             layers: layers::State::default(),
+            prefabs: prefabs::State::default(),
             game: Arc::new(game),
             game_error,
             document: Document::empty(),

@@ -2130,6 +2130,36 @@ pub struct PasteArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct PrefabsArgs {
+    pub query: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+    pub selected: Option<String>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SavePrefabArgs {
+    pub name: String,
+    pub snapshot: String,
+    pub ids: Option<Vec<String>>,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrefabEntryArgs {
+    pub name: String,
+    pub snapshot: String,
+}
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewPrefabArgs {
+    pub name: String,
+    pub snapshot: String,
+    pub position: Option<[f64; 3]>,
+    pub keep_external_links: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersArgs {
     pub query: Option<String>,
     pub offset: Option<usize>,
@@ -6400,6 +6430,54 @@ impl EditorServer {
     )]
     fn cancel_paste(&self, Parameters(args): Parameters<RepeatArrayTokenArgs>) -> ToolResult {
         run(|| self.session().cancel_paste(args.token))
+    }
+
+    #[tool(
+        description = "List the personal portable-VMF prefab library and inspect a chosen assembly. query/offset/limit page entries (default64/max64); selected decodes one prefab with counts, authored bounds and external links. Returns snapshot for mutations and placement. No map, clipboard or history changes. Limits:128 VMFs,8 MiB each,64 MiB total,512 scanned entries. Assets stay external; private Hammer formats and instances are unavailable. UI: Prefabs….",
+        annotations(read_only_hint = true)
+    )]
+    fn get_prefabs(&self, Parameters(args): Parameters<PrefabsArgs>) -> ToolResult {
+        run(|| {
+            Ok(self.session().prefab_report(
+                args.query.as_deref().unwrap_or_default(),
+                args.offset.unwrap_or(0),
+                args.limit.unwrap_or(64),
+                args.selected.as_deref(),
+            ))
+        })
+    }
+    #[tool(
+        description = "Save committed whole objects as a new named portable VMF prefab with get_prefabs.snapshot. ids defaults to current object selection. Names use1–80 UTF-8 bytes of letters/numbers/spaces/dashes/underscores. Captures the checked clipboard scope, groups/layers, notes and supported references; no map/history/clipboard change. Existing files are never overwritten. UI: Prefabs… → Save selection… → Save prefab."
+    )]
+    fn save_prefab(&self, Parameters(args): Parameters<SavePrefabArgs>) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            session.save_prefab(Actor::Agent, &args.name, &ids, &args.snapshot)
+        })
+    }
+    #[tool(
+        description = "Preview a library assembly centered at position (world XYZ, default0,0,0) with get_prefabs.snapshot. Privately validates placement before changing clipboard/drafts. Geometry, map history and source files remain unchanged. The returned paste.preview.token uses existing apply_paste/cancel_paste and render_view. Supported IDs/names/references/groups/layers remap; external links require keep_external_links:true. Restore-cut-names is always false. UI: Prefabs… → Preview placement…."
+    )]
+    fn preview_prefab(&self, Parameters(args): Parameters<PreviewPrefabArgs>) -> ToolResult {
+        run(|| {
+            self.session().preview_prefab(
+                Actor::Agent,
+                &args.name,
+                args.position.map(vec3).unwrap_or(DVec3::ZERO),
+                args.keep_external_links.unwrap_or(false),
+                &args.snapshot,
+            )
+        })
+    }
+    #[tool(
+        description = "Remove the exact named VMF from the personal prefab library using get_prefabs.snapshot. Placed map copies, map history and owned detached paste previews remain intact. File removal is separate from map Undo. Stale library/map/selection state rejects. UI: Prefabs… → Delete prefab… → Delete prefab; Cancel preserves it."
+    )]
+    fn delete_prefab(&self, Parameters(args): Parameters<PrefabEntryArgs>) -> ToolResult {
+        run(|| {
+            self.session()
+                .delete_prefab(Actor::Agent, &args.name, &args.snapshot)
+        })
     }
 
     #[tool(

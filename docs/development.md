@@ -448,3 +448,21 @@ builds while preserving source/history. Native mode uses a private Cage display,
 variant retains per-face mappings. Compiler regressions cover default collision
 bytes, uniform keys, mixed triangle mappings, safe name bounds, invalid body
 roles and native serialization/reload. Use a fresh output directory per run.
+
+### Prefab library
+
+```sh
+mkdir -p /tmp/hammerr-prefab-ui
+HAMMERR_UI_SNAPSHOTS=/tmp/hammerr-prefab-ui cargo test -p editor --bin editor prefabs
+python3 -B scripts/validate_prefabs.py --binary target/debug/editor --output /tmp/hammerr-prefab-check
+```
+
+Storage checks cover atomic unique creation, filename scope, stale metadata,
+symlink rejection and preservation of unrelated files. Session/software UI checks
+cover source preservation, capture/preview/Apply/Cancel, stale source requests,
+failed load/placement retention and deletion review; the UI capture is
+`prefab-library.png`. The MCP script uses private Sessions and a private library
+for cross-map IDs/links/groups/layers/notes, exact centered placement, Undo/Redo,
+native save/reopen, restart, malformed files and deletion after loading a detached
+draft. Use a fresh output directory. These checks use no desktop input, native
+clipboard or game launch.

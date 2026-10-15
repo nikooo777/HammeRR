@@ -20,6 +20,10 @@ mod displacements;
 mod lighting;
 mod overlays;
 pub use overlays::{MAX_OVERLAY_FACES, MAX_OVERLAYS, Overlay, OverlayData, OverlayFade};
+mod water_overlays;
+pub use water_overlays::{
+    MAX_WATER_OVERLAY_FACES, MAX_WATER_OVERLAYS, WaterOverlay, WaterOverlayData,
+};
 mod occlusion;
 pub use occlusion::{
     MAX_OCCLUDERS, MAX_OCCLUSION_POLYGONS, MAX_OCCLUSION_VERTEX_INDICES, OCCLUDER_INACTIVE,

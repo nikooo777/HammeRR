@@ -8,6 +8,8 @@ use source_formats::vmf::{Entity, Vmf, format_vec3};
 use crate::map::Map;
 use crate::{Control, Diagnostic, Report};
 
+mod water;
+
 const MAX_SOURCE_REFERENCES: usize = 65_536;
 
 pub(crate) struct Definition {
@@ -21,6 +23,7 @@ pub(crate) struct Definition {
 #[derive(Default)]
 pub(crate) struct Plan {
     pub definitions: Vec<Definition>,
+    water: Vec<water::Definition>,
     membership: BTreeMap<u32, Arc<[usize]>>,
 }
 
@@ -36,25 +39,8 @@ impl Plan {
         let mut data = OverlayData::default();
         for definition in &self.definitions {
             control.checkpoint()?;
-            let mut targets = BTreeSet::new();
-            for side in &definition.sides {
-                let faces = bindings.faces.get(side).ok_or_else(|| {
-                    format!(
-                        "entity:{}: overlay side {side} has no emitted world face; choose a visible exposed world, detail or terrain surface",
-                        definition.entity
-                    )
-                })?;
-                for &face in faces {
-                    targets.insert(face);
-                    if targets.len() > bsp::MAX_OVERLAY_FACES {
-                        return Err(format!(
-                            "entity:{}: overlay exceeds its {} compiled-face budget; use fewer surfaces or a larger lightmap scale",
-                            definition.entity,
-                            bsp::MAX_OVERLAY_FACES
-                        ));
-                    }
-                }
-            }
+            let targets =
+                bindings.targets(&definition.sides, definition.entity, bsp::MAX_OVERLAY_FACES)?;
             let mut record = definition
                 .record
                 .with_face_count(targets.len())
@@ -76,20 +62,43 @@ pub(crate) struct Bindings {
 }
 
 impl Bindings {
+    fn targets(&self, sides: &[u32], entity: u32, maximum: usize) -> Result<BTreeSet<u16>, String> {
+        let mut targets = BTreeSet::new();
+        for side in sides {
+            let faces = self.faces.get(side).ok_or_else(|| format!(
+                "entity:{entity}: overlay side {side} has no emitted world face; choose a visible exposed world, detail or terrain surface"
+            ))?;
+            for &face in faces {
+                targets.insert(face);
+                if targets.len() > maximum {
+                    return Err(format!(
+                        "entity:{entity}: overlay exceeds its {maximum} compiled-face budget; use fewer surfaces or a larger lightmap scale"
+                    ));
+                }
+            }
+        }
+        Ok(targets)
+    }
+
     pub fn add(&mut self, sources: &[u32], face: u16, plan: &Plan) -> Result<(), String> {
         for source in sources {
-            if !plan.membership.contains_key(source) {
+            let Some(membership) = plan.membership.get(source) else {
                 continue;
-            }
+            };
             self.references += 1;
             if self.references > MAX_SOURCE_REFERENCES {
                 return Err("Overlay face bindings exceed their 65,536-reference budget".into());
             }
             let faces = self.faces.entry(*source).or_default();
-            if faces.len() >= bsp::MAX_OVERLAY_FACES {
+            let maximum = if membership.iter().any(|&index| index >= bsp::MAX_OVERLAYS) {
+                bsp::MAX_WATER_OVERLAY_FACES
+            } else {
+                bsp::MAX_OVERLAY_FACES
+            };
+            if faces.len() >= maximum {
                 return Err(format!(
                     "Overlay side {source} exceeds its {} compiled-face budget; increase its lightmap scale",
-                    bsp::MAX_OVERLAY_FACES
+                    maximum
                 ));
             }
             faces.push(face);
@@ -104,19 +113,21 @@ pub(crate) fn load(
     report: &mut Report,
     control: &Control,
 ) -> Result<(), String> {
-    let mut entities = vmf
-        .entities
-        .iter()
-        .filter(|entity| {
-            !entity.hidden
-                && entity
-                    .classname()
-                    .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))
-        })
-        .peekable();
-    if entities.peek().is_none() {
+    if !vmf.entities.iter().any(|entity| {
+        !entity.hidden
+            && entity.classname().is_some_and(|class| {
+                class.eq_ignore_ascii_case("info_overlay")
+                    || class.eq_ignore_ascii_case("info_overlay_transition")
+            })
+    }) {
         return Ok(());
     }
+    let entities = vmf.entities.iter().filter(|entity| {
+        !entity.hidden
+            && entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))
+    });
     let mut sources = BTreeSet::new();
     for brush in &map.brushes {
         control.checkpoint()?;
@@ -162,6 +173,15 @@ pub(crate) fn load(
             )),
         }
     }
+    water::load(
+        vmf,
+        map,
+        report,
+        control,
+        &sources,
+        &mut membership,
+        &mut references,
+    )?;
     map.overlays.membership = membership
         .into_iter()
         .map(|(side, scope)| (side, scope.into()))

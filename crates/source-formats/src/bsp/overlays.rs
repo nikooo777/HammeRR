@@ -7,7 +7,7 @@ use super::{Bsp, Face, MAX_LIGHTING_FACES, TexInfo, invalid, lump};
 
 pub const MAX_OVERLAYS: usize = 1024;
 pub const MAX_OVERLAY_FACES: usize = 64;
-const MAX_TEXINFOS: usize = 32_768;
+pub(super) const MAX_TEXINFOS: usize = 32_768;
 const RENDER_ORDER_MASK: u16 = 0xc000;
 
 #[repr(C)]
@@ -137,7 +137,7 @@ impl OverlayData {
     }
 }
 
-fn bounded_data<T: Pod>(bsp: &Bsp, slot: usize, maximum: usize) -> io::Result<&[u8]> {
+pub(super) fn bounded_data<T: Pod>(bsp: &Bsp, slot: usize, maximum: usize) -> io::Result<&[u8]> {
     let metadata = &bsp.lumps[slot];
     let version_ok = if slot == lump::FACES {
         [0, 1].contains(&metadata.version)

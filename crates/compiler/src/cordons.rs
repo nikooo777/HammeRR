@@ -16,11 +16,7 @@ const MAX_SIDES: usize = 65_536;
 const MAX_SIDES_PER_BRUSH: usize = 128;
 const SHELL_MATERIAL: &str = "tools/toolsblack";
 const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
-const UNSUPPORTED: &[&str] = &[
-    "info_overlay_transition",
-    "func_instance",
-    "func_viscluster",
-];
+const UNSUPPORTED: &[&str] = &["func_instance", "func_viscluster"];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RegionSummary {
@@ -230,6 +226,7 @@ pub(super) fn prepare<'a>(
             ));
         }
         if classname.eq_ignore_ascii_case("info_overlay")
+            || classname.eq_ignore_ascii_case("info_overlay_transition")
             || classname.eq_ignore_ascii_case("info_lighting")
         {
             entities.insert(entity.id, None);

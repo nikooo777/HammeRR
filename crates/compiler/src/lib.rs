@@ -748,6 +748,17 @@ fn build(
             .map(|overlay| overlay.face_count())
             .sum();
     }
+    if let Some(data) = bsp
+        .water_overlay_data()
+        .map_err(|error| error.to_string())?
+    {
+        output.stats.overlays += data.overlays.len();
+        output.stats.overlay_face_refs += data
+            .overlays
+            .iter()
+            .map(|overlay| overlay.face_count())
+            .sum::<usize>();
+    }
     control.advance(Stage::StaticProps)?;
     let prop_stats = static_props::bake(vmf, fs, &mut bsp, &mut output.report, control)?;
     if output.report.has_errors() {

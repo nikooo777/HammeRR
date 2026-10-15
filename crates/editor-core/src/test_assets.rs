@@ -130,3 +130,5 @@ pub use crate::session::placement::fixtures::fixture as placement;
 pub use crate::session::sounds::fixtures::fixture as sounds;
 
 pub use crate::session::repeat::fixtures::fixture as repeat;
+
+pub use crate::session::particles::fixtures::fixture as particles;

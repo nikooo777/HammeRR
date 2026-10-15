@@ -121,6 +121,7 @@ pub(crate) fn property_row(field: inspector::Field) -> KeyValue {
         Control::Material => "material",
         Control::Model => "model",
         Control::Sound => "sound",
+        Control::Particle => "particle",
     };
     KeyValue {
         key: field.key.into(),

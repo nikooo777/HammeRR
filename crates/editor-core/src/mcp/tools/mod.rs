@@ -10,6 +10,7 @@ mod geometry;
 mod groups;
 mod materials;
 mod overlay;
+mod particles;
 mod partitions;
 mod placement;
 mod recovery;

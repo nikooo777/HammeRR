@@ -35,6 +35,8 @@ impl Session {
             .materials_reloaded(previous_scene, self.scene_serial);
         self.model_attachments
             .materials_reloaded(previous_scene, self.scene_serial);
+        self.particles
+            .materials_reloaded(previous_scene, self.scene_serial);
         self.sounds
             .materials_reloaded(previous_scene, self.scene_serial);
         self.view_serial += 1;

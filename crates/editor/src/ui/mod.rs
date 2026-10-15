@@ -75,6 +75,7 @@ struct Ui {
     model: Option<model_ui::Controller>,
     model_browser: Option<model_browser_ui::Controller>,
     sounds: Option<sounds_ui::Controller>,
+    particles: Option<particles_ui::Controller>,
     placement: Option<placement_ui::Controller>,
     repeat: Option<repeat_ui::Controller>,
     clipboard: Option<clipboard_ui::Controller>,
@@ -306,6 +307,7 @@ pub(super) fn run(
         model: None,
         model_browser: None,
         sounds: None,
+        particles: None,
         placement: None,
         repeat: None,
         clipboard: None,
@@ -1324,6 +1326,35 @@ pub(super) fn run(
             }
         }
     });
+    app.on_browse_particle({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().particles.is_none() {
+                match particles_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().particles = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            let controller = ui.particles.as_ref().unwrap();
+            let result = {
+                let mut session = lock(&shared);
+                single_selected_entity(&session)
+                    .ok_or("Select a particle system entity".to_owned())
+                    .and_then(|id| controller.initialize(&mut session, id))
+            };
+            match result {
+                Ok(()) => {
+                    let _ = controller.window.show();
+                }
+                Err(error) => app.unwrap().set_message(error.into()),
+            }
+        }
+    });
     app.on_browse_sound({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |key| {
@@ -2293,6 +2324,11 @@ pub(super) fn run(
                     {
                         controller.refresh(&session);
                     }
+                    if let Some(controller) = &ui.particles
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
                     if let Some(controller) = &ui.sounds
                         && controller.window.window().is_visible()
                     {
@@ -2365,6 +2401,11 @@ pub(super) fn run(
                     refresh_spatial(&app, &session);
                     refresh_texture_brush_sample(&app, &mut session);
                     if let Some(controller) = &ui.model_browser
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
+                    if let Some(controller) = &ui.particles
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&session);

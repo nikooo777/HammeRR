@@ -21,7 +21,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera and recent activity by the user and agents.",
+        description = "Summary of the open map: file, unsaved state, object counts, bounds, selection, undo history, camera, the last material_reload report and recent activity by the user and agents.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_map_info(&self) -> ToolResult {
@@ -40,6 +40,7 @@ impl EditorServer {
             .collect();
         let mut result = json!({
             "rendering": rendering,
+            "material_reload": session.material_reload_report(),
             "compile_region": session.compile_region_build_scope(),
             "context": session.context_state(),
             "primitive": session.primitive_state(),

@@ -129,7 +129,7 @@ impl Controller {
         let window = RepeatWindow::new()?;
         window
             .window()
-            .set_size(slint::LogicalSize::new(660.0, 700.0));
+            .set_size(slint::LogicalSize::new(660.0, 780.0));
         let context = Rc::new(RefCell::new(None));
         let token = Rc::new(Cell::new(None));
         let prepared = Rc::new(Cell::new(None));

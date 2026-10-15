@@ -28,6 +28,29 @@ pub(super) fn refresh_material_preview(app: &AppWindow, session: &mut Session) {
 }
 
 pub(crate) fn refresh_material_window(window: &MaterialWindow, session: &mut Session) {
+    window.set_asset_generation(session.materials().generation().to_string().into());
+    window.set_reload_status(
+        session
+            .material_reload_report()
+            .map_or_else(String::new, |report| {
+                std::iter::once(report.summary.clone())
+                    .chain(
+                        report
+                            .failures
+                            .iter()
+                            .map(|failure| format!("{}: {}", failure.material, failure.error)),
+                    )
+                    .chain((report.failed > report.failures.len()).then(|| {
+                        format!(
+                            "Only the first {} unavailable previews are listed.",
+                            render::materials::MAX_RELOAD_FAILURES
+                        )
+                    }))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .into(),
+    );
     window.set_favorite(session.is_material_favorite(&window.get_material()));
     match session.material_preview(&window.get_material()) {
         Ok(preview) => {
@@ -492,6 +515,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             let (window, ui) = (window.as_weak(), ui.clone());
             move || refresh_material_window(&window.unwrap(), &mut lock(&session_of(&ui)))
         });
+        bind_material_reload(&window, session_of(ui));
         window.on_use_material({
             let (window, app, ui) = (window.as_weak(), app.as_weak(), ui.clone());
             move || {
@@ -501,6 +525,9 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                 let target = ui.borrow().material_target.clone();
                 let shared = session_of(&ui);
                 let mut session = lock(&shared);
+                if !review_material_choice(&window, &mut session) {
+                    return;
+                }
                 if let Some((entity, key, generation)) = target {
                     if session.document_generation() != generation {
                         window.set_detail("Map changed. Open this picker again.".into());
@@ -755,4 +782,39 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     if let Err(error) = window.show() {
         app.set_message(error.to_string().into());
     }
+}
+
+pub(crate) fn bind_material_reload(window: &MaterialWindow, shared: SharedSession) {
+    window.on_reload_material_assets({
+        let window = window.as_weak();
+        move || {
+            let window = window.unwrap();
+            let mut session = lock(&shared);
+            session.reload_material_assets(Actor::User);
+            refresh_material_catalog(&window, &mut session);
+            refresh_material_window(&window, &mut session);
+        }
+    });
+}
+
+pub(super) fn refresh_surface_material(window: &SurfaceWindow, session: &Session) {
+    window.set_preview(
+        session
+            .material_preview(&window.get_material())
+            .ok()
+            .map(|preview| preview_image(&preview))
+            .unwrap_or_default(),
+    );
+}
+
+pub(crate) fn review_material_choice(window: &MaterialWindow, session: &mut Session) -> bool {
+    if window.get_asset_generation().as_str() == session.materials().generation().to_string() {
+        return true;
+    }
+    refresh_material_catalog(window, session);
+    refresh_material_window(window, session);
+    window.set_detail(
+        "Material assets changed. Review the refreshed preview and choose again.".into(),
+    );
+    false
 }

@@ -37,6 +37,7 @@ pub mod groups;
 pub mod hollowing;
 pub mod layers;
 mod management;
+pub mod material_assets;
 pub mod material_search;
 pub mod merging;
 mod model_attachments;
@@ -193,6 +194,7 @@ pub struct Session {
     area_mode: SelectMode,
     interaction_epoch: u64,
     material_index: Option<Vec<String>>,
+    material_reload: Option<material_assets::Report>,
     material_favorites: BTreeSet<String>,
     favorite_preferences: favorites::State,
     material_recent: VecDeque<String>,
@@ -299,6 +301,7 @@ impl Session {
             area_mode: SelectMode::Replace,
             interaction_epoch: 0,
             material_index: None,
+            material_reload: None,
             material_favorites: BTreeSet::new(),
             favorite_preferences: favorites::State::default(),
             material_recent: VecDeque::new(),

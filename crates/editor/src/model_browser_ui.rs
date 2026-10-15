@@ -106,10 +106,13 @@ fn refresh_catalog(window: &ModelBrowserWindow, session: &mut Session, state: &m
 #[derive(Default)]
 struct Preview {
     renderer: PreviewRenderer,
-    seen: Option<(u64, String, usize, u32)>,
+    seen: Option<(u64, String, usize, u32, u64)>,
 }
 
-fn choice_key(report: &serde_json::Value) -> Option<(u64, String, usize, u32)> {
+fn choice_key(
+    report: &serde_json::Value,
+    generation: u64,
+) -> Option<(u64, String, usize, u32, u64)> {
     let asset = &report["asset"];
     (!asset.is_null()).then(|| {
         (
@@ -117,6 +120,7 @@ fn choice_key(report: &serde_json::Value) -> Option<(u64, String, usize, u32)> {
             asset["path"].as_str().unwrap().to_owned(),
             asset["skin"].as_u64().unwrap() as usize,
             asset["body"].as_u64().unwrap() as u32,
+            generation,
         )
     })
 }
@@ -157,6 +161,7 @@ fn present(
         path.to_owned(),
         skin,
         body,
+        session.materials().generation(),
     );
     window.set_path(path.into());
     window.set_skin_count(asset["skins"].as_u64().unwrap() as i32);
@@ -403,7 +408,9 @@ impl Controller {
                     .and_then(|token| {
                         let mut session = lock(&shared);
                         let report = session.model_choice(token)?;
-                        if renderer.borrow().seen.as_ref() != choice_key(&report).as_ref() {
+                        if renderer.borrow().seen.as_ref()
+                            != choice_key(&report, session.materials().generation()).as_ref()
+                        {
                             present(&window, &session, &report, &mut renderer.borrow_mut());
                             return Ok(None);
                         }

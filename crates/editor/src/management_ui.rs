@@ -324,6 +324,7 @@ fn bind_material(
     shared: &SharedSession,
 ) -> Result<(), slint::PlatformError> {
     let window = MaterialWindow::new()?;
+    crate::ui::bind_material_reload(&window, shared.clone());
     let target = Rc::new(RefCell::new(None::<(u64, String)>));
     parent.on_pick_material({
         let (parent, window, shared, target) = (
@@ -390,6 +391,9 @@ fn bind_material(
                 return;
             };
             let mut session = lock(&shared);
+            if !crate::ui::review_material_choice(&window, &mut session) {
+                return;
+            }
             match session.append_property_change(
                 token,
                 PropertyChange::Set {

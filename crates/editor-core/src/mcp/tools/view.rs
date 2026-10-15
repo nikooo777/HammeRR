@@ -242,8 +242,9 @@ impl EditorServer {
         };
         let data = base64::engine::general_purpose::STANDARD.encode(rendered.png);
         let skybox = skybox_state(&mut self.session());
+        let material_reload = self.session().material_reload_report().cloned();
         let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
-        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "preview_issues":preview_issues,
+        let info = json!({ "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "preview_issues":preview_issues, "material_reload":material_reload,
             "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,

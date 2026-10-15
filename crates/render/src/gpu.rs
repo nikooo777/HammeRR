@@ -274,6 +274,7 @@ pub struct Renderer {
     skyboxes: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
     /// Bind groups by [`MaterialId`], uploaded on first use.
     materials: Vec<Option<wgpu::BindGroup>>,
+    material_generation: Option<u64>,
     white: wgpu::Texture,
     missing: wgpu::Texture,
     depth: Option<(wgpu::TextureView, (u32, u32))>,
@@ -283,6 +284,7 @@ pub struct Renderer {
 impl Renderer {
     /// Material IDs are local to a library; clear bindings when replacing it.
     pub fn clear_materials(&mut self) {
+        self.material_generation = None;
         self.materials.clear();
         self.skyboxes.clear();
     }
@@ -508,6 +510,7 @@ impl Renderer {
             sky_sampler,
             skyboxes: std::collections::HashMap::new(),
             materials: Vec::new(),
+            material_generation: None,
             white: solid_texture(ctx, [255, 255, 255, 255]),
             missing: checkerboard_texture(ctx),
             depth: None,
@@ -526,6 +529,10 @@ impl Renderer {
         mesh: &SceneMesh,
         library: &MaterialLibrary,
     ) -> GpuScene {
+        if self.material_generation != Some(library.generation()) {
+            self.clear_materials();
+            self.material_generation = Some(library.generation());
+        }
         let device = &ctx.device;
         let buffer = |label, contents: &[u8], usage| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

@@ -130,7 +130,7 @@ To build the map, set the build options once, then compile:
 | Terrain vertices | `get_terrain_vertices`, `highlight_terrain_vertices`, `pick_terrain_vertex`, `frame_terrain_vertices`, `get_terrain_volume_vertices`, `select_terrain_vertices_in_volume`, `get_terrain_vertex_mask`, `preview_terrain_vertex_move` |
 | Terrain brush strokes | `begin_terrain_stroke`, `update_terrain_stroke`, `get_terrain_stroke`, `break_terrain_stroke`, `finish_terrain_stroke`, `cancel_terrain_stroke` |
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials` |
-| Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite` |
+| Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite`, `reload_material_assets` |
 | Entities | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
 | Connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
@@ -318,7 +318,7 @@ Source, mask, camera, viewport-size, visibility and grid changes guard the gestu
 - `inspect_model` takes a `path` under `models/` and optional zero-based `skin` and native `body` number. It reads MDL44/48, VVD4 and DX90 VTX7 LOD0 data on the CPU, returning geometry counts, selected-body material paths, skin count, local/hull bounds and resource limits. `pose` is `static` or `reference`; `reference_bones` counts decoded pose bones, and `static_prop` reports asset eligibility. It preserves map/history and does not initialize graphics.
 - `inspect_entity_model` takes optional `id` (defaults to the selected entity). It reports the shared asset, authored skin, transformed bounds, displayed/hidden state and helper fallback reason from the rendered draft. Static meshes, checked reference poses and selected bodygroups at scale 1 and LOD 0 are supported. Unsupported/missing/malformed assets remain helpers and inspection errors explain unavailable data.
 - Existing `create_entity`, `set_entity_properties`, transforms, `pick_at_pixel`, `raycast`, camera focus and `render_view` author, inspect and view the same model instances as the editor. Loaded meshes replace helper-box picking; model bounds drive framing and shared selection/transform bounds. `select_area` and `select_volume` match transformed asset bounds for loaded models. Contained tests require the full box; intersecting tests include touching bounds and empty space inside them. Hidden models are excluded; unsupported assets retain helper bounds.
-- `reload_model_assets` clears the bounded CPU model cache and refreshes geometry/picks after model-file changes, without editing source/history. It refreshes MDL/VVD/VTX data and material search paths; existing VMT/VTF texture content remains cached. It cancels pending grid-snap previews and reports `snap_preview_cancelled`; other transform drafts remain intact.
+- `reload_model_assets` clears the bounded CPU model cache and refreshes geometry/picks after model-file changes, without editing source/history. It refreshes MDL/VVD/VTX data and material search paths. Use `reload_material_assets` for changed VMT/VTF texture contents; use both operations when newly available content changes model material-path resolution. It cancels pending grid-snap previews and reports `snap_preview_cancelled`; other transform drafts remain intact.
 - UI: model entity → **World Model**, **Position**, **Rotation**, **Skin**, **Model details… → Reload models / Cancel**. Files are limited to 64 MiB each; the cache holds at most 128 entries/256 MiB, and a scene has at most one million model vertices/six million indices. These are HammeRR resource caps.
 
 Model selection uses the same Session draft as **World Model → Browse…**:
@@ -602,6 +602,32 @@ For imports with one effective active box, `committed`, `build_scope`,
 boxes or roots remain. Readback preserves all imported metadata. Malformed active
 records and ambiguous disabled-only sets return inspection errors.
 
+### Reload material assets
+
+Call `reload_material_assets` without arguments after changing VMT/VTF files in
+mounted content. It reloads cached display materials and sky faces, rescans the
+material catalog and refreshes desktop/offscreen textures and thumbnails. The
+human equivalent is **Browse materials… → Reload material assets**.
+
+The response contains `generation` (the display-cache generation), `reloaded`
+(cached material entries reread), `failed` (the full unavailable-preview count),
+`failures` (the first 100 `{material, error}` details) and `summary`. Catalog
+discovery errors also appear in these diagnostics. `get_map_info.material_reload`
+and `render_view` metadata's `material_reload` retain the last report, or `null`
+before the first reload.
+
+Unavailable previews are not a compiler-validity verdict: valid untextured/tool
+materials can have no display texture. Broken display assets replace stale
+images with the missing-texture fallback. Repair files and reload again; rerun
+map checks or compile to validate the map.
+
+Reload preserves map data, selection, camera, Undo history and active draft
+geometry. View-dependent snapshots may need renewed review. It uses existing
+mounts only, with no file watcher, archive/content remount, model-geometry or
+particle reload, or running-game cache refresh. Model textures use their cached
+resolved material paths; use `reload_model_assets` too when newly available
+content changes which model material path should be chosen.
+
 ### Material asset errors
 
 `preview_material` returns an error for malformed VMT/VTF data, broken patch
@@ -610,8 +636,8 @@ includes or a broken preferred editor texture. `run_map_checks` /
 face IDs, shared with **Check map…**. Neither operation edits source or history.
 `compile_map` and `start_compile` reject failed material/primary-texture reads
 required by compilation and preserve prior BSPs. Absent content is separately
-reported; external asset repairs require rerunning checks, and cached viewport
-materials require a new editor Session until general material reload exists.
+reported; after external asset repairs, use `reload_material_assets` to refresh
+display caches and rerun checks for current map diagnostics.
 
 Directory lookup and scanning failures propagate through `search_materials`,
 `browse_materials`, `browse_models` and `browse_sounds`. A failed catalog load

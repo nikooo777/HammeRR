@@ -17,7 +17,7 @@ component VectorRow inherits HorizontalLayout {
 }
 
 export component RepeatWindow inherits Window {
-    title:"Repeat array";preferred-width:660px;preferred-height:700px;
+    title:"Repeat array";preferred-width:660px;preferred-height:780px;
     in property <string> selection;
     in-out property <int> count:3;
     in-out property <int> space-index:0;
@@ -63,7 +63,7 @@ export component RepeatWindow inherits Window {
             Button {text:"Preview array";clicked=>{root.preview();}}
             ScrollView {
                 vertical-stretch:1;
-                Text {text:root.summary;wrap:word-wrap;color:#d6deea;}
+                Text {text:root.summary;wrap:word-wrap;color:#d6deea;vertical-alignment:top;}
             }
             Text {text:root.message;wrap:word-wrap;color:#aeb8c6;min-height:32px;}
             HorizontalLayout {

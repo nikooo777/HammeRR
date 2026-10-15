@@ -21,6 +21,7 @@ struct Form {
     snapshot: String,
     seen: String,
     serial: u64,
+    material_generation: u64,
 }
 
 #[derive(Clone)]
@@ -129,7 +130,7 @@ fn outline(value: &Value) -> Option<String> {
     Some(path)
 }
 
-fn refresh_material(window: &OverlayWindow, session: &mut Session) {
+fn refresh_material(window: &OverlayWindow, session: &Session) {
     if window.get_material().trim().is_empty() {
         window.set_material_image(slint::Image::default());
         window.set_material_detail("Choose an overlay material".into());
@@ -363,7 +364,7 @@ impl Controller {
                     }
                     Err(error) => window.set_message(error.into()),
                 }
-                refresh_material(&window, &mut session);
+                refresh_material(&window, &session);
                 refresh(&window, &session, &form);
             }
         });
@@ -435,6 +436,11 @@ impl Controller {
     }
 
     pub fn refresh(&self, session: &Session) {
+        let generation = session.materials().generation();
+        if self.form.borrow().material_generation != generation {
+            self.form.borrow_mut().material_generation = generation;
+            refresh_material(&self.window, session);
+        }
         if self.form.borrow().seen != session.overlay_stamp() {
             refresh(&self.window, session, &self.form);
         }
@@ -572,6 +578,25 @@ mod tests {
         assert_eq!(lock(&shared).get_overlay_state(), before_competing);
         assert_eq!(lock(&shared).document().vmf(), &original);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        let texture = assets.path().join("materials/test/checker.vtf");
+        let texture_bytes = std::fs::read(&texture).unwrap();
+        std::fs::write(&texture, b"broken VTF").unwrap();
+        lock(&shared).reload_material_assets(Actor::Agent);
+        controller.refresh(&lock(&shared));
+        assert!(
+            controller
+                .window
+                .get_material_detail()
+                .contains("checker.vtf")
+        );
+        assert!(controller.window.get_ready());
+        assert_eq!(lock(&shared).get_overlay_state(), before_competing);
+        std::fs::write(&texture, texture_bytes).unwrap();
+        lock(&shared).reload_material_assets(Actor::Agent);
+        controller.refresh(&lock(&shared));
+        assert!(controller.window.get_material_image().size().width > 0);
+        assert!(controller.window.get_ready());
+        assert_eq!(lock(&shared).get_overlay_state(), before_competing);
         controller
             .window
             .window()

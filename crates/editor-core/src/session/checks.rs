@@ -29,6 +29,7 @@ pub struct MapReport {
     pub generation: u64,
     pub revision: u64,
     pub definitions_revision: u64,
+    material_generation: u64,
     map_version: Option<String>,
     pub elapsed_ms: u128,
     pub result: Report,
@@ -74,6 +75,7 @@ impl Session {
             report.generation != self.document_generation
                 || report.revision != self.document.revision()
                 || report.definitions_revision != self.definitions_serial
+                || report.material_generation != self.materials.generation()
                 || report.map_version.as_deref()
                     != self.document.vmf().world.properties.get("mapversion")
         })
@@ -453,6 +455,7 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             definitions_revision: self.definitions_serial,
+            material_generation: self.materials.generation(),
             map_version: self
                 .document
                 .vmf()
@@ -527,7 +530,7 @@ impl Session {
             return Err("Map check report was replaced; read the current report".into());
         }
         if self.map_checks_stale() {
-            return Err("Map or definitions changed; run map checks again".into());
+            return Err("Check results are stale; run map checks again".into());
         }
         Ok(report)
     }

@@ -1834,3 +1834,20 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
         }
     });
 }
+
+pub fn refresh_material_previews(window: &ComponentsWindow, session: &Session) {
+    window.set_top_material_preview(
+        session
+            .material_preview(&window.get_top_material())
+            .ok()
+            .map(|preview| crate::ui::preview_image(&preview))
+            .unwrap_or_default(),
+    );
+    window.set_wall_preview(
+        session
+            .material_preview(&window.get_wall_material())
+            .ok()
+            .map(|preview| crate::ui::preview_image(&preview))
+            .unwrap_or_default(),
+    );
+}

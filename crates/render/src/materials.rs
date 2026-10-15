@@ -2,6 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 use source_formats::gamefs::GameFs;
 use source_formats::vmt::{Material, texture_path};
@@ -11,6 +14,7 @@ use crate::helpers::{HelperMaterial, bulb_material};
 
 /// Texture size assumed for UV mapping when a material can't be loaded.
 const FALLBACK_SIZE: u32 = 128;
+pub const MAX_RELOAD_FAILURES: usize = 100;
 
 #[derive(Debug)]
 pub struct MaterialInfo {
@@ -126,6 +130,7 @@ pub type MaterialId = usize;
 /// rebuild geometry. Ids are stable for the library's lifetime.
 #[derive(Debug)]
 pub struct MaterialLibrary {
+    generation: u64,
     materials: Vec<MaterialInfo>,
     by_name: HashMap<String, MaterialId>,
     skyboxes: HashMap<String, Arc<crate::sky::Skybox>>,
@@ -134,6 +139,7 @@ pub struct MaterialLibrary {
 impl Default for MaterialLibrary {
     fn default() -> Self {
         Self {
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             materials: vec![MaterialInfo::untextured(Self::EDITOR_NAME)],
             by_name: HashMap::from([(Self::EDITOR_NAME.to_owned(), Self::EDITOR)]),
             skyboxes: HashMap::new(),
@@ -141,7 +147,59 @@ impl Default for MaterialLibrary {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ReloadReport {
+    pub reloaded: usize,
+    pub failed: usize,
+    pub failures: Vec<(String, String)>,
+}
+
+impl ReloadReport {
+    pub fn record_failure(&mut self, name: String, error: String) {
+        self.failed += 1;
+        if self.failures.len() < MAX_RELOAD_FAILURES {
+            self.failures.push((name, error));
+        }
+    }
+}
+
 impl MaterialLibrary {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn reload(&mut self, fs: &GameFs) -> ReloadReport {
+        let mut report = ReloadReport::default();
+        for material in self.materials.iter_mut().skip(1) {
+            if material.helper.is_some() {
+                continue;
+            }
+            *material = MaterialInfo::load(fs, &material.name);
+            report.reloaded += 1;
+            if let Some(error) = &material.error {
+                report.record_failure(material.name.clone(), error.clone());
+            } else if material.missing {
+                report.record_failure(
+                    material.name.clone(),
+                    "No usable display texture was found".into(),
+                );
+            }
+        }
+        let mut skies = self.skyboxes.keys().cloned().collect::<Vec<_>>();
+        skies.sort();
+        self.skyboxes.clear();
+        for name in skies {
+            let sky = self.skybox(fs, &name);
+            for face in &sky.faces {
+                if let Some(error) = &face.issue {
+                    report.record_failure(face.material.clone(), error.clone());
+                }
+            }
+        }
+        self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        report
+    }
+
     pub fn skybox(&mut self, fs: &GameFs, name: &str) -> Arc<crate::sky::Skybox> {
         let name = name.trim().to_ascii_lowercase();
         self.skyboxes

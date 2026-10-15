@@ -28,6 +28,7 @@ HammeRR is in active development.
 | Vertices, edges and faces | Brush component editing works. Terrain has separate vertex controls. |
 | Flat partitions | Works. Inward extrusion, free-form dividing lines and per-piece texture axes, fit and justification are planned. |
 | Materials and textures | Works. Failed asset discovery and material reads report errors; failed catalogs can be retried after content repairs. |
+| Asset reload (P11) | Partial. **Reload material assets** and MCP refresh cached VMT/VTF display data, sky faces and the material catalog through existing mounts, preserving map data, history and draft geometry. File watching, remounting, running-game caches and broader model/particle refresh remain unavailable. |
 | 2D sky preview | Six mounted static LDR faces render through authored sky surfaces in perspective Textured views, with shared controls and load diagnostics. Axis-aligned texture scale/translation and unequal face sizes work. 3D sky-camera regions, HDR, fog, exposure, animation and compiled visibility fidelity are unavailable. |
 | Entities, connections and renaming | Works. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths, face-linked material/texture errors, terrain metadata and authored spawn clearance against static brushes/world/detail terrain. Models, compiler LOD changes, runtime placement, objectives, full dependencies and engine limits are planned. |

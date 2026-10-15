@@ -205,3 +205,30 @@ fn model_bodygroups_resume_and_apply_as_one_shared_guarded_choice() {
         session.cancel_model_choice(token).unwrap();
     }
 }
+
+#[test]
+fn material_reload_preserves_a_current_choice_without_reviving_a_stale_choice() {
+    let mut session = Session::new(Err("No model assets needed".into()));
+    let ObjectId::Entity(id) = session
+        .create_entity(
+            Actor::User,
+            "prop_static",
+            Some(DVec3::ZERO),
+            BTreeMap::from([("model".into(), "".into())]),
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    let token = session.begin_model_choice(id).unwrap()["token"]
+        .as_u64()
+        .unwrap();
+    session.reload_material_assets(Actor::Agent);
+    assert!(session.model_choice(token).is_ok());
+    session
+        .select(&[], super::super::SelectMode::Replace)
+        .unwrap();
+    assert!(session.model_choice(token).is_err());
+    session.reload_material_assets(Actor::User);
+    assert!(session.model_choice(token).is_err());
+}

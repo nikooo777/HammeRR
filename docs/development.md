@@ -123,13 +123,22 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Hollow, carve, merge and clip | `hollow`, `carving`, `carve_many`, `merge`, `clip_handles` |
 | Vertices, edges and faces | `components`, `component_sources`, `component_picking`, `component_topology`, `component_transforms`, `component_creases`, `weld_texture_attachment`, `split_texture_attachment`, `roof_texture_attachment` |
 | Flat partitions | `component_partitions`, `partition_picking`, `saved_partitions`, `partition_material_metadata`, `partition_materials`, `partition_textures`, `adjusted_partition_ridges`, `boundary_partitions`, `polygon_partitions`, `partition_extrusion`, `partition_visibility` |
-| Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `surface_group`, `texture_strokes`, `texture_chain` |
+| Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `material_reload`, `surface_group`, `texture_strokes`, `texture_chain` |
 | Map checks | `spawn_clearance`, `audit_fixes` |
 | Local preferences | `recent_maps`, `build_recipes` |
 | Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `direct_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals` |
 | In game | `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
 `transform_display` also checks `preview_snap_to_grid`: fractional negative world bounds-minimum anchors, mixed selections, shared texture-lock policy, source/history preservation, Apply/Cancel, aligned no-ops, model-reload cancellation and exact typed transforms with snapping enabled.
+
+`material_reload` edits private mounted VMT/VTF fixtures and checks explicit cache
+refresh, persistent offscreen GPU uploads, thumbnails, added/deleted catalog
+entries, failure diagnostics, stale-texture replacement and repair, with unchanged
+source and Undo history:
+
+```sh
+python3 -B scripts/validate_material_reload.py --binary target/debug/hammerr-headless --output /tmp/hammerr-material-reload-check
+```
 
 `object_picking` checks depth order, exact world distances for non-unit rays, stateless cycling and wrapping, source/history/camera preservation, misses, mode/preview guards, visibility, brush owners, nested groups, bypass and nearest-64 truncation. Add `--render` for a private viewport example:
 

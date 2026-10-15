@@ -1,0 +1,360 @@
+use std::sync::Arc;
+
+use glam::DVec2;
+use source_formats::{vmt, vtf::Vtf};
+
+use super::{Assets, Budget};
+
+const MAX_TEXTURE_SIZE: u32 = 4096;
+const MAX_ALPHA_BYTES: usize = 64 * 1024 * 1024;
+const CLAMP_S: u32 = 0x0000_0004;
+const CLAMP_T: u32 = 0x0000_0008;
+
+pub(super) struct Texture {
+    dimensions: [usize; 2],
+    clamp: [bool; 2],
+    alpha: Vec<u8>,
+}
+
+pub(super) struct Material {
+    texture: Arc<Texture>,
+    transform: [f64; 4],
+    reference: f64,
+}
+
+impl Material {
+    pub(super) fn blocks(&self, uv: DVec2) -> Result<bool, String> {
+        let uv = uv * DVec2::new(self.transform[0], self.transform[1])
+            + DVec2::new(self.transform[2], self.transform[3]);
+        if !uv.is_finite() {
+            return Err("Static-prop texture-shadow coordinates must be finite".into());
+        }
+        let texel: [usize; 2] = std::array::from_fn(|axis| {
+            let coordinate = if self.texture.clamp[axis] {
+                uv[axis].clamp(0.0, 1.0)
+            } else {
+                uv[axis].rem_euclid(1.0)
+            };
+            ((coordinate * self.texture.dimensions[axis] as f64).floor() as usize)
+                .min(self.texture.dimensions[axis] - 1)
+        });
+        let alpha = self.texture.alpha[texel[1] * self.texture.dimensions[0] + texel[0]];
+        Ok(f64::from(alpha) / 255.0 >= self.reference)
+    }
+}
+
+fn scalar(material: &vmt::Material, key: &str, default: f64) -> Result<f64, String> {
+    let Some(value) = material.get(key) else {
+        return Ok(default);
+    };
+    let value = value
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("invalid {key}"))?;
+    if !value.is_finite() {
+        return Err(format!("nonfinite {key}"));
+    }
+    Ok(value)
+}
+
+fn transform(value: Option<&str>) -> Result<[f64; 4], String> {
+    let mut center = [0.5; 2];
+    let mut scale = [1.0; 2];
+    let mut translate = [0.0; 2];
+    let mut seen = [false; 4];
+    let mut tokens = value.unwrap_or_default().split_whitespace();
+    while let Some(key) = tokens.next() {
+        let (index, count) = match key {
+            "center" => (0, 2),
+            "scale" => (1, 2),
+            "translate" => (2, 2),
+            "rotate" => (3, 1),
+            _ => return Err("unsupported $basetexturetransform syntax".into()),
+        };
+        if std::mem::replace(&mut seen[index], true) {
+            return Err("duplicate $basetexturetransform operation".into());
+        }
+        let mut values = [0.0; 2];
+        for value in values.iter_mut().take(count) {
+            *value = tokens
+                .next()
+                .ok_or("incomplete $basetexturetransform")?
+                .parse::<f64>()
+                .map_err(|_| "invalid $basetexturetransform")?;
+            if !value.is_finite() || value.abs() > 1024.0 {
+                return Err("$basetexturetransform values must be finite and within ±1024".into());
+            }
+        }
+        match index {
+            0 => center = values,
+            1 => scale = values,
+            2 => translate = values,
+            _ if values[0] != 0.0 => {
+                return Err(
+                    "rotated $basetexturetransform is unsupported for texture shadows".into(),
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok([
+        scale[0],
+        scale[1],
+        center[0] * (1.0 - scale[0]) + translate[0],
+        center[1] * (1.0 - scale[1]) + translate[1],
+    ])
+}
+
+pub(super) fn prepare(
+    material: &vmt::Material,
+    assets: &mut Assets<'_>,
+    budget: &mut Budget<'_>,
+) -> Result<Option<Arc<Material>>, String> {
+    if !matches!(
+        material.shader.as_str(),
+        "vertexlitgeneric" | "unlitgeneric" | "lightmappedgeneric"
+    ) {
+        return Err(format!(
+            "unsupported texture-shadow shader {}",
+            material.shader
+        ));
+    }
+    if !material.blocks.is_empty() {
+        return Err(
+            "material animation and conditional blocks are unsupported for texture shadows".into(),
+        );
+    }
+    for key in [
+        "$translucent",
+        "$additive",
+        "$vertexalpha",
+        "$distancealpha",
+    ] {
+        if scalar(material, key, 0.0)? != 0.0 {
+            return Err(format!("{key} is unsupported for texture shadows"));
+        }
+    }
+    if scalar(material, "$alpha", 1.0)? != 1.0 {
+        return Err("$alpha modulation is unsupported for texture shadows".into());
+    }
+    let alpha_test = scalar(material, "$alphatest", 0.0)?;
+    if alpha_test == 0.0 {
+        return Ok(None);
+    }
+    for key in ["$selfillum", "$basealphaenvmapmask", "$seamless_scale"] {
+        if scalar(material, key, 0.0)? != 0.0 {
+            return Err(format!("{key} is unsupported for texture shadows"));
+        }
+    }
+    if !matches!(
+        material.shader.as_str(),
+        "vertexlitgeneric" | "unlitgeneric"
+    ) {
+        return Err(format!(
+            "alpha-test texture shadows do not support shader {}",
+            material.shader
+        ));
+    }
+    for (key, _) in &material.params {
+        if !matches!(
+            key.as_str(),
+            "$basetexture"
+                | "$basetexturetransform"
+                | "$alphatest"
+                | "$alphatestreference"
+                | "$alpha"
+                | "$translucent"
+                | "$additive"
+                | "$vertexalpha"
+                | "$distancealpha"
+                | "$selfillum"
+                | "$seamless_scale"
+                | "$frame"
+                | "$model"
+                | "$nocull"
+                | "$surfaceprop"
+                | "$surfaceprop2"
+                | "$color"
+                | "$color2"
+                | "$halflambert"
+                | "$bumpmap"
+                | "$envmap"
+                | "$envmapmask"
+                | "$envmaptint"
+                | "$basealphaenvmapmask"
+                | "$normalmapalphaenvmapmask"
+                | "$nodecal"
+                | "$nofog"
+                | "%keywords"
+                | "%tooltexture"
+        ) {
+            return Err(format!(
+                "unsupported alpha-test texture-shadow parameter {key}"
+            ));
+        }
+    }
+    if scalar(material, "$frame", 0.0)? != 0.0 {
+        return Err("nonzero $frame is unsupported for texture shadows".into());
+    }
+    let default_reference = if material.shader == "unlitgeneric" {
+        0.7
+    } else {
+        0.5
+    };
+    let reference = scalar(material, "$alphatestreference", default_reference)?;
+    if !(0.0..=1.0).contains(&reference) {
+        return Err("$alphatestreference must be between zero and one".into());
+    }
+    let reference = if reference == 0.0 { 0.5 } else { reference };
+    let transform = transform(material.get("$basetexturetransform"))?;
+    let path = material
+        .get("$basetexture")
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("alpha-test texture shadows require $basetexture")?;
+    let path = vmt::texture_path(path);
+    let texture = match assets.textures.get(&path) {
+        Some(texture) => Arc::clone(texture),
+        None => {
+            let bytes = assets.read(&path, budget)?;
+            let vtf = Vtf::parse(bytes).map_err(|error| format!("{path}: {error}"))?;
+            if vtf.frames != 1 || vtf.faces != 1 || vtf.depth != 1 {
+                return Err(format!(
+                    "{path}: animated, cubemap and volume texture shadows are unsupported"
+                ));
+            }
+            if vtf.width > MAX_TEXTURE_SIZE || vtf.height > MAX_TEXTURE_SIZE {
+                return Err(format!(
+                    "{path}: texture shadows exceed the {MAX_TEXTURE_SIZE} pixel dimension limit"
+                ));
+            }
+            let pixels = vtf.width as usize * vtf.height as usize;
+            if pixels > MAX_ALPHA_BYTES - assets.alpha_bytes {
+                return Err(
+                    "Static-prop texture shadows exceed the 64 MiB decoded alpha limit".into(),
+                );
+            }
+            budget.consume(pixels * 2)?;
+            let image = vtf
+                .decode_rgba8(0, 0, 0)
+                .map_err(|error| format!("{path}: {error}"))?;
+            if image.pixels.len() != pixels * 4 {
+                return Err(format!(
+                    "{path}: decoded texture-shadow image has invalid dimensions"
+                ));
+            }
+            let texture = Arc::new(Texture {
+                dimensions: [vtf.width as usize, vtf.height as usize],
+                clamp: [vtf.flags & CLAMP_S != 0, vtf.flags & CLAMP_T != 0],
+                alpha: image.pixels.chunks_exact(4).map(|pixel| pixel[3]).collect(),
+            });
+            assets.alpha_bytes += pixels;
+            assets.textures.insert(path, Arc::clone(&texture));
+            texture
+        }
+    };
+    Ok(Some(Arc::new(Material {
+        texture,
+        transform,
+        reference,
+    })))
+}
+
+#[cfg(test)]
+mod tests {
+    use glam::DVec3;
+
+    use super::*;
+    use crate::lighting::{
+        props::PropTriangle,
+        shadows::{ShadowIndex, ShadowObject},
+    };
+
+    fn triangle(clamp: [bool; 2], transform: [f64; 4], reference: f64) -> PropTriangle {
+        let mut triangle =
+            PropTriangle::new([DVec3::ZERO, DVec3::X * 8.0, DVec3::Y * 8.0]).unwrap();
+        triangle.alpha = Some((
+            Arc::new(Material {
+                texture: Arc::new(Texture {
+                    dimensions: [2, 2],
+                    clamp,
+                    alpha: vec![0, 255, 128, 64],
+                }),
+                transform,
+                reference,
+            }),
+            [DVec2::ZERO, DVec2::X * 2.0, DVec2::Y * 2.0],
+        ));
+        triangle
+    }
+
+    #[test]
+    fn cutout_rays_interpolate_uvs_repeat_clamp_transform_and_apply_the_reference() {
+        let identity = [1.0, 1.0, 0.0, 0.0];
+        for (clamp, mapping, reference, point, expected) in [
+            ([false; 2], identity, 0.5, [1.0, 1.0], false),
+            ([false; 2], identity, 0.5, [3.0, 1.0], true),
+            ([false; 2], identity, 128.0 / 255.0, [1.0, 3.0], true),
+            ([false; 2], identity, 0.75, [1.0, 3.0], false),
+            ([false; 2], identity, 0.5, [5.0, 1.0], false),
+            ([true, false], identity, 0.5, [5.0, 1.0], true),
+            ([false; 2], identity, 0.5, [1.0, 5.0], false),
+            ([false, true], identity, 0.5, [1.0, 5.0], true),
+            ([false; 2], [1.0, 1.0, -0.5, 0.0], 0.5, [1.0, 1.0], true),
+            ([true, false], [1.0, 1.0, -0.5, 0.0], 0.5, [1.0, 1.0], false),
+            (
+                [false; 2],
+                transform(Some("center 0 0 scale -1 1 translate 1 0 rotate 0")).unwrap(),
+                0.5,
+                [1.0, 1.0],
+                true,
+            ),
+        ] {
+            let triangle = triangle(clamp, mapping, reference);
+            let point = DVec3::new(point[0], point[1], 0.0);
+            for (start, end) in [
+                (point - DVec3::Z, point + DVec3::Z),
+                (point + DVec3::Z, point - DVec3::Z),
+            ] {
+                assert_eq!(triangle.intersects(start, end).unwrap(), expected);
+            }
+            assert!(!triangle.intersects(point, point + DVec3::Z).unwrap());
+            assert!(!triangle.intersects(point - DVec3::Z, point).unwrap());
+        }
+    }
+
+    #[test]
+    fn transparent_bvh_hits_continue_to_opaque_geometry_and_remain_cancellable() {
+        let control = crate::Control::default();
+        let mut budget = Budget::new(&control);
+        let cutout = triangle([false; 2], [1.0, 1.0, 0.0, 0.0], 0.5);
+        let blocker = PropTriangle::new([
+            DVec3::new(0.0, 0.0, 0.5),
+            DVec3::new(8.0, 0.0, 0.5),
+            DVec3::new(0.0, 8.0, 0.5),
+        ])
+        .unwrap();
+        let index =
+            ShadowIndex::new(vec![cutout, blocker], &mut |work| budget.consume(work)).unwrap();
+        let point = DVec3::new(1.0, 1.0, 0.0);
+        assert!(
+            index
+                .blocked(point - DVec3::Z, point + DVec3::Z, &mut |work| budget
+                    .consume(work))
+                .unwrap()
+        );
+        assert!(
+            !index
+                .blocked(point - DVec3::Z, point + DVec3::Z * 0.25, &mut |work| {
+                    budget.consume(work)
+                })
+                .unwrap()
+        );
+        control.cancel().unwrap();
+        assert!(
+            index
+                .blocked(point - DVec3::Z, point + DVec3::Z, &mut |work| budget
+                    .consume(work))
+                .is_err()
+        );
+    }
+}

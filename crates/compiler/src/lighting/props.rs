@@ -1,6 +1,6 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeMap, sync::Arc};
 
-use glam::{DQuat, DVec3, EulerRot};
+use glam::{DQuat, DVec2, DVec3, EulerRot};
 use source_formats::{
     bsp::{Bsp, StaticProp},
     gamefs::GameFs,
@@ -20,6 +20,8 @@ const MAX_MATERIAL_LOOKUPS: usize = 65_536;
 const NO_SHADOW: u32 = 0x10;
 const CAST_TEXTURE_SHADOWS: u32 = 0x0004_0000;
 
+mod alpha;
+
 #[derive(Debug, Default)]
 pub(crate) struct Stats {
     pub props: usize,
@@ -27,13 +29,23 @@ pub(crate) struct Stats {
     pub triangles: usize,
     pub disabled: usize,
     pub work: usize,
+    pub alpha_triangles: usize,
+    pub alpha_materials: usize,
+    pub alpha_textures: usize,
+    pub alpha_bytes: usize,
 }
 
-pub(super) struct PropTriangle(Triangle);
+pub(super) struct PropTriangle {
+    triangle: Triangle,
+    alpha: Option<(Arc<alpha::Material>, [DVec2; 3])>,
+}
 
 impl PropTriangle {
     pub(super) fn new(points: [DVec3; 3]) -> Result<Self, String> {
-        Triangle::new(points).map(Self)
+        Ok(Self {
+            triangle: Triangle::new(points)?,
+            alpha: None,
+        })
     }
 }
 
@@ -41,15 +53,26 @@ impl ShadowObject for PropTriangle {
     const MAX_OBJECTS: usize = MAX_TRIANGLES;
 
     fn bounds(&self) -> (DVec3, DVec3) {
-        self.0.bounds()
+        self.triangle.bounds()
     }
 
     fn work(&self) -> usize {
-        self.0.work()
+        self.triangle.work() + if self.alpha.is_some() { 24 } else { 0 }
     }
 
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
-        self.0.intersects(start, end)
+        let Some((material, coordinates)) = &self.alpha else {
+            return self.triangle.intersects(start, end);
+        };
+        let Some((_, weights)) = self.triangle.intersection(start, end)? else {
+            return Ok(false);
+        };
+        let uv = coordinates
+            .iter()
+            .zip(weights)
+            .map(|(point, weight)| *point * weight)
+            .sum::<DVec2>();
+        material.blocks(uv)
     }
 }
 
@@ -81,6 +104,8 @@ struct Assets<'a> {
     fs: &'a GameFs,
     bytes: usize,
     lookups: usize,
+    textures: BTreeMap<String, Arc<alpha::Texture>>,
+    alpha_bytes: usize,
 }
 
 impl Assets<'_> {
@@ -173,6 +198,7 @@ fn needs_material_warning(material: &Material) -> bool {
 fn append(
     model: &Model,
     prop: &StaticProp,
+    materials: &BTreeMap<usize, Option<Arc<alpha::Material>>>,
     triangles: &mut Vec<PropTriangle>,
     budget: &mut Budget<'_>,
 ) -> Result<usize, String> {
@@ -180,7 +206,14 @@ fn append(
     let rotation = DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z);
     let origin = DVec3::from_array(prop.origin.map(f64::from));
     let mut degenerate = 0;
+    let skin = model
+        .skins
+        .get(prop.skin as usize)
+        .ok_or("Static-prop shadow skin is unavailable")?;
     for part in model.parts_for_body(0) {
+        let material = *skin
+            .get(part.material)
+            .ok_or("Static-prop shadow skin material is unavailable")?;
         for indices in part.indices.as_chunks::<3>().0 {
             budget.consume(4)?;
             let points = std::array::from_fn(|corner| {
@@ -211,7 +244,14 @@ fn append(
             if triangles.len() >= MAX_TRIANGLES {
                 return Err("Static-prop shadows exceed the 262,144 world-space triangle limit; disable shadows on unnecessary props".into());
             }
-            triangles.push(PropTriangle::new(points)?);
+            let mut triangle = PropTriangle::new(points)?;
+            if let Some(Some(alpha)) = materials.get(&material) {
+                let coordinates = indices.map(|index| {
+                    DVec2::from_array(model.vertices[index as usize].uv.map(f64::from))
+                });
+                triangle.alpha = Some((Arc::clone(alpha), coordinates));
+            }
+            triangles.push(triangle);
         }
     }
     Ok(degenerate)
@@ -246,6 +286,8 @@ pub(super) fn build(
             fs,
             bytes: 0,
             lookups: 0,
+            textures: BTreeMap::new(),
+            alpha_bytes: 0,
         };
         stats.disabled = props
             .props
@@ -282,7 +324,7 @@ pub(super) fn build(
                 }
             };
             stats.models += 1;
-            let mut warned_materials = BTreeSet::new();
+            let mut materials = BTreeMap::new();
             for &index in instances {
                 let entity = entities[index];
                 let prop = &props.props[index];
@@ -296,20 +338,40 @@ pub(super) fn build(
                         let material = *skin
                             .get(part.material)
                             .ok_or("Static-prop shadow skin material is unavailable")?;
-                        if warned_materials.insert(material) {
-                            match assets.material(&model, material, budget)? {
-                                Some(material) if !needs_material_warning(&material) && model.header.flags & CAST_TEXTURE_SHADOWS == 0 => {}
+                        if let std::collections::btree_map::Entry::Vacant(entry) =
+                            materials.entry(material)
+                        {
+                            let loaded = assets.material(&model, material, budget)?;
+                            let cutout = if model.header.flags & CAST_TEXTURE_SHADOWS != 0 {
+                                let loaded = loaded.as_ref().ok_or_else(|| format!(
+                                    "{path}: requested texture-shadow material {} was not found", model.materials[material]
+                                ))?;
+                                alpha::prepare(loaded, &mut assets, budget).map_err(|error| {
+                                    format!(
+                                        "{path}: texture-shadow material {}: {error}",
+                                        model.materials[material]
+                                    )
+                                })?
+                            } else {
+                                match loaded {
+                                Some(material) if !needs_material_warning(&material) => {}
                                 Some(_) => report.diagnostics.push(Diagnostic::warning(
                                     format!("{path}: static-prop shadows use opaque mesh triangles; texture alpha, translucency, nonstandard shaders and material animation/conditional blocks are not evaluated"),
                                     Some(format!("entity:{}", entity.id)), entity.origin())),
                                 None => report.diagnostics.push(Diagnostic::warning(
                                     format!("{path}: shadow material {} was not found; mesh casts opaque shadows", model.materials[material]),
                                     Some(format!("entity:{}", entity.id)), entity.origin())),
+                                }
+                                None
+                            };
+                            if cutout.is_some() {
+                                stats.alpha_materials += 1;
                             }
+                            entry.insert(cutout);
                         }
                     }
                     let before = triangles.len();
-                    let degenerate = append(&model, prop, &mut triangles, budget)?;
+                    let degenerate = append(&model, prop, &materials, &mut triangles, budget)?;
                     if triangles.len() > before {
                         budget.consume(triangles.len() - before)?;
                         let mut mins = DVec3::splat(f64::INFINITY);
@@ -342,13 +404,19 @@ pub(super) fn build(
                 }
             }
         }
+        stats.alpha_textures = assets.textures.len();
+        stats.alpha_bytes = assets.alpha_bytes;
     }
     stats.triangles = triangles.len();
+    stats.alpha_triangles = triangles
+        .iter()
+        .filter(|triangle| triangle.alpha.is_some())
+        .count();
     let index = ShadowIndex::new(triangles, &mut |amount| budget.consume(amount))?;
     let probe_bounds = ShadowIndex::new(probe_bounds, &mut |amount| budget.consume(amount))?;
     stats.work = budget.work() - start_work;
     if stats.props > 0 {
-        report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. Opaque triangles block direct, sky, bounced and ambient rays. Prop vertex/lightmap baking, reflected prop sources and animated props remain unfinished", stats.props, stats.models, stats.triangles, stats.disabled), None, None));
+        report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. {} triangles use {} alpha-test materials and {} textures ({} decoded alpha bytes). Two-sided opaque/cutout triangles block direct, sky, bounced and ambient rays. Cutouts use mip0 nearest texels, not filtered or fractional transmission. Prop vertex/lightmap baking, reflected prop sources and animated props remain unfinished", stats.props, stats.models, stats.triangles, stats.disabled, stats.alpha_triangles, stats.alpha_materials, stats.alpha_textures, stats.alpha_bytes), None, None));
     }
     Ok((index, probe_bounds, stats))
 }
@@ -404,7 +472,14 @@ mod tests {
             angles: [90.0, 0.0, 0.0],
             ..Default::default()
         };
-        append(&triangle_model(), &prop, &mut triangles, &mut budget).unwrap();
+        append(
+            &triangle_model(),
+            &prop,
+            &BTreeMap::new(),
+            &mut triangles,
+            &mut budget,
+        )
+        .unwrap();
         let index = ShadowIndex::new(triangles, &mut |work| budget.consume(work)).unwrap();
         let middle = DVec3::new(32.0, 16.0, 64.0);
         for (start, end, expected) in [
@@ -442,17 +517,29 @@ mod tests {
         let mut model = triangle_model();
         model.vertices[0].position = [100_000.0, 0.0, 0.0];
         assert!(
-            append(&model, &StaticProp::default(), &mut triangles, &mut budget)
-                .unwrap_err()
-                .contains("vertices must fit")
+            append(
+                &model,
+                &StaticProp::default(),
+                &BTreeMap::new(),
+                &mut triangles,
+                &mut budget
+            )
+            .unwrap_err()
+            .contains("vertices must fit")
         );
         assert!(triangles.is_empty());
         let mut model = triangle_model();
         model.parts[0].indices = [0, 1, 2].repeat(MAX_TRIANGLES + 1);
         assert!(
-            append(&model, &StaticProp::default(), &mut triangles, &mut budget)
-                .unwrap_err()
-                .contains("triangle limit")
+            append(
+                &model,
+                &StaticProp::default(),
+                &BTreeMap::new(),
+                &mut triangles,
+                &mut budget
+            )
+            .unwrap_err()
+            .contains("triangle limit")
         );
         assert_eq!(triangles.len(), MAX_TRIANGLES);
         triangles.clear();
@@ -461,6 +548,7 @@ mod tests {
             append(
                 &triangle_model(),
                 &StaticProp::default(),
+                &BTreeMap::new(),
                 &mut triangles,
                 &mut budget
             )
@@ -477,7 +565,14 @@ mod tests {
         model.vertices[2].position = [0.0, -8.0, 0.0];
         let mut triangles = Vec::new();
         assert_eq!(
-            append(&model, &StaticProp::default(), &mut triangles, &mut budget).unwrap(),
+            append(
+                &model,
+                &StaticProp::default(),
+                &BTreeMap::new(),
+                &mut triangles,
+                &mut budget
+            )
+            .unwrap(),
             1
         );
         assert!(triangles.is_empty());

@@ -343,6 +343,10 @@ pub struct Stats {
     pub prop_shadow_triangles: usize,
     pub prop_shadow_disabled: usize,
     pub prop_shadow_work: usize,
+    pub prop_shadow_alpha_triangles: usize,
+    pub prop_shadow_alpha_materials: usize,
+    pub prop_shadow_alpha_textures: usize,
+    pub prop_shadow_alpha_bytes: usize,
     pub displacements: usize,
     pub displacement_vertices: usize,
     pub displacement_triangles: usize,
@@ -749,6 +753,10 @@ fn build(
         output.stats.prop_shadow_triangles = stats.prop_shadows.triangles;
         output.stats.prop_shadow_disabled = stats.prop_shadows.disabled;
         output.stats.prop_shadow_work = stats.prop_shadows.work;
+        output.stats.prop_shadow_alpha_triangles = stats.prop_shadows.alpha_triangles;
+        output.stats.prop_shadow_alpha_materials = stats.prop_shadows.alpha_materials;
+        output.stats.prop_shadow_alpha_textures = stats.prop_shadows.alpha_textures;
+        output.stats.prop_shadow_alpha_bytes = stats.prop_shadows.alpha_bytes;
         output.stats.light_evaluations = stats.culling.evaluated;
         output.stats.light_pvs_skipped = stats.culling.pvs_skipped;
         output.stats.light_range_skipped = stats.culling.range_skipped;

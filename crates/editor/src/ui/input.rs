@@ -140,6 +140,10 @@ pub(super) fn command_key(
         return true;
     }
     if key == key_text(Key::Escape) {
+        if ui.borrow().object_cycle.active() {
+            ui.borrow_mut().object_cycle.cancel();
+            return true;
+        }
         if cancel_surface_pick(app, ui) {
             return true;
         }

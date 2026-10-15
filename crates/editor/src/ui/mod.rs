@@ -30,6 +30,7 @@ mod materials;
 use materials::*;
 mod navigation;
 use navigation::*;
+mod object_picking;
 
 struct Ui {
     ctx: GpuContext,
@@ -41,6 +42,7 @@ struct Ui {
     brush_drag: Option<BrushDrag>,
     clip_drag: Option<BrushDrag>,
     interaction: interaction::Interaction,
+    object_cycle: object_picking::Gesture,
     seen_log: u64,
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
@@ -79,6 +81,7 @@ struct Ui {
     object_groups: Option<groups_ui::Controller>,
     layers: Option<layers_ui::Controller>,
     compile_region: Option<compile_region_ui::Controller>,
+    overlay: Option<overlay_ui::Controller>,
     prefabs: Option<prefabs_ui::Controller>,
     color_target: Option<(u32, String, u64)>,
     material_window: Option<MaterialWindow>,
@@ -95,6 +98,7 @@ struct Ui {
     compile_status: Option<compile_ui::Controller>,
     saved_views: Option<saved_views_ui::Controller>,
     material_for_group: bool,
+    overlay_material_target: Option<overlay_ui::MaterialTarget>,
     material_for_replace: Option<bool>,
     material_for_faces: bool,
     material_for_clip: bool,
@@ -261,6 +265,7 @@ pub(super) fn run(
         brush_drag: None,
         clip_drag: None,
         interaction: interaction::Interaction::default(),
+        object_cycle: object_picking::Gesture::default(),
         seen_log: 0,
         game_log_window: None,
         last_log_refresh: Instant::now(),
@@ -299,6 +304,7 @@ pub(super) fn run(
         object_groups: None,
         layers: None,
         compile_region: None,
+        overlay: None,
         prefabs: None,
         color_target: None,
         material_window: None,
@@ -315,6 +321,7 @@ pub(super) fn run(
         compile_status: None,
         saved_views: None,
         material_for_group: false,
+        overlay_material_target: None,
         material_for_replace: None,
         material_for_faces: false,
         material_for_clip: false,
@@ -863,6 +870,36 @@ pub(super) fn run(
     app.on_edit_face_textures({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
+    });
+    app.on_create_overlay({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().overlay.is_none() {
+                match overlay_ui::Controller::new(&shared) {
+                    Ok(controller) => {
+                        controller.window.on_browse_material({
+                            let (app, ui) = (app.clone(), ui.clone());
+                            move || show_material_window(&app.unwrap(), &ui, "@overlay")
+                        });
+                        ui.borrow_mut().overlay = Some(controller);
+                    }
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let ui = ui.borrow();
+            if let Err(error) = ui
+                .overlay
+                .as_ref()
+                .unwrap()
+                .show(&mut lock(&shared), &app.unwrap().get_material())
+            {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
     });
     app.on_select_volume({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -1491,10 +1528,34 @@ pub(super) fn run(
     });
     app.on_mouse_button({
         let (app, ui) = (app.as_weak(), ui.clone());
-        move |button, down, x, y, control| {
+        move |button, down, x, y, control, alt| {
             let app = app.unwrap();
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
+            if button == 0 && !down && ui.object_cycle.active() {
+                let shared = ui.session.clone();
+                let camera = ui.viewport.camera;
+                let pointer = Pointer {
+                    position: DVec2::new(f64::from(x), f64::from(y)),
+                    size: (
+                        viewport_size.0.round().max(1.0) as u32,
+                        viewport_size.1.round().max(1.0) as u32,
+                    ),
+                };
+                let mut session = lock(&shared);
+                match ui.object_cycle.release(&mut session, camera, pointer) {
+                    Ok(Some(message)) => app.set_message(message.into()),
+                    Ok(None) => {}
+                    Err(error) => app.set_message(error.into()),
+                }
+                refresh_interaction(&app, &session);
+                return;
+            }
+            if button == 0 && down {
+                ui.object_cycle = object_picking::Gesture::default();
+            } else if button != 0 && down {
+                ui.object_cycle.cancel();
+            }
             if button == 0 && !down && ui.pick_release {
                 ui.pick_release = false;
                 return;
@@ -1815,6 +1876,20 @@ pub(super) fn run(
                         viewport_size.1.round().max(1.0) as u32,
                     ),
                 };
+                if down {
+                    let camera = ui.viewport.camera;
+                    match ui
+                        .object_cycle
+                        .begin(&session, camera, pointer, control, alt)
+                    {
+                        Ok(true) => return,
+                        Ok(false) => {}
+                        Err(error) => {
+                            app.set_message(error.into());
+                            return;
+                        }
+                    }
+                }
                 let result = if down {
                     ui.interaction.down(&mut session, pointer, control)
                 } else {
@@ -1890,6 +1965,15 @@ pub(super) fn run(
             let size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
             ui.viewport.mouse_moved(x, y, size.1);
+            if ui.object_cycle.moved(Pointer {
+                position: DVec2::new(f64::from(x), f64::from(y)),
+                size: (
+                    size.0.round().max(1.0) as u32,
+                    size.1.round().max(1.0) as u32,
+                ),
+            }) {
+                return;
+            }
             if let Some(controller) = &ui.terrain
                 && controller.is_handling()
             {
@@ -1998,6 +2082,7 @@ pub(super) fn run(
             let height = app.get_viewport_height().max(1.0);
             let ndc = (x * 2.0 / width - 1.0, 1.0 - y * 2.0 / height);
             let mut ui = ui.borrow_mut();
+            ui.object_cycle.cancel();
             if ui.interaction.active() {
                 let shared = ui.session.clone();
                 ui.interaction.cancel(&mut lock(&shared));
@@ -2016,6 +2101,7 @@ pub(super) fn run(
         move || {
             {
                 let mut ui = ui.borrow_mut();
+                ui.object_cycle.cancel();
                 if let Some(controller) = &ui.terrain
                     && controller.is_stroking()
                     && controller.stroke_dragging()
@@ -2431,6 +2517,11 @@ pub(super) fn run(
                     controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.compile_region
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.overlay
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

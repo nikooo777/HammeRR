@@ -261,6 +261,13 @@ pub struct RaycastArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectHitArgs {
+    pub origin: [f64; 3],
+    pub direction: [f64; 3],
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrimitiveFrameArgs {
     pub token: String,
     pub aspect: Option<f32>,

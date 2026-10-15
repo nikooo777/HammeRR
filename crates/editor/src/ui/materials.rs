@@ -515,6 +515,14 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                         window.set_detail(error.into());
                         return;
                     }
+                } else if let Some(target) = ui.borrow().overlay_material_target.clone() {
+                    if let Some(controller) = &ui.borrow().overlay
+                        && let Err(error) =
+                            controller.choose_material(&mut session, &target, &material)
+                    {
+                        window.set_detail(error.into());
+                        return;
+                    }
                 } else if let Some(replacement) = ui.borrow().material_for_replace {
                     if let Some(controller) = &ui.borrow().material_replace {
                         controller.choose_material(&mut session, replacement, &material);
@@ -613,6 +621,15 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     }
     let shared = session_of(ui);
     let mut session = lock(&shared);
+    let overlay_target = if key == "@overlay" {
+        ui.borrow()
+            .overlay
+            .as_ref()
+            .map(|controller| controller.material_target(&session))
+    } else {
+        None
+    };
+    ui.borrow_mut().overlay_material_target = overlay_target;
     ui.borrow_mut().material_for_replace = match key {
         "@replace-source" => Some(false),
         "@replace-target" => Some(true),
@@ -642,6 +659,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         });
     let target = if key.is_empty()
         || key == "@faces"
+        || key == "@overlay"
         || key == "@clip"
         || key == "@primitive"
         || key == "@polygon"
@@ -666,6 +684,12 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     controller.window.get_source().to_string()
                 }
             })
+            .unwrap_or_default()
+    } else if key == "@overlay" {
+        ui.borrow()
+            .overlay
+            .as_ref()
+            .map(|controller| controller.window.get_material().to_string())
             .unwrap_or_default()
     } else if key == "@partition" {
         ui.borrow()

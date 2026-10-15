@@ -2,7 +2,20 @@
 
 # Overlays
 
-Overlays project a material onto selected world surfaces. Use them for markings, graffiti and signs without adding brush geometry. HammeRR compiles existing `info_overlay` entities imported from a VMF.
+Overlays project a material onto world surfaces for markings, graffiti and signs without adding brush geometry. Fit a new overlay to one quad face, or compile an existing `info_overlay` imported from a VMF.
+
+## Create a fitted overlay
+
+1. Set **Selection** to **Faces · materials & textures** and select exactly one visible quad face on a world brush or `func_detail` brush. Tilted and trapezoid faces are supported.
+2. In the inspector, click **Overlay…** above **Replace materials…**.
+3. Enter **Material** or click **Browse materials…**. The dialog shows the existing material browser's thumbnail and the source face outline in its own plane.
+4. Optionally enter a **Name** and choose **Render order** (0–3). Set **U start**, **U end**, **V start**, **V end**, and fade **Start distance** and **End distance** as needed.
+5. Click **Fit / Preview** to fit the full 0–1 texture range to the face. Click **Preview settings** to preserve your U/V ranges. Cyan lines in the viewport mark the fitted corners; the projected material is shown after compiling and running the map.
+6. Click **Apply overlay** to create and select the overlay in one Undo step. **Cancel**, Escape, and closing the dialog discard only the draft this dialog owns.
+
+![Fitted overlay controls with the source outline and material thumbnail](images/overlay-authoring.png)
+
+**Overlay…** is also available without a face selection. **Review current draft** loads a shared preview and transfers its ownership to you, including a preview created through MCP with an explicit source face. Review before applying or cancelling that preview; keep the selection unchanged until applying it. Changing the map, source selection or shared draft requires another review or reopening **Overlay…**. Invalid fields preserve the previous valid draft and keep **Apply overlay** disabled.
 
 ## Build an imported overlay
 
@@ -24,7 +37,8 @@ without replacing the previous BSP.
 
 ## Limits
 
-- Overlay placement, corner handles, viewport projection and automatic rebinding after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields are read-only.
+- New overlay fitting supports one visible planar world or `func_detail` quad. Terrain, brush models and faces with other corner counts cannot be used for new fitting. Imported overlays retain their broader compile support.
+- Editing an existing overlay's projection, corner handles, viewport material projection and automatic rebinding after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields remain read-only.
 - Targets must be visible, exposed world, detail or terrain faces. Hidden, absent, non-rendering and brush-model targets fail compilation. Hidden overlays are omitted.
 - Budgets: 1,024 overlays, 64 source sides and 64 compiled surface references per overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
 - Basis axes must be finite perpendicular unit vectors. Projection corners must form a convex quadrilateral within the compile coordinate bounds. Invalid material paths, projections or fade distances keep the previous BSP.

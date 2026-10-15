@@ -11,6 +11,25 @@ The **Selection** dropdown in the inspector switches between:
 
 Click to select, Ctrl+click to toggle. Loaded models use their visible triangles for point picking. Model entities belong to **Objects** mode; their mesh triangles are not editable brush faces.
 
+## Cycle overlapping objects
+
+Select an object behind another object without hiding either one.
+
+1. Choose **Objects** in **Selection**.
+2. Hold Alt and left-click where the objects overlap. If the current selection exactly matches one hit, the next hit in depth order replaces it; otherwise the nearest hit is selected.
+3. Repeat Alt+click to advance through the hits and wrap to the first. The status bar shows the current overlap and its label.
+
+![The rear brush selected by cycling through three overlapping objects](images/object-hit-cycling.png)
+
+Brush entities count once even when the ray hits several child brushes. Native groups count once as their outermost visible selection unit. Enable **Bypass groups** in [Object groups…](groups.md) to cycle individual objects.
+
+Cycling uses the same brush, terrain, model triangle and point-helper hits as ordinary object picking. Hidden objects and hidden tool brushes are skipped. Clicking empty space while holding Alt preserves the selection. Cycling replaces the selection; ordinary Ctrl+click retains its toggle behavior.
+
+- The nearest 64 distinct object/group hits are available. If more overlap, the status bar reports the limit.
+- Keep the pointer still until release. Alt-drag, Escape, navigation, viewport resizing, camera changes, map changes and selection changes cancel the gesture without falling through to an ordinary click.
+- Cycling is an **Objects** operation. Finish active geometry previews first. Face selection, component picking, paint, placement picking, terrain tools, clipping and brush drawing retain their own gestures.
+- Cycling changes selection without adding map undo history.
+
 ## Selection rules
 
 Area, volume and paint selection share two settings:

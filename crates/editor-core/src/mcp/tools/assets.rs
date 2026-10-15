@@ -215,11 +215,11 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Clear the bounded shared model asset cache and refresh viewport geometry/picks after external asset changes. No map/history changes; graphics remain lazy. UI: Model details… → Reload models."
+        description = "Clear the bounded shared model asset cache and refresh viewport geometry/picks after external asset changes. Cancels snap-to-grid drafts whose bounds may have changed; preview_snap_to_grid again before applying. Returns snap_preview_cancelled. No map/history changes; graphics remain lazy. UI: Model details… → Reload models."
     )]
     pub(in crate::mcp) fn reload_model_assets(&self) -> ToolResult {
-        self.session().refresh_model_assets(Actor::Agent);
-        ok(json!({"reloaded":true}))
+        let snap_preview_cancelled = self.session().refresh_model_assets(Actor::Agent);
+        ok(json!({"reloaded":true,"snap_preview_cancelled":snap_preview_cancelled}))
     }
 
     #[tool(

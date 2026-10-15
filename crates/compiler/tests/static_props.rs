@@ -119,6 +119,115 @@ fn static_props_emit_native_dictionary_transforms_leaves_and_lighting_origins() 
 }
 
 #[test]
+fn regions_preserve_external_lighting_references_and_ambiguity() {
+    let (directory, game) = game();
+    let tools = directory.path().join("materials/tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::fs::write(tools.join("toolsblack.vmt"), "UnlitGeneric { }").unwrap();
+    let mut source = common::room();
+    let prop = add_prop(&mut source, "-64 32 8");
+    source.entities[prop]
+        .properties
+        .set("lightingorigin", "sample");
+    let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
+    let mut helper = Entity::new(id, "info_lighting");
+    helper.properties.set("targetname", "sample");
+    helper.properties.set("origin", "400.125 64.25 80.375");
+    source.entities.push(helper);
+    let baseline = compiler::compile(&source, &game).bsp.unwrap().to_bytes();
+    let mut document = Document::new(source);
+    document
+        .edit("region", |tx| {
+            map_core::compile_region::apply(
+                tx,
+                Some(map_core::compile_region::Definition {
+                    enabled: true,
+                    bounds: map_core::compile_region::Bounds {
+                        mins: DVec3::new(-128.0, -128.0, 0.0),
+                        maxs: DVec3::new(128.0, 128.0, 256.0),
+                    },
+                }),
+            )
+        })
+        .unwrap();
+    let source = document.vmf().clone();
+    let output = compiler::compile(&source, &game);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(source, *document.vmf());
+    assert!(
+        output
+            .stats
+            .compile_region
+            .as_ref()
+            .unwrap()
+            .included
+            .contains(&format!("entity:{id}"))
+    );
+    let data = output.bsp.unwrap().to_bytes();
+    let props = Bsp::parse(&data).unwrap().static_props().unwrap().unwrap();
+    assert_eq!(props.props[0].lighting_origin, [400.125, 64.25, 80.375]);
+    assert_eq!(props.props[0].flags & 2, 2);
+    let controlled = compiler::compile_controlled(&source, &game, &Default::default());
+    assert_eq!(controlled.bsp.unwrap().to_bytes(), data);
+    let mut omitted = source.clone();
+    let outside = add_prop(&mut omitted, "400 0 8");
+    omitted.entities[outside]
+        .properties
+        .set("lightingorigin", "unavailable");
+    let filtered = compiler::compile(&omitted, &game);
+    assert!(!filtered.report.has_errors(), "{:?}", filtered.report);
+    assert_eq!(filtered.stats.static_props, 1);
+    assert!(
+        filtered
+            .stats
+            .compile_region
+            .unwrap()
+            .omitted
+            .contains(&format!("entity:{}", omitted.entities[outside].id))
+    );
+    let path = directory.path().join("region.bsp");
+    std::fs::write(&path, &data).unwrap();
+    for duplicate in [false, true] {
+        let mut invalid = source.clone();
+        if duplicate {
+            let mut helper = invalid.entities.last().unwrap().clone();
+            helper.id += 100;
+            helper.properties.set("origin", "32 32 64");
+            invalid.entities.push(helper);
+        } else {
+            invalid.entities.last_mut().unwrap().hidden = true;
+        }
+        let before = invalid.clone();
+        let failed = compiler::compile(&invalid, &game);
+        let expected = if duplicate {
+            "multiple info_lighting"
+        } else {
+            "one visible info_lighting"
+        };
+        assert!(
+            failed
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.message.contains(expected)),
+            "{:?}",
+            failed.report
+        );
+        assert!(!failed.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), data);
+        assert_eq!(invalid, before);
+    }
+    document.undo().unwrap();
+    assert_eq!(
+        compiler::compile(document.vmf(), &game)
+            .bsp
+            .unwrap()
+            .to_bytes(),
+        baseline
+    );
+}
+
+#[test]
 fn invalid_static_props_preserve_previous_output_and_source() {
     let (directory, game) = game();
     let mut vmf = common::room();

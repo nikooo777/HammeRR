@@ -128,6 +128,21 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Preview a rigid move that places the selection's world bounds minimum on the nearest shared grid coordinates. IDs default to the shared selection. Uses the current grid spacing and transform texture-lock policy, even when automatic Snap is off; keeps every relative offset and brush shape. Returns grid_snap with bounds_minimum, snapped_bounds_minimum, grid and delta, plus the normal transform draft. Review with get_transform_handles/render_view, then commit_transform_preview or cancel_transform_preview. Already aligned selections create no map history. Reloading model assets cancels snap drafts; preview again after reload. UI: Transform selection → Preview snap to grid; Anchor: selection bounds minimum."
+    )]
+    pub(in crate::mcp) fn preview_snap_to_grid(
+        &self,
+        Parameters(args): Parameters<IdsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let snap = session.preview_snap_to_grid(Actor::Agent, &ids)?;
+            Ok(json!({"grid_snap": snap, "state": transform_state(&session)}))
+        })
+    }
+
+    #[tool(
         description = "Copy objects with an offset and select the copies (defaults to the selection)."
     )]
     pub(in crate::mcp) fn duplicate_objects(

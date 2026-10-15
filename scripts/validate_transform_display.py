@@ -5,6 +5,52 @@ from pathlib import Path
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 
 
+def validate_grid_snap(client, check):
+    client.call("new_map", {"discard_changes": True})
+    client.call("set_spatial_settings", {"grid_size": 0.25, "snap": False})
+    brush = client.call("create_block", {"mins": [-10.125, 3.0625, -0.375], "maxs": [5.375, 18.5625, 15.125], "material": "brick/test"})["id"]
+    point = client.call("create_entity", {"classname": "info_target", "origin": [-32.125, -24.375, -16.0625]})["id"]
+    ids = [brush, point]
+    client.call("select", {"ids": ids})
+    source = detail(client, ids)
+    history = client.call("get_map_info")["undo"]
+    for texture_lock in [False, True]:
+        client.call("set_transform_tool", {"texture_lock": texture_lock})
+        result = client.call("preview_snap_to_grid")
+        snap = result["grid_snap"]
+        draft = result["state"]["preview"]
+        check(snap == {"grid": 0.25, "bounds_minimum": [-40.125, -32.375, -24.0625], "snapped_bounds_minimum": [-40.25, -32.5, -24.0], "delta": [-0.125, -0.125, 0.0625]}, "Grid snap names the world bounds-minimum anchor and rounds negative fractional coordinates")
+        check(draft["grid_snap"] == snap and draft["translation"] == snap["delta"] and draft["texture_lock"] == texture_lock and draft["bounds"]["mins"] == snap["snapped_bounds_minimum"], "Grid snap exposes the normal transform draft with the shared texture policy")
+        check(client.call("get_transform_handles")["state"]["preview"]["grid_snap"] == snap and "bounds minimum" in draft["display"]["summary"], "Agent and human transform inspection retain the named snap anchor")
+        check(detail(client, ids) == source and client.call("get_map_info")["undo"] == history, "Snapping previews preserve source geometry and history")
+        client.call("cancel_transform_preview")
+        check(detail(client, ids) == source, "Cancelling grid snap preserves the mixed selection")
+        draft = client.call("preview_snap_to_grid", {"ids": ids})["state"]["preview"]
+        client.call("commit_transform_preview")
+        check(detail(client, ids) == draft["objects"] and len(client.call("get_map_info")["undo"]) == len(history) + 1, "Applying grid snap matches its rigid mixed-selection draft in one edit")
+        aligned = detail(client, ids)
+        aligned_history = client.call("get_map_info")["undo"]
+        check(client.call("preview_snap_to_grid")["grid_snap"]["delta"] == [0, 0, 0], "An aligned bounds minimum has zero snap delta")
+        client.call("commit_transform_preview")
+        check(detail(client, ids) == aligned and client.call("get_map_info")["undo"] == aligned_history, "Applying an aligned snap creates no history edit")
+        client.call("undo")
+        check(detail(client, ids) == source, "One Undo restores every snapped source object")
+    client.call("set_spatial_settings", {"snap": True})
+    client.call("transform_objects", {"ids": ids, "translation": [0.03125, 0, 0]})
+    check(client.call("get_selection")["bounds"]["mins"] == [-40.09375, -32.375, -24.0625], "Typed transform offsets remain exact with automatic snapping enabled")
+    source = detail(client, ids)
+    history = client.call("get_map_info")["undo"]
+    client.call("preview_snap_to_grid")
+    reloaded = client.call("reload_model_assets")
+    check(reloaded["snap_preview_cancelled"] and client.call("get_transform_handles")["state"]["preview"] is None, "Reloading model assets reports cancellation of the old snap anchor")
+    client.call("commit_transform_preview", error=True)
+    check(detail(client, ids) == source and client.call("get_map_info")["undo"] == history, "An asset reload cannot apply stale snap bounds or edit the map")
+    draft = client.call("transform_objects", {"ids": ids, "translation": [0.03125, 0, 0], "preview": True})["state"]["preview"]
+    reloaded = client.call("reload_model_assets")
+    check(not reloaded["snap_preview_cancelled"] and client.call("get_transform_handles")["state"]["preview"] == draft, "Model reload retains ordinary exact transform drafts")
+    client.call("cancel_transform_preview")
+
+
 def validate(client):
     checks = []
 
@@ -87,6 +133,7 @@ def validate(client):
     )
     client.call("cancel_transform_preview")
     check(detail(client, [object_id]) == before, "Compound cancel preserves source")
+    validate_grid_snap(client, check)
     return checks
 
 

@@ -10,7 +10,8 @@
 | `crates/map-core` | Geometry, terrain, the undoable map document, edits and picking. |
 | `crates/render` | The wgpu renderer, materials, camera and offscreen snapshots. |
 | `crates/editor-core` | The shared editing session, application runtime, optional MCP server and `hammerr-headless`. No Slint dependency. |
-| `crates/editor` | The Slint UI, desktop startup and software UI tests. |
+| `crates/editor-ui` | Generated Slint windows and rows; UI definitions remain in `crates/editor/ui/`. |
+| `crates/editor` | UI controllers, desktop startup and software UI tests. |
 | `crates/compiler` | The native VMF-to-BSP compiler, `hammerr-compile` and the `hammerr-physics` helper. |
 | `scripts/` | End-to-end validation scripts. |
 | `docs/` | This manual and its screenshots. |
@@ -117,7 +118,7 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Area | Scripts |
 | --- | --- |
 | Application startup and shutdown | `headless` (edit/history, save/reopen, compile, lazy graphics and exit recovery; `--desktop-binary` compares both executable tool inventories, and `--baseline` compares a saved `tools/list` array sorted by name) |
-| Viewing and selection | `view_modes`, `saved_views`, `sky_preview`, `volume_selection`, `paint_selection`, `map_statistics`, `pointfiles` |
+| Viewing and selection | `view_modes`, `saved_views`, `sky_preview`, `volume_selection`, `paint_selection`, `object_picking`, `map_statistics`, `pointfiles` |
 | Brushes and transforms | `geometry_tools`, `texture_lock_modes`, `brush_reflection`, `brush_shear`, `transform_display`, `precision_cycles`, `polygon_brushes`, `surface_placement`, `repeat_array` |
 | Hollow, carve, merge and clip | `hollow`, `carving`, `carve_many`, `merge`, `clip_handles` |
 | Vertices, edges and faces | `components`, `component_sources`, `component_picking`, `component_topology`, `component_transforms`, `component_creases`, `weld_texture_attachment`, `split_texture_attachment`, `roof_texture_attachment` |
@@ -127,6 +128,14 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Local preferences | `recent_maps`, `build_recipes` |
 | Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `direct_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals` |
 | In game | `native_runtime`, `brush_runtime`, `vphysics_backend` |
+
+`transform_display` also checks `preview_snap_to_grid`: fractional negative world bounds-minimum anchors, mixed selections, shared texture-lock policy, source/history preservation, Apply/Cancel, aligned no-ops, model-reload cancellation and exact typed transforms with snapping enabled.
+
+`object_picking` checks depth order, exact world distances for non-unit rays, stateless cycling and wrapping, source/history/camera preservation, misses, mode/preview guards, visibility, brush owners, nested groups, bypass and nearest-64 truncation. Add `--render` for a private viewport example:
+
+```sh
+python3 -B scripts/validate_object_picking.py --binary target/debug/hammerr-headless --output /tmp/hammerr-object-picking-check --render
+```
 
 ### Extra options
 
@@ -527,6 +536,7 @@ python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-hea
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-global-check --water --global-markers --runtime
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-terrain-check --terrain --global-markers --render --runtime
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-mixed-check --terrain --water --global-markers --runtime
+python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-lighting-origin-check --lighting-origins
 python3 -B scripts/validate_region_overlays.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-overlay-check --runtime
 python3 -B scripts/validate_region_helpers.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-helper-check --runtime
 ```
@@ -549,6 +559,9 @@ whole imported projections and reject unavailable final face bindings. The helpe
 workflow combines portals/windows with native occluder arrays, geometry-based
 inclusion, boundary rejection and missing window render targets. Its `--runtime`
 mode uses isolated displays to observe native area controls and window fading.
+`--lighting-origins` inspects exact outside static-prop lighting coordinates and
+checks hidden/ambiguous references through both publication paths.
+
 `--global-markers` places sun/water controls outside the region, verifies
 retained origins and authored distances, and checks exact shared output with
 the rendered black boundary. Compiler cases cover unavailable/incompatible
@@ -561,6 +574,22 @@ contact above the raised sheet; combining `--terrain --water` checks buoyancy
 with both geometry types present.
 The cordon script separately checks invalid imports and retained prior output.
 Use fresh output directories. Neither script sends desktop input.
+
+### Fitted overlay authoring
+
+```sh
+cargo test -p map-core --lib overlay::tests
+cargo test -p editor-core --features mcp --lib overlay
+cargo test -p compiler --test overlay_fit --test overlays --test region_overlays
+cargo test -p editor --bin editor overlay_ui::tests
+python3 -B scripts/validate_overlay_authoring.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-authoring-check --render --runtime
+```
+
+These checks cover real tilted world/detail corners, shared imported projection
+validation, ownership/review, stale source/selection guards, material browsing,
+Apply/Cancel/Undo and exact shared native output. `--render` captures the shared
+outline; `--runtime` compares a fully MCP-created floor projection with absent
+and faded cases on private displays, including runtime accessor lookup.
 
 ### Compile-region shell experiment
 

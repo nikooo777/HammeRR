@@ -15,6 +15,7 @@ mod material_replace_ui;
 mod merge_ui;
 mod model_browser_ui;
 mod model_ui;
+mod overlay_ui;
 mod placement_ui;
 mod pointfile_ui;
 mod polygon_ui;
@@ -36,7 +37,7 @@ mod ui;
 mod viewport;
 mod volume_ui;
 
-slint::include_modules!();
+pub use editor_ui::*;
 
 use editor_core::startup::{Application, Args};
 use editor_core::{

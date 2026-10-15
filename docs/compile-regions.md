@@ -86,6 +86,10 @@ pending draft stale. Preview it again before applying.
   entities, the sun and water LOD controllers remain. Sun and water-control
   markers keep their positions and settings even outside the region.
   Hidden objects remain excluded.
+- Visible `info_lighting` helpers stay as compiler-only references even outside
+  the box. Included static props retain their authored lighting origins. Hidden
+  or duplicate named helpers still fail reference validation; omitted props stay
+  omitted.
 - References are retained unchanged. Targets outside the region may be absent.
   The solid boundary can hide leaks, block views and change light or sound;
   region output is for partial-map work.

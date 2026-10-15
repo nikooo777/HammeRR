@@ -42,6 +42,8 @@ pub mod merging;
 mod model_attachments;
 pub mod model_browser;
 pub mod models;
+pub mod object_picking;
+pub mod overlay;
 pub mod paint;
 pub mod placement;
 pub mod pointfiles;
@@ -74,7 +76,9 @@ mod manipulation;
 mod preview_tests;
 mod previews;
 mod rename_view;
-pub use manipulation::{AreaPreview, Pointer, TransformDrag, TransformPreview, TransformTool};
+pub use manipulation::{
+    AreaPreview, GridSnap, Pointer, TransformDrag, TransformPreview, TransformTool,
+};
 
 const LOG_LENGTH: usize = 50;
 
@@ -140,6 +144,7 @@ pub enum SelectMode {
 
 pub struct Session {
     compile_region: compile_region::State,
+    overlay: overlay::State,
     geometry: previews::State,
     groups: groups::State,
     layers: layers::State,
@@ -246,6 +251,7 @@ impl Session {
         Self {
             geometry: previews::State::default(),
             compile_region: compile_region::State::default(),
+            overlay: overlay::State::default(),
             groups: groups::State::default(),
             layers: layers::State::default(),
             prefabs: prefabs::State::default(),
@@ -1073,6 +1079,11 @@ impl Session {
     }
 
     fn changed(&mut self) {
+        self.overlay.context_changed();
+        self.refresh_scene();
+    }
+
+    fn refresh_scene(&mut self) {
         self.clear_geometry_previews_except(&[previews::Kind::Paint]);
 
         self.cancel_block_preview();
@@ -1955,6 +1966,7 @@ impl Session {
         self.append_surface_placement_guide(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_compile_region_guide(&mut mesh);
+        self.append_overlay_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
         self.append_terrain_triangle_guides(&mut mesh);
         self.append_terrain_stroke_guides(&mut mesh);

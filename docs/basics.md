@@ -50,6 +50,8 @@ Framing fits the viewport's width and height and keeps the camera's direction an
 
 **Grid** sets the spacing, from 0.125 to 4096 units. **Snap** and **Show grid** are independent. Values typed into numeric fields are always exact; they are never snapped.
 
+To align an existing selection, enable **Transform selection** and click **Preview snap to grid**. The helper **Anchor: selection bounds minimum** identifies the corner being aligned. Review the anchor and offset, then **Apply transform** or **Cancel**. The selection moves rigidly by one offset; see [Snap selection to grid](brushes.md#snap-selection-to-grid).
+
 ## Viewport modes
 
 Choose a mode in the **Viewport** section of the inspector. Every mode works in every projection.

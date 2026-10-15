@@ -10,6 +10,8 @@ mod entities;
 pub(super) use entities::*;
 mod geometry;
 pub(super) use geometry::*;
+mod overlay;
+pub(super) use overlay::*;
 mod terrain;
 pub(super) use terrain::*;
 mod view;

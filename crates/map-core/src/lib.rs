@@ -16,6 +16,7 @@ pub mod layers;
 pub mod light;
 pub mod merge;
 mod metadata;
+pub mod overlay;
 pub mod partition_metadata;
 pub mod picking;
 pub mod plane;

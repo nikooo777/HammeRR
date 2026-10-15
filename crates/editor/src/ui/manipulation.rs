@@ -333,6 +333,19 @@ pub(super) fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
 }
 
 pub(super) fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
+    app.on_preview_snap_to_grid({
+        let (app, shared) = (app.as_weak(), shared.clone());
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            let ids = session.selected_ids();
+            if let Err(error) = session.preview_snap_to_grid(Actor::User, &ids) {
+                app.set_message(error.into());
+            }
+            refresh_panel(&app, &mut session);
+            refresh_interaction(&app, &session);
+        }
+    });
     app.on_transform_tool_changed({
         let (app, shared) = (app.as_weak(), shared.clone());
         move || {

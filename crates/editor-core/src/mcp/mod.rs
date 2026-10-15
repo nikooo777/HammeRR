@@ -85,6 +85,7 @@ and undo history untouched. Inspect get_map_info.block_preview and cancel with c
 transform_objects applies exact move/rotation/positive scale, brush reflection and single-axis shear, with an optional world-space pivot \
 (default: selection bounds center) and independent texture_lock (move/rotation) and texture_scale_lock (stretch); omitted scale lock inherits movement locking. Rotation is world X/Y/Z, in degrees. \
 space: local uses the first selected object's frame; preview: true creates a shared transform draft. \
+preview_snap_to_grid rigidly aligns the world selection bounds minimum with the shared grid; inspect grid_snap and use the normal transform commit/cancel. \
 set_transform_tool configures move/rotate/scale handles, pivots and angle snap. Inspect \
 get_transform_handles, begin_transform_drag, then update_transform_drag with total amounts \
 or viewport pointers. Apply with commit_transform_preview or cancel_transform_preview. \
@@ -101,6 +102,7 @@ get_brush_components exposes precise faces/vertices/edges with stable incident-f
 For a roof ridge, select one quad face per brush, inspect crease_choices, then preview_component_crease with opposing edge pairs and rise; apply/discard through commit_component_edit/cancel_component_edit. \
 select_faces switches to shared face selection; edit_faces changes material, UVs and fitting. \
 Use preview: true for a draft, then commit_face_preview or cancel_face_preview. \
+Use get_overlay_state and preview_overlay to fit a new overlay to one explicit visible world/detail quad, then apply_overlay or cancel_overlay with its owned token. review_overlay explicitly transfers a shared draft to a new ownership token. \
 get_face_selection inspects selected faces and pending texture changes. browse_materials \
 provides grouped catalog metadata; set_material_favorite shares browser favorites. \
 find_material_faces creates an exact map/selection material report with explicit hidden handling. \
@@ -549,6 +551,7 @@ impl EditorServer {
             + Self::geometry_tools()
             + Self::groups_tools()
             + Self::materials_tools()
+            + Self::overlay_tools()
             + Self::partitions_tools()
             + Self::placement_tools()
             + Self::recovery_tools()

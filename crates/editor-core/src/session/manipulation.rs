@@ -8,6 +8,8 @@ use render::handles::{self, Guide, Handle, Mode};
 
 use super::{Actor, SelectMode, Session};
 
+const GRID_SNAP_ROUNDOFF_ULPS: f64 = 4.0;
+
 pub(super) fn combined_selection<T: Copy + Eq + std::hash::Hash>(
     before: &std::collections::HashSet<T>,
     matches: &[T],
@@ -63,9 +65,18 @@ pub struct TransformPreview {
     pub document: Document,
     pub ids: Vec<ObjectId>,
     pub transform: Transform,
+    pub grid_snap: Option<GridSnap>,
     generation: u64,
     revision: u64,
     surface_owner: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct GridSnap {
+    pub grid: f64,
+    pub bounds_minimum: [f64; 3],
+    pub snapped_bounds_minimum: [f64; 3],
+    pub delta: [f64; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +166,24 @@ impl TransformPreview {
                 "Shear: {} by {} × {}",
                 axes[shear.axis], axes[shear.reference], shear.factor
             ));
+        }
+        if let Some(snap) = self.grid_snap {
+            lines.insert(
+                0,
+                format!(
+                    "Snap selection bounds minimum to grid {}\nAnchor: {}, {}, {} → {}, {}, {}",
+                    snap.grid,
+                    snap.bounds_minimum[0],
+                    snap.bounds_minimum[1],
+                    snap.bounds_minimum[2],
+                    snap.snapped_bounds_minimum[0],
+                    snap.snapped_bounds_minimum[1],
+                    snap.snapped_bounds_minimum[2],
+                ),
+            );
+            if operations.is_empty() {
+                lines.push("Already on grid; no geometry change".into());
+            }
         }
         TransformPresentation {
             primary: operations
@@ -437,6 +466,49 @@ impl Session {
         })
     }
 
+    pub fn preview_snap_to_grid(
+        &mut self,
+        actor: Actor,
+        ids: &[ObjectId],
+    ) -> Result<GridSnap, String> {
+        if ids.is_empty() {
+            return Err("Select objects to snap to the grid".into());
+        }
+        for &id in ids {
+            if !self.document.contains(id) {
+                return Err(format!("{id} does not exist"));
+            }
+        }
+        let (anchor, _) = self
+            .object_bounds_in(&self.document, ids)
+            .ok_or("Selected objects have no valid bounds")?;
+        let grid = self.spatial.grid_size;
+        let snapped = (anchor / grid).round() * grid;
+        let mut delta = snapped - anchor;
+        for axis in 0..3 {
+            let scale = anchor[axis].abs().max(snapped[axis].abs()).max(grid);
+            if delta[axis].abs() <= GRID_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale {
+                delta[axis] = 0.0;
+            }
+        }
+        let snap = GridSnap {
+            grid,
+            bounds_minimum: anchor.to_array(),
+            snapped_bounds_minimum: snapped.to_array(),
+            delta: delta.to_array(),
+        };
+        let transform = Transform {
+            translation: delta,
+            texture_lock: self.transform_tool.texture_lock,
+            texture_scale_lock: self.transform_tool.texture_scale_lock,
+            ..Transform::default()
+        };
+        self.preview_transform(actor, ids, transform, Some(anchor))?;
+        self.geometry.transform_preview.as_mut().unwrap().grid_snap = Some(snap);
+        self.view_serial += 1;
+        Ok(snap)
+    }
+
     pub fn preview_transform(
         &mut self,
         actor: Actor,
@@ -482,6 +554,7 @@ impl Session {
                 previous.ids == ids
                     && previous.transform == transform
                     && previous.surface_owner == surface_owner
+                    && previous.grid_snap.is_none()
             })
         {
             if actor == Actor::Agent && self.transform_drag.take().is_some() {
@@ -512,6 +585,7 @@ impl Session {
             document,
             ids: ids.to_vec(),
             transform,
+            grid_snap: None,
             generation: self.document_generation,
             revision: self.document.revision(),
             surface_owner,
@@ -910,6 +984,198 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn grid_snap_rigidly_moves_fractional_brush_and_mixed_selections_for_both_actors() {
+        for actor in [Actor::User, Actor::Agent] {
+            for mixed in [false, true] {
+                for texture_lock in [false, true] {
+                    let mut session = Session::new(Err("no assets needed".into()));
+                    let block = session
+                        .create_block(
+                            actor,
+                            DVec3::new(-10.125, 3.0625, -0.375),
+                            DVec3::new(5.375, 18.5625, 15.125),
+                            "brick/test",
+                            false,
+                        )
+                        .unwrap();
+                    let child = session
+                        .create_block(
+                            actor,
+                            DVec3::new(32.0625, 20.125, 8.1875),
+                            DVec3::new(48.5625, 36.625, 24.6875),
+                            "brick/test",
+                            false,
+                        )
+                        .unwrap();
+                    let entity = session
+                        .tie_to_entity(actor, &[child], "func_detail", Default::default())
+                        .unwrap();
+                    let mut ids = vec![block, entity];
+                    if mixed {
+                        ids.push(
+                            session
+                                .create_entity(
+                                    actor,
+                                    "info_target",
+                                    Some(DVec3::new(-32.125, -24.375, -16.0625)),
+                                    Default::default(),
+                                )
+                                .unwrap(),
+                        );
+                    }
+                    session
+                        .set_spatial(
+                            actor,
+                            crate::spatial::Update {
+                                grid_size: Some(0.25),
+                                snap: Some(false),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                    session
+                        .set_transform_tool(
+                            actor,
+                            TransformTool {
+                                local: true,
+                                pivot: Some(DVec3::splat(123.0)),
+                                texture_lock,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                    session.select(&ids, SelectMode::Replace).unwrap();
+                    let before = session.document.vmf().clone();
+                    let history = session.document.undo_labels().count();
+                    let bounds = session.object_bounds_in(&session.document, &ids).unwrap();
+                    let snap = session.preview_snap_to_grid(actor, &ids).unwrap();
+                    let delta = DVec3::from_array(snap.delta);
+                    assert_eq!(snap.grid, 0.25);
+                    assert_eq!(snap.bounds_minimum, bounds.0.to_array());
+                    assert_eq!(
+                        snap.snapped_bounds_minimum,
+                        if mixed {
+                            [-40.25, -32.5, -24.0]
+                        } else {
+                            [-10.25, 3.0, -0.5]
+                        }
+                    );
+                    assert_eq!(session.document.vmf(), &before);
+                    assert_eq!(session.document.undo_labels().count(), history);
+                    let draft = session.transform_preview().unwrap();
+                    assert_eq!(draft.grid_snap, Some(snap));
+                    assert_eq!(draft.transform.translation, delta);
+                    assert_eq!(draft.transform.basis, DMat3::IDENTITY);
+                    assert!(draft.presentation().summary.contains("bounds minimum"));
+                    let after = session.render_document().vmf().clone();
+                    for (old, new) in before.solids().zip(after.solids()) {
+                        for (old, new) in old.sides.iter().zip(&new.sides) {
+                            for (old, new) in old.plane.0.iter().zip(new.plane.0) {
+                                assert!((new - *old).abs_diff_eq(delta, 1e-8));
+                            }
+                            if texture_lock {
+                                assert!(
+                                    (map_core::texel_uv(old, old.plane.0[0])
+                                        - map_core::texel_uv(new, new.plane.0[0]))
+                                    .length()
+                                        < 1e-8
+                                );
+                            } else {
+                                assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
+                            }
+                        }
+                    }
+                    if mixed {
+                        let old = before.entities.last().unwrap().origin().unwrap();
+                        let new = after.entities.last().unwrap().origin().unwrap();
+                        assert!((new - old).abs_diff_eq(delta, 1e-8));
+                    }
+                    session.commit_transform_preview(actor).unwrap();
+                    assert_eq!(session.document.vmf(), &after);
+                    assert_eq!(session.document.undo_labels().count(), history + 1);
+                    let revision = session.document.revision();
+                    let aligned = session.preview_snap_to_grid(actor, &ids).unwrap();
+                    assert_eq!(aligned.delta, [0.0; 3]);
+                    session.commit_transform_preview(actor).unwrap();
+                    assert_eq!(session.document.revision(), revision);
+                    assert_eq!(session.document.undo_labels().count(), history + 1);
+                    session.undo(actor).unwrap();
+                    assert_eq!(session.document.vmf(), &before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grid_snap_suppresses_only_roundoff_scale_offsets() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets needed".into()));
+            let ObjectId::Entity(id) = session
+                .create_entity(
+                    actor,
+                    "info_target",
+                    Some(DVec3::new(8.0 + 1e-10, 8.0, 8.0)),
+                    Default::default(),
+                )
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let ids = [ObjectId::Entity(id)];
+            let real_offset = session.preview_snap_to_grid(actor, &ids).unwrap();
+            assert!(real_offset.delta[0] < -1e-11);
+            session.commit_transform_preview(actor).unwrap();
+            session
+                .set_entity_properties(
+                    actor,
+                    id,
+                    &[("origin".into(), Some("8.000000000000002 8 8".into()))],
+                )
+                .unwrap();
+            let before = session.document.vmf().clone();
+            let revision = session.document.revision();
+            let history = session.document.undo_labels().count();
+            let roundoff = session.preview_snap_to_grid(actor, &ids).unwrap();
+            assert!(roundoff.bounds_minimum[0] > 0.0);
+            assert_eq!(roundoff.delta, [0.0; 3]);
+            session.commit_transform_preview(actor).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.revision(), revision);
+            assert_eq!(session.document.undo_labels().count(), history);
+        }
+    }
+
+    #[test]
+    fn model_reload_cancels_grid_snap_drafts_and_retains_other_transforms() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, id) = fixture();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            session.preview_snap_to_grid(actor, &[id]).unwrap();
+            assert!(session.refresh_model_assets(actor));
+            assert!(session.transform_preview().is_none());
+            assert!(session.commit_transform_preview(actor).is_err());
+            session
+                .preview_transform(
+                    actor,
+                    &[id],
+                    Transform {
+                        translation: DVec3::X * 0.125,
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+            let draft = session.render_document().vmf().clone();
+            assert!(!session.refresh_model_assets(actor));
+            assert!(session.transform_preview().is_some());
+            assert_eq!(session.render_document().vmf(), &draft);
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+        }
     }
 
     #[test]

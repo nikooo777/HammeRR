@@ -31,9 +31,10 @@ pub use partition::{
 };
 mod extrusion;
 pub use extrusion::{
-    ExtrusionFace, ExtrusionPiece, ExtrusionPlan, ExtrusionSpec, ExtrusionSurface,
-    MAX_EXTRUSION_PIECES, MAX_EXTRUSION_PLANES, MAX_EXTRUSION_SOURCE_VERTICES, extrude_partitions,
-    extrude_partitions_with_materials, extrude_partitions_with_surfaces, plan_partition_extrusion,
+    ExtrusionFace, ExtrusionFragment, ExtrusionPiece, ExtrusionPlan, ExtrusionSpec,
+    ExtrusionSurface, MAX_EXTRUSION_FRAGMENTS, MAX_EXTRUSION_PIECES, MAX_EXTRUSION_PLANES,
+    MAX_EXTRUSION_SOURCE_VERTICES, extrude_partitions, extrude_partitions_with_materials,
+    extrude_partitions_with_surfaces, plan_partition_extrusion,
     plan_partition_extrusion_with_materials, plan_partition_extrusion_with_surfaces,
 };
 mod partition_materials;

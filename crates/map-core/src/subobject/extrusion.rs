@@ -4,6 +4,7 @@ use source_formats::vmf::{Properties, Side, UvAxis};
 pub const MAX_EXTRUSION_PIECES: usize = MAX_SOLIDS * 2;
 pub const MAX_EXTRUSION_SOURCE_VERTICES: usize = MAX_SOLIDS * MAX_PARTITION_VERTICES;
 pub const MAX_EXTRUSION_PLANES: usize = MAX_SOLIDS * (MAX_BOUNDARY_SOURCE_CORNERS + 8);
+pub const MAX_EXTRUSION_FRAGMENTS: usize = crate::carve::MAX_FRAGMENTS;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtrusionSpec {
@@ -14,6 +15,7 @@ pub struct ExtrusionSpec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtrusionSurface {
+    Source,
     Top,
     Base,
     Boundary,
@@ -24,6 +26,7 @@ pub enum ExtrusionSurface {
 pub struct ExtrusionFace {
     pub side: u32,
     pub source_side: u32,
+    pub partition: Option<u32>,
     pub surface: ExtrusionSurface,
 }
 
@@ -39,6 +42,15 @@ pub struct ExtrusionPiece {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtrusionPlan {
     pub pieces: Vec<ExtrusionPiece>,
+    pub fragments: Vec<ExtrusionFragment>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtrusionFragment {
+    pub source: u32,
+    pub owner: ObjectId,
+    pub solid: Solid,
+    pub faces: Vec<ExtrusionFace>,
 }
 
 fn incidence(vertex: &PartitionVertex) -> BTreeSet<u32> {
@@ -89,9 +101,9 @@ pub fn plan_partition_extrusion_with_surfaces(
     if partitions.is_empty() || partitions.len() > MAX_SOLIDS {
         return Err(invalid("Extrude flat partitions in 1–16 source brushes"));
     }
-    if !spec.height.is_finite() || !(MIN_SPLIT_RISE..=MAX_SPLIT_RISE).contains(&spec.height) {
+    if !spec.height.is_finite() || !(MIN_SPLIT_RISE..=MAX_SPLIT_RISE).contains(&spec.height.abs()) {
         return Err(invalid(
-            "Extrusion height must be finite and between 0.125 and 4096 units",
+            "Extrusion depth must have magnitude 0.125–4096 units; positive adds outward, negative cuts inward",
         ));
     }
     if spec
@@ -196,11 +208,13 @@ pub fn plan_partition_extrusion_with_surfaces(
             ExtrusionFace {
                 side: 1,
                 source_side: original.id,
+                partition: Some(partition_id),
                 surface: ExtrusionSurface::Top,
             },
             ExtrusionFace {
                 side: 2,
                 source_side: original.id,
+                partition: Some(partition_id),
                 surface: ExtrusionSurface::Base,
             },
         ];
@@ -236,6 +250,7 @@ pub fn plan_partition_extrusion_with_surfaces(
             faces.push(ExtrusionFace {
                 side: id,
                 source_side: template.id,
+                partition: Some(partition_id),
                 surface: if neighbor.is_some() {
                     ExtrusionSurface::Boundary
                 } else {
@@ -276,7 +291,143 @@ pub fn plan_partition_extrusion_with_surfaces(
             faces,
         });
     }
-    Ok(ExtrusionPlan { pieces })
+    let mut plan = ExtrusionPlan {
+        pieces,
+        fragments: Vec::new(),
+    };
+    if spec.height < 0.0 {
+        plan_inward(document, &mut plan)?;
+    }
+    Ok(plan)
+}
+
+fn plan_inward(document: &Document, plan: &mut ExtrusionPlan) -> Result<(), EditError> {
+    crate::partition_metadata::Metadata::parse(document.vmf()).map_err(EditError::Invalid)?;
+    let used = document.vmf().side_ids().collect::<BTreeSet<_>>();
+    let mut temporary = u32::MAX;
+    let mut cut_faces = BTreeMap::new();
+    for piece in &mut plan.pieces {
+        piece.solid.id = 0;
+        // Bound each floor to its footprint before splitting at the depth plane.
+        piece.solid.sides.rotate_left(2);
+        piece.faces.rotate_left(2);
+        for (side, face) in piece.solid.sides.iter_mut().zip(&mut piece.faces) {
+            while used.contains(&temporary) {
+                temporary = temporary
+                    .checked_sub(1)
+                    .ok_or_else(|| invalid("No temporary side IDs remain for inward extrusion"))?;
+            }
+            side.id = temporary;
+            face.side = temporary;
+            cut_faces.insert(temporary, face.clone());
+            temporary = temporary
+                .checked_sub(1)
+                .ok_or_else(|| invalid("No temporary side IDs remain for inward extrusion"))?;
+        }
+    }
+    let sources = plan
+        .pieces
+        .iter()
+        .map(|piece| piece.source.solid)
+        .collect::<BTreeSet<_>>();
+    for id in sources {
+        let (owner, source) = solid(document, id)?;
+        let mut fragments = vec![source.clone()];
+        for piece in plan.pieces.iter().filter(|piece| piece.source.solid == id) {
+            let mut remaining = Vec::new();
+            for fragment in fragments {
+                if crate::carve::intersects(&fragment, &piece.solid)? {
+                    remaining.extend(crate::carve::subtract(&fragment, &piece.solid)?);
+                } else {
+                    remaining.push(fragment);
+                }
+                if plan.fragments.len() + remaining.len() > MAX_EXTRUSION_FRAGMENTS {
+                    return Err(invalid("Inward extrusion exceeds 256 convex fragments"));
+                }
+            }
+            fragments = remaining;
+        }
+        if fragments.is_empty() {
+            return Err(invalid(format!(
+                "Brush {id}: inward extrusion would remove the entire source; select fewer pieces or reduce the depth"
+            )));
+        }
+        for fragment in fragments {
+            topology(&fragment)?;
+            let faces = fragment
+                .sides
+                .iter()
+                .map(|side| {
+                    cut_faces.get(&side.id).cloned().unwrap_or(ExtrusionFace {
+                        side: side.id,
+                        source_side: side.id,
+                        partition: None,
+                        surface: ExtrusionSurface::Source,
+                    })
+                })
+                .collect();
+            plan.fragments.push(ExtrusionFragment {
+                source: id,
+                owner,
+                solid: fragment,
+                faces,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn apply_inward(tx: &mut Transaction, plan: &mut ExtrusionPlan) -> Result<(), EditError> {
+    let mut retained_solids = BTreeSet::new();
+    let mut retained_sides = BTreeSet::new();
+    for fragment in &mut plan.fragments {
+        if !retained_solids.insert(fragment.source) {
+            fragment.solid.id = tx.new_object_id()?;
+        }
+        for (side, face) in fragment.solid.sides.iter_mut().zip(&mut fragment.faces) {
+            if face.partition.is_some() || !retained_sides.insert(side.id) {
+                side.id = tx.new_side_id()?;
+            }
+            face.side = side.id;
+        }
+    }
+    let mut metadata =
+        crate::partition_metadata::Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
+    let count = metadata.entries.len();
+    metadata
+        .entries
+        .retain(|(solid, _), _| !retained_solids.contains(solid));
+    if count != metadata.entries.len() {
+        metadata.write(tx)?;
+    }
+    for id in retained_solids {
+        let fragments = plan
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.source == id)
+            .collect::<Vec<_>>();
+        match fragments[0].owner {
+            ObjectId::Solid(_) => {
+                *tx.solid_mut(id)? = fragments[0].solid.clone();
+                for fragment in &fragments[1..] {
+                    tx.add_solid(fragment.solid.clone())?;
+                }
+            }
+            ObjectId::Entity(owner) => {
+                let entity = tx.entity_mut(owner)?;
+                let index = entity
+                    .solids
+                    .iter()
+                    .position(|solid| solid.id == id)
+                    .unwrap();
+                entity.solids.splice(
+                    index..=index,
+                    fragments.iter().map(|fragment| fragment.solid.clone()),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn extrude_partitions(
@@ -314,6 +465,10 @@ pub fn extrude_partitions_with_surfaces(
         materials,
         textures,
     )?;
+    if spec.height < 0.0 {
+        apply_inward(tx, &mut plan)?;
+        return Ok(plan);
+    }
     for piece in &mut plan.pieces {
         piece.solid.id = tx.new_object_id()?;
         for (side, face) in piece.solid.sides.iter_mut().zip(&mut piece.faces) {
@@ -335,11 +490,14 @@ pub fn extrude_partitions_with_surfaces(
 }
 
 #[cfg(test)]
+mod inward_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::edit;
 
-    fn fixture(
+    pub(super) fn fixture(
         owned: bool,
         oblique: bool,
         reflection: bool,
@@ -583,7 +741,7 @@ mod tests {
         for (height, wall, selection) in [
             (f64::NAN, None, vec![(id, 0)]),
             (0.0, None, vec![(id, 0)]),
-            (-1.0, None, vec![(id, 0)]),
+            (-0.01, None, vec![(id, 0)]),
             (0.01, None, vec![(id, 0)]),
             (4096.01, None, vec![(id, 0)]),
             (16.0, Some(" ".to_string()), vec![(id, 0)]),

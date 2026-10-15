@@ -61,6 +61,7 @@ export component ComponentsWindow inherits Window {
     in property <bool> has-extrusion-preview;
     in-out property <int> partition-mode;
     in-out property <string> extrusion-height: "32";
+    in-out property <int> extrusion-direction;
     in property <float> extrusion-height-value: 32;
     in-out property <bool> extrusion-texture-lock;
     in-out property <bool> wall-override;
@@ -403,10 +404,12 @@ export component ComponentsWindow inherits Window {
                             if root.partition-mode == 0 && root.can-raise-partition && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                             if root.partition-mode == 1: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: "Extrusion height · world units"; color: #aeb9c8; }
-                                LineEdit { text <=> root.extrusion-height; input-type: decimal; accessible-label: "Extrusion height"; edited => { root.edited(); } }
+                                ComboBox { model: ["Outward · add brushes", "Inward · cut source"]; current-index <=> root.extrusion-direction; accessible-label: "Extrusion direction"; selected => { root.edited(); } }
+                                Text { text: "Extrusion depth · world units"; color: #aeb9c8; }
+                                LineEdit { text <=> root.extrusion-height; input-type: decimal; accessible-label: "Extrusion depth"; edited => { root.edited(); } }
                                 Slider { minimum: 0.125; maximum: max(128, root.extrusion-height-value); value: root.extrusion-height-value; released(value) => { root.choose-extrusion-height(value); } }
-                                CheckBox { text: "Keep top texture at corners"; checked <=> root.extrusion-texture-lock; toggled => { root.edited(); } }
+                                if root.extrusion-direction == 1: Text { text: "Cuts into the source opposite its face normal, continuing through thinner areas. Apply replaces the source with convex fragments and consumes its saved pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                CheckBox { text: root.extrusion-direction == 1 ? "Keep floor texture at corners" : "Keep top texture at corners"; checked <=> root.extrusion-texture-lock; toggled => { root.edited(); } }
                                 CheckBox { text: "Choose wall material"; checked <=> root.wall-override; toggled => { root.edited(); } }
                                 if root.wall-override: HorizontalLayout {
                                     spacing: 6px;

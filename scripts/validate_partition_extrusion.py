@@ -233,7 +233,7 @@ def validate(client, output, render=False, adjusted=False):
                     check(before_view != after_view, f"{label}: extrusion is visible")
                 for update in [
                     {"height": 0},
-                    {"height": -1},
+                    {"height": -0.01},
                     {"height": 4097},
                     {"wall_material": " "},
                 ]:
@@ -498,6 +498,316 @@ def render_independent_heights(client, output, adjusted=False):
     client.call("cancel_component_edit", {"token": draft["token"]})
 
 
+def validate_inward(client, output, render=False):
+    checks = []
+
+    def check(condition, label):
+        assert condition, label
+        checks.append(label)
+
+    def difference(a, b):
+        return [x - y for x, y in zip(a, b)]
+
+    def determinant(a, b, c):
+        return (
+            a[0] * (b[1] * c[2] - b[2] * c[1])
+            - a[1] * (b[0] * c[2] - b[2] * c[0])
+            + a[2] * (b[0] * c[1] - b[1] * c[0])
+        )
+
+    def volume(shape):
+        points = [vertex["position"] for vertex in shape["vertices"]]
+        center = [
+            sum(point[axis] for point in points) / len(points) for axis in range(3)
+        ]
+        total = 0
+        for face in shape["faces"]:
+            ring = [difference(points[index], center) for index in face["vertices"]]
+            total += sum(
+                abs(determinant(ring[0], ring[index], ring[index + 1])) / 6
+                for index in range(1, len(ring) - 1)
+            )
+        return total
+
+    def inspect():
+        return client.call("get_brush_components")
+
+    def topology_for(ids):
+        shapes = client.call("get_brush_components", {"solids": ids})["brushes"]
+        for shape in shapes:
+            for kind in ["vertices", "edges", "faces"]:
+                for component in shape[kind]:
+                    component.pop("selected", None)
+        return shapes
+
+    def resume(solid, side, through):
+        result = client.call(
+            "resume_component_partitions",
+            {
+                "sources": [{"solid": solid, "side": side}],
+                "snapshot": client.call("get_saved_component_partitions")["snapshot"],
+            },
+        )["preview"]
+        if through:
+            result = client.call(
+                "select_component_partitions",
+                {
+                    "token": result["token"],
+                    "partitions": [{"solid": solid, "partition": 0}],
+                },
+            )["preview"]
+        return result
+
+    for owned in [False, True]:
+        for through in [False, True]:
+            for adjusted in [False, True]:
+                label = f"inward owned={owned} through={through} adjusted={adjusted}"
+                client.call("new_map", {"discard_changes": True})
+                object_id = client.call(
+                    "create_block",
+                    {
+                        "mins": [0, 0, 0],
+                        "maxs": [64, 64, 64],
+                        "material": "dev/dev_measuregeneric01",
+                    },
+                )["id"]
+                solid = int(object_id.split(":")[1])
+                if owned:
+                    object_id = client.call(
+                        "tie_to_entity",
+                        {"ids": [object_id], "classname": "func_detail"},
+                    )["id"]
+                brush = detail(client, [object_id])[0]
+                if owned:
+                    brush = brush["brushes"][0]
+                side = max(brush["faces"], key=lambda face: face["normal"][2])["side"]
+                selected = client.call(
+                    "select_brush_components",
+                    {
+                        "components": [{"solid": solid, "sides": [side]}],
+                        "snapshot": inspect()["snapshot"],
+                    },
+                )
+                draft = client.call(
+                    "preview_component_partition",
+                    {
+                        "pairs": [
+                            {
+                                "solid": solid,
+                                "edges": selected["crease_choices"][0]["pairs"][0][
+                                    "edges"
+                                ],
+                            }
+                        ],
+                        "snapshot": inspect()["snapshot"],
+                    },
+                )["preview"]
+                if adjusted:
+                    draft = client.call(
+                        "update_component_partition_cut",
+                        {"token": draft["token"], "edge_parameters": [0.2, 0.8]},
+                    )["preview"]
+                for piece, material in enumerate(
+                    ["brick/planned_red", "wood/planned_blue"]
+                ):
+                    draft = client.call(
+                        "update_component_partition_material",
+                        {
+                            "token": draft["token"],
+                            "partitions": [{"solid": solid, "partition": piece}],
+                            "material": material,
+                        },
+                    )["preview"]
+                client.call("store_component_partition", {"token": draft["token"]})
+                source = detail(client, [object_id])[0]
+                history = client.call("get_map_info")["undo"]
+
+                flat = resume(solid, side, through)
+                render_args = {
+                    "surface": "textured",
+                    "camera": {
+                        "projection": "perspective",
+                        "position": [170, -180, 170],
+                        "look_at": [32, 32, 32],
+                    },
+                }
+                baseline = (
+                    client.render(
+                        output / f"inward-before-{owned}-{through}-{adjusted}.png",
+                        **render_args,
+                    )
+                    if render
+                    else None
+                )
+                arguments = {
+                    "height": -128 if through else -16,
+                    "texture_lock": True,
+                    "wall_material": "dev/dev_measurewall01a",
+                }
+                draft = client.call(
+                    "preview_partition_extrusion", {"token": flat["token"], **arguments}
+                )["preview"]
+                extrusion = draft["extrusion"]
+                fragments = extrusion["fragments"]
+                ids = [fragment["solid"] for fragment in fragments]
+                topology = topology_for(ids)
+                check(
+                    abs(
+                        sum(volume(shape) for shape in topology)
+                        - (131072 if through else 196608)
+                    )
+                    < 0.01,
+                    f"{label}: exact bounded subtraction volume",
+                )
+                check(
+                    extrusion["direction"] == "inward"
+                    and all(piece["solid"] is None for piece in extrusion["pieces"]),
+                    f"{label}: virtual cutters distinguished from real fragments",
+                )
+                check(
+                    solid in ids
+                    and all(
+                        fragment["owner"] == (object_id if owned else "world")
+                        for fragment in fragments
+                    ),
+                    f"{label}: retained source identity and owner",
+                )
+                check(
+                    detail(client, [object_id])[0] == source
+                    and client.call("get_map_info")["undo"] == history,
+                    f"{label}: preview preserves authored source and history",
+                )
+                floors = [
+                    face
+                    for fragment in fragments
+                    for face in fragment["faces"]
+                    if face["surface"] == "top"
+                ]
+                check(
+                    not floors
+                    if through
+                    else {face["material"] for face in floors}
+                    == {"brick/planned_red", "wood/planned_blue"},
+                    f"{label}: through opening or independently planned floors",
+                )
+                if not through:
+                    part = draft["partition"]["partitions"][0]
+                    ring = [
+                        part["vertices"][index]["position"]
+                        for index in part["loops"][0]["vertices"]
+                    ]
+                    center = [
+                        sum(point[axis] for point in ring) / len(ring)
+                        for axis in range(3)
+                    ]
+                    center[2] -= 16
+                    client.call(
+                        "set_camera",
+                        {"projection": "top", "center": center, "ortho_height": 128},
+                    )
+                    camera = client.call("get_map_info")["camera"]
+                    picks = client.call(
+                        "pick_component_partitions",
+                        {"token": draft["token"], **screen(camera, center)},
+                    )["candidates"]
+                    check(
+                        any(
+                            hit["partition"] == {"solid": solid, "partition": 0}
+                            and abs(hit["position"][2] - 48) < 0.01
+                            for hit in picks
+                        ),
+                        f"{label}: visible cavity floor picks original piece",
+                    )
+                pixels = (
+                    client.render(
+                        output / f"inward-preview-{owned}-{through}-{adjusted}.png",
+                        **render_args,
+                    )
+                    if render
+                    else None
+                )
+                if render:
+                    check(
+                        pixels != baseline, f"{label}: renderer displays removed volume"
+                    )
+                for height in [0, -0.01, -4097]:
+                    client.call(
+                        "preview_partition_extrusion",
+                        {"token": draft["token"], **arguments, "height": height},
+                        error=True,
+                    )
+                    check(
+                        inspect()["preview"] == draft,
+                        f"{label}: invalid depth preserves complete draft",
+                    )
+                client.call(
+                    "save_map", {"path": str(output / "inward-pending.vmf")}, error=True
+                )
+                client.call("cancel_component_edit", {"token": draft["token"]})
+                check(
+                    detail(client, [object_id])[0] == source
+                    and client.call("get_saved_component_partitions")["entries"][0][
+                        "valid"
+                    ],
+                    f"{label}: cancellation preserves source and saved plan",
+                )
+                flat = resume(solid, side, through)
+                if render:
+                    check(
+                        client.render(
+                            output / f"inward-cancel-{owned}-{through}-{adjusted}.png",
+                            **render_args,
+                        )
+                        == baseline,
+                        f"{label}: cancellation restores exact pixels",
+                    )
+                repeated = client.call(
+                    "preview_partition_extrusion", {"token": flat["token"], **arguments}
+                )["preview"]
+                check(
+                    repeated["extrusion"] == extrusion,
+                    f"{label}: repeated draft retains exact IDs and inheritance",
+                )
+                client.call("commit_component_edit", {"token": repeated["token"]})
+                check(
+                    topology_for(ids) == topology,
+                    f"{label}: Apply matches reviewed geometry",
+                )
+                check(
+                    client.call("get_saved_component_partitions")["entries"] == [],
+                    f"{label}: Apply consumes changed-source saved plans",
+                )
+                selected = client.call("get_selection")["face_selection"]["faces"]
+                check(
+                    {face["solid"] for face in selected} == set(ids),
+                    f"{label}: fragment faces selected",
+                )
+                check(
+                    client.call("get_map_info")["undo"][1:] == history[:9],
+                    f"{label}: one undo step",
+                )
+                path = output / f"inward-{owned}-{through}-{adjusted}.vmf"
+                client.call("save_map", {"path": str(path)})
+                client.call("undo")
+                check(
+                    detail(client, [object_id])[0] == source
+                    and client.call("get_saved_component_partitions")["entries"][0][
+                        "valid"
+                    ],
+                    f"{label}: Undo restores exact source and saved plan",
+                )
+                client.call("redo")
+                check(
+                    topology_for(ids) == topology, f"{label}: Redo restores exact cut"
+                )
+                client.call("open_map", {"path": str(path), "discard_changes": True})
+                check(
+                    topology_for(ids) == topology,
+                    f"{label}: valid exported fragments reopen",
+                )
+    return checks
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
@@ -511,6 +821,7 @@ def main():
     client = Client(None, args.binary, args.output)
     try:
         checks = validate(client, args.output, args.render, args.adjusted)
+        checks.extend(validate_inward(client, args.output, args.render))
         if args.render:
             render_independent_heights(client, args.output, args.adjusted)
         (args.output / "results.json").write_text(

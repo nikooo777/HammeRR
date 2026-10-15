@@ -240,7 +240,9 @@ fn present(
             }
         }
     }
-    window.set_message(if asset["blank"]==true {"Blank bodygroups show an editor helper. Use model applies the model, skin and bodygroups together.".into()}else if asset["pose"]=="reference" {"Reference pose; animation sequences are not played. Use model applies model, skin and bodygroups together.".into()}else{"Preview only. Use model applies model, skin and bodygroups together.".into()});
+    window.set_message(if let Some(error) = asset["material_error"].as_str() {
+        format!("Model materials unavailable: {error}").into()
+    } else if asset["blank"]==true {"Blank bodygroups show an editor helper. Use model applies the model, skin and bodygroups together.".into()}else if asset["pose"]=="reference" {"Reference pose; animation sequences are not played. Use model applies model, skin and bodygroups together.".into()}else{"Preview only. Use model applies model, skin and bodygroups together.".into()});
 }
 
 fn preview(

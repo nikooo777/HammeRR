@@ -13,3 +13,6 @@ pollster = "1.0.1"
 png = "0.18.1"
 source-formats.workspace = true
 wgpu = "30"
+
+[dev-dependencies]
+tempfile = "3.27.0"

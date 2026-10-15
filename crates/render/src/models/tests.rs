@@ -1,14 +1,14 @@
 use super::*;
+use map_core::Document;
 use source_formats::{
     mdl::ModelHeader,
     model::{Part, Vertex},
 };
 
 fn asset() -> Arc<Asset> {
-    Arc::new(Asset {
-        path: "models/test.mdl".into(),
-        materials: vec!["dev/test".into()],
-        model: Model {
+    Arc::new(Asset::new(
+        "models/test.mdl".into(),
+        Model {
             reference_bones: 0,
             body_groups: Vec::new(),
             attachments: Vec::new(),
@@ -45,7 +45,245 @@ fn asset() -> Arc<Asset> {
             bounds: [[-32.0, -16.0, 0.0], [32.0, 16.0, 0.0]],
             body_parts: 1,
         },
-    })
+        Ok(vec!["dev/test".into()]),
+    ))
+}
+
+fn cached_asset(asset: Arc<Asset>) -> Library {
+    let bytes = asset.memory_bytes();
+    Library {
+        entries: BTreeMap::from([(
+            asset.path.clone(),
+            Entry {
+                result: Ok(asset),
+                used: 0,
+                bytes,
+            },
+        )]),
+        bytes,
+        ..Library::default()
+    }
+}
+
+fn material_game(directory: &std::path::Path) -> GameFs {
+    GameFs {
+        game_dir: directory.into(),
+        base_dir: directory.into(),
+        mounts: vec![source_formats::gamefs::MountedPath {
+            ids: vec!["game".into()],
+            mount: source_formats::gamefs::Mount::Directory(directory.into()),
+        }],
+    }
+}
+
+#[test]
+fn material_reload_reselects_preferred_missing_and_deleted_paths_without_copying_geometry() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = material_game(directory.path());
+    let materials = directory.path().join("materials");
+    std::fs::create_dir_all(materials.join("dev")).unwrap();
+    std::fs::create_dir_all(materials.join("preferred")).unwrap();
+    std::fs::write(materials.join("dev/test.vmt"), "VertexLitGeneric {}").unwrap();
+    let mut initial = asset();
+    Arc::get_mut(&mut initial)
+        .unwrap()
+        .model
+        .material_directories = vec!["preferred".into(), "dev".into()];
+    let mut library = cached_asset(initial.clone());
+    let mut entity = Entity::new(2, "prop_dynamic");
+    entity.properties.set("origin", "0 0 0");
+    let original = Instance::new(&entity, initial.clone()).unwrap();
+    let ray = Ray {
+        origin: DVec3::Z * 64.0,
+        direction: DVec3::NEG_Z,
+    };
+    for (file, create, expected) in [
+        ("preferred/test.vmt", true, "preferred/test"),
+        ("preferred/test.vmt", false, "dev/test"),
+        ("dev/test.vmt", false, "test"),
+        ("dev/test.vmt", true, "dev/test"),
+    ] {
+        if create {
+            std::fs::write(materials.join(file), "VertexLitGeneric {}").unwrap();
+        } else {
+            std::fs::remove_file(materials.join(file)).unwrap();
+        }
+        let report = library.reload_materials(&fs);
+        assert_eq!((report.refreshed, report.changed), (1, 1));
+        assert!(report.failures.is_empty());
+        assert_eq!(report.materials, [expected]);
+        let current = library.get(&fs, &initial.path).unwrap();
+        assert_eq!(&*current.materials().unwrap(), &[expected]);
+        assert!(Arc::ptr_eq(&initial, &current));
+        assert_eq!(library.bytes, current.memory_bytes());
+        assert_eq!(
+            current.model.vertices.as_ptr(),
+            initial.model.vertices.as_ptr()
+        );
+        assert_eq!(
+            current.model.parts[0].indices.as_ptr(),
+            initial.model.parts[0].indices.as_ptr()
+        );
+        let instance = Instance::new(&entity, current).unwrap();
+        assert_eq!(instance.bounds(), original.bounds());
+        assert_eq!(instance.pick(&ray), original.pick(&ray));
+        assert!(library.bytes <= MAX_CACHE_BYTES);
+    }
+    let current = library.get(&fs, &initial.path).unwrap();
+    assert_eq!(library.reload_materials(&fs).changed, 0);
+    assert!(Arc::ptr_eq(
+        &current,
+        &library.get(&fs, &initial.path).unwrap()
+    ));
+    drop(current);
+    library.entries.get_mut(&initial.path).unwrap().used = 0;
+    for index in 1..MAX_CACHE_ENTRIES {
+        library.entries.insert(
+            format!("models/unsupported{index}.mdl"),
+            Entry {
+                result: Err("Unsupported cached geometry".into()),
+                used: index as u64,
+                bytes: 0,
+            },
+        );
+    }
+    assert!(library.get(&fs, "models/new_missing.mdl").is_err());
+    assert!(Arc::ptr_eq(
+        &initial,
+        &library.get(&fs, &initial.path).unwrap()
+    ));
+    assert_eq!(
+        library.get(&fs, "models/unsupported2.mdl").unwrap_err(),
+        "Unsupported cached geometry"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_material_resolution_discards_old_bindings_and_repairs_with_the_same_geometry() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = material_game(directory.path());
+    let materials = directory.path().join("materials");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::os::unix::fs::symlink("dev", materials.join("dev")).unwrap();
+    let initial = asset();
+    let mut library = cached_asset(initial.clone());
+    let report = library.reload_materials(&fs);
+    assert_eq!((report.refreshed, report.changed), (1, 1));
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.failures[0].0, initial.path);
+    assert!(report.failures[0].1.contains("dev/test"));
+    let current = library.get(&fs, &initial.path).unwrap();
+    assert!(current.materials().is_err());
+    assert!(Arc::ptr_eq(&initial, &current));
+    let mut entity = Entity::new(2, "prop_dynamic");
+    entity.properties.set("origin", "0 0 0");
+    let instance = Instance::new(&entity, current).unwrap();
+    let mut vmf = Document::empty().vmf().clone();
+    vmf.entities.push(entity.clone());
+    let mut display = crate::MaterialLibrary::default();
+    let scene = crate::SceneMesh::build_with_models(
+        &vmf,
+        &fs,
+        &mut display,
+        &Default::default(),
+        &Default::default(),
+        &[],
+        &[instance],
+    );
+    assert_eq!(scene.stats.model_entities, 1);
+    assert_eq!(scene.stats.missing_materials, 1);
+    assert_eq!(scene.indices, initial.model.parts[0].indices);
+    assert!(display.get(scene.batches[0].material).missing);
+    assert_eq!(display.reload(&fs).failed, 0);
+    std::fs::remove_file(materials.join("dev")).unwrap();
+    std::fs::create_dir(materials.join("dev")).unwrap();
+    std::fs::write(materials.join("dev/test.vmt"), "VertexLitGeneric {}").unwrap();
+    let report = library.reload_materials(&fs);
+    assert!(report.failures.is_empty());
+    assert_eq!(report.changed, 1);
+    let repaired = library.get(&fs, &initial.path).unwrap();
+    assert_eq!(&*repaired.materials().unwrap(), &["dev/test"]);
+    assert!(Arc::ptr_eq(&initial, &repaired));
+    assert_eq!(
+        Instance::new(&entity, repaired).unwrap().bounds(),
+        Instance::new(&entity, initial).unwrap().bounds()
+    );
+}
+
+#[test]
+fn retained_assets_share_reloaded_bindings_and_budget_failures_clear_them_in_place() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = material_game(directory.path());
+    let materials = directory.path().join("materials");
+    let preferred = "a_longer_preferred_material_directory";
+    std::fs::create_dir_all(materials.join("dev")).unwrap();
+    std::fs::create_dir_all(materials.join(preferred)).unwrap();
+    std::fs::write(materials.join("dev/test.vmt"), "VertexLitGeneric {}").unwrap();
+    let mut original = Arc::try_unwrap(asset()).unwrap();
+    original.model.materials = vec!["test".into(); 4096];
+    original.model.material_directories = vec![preferred.into(), "dev".into()];
+    let initial = Arc::new(Asset::new(
+        original.path,
+        original.model,
+        Ok(vec!["dev/test".into(); 4096]),
+    ));
+    let mut library = cached_asset(initial.clone());
+    let mut retained = vec![initial.clone()];
+    for _ in 0..4 {
+        std::fs::write(
+            materials.join(preferred).join("test.vmt"),
+            "VertexLitGeneric {}",
+        )
+        .unwrap();
+        library.reload_materials(&fs);
+        let current = library.get(&fs, &initial.path).unwrap();
+        retained.push(current);
+        assert!(retained.iter().all(|asset| Arc::ptr_eq(asset, &initial)));
+        assert!(
+            retained
+                .iter()
+                .all(|asset| asset.materials().unwrap()[0] == format!("{preferred}/test"))
+        );
+        assert_eq!(library.bytes, initial.memory_bytes());
+        std::fs::remove_file(materials.join(preferred).join("test.vmt")).unwrap();
+        library.reload_materials(&fs);
+        assert_eq!(library.bytes, initial.memory_bytes());
+    }
+    library.bytes = MAX_CACHE_BYTES;
+    std::fs::write(
+        materials.join(preferred).join("test.vmt"),
+        "VertexLitGeneric {}",
+    )
+    .unwrap();
+    let report = library.reload_materials(&fs);
+    assert!(report.failures[0].1.contains("cache budget"));
+    assert!(retained.iter().all(|asset| asset.materials().is_err()));
+    assert!(library.bytes <= MAX_CACHE_BYTES);
+    assert_eq!(initial.model.vertices.len(), 4);
+}
+
+#[test]
+fn poisoned_material_bindings_report_failure_without_exposing_previous_paths() {
+    let initial = asset();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _bindings = initial.materials.write().unwrap();
+        panic!("interrupted update");
+    }));
+    assert_eq!(initial.materials().unwrap_err(), MATERIAL_BINDINGS_ERROR);
+    let directory = tempfile::tempdir().unwrap();
+    let mut library = cached_asset(initial.clone());
+    let report = library.reload_materials(&material_game(directory.path()));
+    assert_eq!(
+        report.failures,
+        [(initial.path.clone(), MATERIAL_BINDINGS_ERROR.into())]
+    );
+    assert!(Arc::ptr_eq(
+        &initial,
+        &library
+            .get(&material_game(directory.path()), &initial.path)
+            .unwrap()
+    ));
 }
 
 #[test]
@@ -253,6 +491,7 @@ fn model_scene_uses_material_batches_normals_and_wire_geometry_without_a_helper_
 fn blank_bodygroups_keep_helpers_and_visible_variants_use_only_their_meshes() {
     use source_formats::model::{BodyGroup, BodyVariant};
     let mut asset = Arc::try_unwrap(asset()).unwrap();
+    let bounds = asset.model.bounds;
     asset.model.body_groups = vec![BodyGroup {
         name: "Appearance".into(),
         base: 1,
@@ -265,7 +504,7 @@ fn blank_bodygroups_keep_helpers_and_visible_variants_use_only_their_meshes() {
             BodyVariant {
                 name: "quad".into(),
                 parts: 0..1,
-                bounds: Some(asset.model.bounds),
+                bounds: Some(bounds),
             },
         ],
     }];

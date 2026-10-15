@@ -34,7 +34,7 @@ Refresh edited VMT/VTF files without reopening the map.
 
 1. Save the changed material or texture files in content already mounted by the editor.
 2. Click **Browse materials…** to open the material picker, then **Reload material assets**.
-3. Review the reload summary and any unavailable-preview details. Thumbnails, viewport textures, model textures and cached sky faces refresh, and the catalog includes added or removed material names.
+3. Review the reload summary and any unavailable-preview details. Thumbnails, viewport textures, model textures and cached sky faces refresh, and the catalog includes added or removed material names. Cached models repeat their material search, so newly added preferred VMTs, missing-material repairs and deleted paths update in the viewport and isolated model browser too.
 4. Repair any reported asset files and click **Reload material assets** again. Use **Check map… → Run checks** or **Compile** to check their effect on the map.
 
 ![Material picker with reload controls and asset diagnostics](images/material-reload.png)
@@ -48,9 +48,15 @@ Reload leaves map data, selection, camera, Undo history and draft geometry
 unchanged. View-dependent review guards can require another review before Apply.
 It refreshes cached materials and the catalog through existing mounts; it does
 not watch files, remount content or archives, reload model geometry or particles,
-or refresh a running game's asset cache. Model textures refresh at their cached
-resolved material paths. If adding a previously missing material changes which
-model material path should be chosen, use **Reload models** too.
+or refresh a running game's asset cache. Model material lookup uses the cached
+MDL texture names and directory order, then its existing bare-name candidate.
+Changed MDL names or directories still require **Reload models**. Geometry,
+bounds, picking and attachment data stay decoded and shared during material
+reload. A material-search read or work-limit failure exposes the model path and
+error, replaces its old bindings with missing textures, and preserves the mesh.
+The report includes refreshed and changed model-material set counts. Cached
+material IDs remain stable, so unavailable historical paths can remain listed
+even after a model switches to a different existing candidate.
 
 ## Edit face textures
 

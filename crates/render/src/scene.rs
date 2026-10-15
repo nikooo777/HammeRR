@@ -589,9 +589,19 @@ impl Builder<'_> {
                 smoothing: 0,
             });
         }
+        let materials = instance.asset.materials();
         for part in model.parts_for_body(instance.body) {
             let material_index = model.skins[instance.skin][part.material];
-            let material = self.material(&instance.asset.materials[material_index]);
+            let material = match &materials {
+                Ok(materials) => self.material(&materials[material_index]),
+                Err(_) => {
+                    let id = self.library.unavailable_model();
+                    if self.indices.len() <= id {
+                        self.indices.resize_with(id + 1, Vec::new);
+                    }
+                    id
+                }
+            };
             self.indices[material].extend(part.indices.iter().map(|&index| first + index));
             for triangle in part.indices.as_chunks::<3>().0 {
                 for (a, b) in [(0, 1), (1, 2), (2, 0)] {

@@ -290,3 +290,68 @@ fn typed_scalar_and_array_payloads_are_consumed_without_string_scanning() {
     corrupt.splice(insertion..insertion, payload);
     assert!(parse(&corrupt).is_err());
 }
+
+#[test]
+fn repeated_function_references_use_indexed_metadata_at_the_value_budget() {
+    let mut dictionary = vec![
+        "DmElement".to_owned(),
+        "DmeParticleSystemDefinition".into(),
+        "DmeParticleOperator".into(),
+        "particleSystemDefinitions".into(),
+        "emitters".into(),
+    ];
+    dictionary.extend((0..511).map(|index| format!("padding{index:03}")));
+    dictionary.push("functionName".into());
+    let mut data = b"<!-- dmx encoding binary 2 format pcf 1 -->\n\0".to_vec();
+    data.extend((dictionary.len() as i16).to_le_bytes());
+    for value in &dictionary {
+        string(&mut data, value);
+    }
+    data.extend(3i32.to_le_bytes());
+    for (kind, name) in [(0i16, "root"), (1, "repeated"), (2, "x")] {
+        data.extend(kind.to_le_bytes());
+        string(&mut data, name);
+        data.extend([0; 16]);
+    }
+    data.extend(1i32.to_le_bytes());
+    data.extend(3i16.to_le_bytes());
+    data.push(15);
+    data.extend(1i32.to_le_bytes());
+    data.extend(1i32.to_le_bytes());
+    data.extend(1i32.to_le_bytes());
+    data.extend(4i16.to_le_bytes());
+    data.push(15);
+    let references = MAX_VALUES - 513;
+    data.extend((references as i32).to_le_bytes());
+    for _ in 0..references {
+        data.extend(2i32.to_le_bytes());
+    }
+    data.extend(512i32.to_le_bytes());
+    for index in 5..516i16 {
+        data.extend(index.to_le_bytes());
+        data.extend([4, 1]);
+    }
+    data.extend(516i16.to_le_bytes());
+    data.push(5);
+    string(&mut data, "x");
+    let file = parse(&data).unwrap();
+    let names = &file.definitions[0].functions["emitters"];
+    assert_eq!(names.len(), references);
+    assert!(names.iter().all(|name| name == "x"));
+}
+
+#[test]
+fn quoted_system_names_are_rejected_before_they_can_reach_vmf_properties() {
+    let mut data = fixture();
+    let offset = data
+        .windows(b"test_flame".len())
+        .position(|bytes| bytes == b"test_flame")
+        .unwrap();
+    data[offset..offset + b"bad\"effect".len()].copy_from_slice(b"bad\"effect");
+    assert!(
+        parse(&data)
+            .unwrap_err()
+            .to_string()
+            .contains("name is invalid")
+    );
+}

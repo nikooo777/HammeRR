@@ -131,7 +131,7 @@ impl Session {
     }
 
     fn particle_entry(&mut self, name: &str) -> Result<catalog::Entry, String> {
-        if name.is_empty() || name.len() > 255 || name.contains(['\0', '\r', '\n']) {
+        if name.is_empty() || name.len() > 255 || name.contains(['\"', '\0', '\r', '\n']) {
             return Err("Choose a listed particle system name up to 255 bytes".into());
         }
         let catalog = self.particle_catalog()?;

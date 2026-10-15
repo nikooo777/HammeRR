@@ -73,20 +73,21 @@ python -B scripts/validate_hollow.py --output /tmp/hammerr-hollow-check
 
 | Area | Scripts |
 | --- | --- |
-| Viewing and selection | `view_modes`, `saved_views`, `volume_selection`, `paint_selection`, `map_statistics`, `pointfiles` |
-| Brushes and transforms | `geometry_tools`, `texture_lock_modes`, `brush_reflection`, `brush_shear`, `transform_display`, `precision_cycles` |
-| Hollow, carve and clip | `hollow`, `carving`, `carve_many`, `clip_handles` |
+| Viewing and selection | `view_modes`, `saved_views`, `sky_preview`, `volume_selection`, `paint_selection`, `map_statistics`, `pointfiles` |
+| Brushes and transforms | `geometry_tools`, `texture_lock_modes`, `brush_reflection`, `brush_shear`, `transform_display`, `precision_cycles`, `polygon_brushes`, `surface_placement`, `repeat_array` |
+| Hollow, carve, merge and clip | `hollow`, `carving`, `carve_many`, `merge`, `clip_handles` |
 | Vertices, edges and faces | `components`, `component_sources`, `component_picking`, `component_topology`, `component_transforms`, `component_creases`, `weld_texture_attachment`, `split_texture_attachment`, `roof_texture_attachment` |
 | Flat partitions | `component_partitions`, `partition_picking`, `saved_partitions`, `partition_material_metadata`, `partition_materials`, `partition_textures`, `adjusted_partition_ridges`, `boundary_partitions`, `polygon_partitions`, `partition_extrusion`, `partition_visibility` |
 | Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `surface_group`, `texture_strokes`, `texture_chain` |
 | Map checks | `spawn_clearance`, `audit_fixes` |
+| Local preferences | `recent_maps`, `build_recipes` |
 | Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `direct_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals` |
 | In game | `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
 ### Extra options
 
-- **`--url http://127.0.0.1:7377/mcp`** runs the check against an open editor instead of a private one. The editor must be idle, with a clean map and empty undo history. The script opens its fixture, then restores the original file, camera, selection and view. Supported by `clip_handles`, `compile_jobs`, `component_picking`, `components`, `face_lighting`, `geometry_tools`, `hollow`, `map_statistics`, `material_replacement`, `paint_selection`, `pointfiles`, `saved_views`, `surface_group`, `texture_chain`, `texture_strokes`, `view_modes` and `volume_selection`.
-- **`--render`** adds offscreen GPU pixel checks without opening a window. Supported by `adjusted_partition_ridges`, `boundary_partitions`, `brush_reflection`, `brush_shear`, `carve_many`, `carving`, `component_creases`, `component_partitions`, `component_topology`, `component_transforms`, `partition_extrusion`, `partition_materials`, `partition_picking`, `partition_textures`, `polygon_partitions`, `roof_texture_attachment`, `saved_partitions`, `split_texture_attachment`, `texture_lock_modes` and `weld_texture_attachment`.
+- **`--url http://127.0.0.1:7377/mcp`** runs the check against an open editor instead of a private one. The editor must be idle, with a clean map and empty undo history. The script opens its fixture, then restores the original file, camera, selection and view. Supported by `clip_handles`, `compile_jobs`, `component_picking`, `components`, `face_lighting`, `geometry_tools`, `hollow`, `map_statistics`, `material_replacement`, `paint_selection`, `pointfiles`, `saved_views`, `sky_preview`, `surface_group`, `texture_chain`, `texture_strokes`, `view_modes` and `volume_selection`.
+- **`--render`** adds offscreen GPU pixel checks without opening a window. Supported by `adjusted_partition_ridges`, `boundary_partitions`, `brush_reflection`, `brush_shear`, `carve_many`, `carving`, `component_creases`, `component_partitions`, `component_topology`, `component_transforms`, `merge`, `partition_extrusion`, `partition_materials`, `partition_picking`, `partition_textures`, `polygon_partitions`, `roof_texture_attachment`, `saved_partitions`, `split_texture_attachment`, `texture_lock_modes` and `weld_texture_attachment`.
 - **`precision_cycles --operation scale|rotate|reflection|shear`** checks repeated edit/save/reopen cycles for an operation other than translation. Drift must stay below `1e-5` units and `1e-4` texels, and undo/redo must be exact.
 - **`partition_extrusion --adjusted`** extrudes pieces from a moved dividing line.
 - **`water_metadata --physics engine`** also checks fluid bodies.
@@ -301,3 +302,68 @@ python3 -B scripts/validate_surface_placement.py --output /tmp/hammerr-surface-p
 ```
 
 Checks shared floor/ceiling and ray placement, actual model support/contact and model targets, hidden-target filtering, terrain triangle normals, helper fallback, source/history/camera preservation, failed-preview retention, stale/foreign ownership, Cancel/Undo/Redo/reopen and native entity transforms through identical foreground/background builds. Core checks cover brush/terrain/model normals; software UI checks drive picking, changed-settings review, Apply and foreign-preview Cancel without a desktop.
+
+```sh
+python3 -B scripts/validate_polygon_brushes.py --output /tmp/hammerr-polygon-brushes-check
+```
+
+Checks concave extrusion, unchanged source/history/camera during preview, invalid-outline retention, fractional axes, shared snapping, replacement ownership, Cancel/Undo/Redo/reopen and identical foreground/background native builds. Core checks cover both windings, translated outlines, exact volume/concavity and invalid intersections; software UI drives the pad, exact controls, review and foreign Cancel. Existing primitive geometry and controls share regression coverage.
+
+### Convex brush merging
+
+```sh
+cargo test -p map-core merge::
+cargo test -p editor merge
+python3 -B scripts/validate_merge.py --binary target/debug/editor --output /tmp/hammerr-merge-check --render
+```
+
+Checks complete convex unions, deterministic outer-face/metadata inheritance, world/entity ownership, unrelated children, gap/concavity/cavity rejection, preview replacement, exact Undo/Redo and VMF reopen. The headless MCP script also checks fractional tiled unions and compiles a sealed room with a merged floor. `--render` adds preview/Apply pixel agreement and restoration after Discard. The software UI test `merge_controls_keep_sources_and_share_preview_discard_cancel_apply` writes `brush-merging.png` when `HAMMERR_UI_SNAPSHOTS` names an existing directory.
+
+### Repeated placement arrays
+
+```sh
+cargo test -p map-core repeat::tests
+cargo test -p editor session::repeat::tests
+python3 -B scripts/validate_repeat_array.py --binary target/debug/editor --output /tmp/hammerr-repeat-array-check
+```
+
+Checks nth-copy transforms from immutable originals, generated IDs/names, supported internal references, external-link preservation, copied notes and bounds. The private headless MCP script includes offscreen renders, source/history/camera preservation, invalid/stale tokens, competing previews, Undo/Redo and VMF save/reopen. The software UI test `repeat_ui::tests::repeat_controls_preview_apply_cancel_and_preserve_foreign_drafts` covers previewed-setting review and exact Cancel ownership; `HAMMERR_UI_SNAPSHOTS` saves `repeat-array.png`.
+
+### 2D sky preview
+
+```sh
+cargo test -p render sky::tests
+cargo test -p render surface_and_sky_shaders_parse_and_validate_without_a_gpu
+cargo test -p render sky::tests -- --ignored
+cargo test -p editor sky_preview_tracks_world_settings_and_undo_without_view_history
+python3 -B scripts/validate_sky_preview.py --binary target/debug/editor --gameinfo /path/to/cstrike/gameinfo.txt --sky sky_dust --output /tmp/hammerr-sky-preview-check
+```
+
+CPU tests check six-face loading, VMT patches, dimensions, LDR selection, supported transforms and reported failures. The explicitly ignored GPU tests check cardinal/quadrant orientation, camera translation, depth/occlusion, fallback and unchanged view modes/filters. The MCP script always performs offscreen image checks, temporary and shared view settings, picking, world-setting Undo and save/reopen. Repeat with `--sky sky_day01_09` to cover stock vertical scaling. `--url` uses the preserved-map workflow described above; private headless sessions are the default.
+
+### Recent maps and build recipes
+
+```sh
+cargo test -p editor recent_maps::tests
+cargo test -p editor session::recent::tests
+cargo test -p editor session::compilation::recipes::tests
+python3 -B scripts/validate_recent_maps.py --binary target/debug/editor --output /tmp/hammerr-recent-maps-check
+python3 -B scripts/validate_build_recipes.py --binary target/debug/editor --output /tmp/hammerr-build-recipes-check
+```
+
+Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible six-field build context, incompatible content, restart and storage repair. Remove/clear preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
+
+Recipe checks cover immutable presets, bounded custom CRUD/apply, stale revisions, manual-value provenance invalidation, active/cancelling job guards, frozen completed-job names, output freshness, corrupt/oversized storage, conflict detection and atomic failure/retry. The headless script isolates recipe/recovery storage and verifies native compilation plus persistence across restart. Its output directory must not already exist; optional `--gameinfo` chooses a fixture game installation. Rebuild the editor before script validation when code changed; Cargo tests alone do not refresh the executable.
+
+Software UI tests `recent_map_controls_share_reopen_and_guard_discard_remove_clear_and_cancel` and `recipe_controls_share_crud_apply_cancel_and_job_guards` exercise the same Session operations and write `recent-maps.png` and `build-recipes.png` under `HAMMERR_UI_SNAPSHOTS`. They use the private testing backend without desktop input. These preference checks do not launch the game.
+
+### Prop shadows and native occluders
+
+```sh
+python3 -B scripts/validate_prop_shadows.py --binary target/debug/editor --output /tmp/hammerr-prop-shadows-check
+python3 -B scripts/validate_occluders.py --binary target/debug/editor --output /tmp/hammerr-occluders-check
+```
+
+The prop fixture mounts synthetic bounded model companions, compares actual BSP light samples through both compile paths, checks shadow flags and selected-material warnings, and verifies malformed-asset failure preserves output/source/history. Compiler `prop_shadows`, `direct_lighting`, `static_props` and `bounced_lighting` integration tests cover lighting interaction and probe relocation outside a closed prop; `prop_occlusion` unit tests check before/on/behind-source indirect rays. Source-format checks cover bounded patch-material includes.
+
+The occluder fixture checks native polygon planes/global vertices, dense entity indices, active state, metadata preservation, foreground/background equality, hidden helpers and atomic rejection of unsupported geometry. Source-format `occlusion` and compiler `occluders` integration tests cover malformed/versioned records, empty native sentinels, area ambiguity, pruned-solid adjacency and world bounds. These checks do not establish in-game culling or input-transition behavior.

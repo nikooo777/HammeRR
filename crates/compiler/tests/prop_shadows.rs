@@ -398,3 +398,74 @@ fn failed_shadow_assets_preserve_bsp_while_fullbright_and_disabled_props_need_on
     assert_eq!(hidden.stats.prop_shadow_props, 0);
     assert_eq!(hidden.stats.prop_shadow_disabled, 0);
 }
+
+#[test]
+fn ambient_probe_moves_outside_closed_prop_instead_of_baking_black_center() {
+    use source_formats::bsp::{Leaf, LeafAmbient};
+    let (directory, game) = game();
+    let [mdl, mut vvd, mut vtx] = fixture();
+    for (index, point) in [
+        [-64.0, -64.0, -64.0],
+        [64.0, -64.0, -64.0],
+        [0.0, 64.0, -64.0],
+        [0.0, 0.0, 64.0],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (axis, value) in point.into_iter().enumerate() {
+            put_float(&mut vvd, 64 + index * 48 + 16 + axis * 4, value);
+        }
+    }
+    let strip = vtx[146..173].to_vec();
+    vtx.resize(185, 0);
+    vtx[158..185].copy_from_slice(&strip);
+    put_int(&mut vtx, 81, 12);
+    put_int(&mut vtx, 93, 85);
+    put_int(&mut vtx, 158, 12);
+    for (index, value) in [0_u16, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3]
+        .into_iter()
+        .enumerate()
+    {
+        vtx[134 + index * 2..136 + index * 2].copy_from_slice(&value.to_le_bytes());
+    }
+    for (suffix, bytes) in ["mdl", "vvd", "dx90.vtx"].into_iter().zip([mdl, vvd, vtx]) {
+        std::fs::write(
+            directory.path().join(format!("models/props/test.{suffix}")),
+            bytes,
+        )
+        .unwrap();
+    }
+    let mut vmf = scene();
+    let prop = vmf.entities.len() - 1;
+    vmf.entities[prop].properties.set("origin", "0 0 128");
+    vmf.entities[prop - 1].properties.set("origin", "160 0 128");
+    let output = compile(&vmf, &game);
+    assert_eq!(output.stats.prop_shadow_triangles, 4);
+    let bsp = output.bsp.unwrap();
+    let leaves = bsp.records::<Leaf>().unwrap();
+    let LeafAmbient::Indexed { indices, samples } =
+        bsp.leaf_ambient(LightingKind::Ldr).unwrap().unwrap()
+    else {
+        panic!("Expected indexed ambient samples");
+    };
+    assert!(!samples.is_empty());
+    assert!(samples.iter().any(|sample| {
+        sample
+            .cube
+            .iter()
+            .any(|color| color.rgb.iter().any(|&channel| channel > 0))
+    }));
+    for (leaf, index) in leaves.iter().zip(indices) {
+        for sample in &samples[usize::from(index.first_sample)
+            ..usize::from(index.first_sample) + usize::from(index.sample_count)]
+        {
+            let point = DVec3::from_array(sample.world_position(leaf).unwrap());
+            assert!(
+                !(point.cmpge(DVec3::new(-64.001, -64.001, 63.999)).all()
+                    && point.cmple(DVec3::new(64.001, 64.001, 192.001)).all()),
+                "Probe remained inside prop bounds: {point}"
+            );
+        }
+    }
+}

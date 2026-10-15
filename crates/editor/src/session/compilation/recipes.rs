@@ -734,8 +734,10 @@ mod tests {
     fn malformed_oversized_or_unsupported_recipes_block_writes_without_replacing_disk() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join(FILE_NAME);
-        let mut file = File::default();
-        file.next_id = 2;
+        let mut file = File {
+            next_id: 2,
+            ..File::default()
+        };
         file.recipes.push(Recipe {
             id: "custom:1".into(),
             name: "Invalid".into(),

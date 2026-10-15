@@ -297,17 +297,23 @@ def validate(client, output, render=False):
     world = block([128, 0, 0], [192, 64, 64])
     preview([pair[1], world], error=True)
     check(state()["preview"] is None, "Mixed entity/world ownership rejects")
+    terrain_pair = [world, block([192, 0, 0], [256, 64, 64])]
+    draft = preview(terrain_pair)
+    client.call("cancel_merge", {"token": draft["preview"]["token"]})
     top = next(
         face
-        for face in original_owner["brushes"][0]["faces"]
+        for face in detail(client, [world])[0]["faces"]
         if face["normal"][2] > 0.9
     )
     client.call(
         "create_terrain",
-        {"faces": [{"solid": number(pair[0]), "side": top["side"]}], "power": 2},
+        {"faces": [{"solid": number(world), "side": top["side"]}], "power": 2},
     )
-    preview(pair, error=True)
-    check(state()["preview"] is None, "Displacement brush merging rejects")
+    rejected = preview(terrain_pair, error=True)
+    check(
+        state()["preview"] is None and "displacements" in json.dumps(rejected),
+        "An otherwise mergeable world-brush pair rejects after terrain is added",
+    )
 
     client.call("new_map", {"discard_changes": True})
     floor = [

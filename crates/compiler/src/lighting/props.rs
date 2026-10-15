@@ -53,6 +53,30 @@ impl ShadowObject for PropTriangle {
     }
 }
 
+pub(super) struct ProbeBounds {
+    mins: DVec3,
+    maxs: DVec3,
+}
+
+impl ShadowObject for ProbeBounds {
+    const MAX_OBJECTS: usize = source_formats::bsp::MAX_STATIC_PROPS;
+
+    fn bounds(&self) -> (DVec3, DVec3) {
+        (self.mins, self.maxs)
+    }
+
+    fn work(&self) -> usize {
+        1
+    }
+
+    fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
+        if start != end {
+            return Err("Prop probe bounds require a point query".into());
+        }
+        Ok(start.cmpge(self.mins).all() && start.cmple(self.maxs).all())
+    }
+}
+
 struct Assets<'a> {
     fs: &'a GameFs,
     bytes: usize,
@@ -199,8 +223,9 @@ pub(super) fn build(
     fs: &GameFs,
     report: &mut Report,
     budget: &mut Budget<'_>,
-) -> Result<(ShadowIndex<PropTriangle>, Stats), String> {
+) -> Result<(ShadowIndex<PropTriangle>, ShadowIndex<ProbeBounds>, Stats), String> {
     let mut triangles = Vec::new();
+    let mut probe_bounds = Vec::new();
     let mut stats = Stats::default();
     let start_work = budget.work();
     if let Some(props) = bsp.static_props().map_err(|error| error.to_string())? {
@@ -286,6 +311,15 @@ pub(super) fn build(
                     let before = triangles.len();
                     let degenerate = append(&model, prop, &mut triangles, budget)?;
                     if triangles.len() > before {
+                        budget.consume(triangles.len() - before)?;
+                        let mut mins = DVec3::splat(f64::INFINITY);
+                        let mut maxs = DVec3::splat(f64::NEG_INFINITY);
+                        for triangle in &triangles[before..] {
+                            let (low, high) = triangle.bounds();
+                            mins = mins.min(low);
+                            maxs = maxs.max(high);
+                        }
+                        probe_bounds.push(ProbeBounds { mins, maxs });
                         stats.props += 1;
                     }
                     if degenerate > 0 {
@@ -311,11 +345,12 @@ pub(super) fn build(
     }
     stats.triangles = triangles.len();
     let index = ShadowIndex::new(triangles, &mut |amount| budget.consume(amount))?;
+    let probe_bounds = ShadowIndex::new(probe_bounds, &mut |amount| budget.consume(amount))?;
     stats.work = budget.work() - start_work;
     if stats.props > 0 {
         report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. Opaque triangles block direct, sky, bounced and ambient rays. Prop vertex/lightmap baking, reflected prop sources and animated props remain unfinished", stats.props, stats.models, stats.triangles, stats.disabled), None, None));
     }
-    Ok((index, stats))
+    Ok((index, probe_bounds, stats))
 }
 
 #[cfg(test)]

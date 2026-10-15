@@ -28,6 +28,7 @@ pub(super) struct Context<'a> {
     pub tree: &'a Tree,
     pub visibility: &'a Visibility,
     pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
+    pub prop_bounds: &'a ShadowIndex<super::props::ProbeBounds>,
     pub shadows: &'a ShadowIndex<Occluder>,
     pub terrain: &'a ShadowIndex<Triangle>,
     pub directions: &'a [DVec3],
@@ -113,7 +114,11 @@ fn candidates(
                 &mut |hull| Ok(hull.entry(point, point)?.map(|hit| (hit.0, ()))),
             )?
             .is_some();
-        if blocked {
+        if blocked
+            || ctx
+                .prop_bounds
+                .blocked(point, point, &mut |work| budget.consume(work))?
+        {
             continue;
         }
         let above = point + DVec3::Z * super::sky::TRACE_LENGTH;

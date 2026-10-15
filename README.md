@@ -65,6 +65,26 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![A resized brush with its texture stretched](docs/images/object-texture-stretch.png) | ![A sheared brush](docs/images/brush-shear-after.png) |
 | Move, rotate and scale with handles or exact values. Textures follow, stretch or stay fixed. | Reflect across any axis or slant one coordinate by another, with textures attached. |
 
+| Polygon brushes |
+| --- |
+| ![A concave polygon extruded into editable brushes](docs/images/polygon-brushes.png) |
+| Draw convex or concave outlines and extrude them into editable map geometry. |
+
+| Merge brushes |
+| --- |
+| ![Brush sources and a convex merge preview](docs/images/brush-merging.png) |
+| Join adjacent or overlapping brushes into one convex brush while keeping outer face settings. |
+
+| Surface placement |
+| --- |
+| ![A model aligned against a wall with a normal offset](docs/images/surface-placement.png) |
+| Drop selections to floors or ceilings, or align them against picked brush, terrain and model surfaces. |
+
+| Repeated placement |
+| --- |
+| ![Repeated placement array preview and controls](docs/images/repeat-array.png) |
+| Preview fixed translation and rotation arrays, then apply all copies in one Undo step. |
+
 [Brushes and transforms →](docs/brushes.md) · [Hollow, carve and clip →](docs/brush-tools.md)
 
 ### Reshape vertices, edges and faces
@@ -117,6 +137,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Wireframe view with a light helper](docs/images/wireframe-view.png) | ![Named camera views](docs/images/saved-views.png) |
 | Textured, flat, wireframe, lightmap density and smoothing groups, in every projection. | Name camera positions and jump back to them. They are saved in the map. |
 
+| 2D sky preview |
+| --- |
+| ![The selected sky rendered through sky surfaces](docs/images/sky-preview.png) |
+| Preview the selected mounted sky through sky surfaces in perspective Textured views. |
+
 [Editor basics →](docs/basics.md) · [Selecting →](docs/selection.md)
 
 ### Entities and logic
@@ -152,6 +177,16 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Map totals and material usage](docs/images/map-statistics.png) | ![A red leak path through the map](docs/images/pointfile-viewport.png) |
 | Counts and breakdowns of brushes, entities, materials, models and terrain. | Follow a leak's pointfile through the map, point by point. |
 
+| Object groups |
+| --- |
+| ![Nested object groups and membership controls](docs/images/object-groups.png) |
+| Organize brushes and entities into nested groups, select them together and edit membership with Undo. |
+
+| Recent maps |
+| --- |
+| ![Recent map paths and retained build settings](docs/images/recent-maps.png) |
+| Reopen recent maps with retained compatible build settings. |
+
 [Organizing and checking maps →](docs/map-tools.md)
 
 ### Compile and play
@@ -159,7 +194,12 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Native compiler | Play in CS:S |
 | --- | --- |
 | ![Build settings, statistics and diagnostics](docs/images/build-status.png) | ![Soft sun shadows in Counter-Strike: Source](docs/images/soft-sun.png) |
-| Baked light from point lights, spotlights, sun and sky, with soft sun shadows, plus CS:S engine physics with material surfaces, water, cubemaps, static props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
+| Baked light from point lights, spotlights, sun and sky, with soft sun and opaque model shadows, plus CS:S engine physics with material surfaces, water, cubemaps, static props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
+
+| Named build recipes |
+| --- |
+| ![Named build recipes and their compiler settings](docs/images/build-recipes.png) |
+| Recall Fast preview, Final lighting or named custom combinations of native compiler settings. |
 
 [Compile and play →](docs/compile-and-play.md)
 
@@ -274,11 +314,6 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | --- |
 | ![Sky and surface tint on a weapon model in Counter-Strike: Source](docs/images/model-ambient.png) |
 | Models pick up reflected light from nearby world surfaces and visible sky. |
-
-| Surface placement |
-| --- |
-| ![A model aligned against a wall with a normal offset](docs/images/surface-placement.png) |
-| Drop selections to floors or ceilings, or align them against picked brush, terrain and model surfaces. |
 
 ## Status
 

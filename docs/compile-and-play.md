@@ -253,7 +253,7 @@ Ambient probes let models pick up reflected light from world surfaces and the sk
 
 1. Set up point lights, spotlights or a sun and sky as above.
 2. Open **Build settings…**, choose **Direct LDR**, and choose **Sampling quality**.
-3. Click **Close**, then **Run Map**. Models receive the compiled ambient light; the editor viewport still does not render model assets.
+3. Click **Close**, then **Run Map**. Models receive the compiled ambient light; the editor's model previews do not display this baked ambient lighting.
 4. Open **Build details…** to see **Model ambient** probe counts and diagnostics.
 
 ![Sky and surface ambient tint on the weapon model in Counter-Strike: Source](images/model-ambient.png)

@@ -407,15 +407,15 @@ impl Session {
         let graph = self.group_graph()?;
         let draft = self.check_group_draft(token, false)?;
         let mut members = graph.selection_members(&self.selected_ids());
-        if let Some(id) = draft.edit.group {
-            if members.contains(&Member::Group(id)) {
-                members.retain(|member| *member != Member::Group(id));
-                members.extend(
-                    graph
-                        .direct_members(id)
-                        .map_err(|error| error.to_string())?,
-                );
-            }
+        if let Some(id) = draft.edit.group
+            && members.contains(&Member::Group(id))
+        {
+            members.retain(|member| *member != Member::Group(id));
+            members.extend(
+                graph
+                    .direct_members(id)
+                    .map_err(|error| error.to_string())?,
+            );
         }
         self.add_group_edit_members(token, &members)
     }

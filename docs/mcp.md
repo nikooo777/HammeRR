@@ -48,7 +48,7 @@ Use `--mcp-port <port>` to change the port, or `--no-mcp` to turn the server off
 
 When an agent connects, the server tells it how HammeRR works, so you don't need to explain:
 
-- **Units and axes**: Hammer units with Z up. A player is 32 × 32 × 72 units. Brushes stay within ±16,384.
+- **Units and axes**: Hammer units with Z up. A player is 32 × 32 × 72 units. Each tool reports its coordinate limits.
 - **IDs**: `solid:<id>` for world brushes and `entity:<id>` for entities. Tools act on the current selection when IDs are left out, and creation tools select what they create.
 - **Materials**: paths under `materials/` without the extension, such as `tools/toolsnodraw`. `search_materials` finds more.
 - **Previews**: most edit tools accept `preview: true` and return a `token`. Pass it to the matching commit or cancel tool, so a preview someone else replaced can't be applied by mistake.
@@ -89,17 +89,20 @@ To build the map, set the build options once, then compile:
 | Task | Tools |
 | --- | --- |
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
+| Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
+| Repeated placement | `get_repeat_array`, `preview_repeat_array`, `apply_repeat_array`, `cancel_repeat_array` |
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
-| Brush shapes | `create_primitive`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
+| Brush shapes | `create_primitive`, `create_polygon_brush`, `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview`, `cancel_primitive_preview` |
 | Hollow | `preview_hollow`, `get_hollow_preview`, `look_inside_hollow`, `commit_hollow`, `cancel_hollow` |
 | Carve | `get_carve_preview`, `preview_carve`, `preview_carve_many`, `commit_carve`, `cancel_carve` |
+| Merge brushes | `get_merge_preview`, `preview_merge`, `commit_merge`, `cancel_merge` |
 | Clip | `set_clip_tool`, `clip_brushes`, `get_clip_preview`, `set_clip_points`, `pick_clip_point`, `get_clip_handles`, `set_clip_handle_options`, `begin_clip_drag`, `update_clip_drag`, `finish_clip_drag`, `cancel_clip_drag`, `commit_clip_preview`, `cancel_clip_preview` |
 | Vertices, edges and faces | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
@@ -125,6 +128,7 @@ To build the map, set the build options once, then compile:
 | Saved camera views | `get_camera_views`, `save_camera_view`, `restore_camera_view`, `rename_camera_view`, `delete_camera_view` |
 | Pointfiles | `load_pointfile`, `get_pointfile`, `navigate_pointfile`, `frame_pointfile`, `clear_pointfile` |
 | Compile and play | `get_compile_settings`, `set_compile_settings`, `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
+| Build recipes | `get_build_recipes`, `save_build_recipe`, `rename_build_recipe`, `delete_build_recipe`, `apply_build_recipe` |
 
 ## Good to know
 
@@ -351,3 +355,64 @@ Tint fields use three integer channels from 0 to 255 with an optional preserved 
 4. Inspect with `render_view` or frame with `frame_selection`. Call `apply_surface_placement` with the token for one Undo step, or `cancel_surface_placement` to discard only that placement. No-op placements create no Undo entry. Foreign tokens fail without clearing replacements.
 
 Source, scene or selection changes invalidate the draft. Other geometry previews must be finished first. Opening the human window resumes a valid shared placement; replaced tokens require reopening for review. The whole selection moves rigidly, with actual brush/terrain/model vertices and helper-bound fallbacks. This operation does not simulate physics or resolve other contacts. See [Surface placement](placement.md) for target, alignment and resource limits.
+
+### Polygon brushes
+
+Call `create_polygon_brush` with `outline: [[u,v],…]`, `base` and positive `depth`. Optional `axis` is `x` (YZ pairs), `y` (XZ) or `z` (XY, default), `material` defaults to nodraw and `snap` defaults to the current editor grid setting. The last corner connects to the first implicitly. Three to 64 distinct corners may describe a convex or simple concave boundary; concavity is decomposed into editable convex brushes without filling the omitted area.
+
+Set `preview: true` to preserve source, selection and history. The existing `get_primitive_preview`, `frame_primitive_preview`, `commit_primitive_preview` and `cancel_primitive_preview` use its guarded string token. Preview state includes the snapped `spec.outline`, axial bounds and generated brush IDs. The human **Draw polygon…** window resumes these same corners. Apply is one Undo step; failed outlines preserve a previous valid preview. `create_primitive` also accepts `shape: "polygon"` with `outline` and matching `mins`/`maxs`; the dedicated tool calculates bounds automatically.
+
+Crossings, touching edges, repeats, collinear corners, invalid dimensions and collapsed results reject atomically. The complete extrusion must fit ±65536 units with depth at least 0.125. Drawing planes are axis-aligned; holes are unsupported. See [Polygon brushes](polygon-brushes.md).
+
+### Merge brushes
+
+Call `get_merge_preview` for source candidates, owners, bounds, materials, the latest `stamp` and any current preview. Pass `sources: [numeric brush IDs]` and that `stamp` to `preview_merge`. Choose 2–16 distinct world brushes or children of one brush entity whose complete combined volume is convex. Gaps, concavities, cavities, mixed owners and displacement-bearing brushes reject without replacing a valid draft.
+
+Inspect `preview.result` for the resulting brush and per-face inheritance; `render_view` and `get_brush_components` show the draft. Pass the exact string `preview.token` to `commit_merge` for one Undo step or `cancel_merge` to discard it. Changed sources, selection or competing geometry previews invalidate Apply; an old token cannot cancel a replacement.
+
+The lowest brush ID supplies brush/editor metadata. Outer faces keep their original IDs, material, world texture projection, lighting and unknown fields; coplanar conflicts choose the lowest brush ID, then side ID. Internal faces disappear and unrelated entity children remain. Limits are 64 faces per input/output brush and 256 coverage-proof fragments. See [Merge brushes](merge.md).
+
+### Repeated placement
+
+Call `get_repeat_array`, then pass its `snapshot` to `preview_repeat_array` with `count` and optional `ids`, `translation`, `rotation`, `pivot` and `texture_lock`. IDs default to the selection; translation and rotation default to zero, pivot to the source center and texture lock to true. `count` is the number of additional copies. Copy n starts from the originals, rotates by n times the world XYZ degree step about the fixed pivot, then moves by n times the world XYZ translation step.
+
+Inspect `preview.copies`, generated names, copied entity fields and bounds, or render the shared draft. Pass its numeric `preview.token` to `apply_repeat_array` or `cancel_repeat_array`. Apply rechecks the complete result, selects the copies and adds one Undo step. Invalid requests retain the previous valid draft; stale tokens cannot apply or cancel replacements. `get_map_info.repeat_array` exposes the same state; `get_objects`, saving and compiling use committed geometry.
+
+Unique targetnames become `name_copyN` with collision suffixes. Supported exact internal FGD/I/O/parent references follow each copy; external links remain. Ambiguous names, uncertain internal references, internal wildcards, generated-name reference captures, overlays and numeric node/side references reject. Named source sets with scripts or dynamic I/O also reject. Design notes copy within their normal budgets; saved face partitions stay on originals. Limits are 16 sources, 64 additional copies, 256 generated objects including owned brushes, 8192 sides and 128 UTF-8 bytes per generated name. Only fixed world translation/rotation arrays are supported; see [Repeated placement](repeated-placement.md).
+
+### 2D sky preview
+
+`set_view` accepts `sky_preview: true` to show the world's `skyname` through authored sky surfaces. `render_view` accepts the same temporary override without changing the shared view. The default is false. Preview requires perspective Textured mode, `tool_textures: true` and six supported mounted LDR sky faces.
+
+`get_map_info.skybox` and `render_view` image metadata report `name`, `ready`, `summary` and per-face `suffix`, `material`, `issue` and `size`. An empty `skyname` returns `name: null` and `ready: false`. Missing or unsupported faces leave the ordinary tool surfaces visible. Axis-aligned VMT scale/translation and unequal face dimensions are supported, within 4096 pixels per axis and 64 MiB per texture file.
+
+Preview controls leave VMF and Undo unchanged; author `skyname` through the existing world-property draft. Sky surfaces retain depth, picking and visibility filtering. Planar, flat, wireframe and diagnostic views retain their usual behavior. 3D sky-camera transforms, HDR, fog, exposure and animated materials are outside this preview; see [2D sky preview](sky.md).
+
+### Recent maps
+
+`get_recent_maps` returns up to 20 entries in most-recent-first order with exact `path`, file availability, retained game directory, six-field `build_settings` and `context_compatible`. It also reports persistence, storage errors and bounds. Pass a listed `path` to `open_recent_map`, optionally with `discard_changes: true` when discarding the current edits is intended. It uses normal map validation and restores retained build values only while idle and with matching mounted game content. Game content and custom FGD files do not switch automatically.
+
+`remove_recent_map {path}` and `clear_recent_maps {}` change only the retained list. Successful opens/saves update recency; changing build settings updates an existing entry without reordering it. Missing files remain listed. Failed primary opens/saves preserve the list; an auxiliary history-write failure is reported without failing an otherwise successful map operation.
+
+Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR` selects an absolute directory; otherwise `HAMMERR_RECOVERY_DIR` also isolates this list. Paths are bounded to 4096 UTF-8 bytes and storage to 192 KiB. Invalid loads block preference changes until repaired and restarted; failed writes preserve the previous list and can retry. Separate editor processes do not coordinate writes. See [Recent maps](recent-maps.md).
+
+### Build recipes
+
+`get_build_recipes` returns built-in and custom recipes with all six settings and readable descriptions, registry `revision`, current `active` identity, editability, persistence, path and errors. Built-in IDs `fast` and `final` are immutable. Fast preview uses Fullbright, no physics, Fast visibility/sampling, no bounces and 0° smoothing. Final lighting uses Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45° smoothing, retaining the compiler's existing requirements and limits.
+
+| Tool | Arguments and effect |
+| --- | --- |
+| `save_build_recipe` | `name`, optional `replace_id` and `revision`; captures all current settings as a new custom recipe or replaces the chosen custom recipe. |
+| `rename_build_recipe` | `id`, `name`, optional `revision`; changes only a custom recipe's name. |
+| `delete_build_recipe` | `id`, optional `revision`; removes a custom recipe while retaining current compiler values. |
+| `apply_build_recipe` | `id`, optional `revision`; applies all settings through the shared settings operation without starting a build. |
+
+Pass the returned registry revision to reject stale edits. Active or cancelling jobs block every recipe mutation and Apply. `get_compile_settings.recipe` identifies the current applied recipe or is null; a changed value clears it. `get_compile_status.job.recipe` keeps the identity captured when that build started, including after rename/deletion. Names alone do not stale output. These operations leave VMF and map Undo unchanged.
+
+Custom recipes use `build-recipes.json` in recovery storage; `HAMMERR_BUILD_RECIPES` overrides the file and `HAMMERR_RECOVERY_DIR` isolates the default. Limits are 32 customs, unique names ignoring case, 1–80 UTF-8 bytes per trimmed name without control characters and a 65,536-byte file. Invalid loads block custom edits while built-ins remain usable. Failed writes preserve preferences and can retry; detected disk changes require restart. Simultaneous writes are not coordinated. Loading recipes does not apply a custom recipe automatically. See [Build recipes](build-recipes.md).
+
+### Prop shadows and occluders
+
+Existing synchronous and background compile results expose `prop_shadow_props`, `prop_shadow_models`, `prop_shadow_triangles`, `prop_shadow_disabled` and `prop_shadow_work`, also shown in **Build details…**. Direct LDR uses supported opaque LOD0 prop meshes for direct, sky, bounce and ambient occlusion, honoring native `disableshadows`. Material approximations generate warnings; missing or invalid required companions fail without replacing prior output. No new setting or tool is required. See [Static-prop shadows](prop-shadows.md).
+
+Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. One visible convex brush per helper must fit one unambiguous world area. Native records and activation indices are emitted; runtime culling and input transitions remain unverified. See [Occluders](occluders.md).

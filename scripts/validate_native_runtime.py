@@ -86,6 +86,8 @@ def private_game(root, output, bsp=None):
     )
     for name in ["autoexec.cfg", "config.cfg"]:
         (game / "cfg" / name).write_text("")
+    for name in ["listenserver.cfg", "server.cfg"]:
+        (game / "cfg" / name).write_text("sv_lan 1\nsv_lan\n")
     (game / "motd.txt").write_text("HammeRR private validation\n")
     (game / "scripts/vscripts/mapspawn.nut").write_text('printl("HAMMERR_MAPSPAWN");\n')
     (game / "scripts/vscripts/hammerr_observer.nut").write_text(OBSERVER)

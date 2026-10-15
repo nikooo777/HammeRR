@@ -381,3 +381,12 @@ python3 -B scripts/validate_clipboard_native.py --binary target/debug/editor --o
 Core checks cover detached source/destination identity collisions, exact internal references, external policies, texture placement, groups, owned-brush notes, terrain, native round trips and atomic history. Parser checks bound nesting/nodes before typed conversion. Session/UI checks cover publication failure before Cut, unchanged-map name receipts, invalid import retention, stale/foreign previews and parameter review; `HAMMERR_UI_SNAPSHOTS` writes `clipboard-paste.png` through the software testing backend.
 
 The default validator uses two private stdio Sessions and exported text, with source replacement, offscreen preview/Apply/Cancel agreement, malformed payloads, metadata, save/reopen and identical foreground/background compilation. It never reads or writes the system clipboard. The native wrapper starts a separate Cage headless Wayland compositor with a private runtime directory, removes inherited display connections and runs the same transfer with explicit native publication/read. Its output directory must be new. It requires Cage and leaves desktop focus, input and the user's clipboard untouched; it does not launch the game.
+
+### Occluder runtime fixture
+
+```sh
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-fixture
+python3 -B scripts/validate_occluder_runtime.py --binary target/debug/editor --output /tmp/hammerr-occluder-client --runtime
+```
+
+The default checks a sealed lit fixture, native occluder records and identical foreground/background builds. `--runtime` launches CS:S with `-insecure` and `sv_lan 1` on a private headless Cage display, and confirms the post-map LAN value. This installed client still requires Steam running to spawn a local player. It observes initial/Deactivate/Activate/Toggle netprops and compares stable prop-culling frames. Server loading alone does not establish client culling. Use a fresh output directory for each run.

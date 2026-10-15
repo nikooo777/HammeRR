@@ -815,8 +815,10 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         }
         if extrusion {
             let spec = &preview["extrusion"];
-            window.set_extrusion_height(spec["height"].as_f64().unwrap().to_string().into());
-            window.set_extrusion_height_value(spec["height"].as_f64().unwrap() as f32);
+            let height = spec["height"].as_f64().unwrap();
+            window.set_extrusion_direction(i32::from(height < 0.0));
+            window.set_extrusion_height(height.abs().to_string().into());
+            window.set_extrusion_height_value(height.abs() as f32);
             window.set_extrusion_texture_lock(spec["texture_lock"].as_bool().unwrap());
             window.set_wall_override(!spec["wall_material"].is_null());
             if let Some(material) = spec["wall_material"].as_str() {
@@ -950,7 +952,12 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         format!("{}: {}, {}, {}{}\nPivot: {}\nThe map is unchanged until Apply.",if operation == 3 {"Scale factors"} else {"Angles"},values[0],values[1],values[2],if operation == 3 {""} else {" degrees"},position(point)).into()
     } else if extrusion {
         let spec = &preview["extrusion"];
-        format!("Adds {} volumes, {} units high. Original brushes stay unchanged.\nApply selects the new faces. Undo removes the volumes.",spec["pieces"].as_array().unwrap().len(),number(spec["height"].as_f64().unwrap())).into()
+        let height = spec["height"].as_f64().unwrap();
+        if height < 0.0 {
+            format!("Cuts {} units inward and leaves {} convex fragments.\nApply consumes saved pieces on changed sources and selects fragment faces. Undo restores the sources.",number(height.abs()),spec["fragments"].as_array().unwrap().len()).into()
+        } else {
+            format!("Adds {} volumes, {} units high. Original brushes stay unchanged.\nApply selects the new faces. Undo removes the volumes.",spec["pieces"].as_array().unwrap().len(),number(height)).into()
+        }
     } else if partition {
         let count = preview["partition"]["partitions"].as_array().unwrap().len();
         let rise = preview["partition"]["rise"].as_f64().unwrap();
@@ -1026,12 +1033,24 @@ fn cut_inputs_match(window: &ComponentsWindow, parameters: &serde_json::Value) -
 fn extrusion_inputs(
     window: &ComponentsWindow,
 ) -> Result<map_core::subobject::ExtrusionSpec, String> {
+    let depth = window
+        .get_extrusion_height()
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| "Enter a numeric extrusion depth".to_string())?;
+    if !(map_core::subobject::MIN_SPLIT_RISE..=map_core::subobject::MAX_SPLIT_RISE).contains(&depth)
+    {
+        return Err(
+            "Extrusion depth must be 0.125–4096 units; choose Outward or Inward for its direction"
+                .into(),
+        );
+    }
     Ok(map_core::subobject::ExtrusionSpec {
-        height: window
-            .get_extrusion_height()
-            .trim()
-            .parse()
-            .map_err(|_| "Enter a numeric extrusion height".to_string())?,
+        height: if window.get_extrusion_direction() == 1 {
+            -depth
+        } else {
+            depth
+        },
         wall_material: window
             .get_wall_override()
             .then(|| window.get_wall_material().to_string()),
@@ -1867,6 +1886,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             }
             let mut session = lock(&shared);
             let extrusion = window.get_has_extrusion_preview();
+            let inward = extrusion && window.get_extrusion_direction() == 1;
             let flat = window.get_has_partition_preview() && window.get_partition_flat() && !extrusion;
             let result = window
                 .get_token()
@@ -1877,7 +1897,7 @@ pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
             window.set_message(
                 result
                     .map(|count| {
-                        if extrusion { format!("Added {count} volumes. Their faces are selected; Undo removes the volumes.") } else if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
+                        if inward { format!("Cut sources into {count} convex fragments. Their faces are selected; Undo restores the sources and saved pieces.") } else if extrusion { format!("Added {count} volumes. Their faces are selected; Undo removes the volumes.") } else if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
                     })
                     .unwrap_or_else(|error| error)
                     .into(),

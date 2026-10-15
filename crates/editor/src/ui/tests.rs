@@ -1779,7 +1779,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     assert!(window.get_ready() && window.get_has_extrusion_preview());
     save_ui_snapshot(window.window(), "partition-extrusion-controls");
     for label in [
-        "Extrusion height",
+        "Extrusion depth",
         "Keep top texture at corners",
         "Choose wall material",
         "Browse…",
@@ -1813,6 +1813,45 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     lock(&shared).undo(Actor::Agent).unwrap();
     assert_eq!(lock(&shared).document().vmf(), &stored);
     components_ui::refresh(&window, &lock(&shared));
+    window.invoke_resume_saved_partition();
+    window.set_partition_mode(1);
+    window.set_extrusion_direction(1);
+    window.invoke_choose_extrusion_height(16.125);
+    window.invoke_preview_edit();
+    assert!(window.get_ready() && window.get_has_extrusion_preview());
+    assert_eq!(window.get_extrusion_height(), "16.125");
+    assert_eq!(window.get_extrusion_direction(), 1);
+    assert!(
+        window
+            .get_preview_summary()
+            .contains("Cuts 16.125 units inward")
+    );
+    save_ui_snapshot(window.window(), "partition-inward-controls");
+    assert_dialog_button_visible(&window, "Extrusion direction");
+    assert_dialog_button_visible(&window, "Keep floor texture at corners");
+    let inward = lock(&shared).render_document().vmf().clone();
+    window.invoke_choose_extrusion_height(128.0);
+    window.invoke_preview_edit();
+    assert!(!window.get_ready());
+    assert!(window.get_message().contains("entire source"));
+    assert_eq!(lock(&shared).render_document().vmf(), &inward);
+    window.invoke_choose_extrusion_height(16.125);
+    window.invoke_preview_edit();
+    assert!(window.get_ready());
+    window.set_extrusion_direction(0);
+    window.invoke_edited();
+    assert!(!window.get_ready());
+    window.set_extrusion_direction(1);
+    window.invoke_edited();
+    assert!(window.get_ready());
+    window.invoke_apply();
+    assert!(window.get_message().contains("convex fragments"));
+    assert_eq!(lock(&shared).document().vmf(), &inward);
+    assert_eq!(window.get_saved_partitions().row_count(), 0);
+    lock(&shared).undo(Actor::Agent).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &stored);
+    components_ui::refresh(&window, &lock(&shared));
+    window.set_extrusion_direction(0);
     window.invoke_resume_saved_partition();
     window.set_partition_mode(1);
     window.invoke_preview_edit();

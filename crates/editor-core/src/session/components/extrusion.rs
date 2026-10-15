@@ -1,5 +1,5 @@
 use super::*;
-use map_core::subobject::{ExtrusionPlan, ExtrusionSpec, ExtrusionSurface};
+use map_core::subobject::{ExtrusionFace, ExtrusionPlan, ExtrusionSpec, ExtrusionSurface};
 use map_core::surface::FaceId;
 
 pub(super) struct Draft {
@@ -10,17 +10,25 @@ pub(super) struct Draft {
 
 impl Draft {
     pub fn report(&self) -> Value {
-        json!({"height":self.spec.height,"wall_material":self.spec.wall_material,"texture_lock":self.spec.texture_lock,
+        json!({"height":self.spec.height,"direction":if self.spec.height < 0.0 {"inward"} else {"outward"},"wall_material":self.spec.wall_material,"texture_lock":self.spec.texture_lock,
             "selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
-            "pieces":self.plan.pieces.iter().map(|piece|json!({"source_solid":piece.source.solid,"source_side":piece.source.side,"partition":piece.partition,"solid":piece.solid.id,
+            "pieces":self.plan.pieces.iter().map(|piece|json!({"source_solid":piece.source.solid,"source_side":piece.source.side,"partition":piece.partition,"solid":(self.spec.height > 0.0).then_some(piece.solid.id),
                 "owner":match piece.owner {ObjectId::Solid(_)=>"world".to_string(),ObjectId::Entity(id)=>format!("entity:{id}")},
                 "bounds":map_core::query::solid_bounds(&piece.solid).map(|(mins,maxs)|json!({"mins":mins.to_array(),"maxs":maxs.to_array()})),
-                "faces":piece.faces.iter().map(|face| {
-                    let side = piece.solid.sides.iter().find(|side|side.id==face.side).unwrap();
-                    json!({"side":face.side,"source_side":face.source_side,"surface":match face.surface {ExtrusionSurface::Top=>"top",ExtrusionSurface::Base=>"base",ExtrusionSurface::Boundary=>"boundary",ExtrusionSurface::Divider=>"divider"},
-                        "material":side.material.to_ascii_lowercase(),"plane":side.plane.0.map(|point|point.to_array()),"uaxis":{"axis":side.u_axis.axis.to_array(),"offset":side.u_axis.offset,"scale":side.u_axis.scale},"vaxis":{"axis":side.v_axis.axis.to_array(),"offset":side.v_axis.offset,"scale":side.v_axis.scale},"rotation":side.rotation,"lightmap_scale":side.lightmap_scale,"smoothing_groups":side.smoothing_groups})
-                }).collect::<Vec<_>>() })).collect::<Vec<_>>()})
+                "faces":face_report(&piece.solid, &piece.faces) })).collect::<Vec<_>>(),
+            "fragments":self.plan.fragments.iter().map(|fragment|json!({"source_solid":fragment.source,"solid":fragment.solid.id,
+                "owner":match fragment.owner {ObjectId::Solid(_)=>"world".to_string(),ObjectId::Entity(id)=>format!("entity:{id}")},
+                "bounds":map_core::query::solid_bounds(&fragment.solid).map(|(mins,maxs)|json!({"mins":mins.to_array(),"maxs":maxs.to_array()})),
+                "faces":face_report(&fragment.solid, &fragment.faces)})).collect::<Vec<_>>()})
     }
+}
+
+fn face_report(solid: &source_formats::vmf::Solid, faces: &[ExtrusionFace]) -> Vec<Value> {
+    faces.iter().map(|face| {
+        let side = solid.sides.iter().find(|side|side.id==face.side).unwrap();
+        json!({"side":face.side,"source_side":face.source_side,"partition":face.partition,"surface":match face.surface {ExtrusionSurface::Source=>"source",ExtrusionSurface::Top=>"top",ExtrusionSurface::Base=>"base",ExtrusionSurface::Boundary=>"boundary",ExtrusionSurface::Divider=>"divider"},
+            "material":side.material.to_ascii_lowercase(),"plane":side.plane.0.map(|point|point.to_array()),"uaxis":{"axis":side.u_axis.axis.to_array(),"offset":side.u_axis.offset,"scale":side.u_axis.scale},"vaxis":{"axis":side.v_axis.axis.to_array(),"offset":side.v_axis.offset,"scale":side.v_axis.scale},"rotation":side.rotation,"lightmap_scale":side.lightmap_scale,"smoothing_groups":side.smoothing_groups})
+    }).collect()
 }
 
 impl Session {
@@ -85,12 +93,24 @@ impl Session {
             .collect::<Vec<_>>();
         let spec = extrusion.spec.clone();
         let expected = extrusion.plan.clone();
-        let faces = expected
-            .pieces
+        let solids = if spec.height < 0.0 {
+            expected
+                .fragments
+                .iter()
+                .map(|fragment| &fragment.solid)
+                .collect::<Vec<_>>()
+        } else {
+            expected
+                .pieces
+                .iter()
+                .map(|piece| &piece.solid)
+                .collect::<Vec<_>>()
+        };
+        let faces = solids
             .iter()
-            .flat_map(|piece| {
-                piece.solid.sides.iter().map(|side| FaceId {
-                    solid: piece.solid.id,
+            .flat_map(|solid| {
+                solid.sides.iter().map(|side| FaceId {
+                    solid: solid.id,
                     side: side.id,
                 })
             })
@@ -109,7 +129,11 @@ impl Session {
                     "Extrusion allocation changed; preview the pieces again".into(),
                 ));
             }
-            Ok(actual.pieces.len())
+            Ok(if spec.height < 0.0 {
+                actual.fragments.len()
+            } else {
+                actual.pieces.len()
+            })
         })?;
         self.select_faces(&faces, SelectMode::Replace)?;
         Ok(count)
@@ -117,11 +141,14 @@ impl Session {
 }
 
 #[cfg(test)]
+mod inward_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::component_picking::Kind;
 
-    fn fixture(actor: Actor, owned: bool, direction: usize) -> (Session, u32, u64) {
+    pub(super) fn fixture(actor: Actor, owned: bool, direction: usize) -> (Session, u32, u64) {
         let mut session = Session::new(Err("no assets needed".into()));
         let ObjectId::Solid(id) = session
             .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
@@ -170,7 +197,7 @@ mod tests {
         (session, id, token)
     }
 
-    fn spec(height: f64) -> ExtrusionSpec {
+    pub(super) fn spec(height: f64) -> ExtrusionSpec {
         ExtrusionSpec {
             height,
             wall_material: Some("concrete/test".into()),
@@ -267,7 +294,7 @@ mod tests {
             .preview_partition_extrusion(flat, spec(32.0))
             .unwrap();
         let preview = session.render_document().vmf().clone();
-        for height in [f64::NAN, 0.0, -1.0, 4097.0] {
+        for height in [f64::NAN, 0.0, -0.01, 4097.0] {
             assert!(
                 session
                     .preview_partition_extrusion(token, spec(height))

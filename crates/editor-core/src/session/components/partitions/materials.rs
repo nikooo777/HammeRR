@@ -147,6 +147,20 @@ impl Session {
     }
 
     pub(in crate::session) fn partition_face_overlays(&self) -> Vec<render::scene::FaceOverlay> {
+        if self
+            .geometry
+            .components
+            .preview
+            .as_ref()
+            .is_some_and(|preview| {
+                preview
+                    .extrusion
+                    .as_ref()
+                    .is_some_and(|draft| draft.spec.height < 0.0)
+            })
+        {
+            return Vec::new();
+        }
         let Some(draft) = self
             .partition_surface_draft()
             .filter(|draft| draft.rise == 0.0)
@@ -224,6 +238,13 @@ impl Session {
     ) -> BTreeMap<PartitionRef, bool> {
         let hidden = self.hidden_tool_brushes();
         let no_tools = HashSet::new();
+        let inward = self
+            .geometry
+            .components
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.extrusion.as_ref())
+            .is_some_and(|extrusion| extrusion.spec.height < 0.0);
         let mut visible = BTreeMap::new();
         for part in &draft.partitions {
             for piece in &part.loops {
@@ -231,33 +252,69 @@ impl Session {
                     solid: part.source.solid,
                     partition: piece.id,
                 };
-                let output = include_outputs.then_some(()).and_then(|()| {
-                    self.geometry
-                        .components
-                        .preview
-                        .as_ref()
-                        .and_then(|preview| preview.extrusion.as_ref())
-                        .and_then(|extrusion| {
-                            extrusion.plan.pieces.iter().find(|output| {
-                                output.source.solid == reference.solid
-                                    && output.partition == reference.partition
-                            })
-                        })
-                        .map(|output| output.solid.id)
-                });
-                let shown = if let Some(solid) = output {
-                    !self.component_hidden(solid, &hidden)
+                let outputs = include_outputs
+                    .then_some(())
+                    .and_then(|()| {
+                        self.geometry
+                            .components
+                            .preview
+                            .as_ref()
+                            .and_then(|preview| preview.extrusion.as_ref())
+                    })
+                    .map(|extrusion| {
+                        if inward {
+                            extrusion
+                                .plan
+                                .fragments
+                                .iter()
+                                .filter(|output| {
+                                    output.source == reference.solid
+                                        && output
+                                            .faces
+                                            .iter()
+                                            .any(|face| face.partition == Some(reference.partition))
+                                })
+                                .map(|output| output.solid.id)
+                                .collect::<Vec<_>>()
+                        } else {
+                            extrusion
+                                .plan
+                                .pieces
+                                .iter()
+                                .filter(|output| {
+                                    output.source.solid == reference.solid
+                                        && output.partition == reference.partition
+                                })
+                                .map(|output| output.solid.id)
+                                .collect()
+                        }
+                    })
+                    .unwrap_or_default();
+                let shown = if !outputs.is_empty() {
+                    outputs
+                        .iter()
+                        .any(|solid| !self.component_hidden(*solid, &hidden))
                 } else if self.component_hidden(part.source.solid, &no_tools) {
                     false
                 } else if self.view.tool_textures {
                     true
                 } else {
-                    draft
-                        .effective_material(&self.document, part, piece.id)
-                        .is_some_and(|material| {
-                            let id = self.materials.load(&self.game, material);
-                            !self.materials.get(id).tool
-                        })
+                    let material = if inward {
+                        map_core::surface::side(
+                            &self.document,
+                            map_core::surface::FaceId {
+                                solid: part.source.solid,
+                                side: part.source.side,
+                            },
+                        )
+                        .map(|side| side.material.as_str())
+                    } else {
+                        draft.effective_material(&self.document, part, piece.id)
+                    };
+                    material.is_some_and(|material| {
+                        let id = self.materials.load(&self.game, material);
+                        !self.materials.get(id).tool
+                    })
                 };
                 visible.insert(reference, shown);
             }

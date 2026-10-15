@@ -40,6 +40,11 @@ impl Session {
             return Err("Partition picking needs a valid camera".into());
         }
         let draft = self.checked_partition(token)?.clone();
+        let inward = self
+            .checked_component_preview(token)?
+            .extrusion
+            .as_ref()
+            .is_some_and(|extrusion| extrusion.spec.height < 0.0);
         let visible = self.partition_top_visibility(&draft);
         let mut hidden = self.hidden_tool_brushes();
         for (piece, shown) in &visible {
@@ -86,10 +91,11 @@ impl Session {
                     && self.working_solid_visible(self.render_document(), solid.id)
             },
             |solid, side, point| {
-                if let Some(part) = draft
-                    .partitions
-                    .iter()
-                    .find(|part| part.source.solid == solid.id && part.source.side == side.id)
+                if !inward
+                    && let Some(part) = draft
+                        .partitions
+                        .iter()
+                        .find(|part| part.source.solid == solid.id && part.source.side == side.id)
                 {
                     let positions = part.positions(draft.rise);
                     let depth =
@@ -131,10 +137,33 @@ impl Session {
         if depth < f64::from(Camera::NEAR) || depth > far {
             return Ok(Vec::new());
         }
+        if let Some(extrusion) = &self.checked_component_preview(token)?.extrusion
+            && extrusion.spec.height < 0.0
+            && let Some(fragment) = extrusion
+                .plan
+                .fragments
+                .iter()
+                .find(|fragment| hit.solid == Some(fragment.solid.id))
+            && let Some(partition) = fragment
+                .faces
+                .iter()
+                .find(|face| Some(face.side) == hit.side)
+                .and_then(|face| face.partition)
+        {
+            return Ok(vec![PartitionPick {
+                partition: PartitionRef {
+                    solid: fragment.source,
+                    partition,
+                },
+                position: hit.point,
+                depth,
+            }]);
+        }
         if let Some(piece) = self
             .checked_component_preview(token)?
             .extrusion
             .as_ref()
+            .filter(|draft| draft.spec.height > 0.0)
             .and_then(|draft| {
                 draft
                     .plan

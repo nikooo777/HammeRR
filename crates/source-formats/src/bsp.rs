@@ -22,8 +22,8 @@ mod overlays;
 pub use overlays::{MAX_OVERLAY_FACES, MAX_OVERLAYS, Overlay, OverlayData, OverlayFade};
 mod occlusion;
 pub use occlusion::{
-    MAX_OCCLUDERS, MAX_OCCLUSION_POLYGONS, MAX_OCCLUSION_VERTEX_INDICES,
-    OCCLUDER_INACTIVE, Occluder, OccluderPolygon, Occlusion,
+    MAX_OCCLUDERS, MAX_OCCLUSION_POLYGONS, MAX_OCCLUSION_VERTEX_INDICES, OCCLUDER_INACTIVE,
+    Occluder, OccluderPolygon, Occlusion,
 };
 mod physics;
 mod static_props;

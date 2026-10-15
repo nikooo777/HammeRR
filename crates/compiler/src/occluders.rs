@@ -31,7 +31,10 @@ pub(crate) struct Definition {
 }
 
 fn property<'a>(entity: &'a Entity, name: &str) -> Option<&'a str> {
-    entity.properties.iter().find_map(|(key, value)| key.eq_ignore_ascii_case(name).then_some(value))
+    entity
+        .properties
+        .iter()
+        .find_map(|(key, value)| key.eq_ignore_ascii_case(name).then_some(value))
 }
 
 impl Map<'_> {
@@ -42,7 +45,11 @@ impl Map<'_> {
         control: &Control,
     ) -> Result<(), String> {
         let object = format!("entity:{}", entity.id);
-        let solids = entity.solids.iter().filter(|solid| !solid.hidden).collect::<Vec<_>>();
+        let solids = entity
+            .solids
+            .iter()
+            .filter(|solid| !solid.hidden)
+            .collect::<Vec<_>>();
         if solids.is_empty() && !entity.solids.is_empty() {
             return Ok(());
         }
@@ -58,7 +65,9 @@ impl Map<'_> {
             Some("0") => false,
             _ => {
                 report.diagnostics.push(Diagnostic::error(
-                    "Occluder Start Active must be 0 or 1", Some(object), entity.origin(),
+                    "Occluder Start Active must be 0 or 1",
+                    Some(object),
+                    entity.origin(),
                 ));
                 return Ok(());
             }
@@ -74,20 +83,30 @@ impl Map<'_> {
         if solid.sides.len() > MAX_POLYGONS_PER_OCCLUDER {
             report.diagnostics.push(Diagnostic::error(
                 "Occluder input exceeds HammeRR's 256-side per-entity budget",
-                Some(object), entity.origin(),
+                Some(object),
+                entity.origin(),
             ));
             return Ok(());
         }
-        if solid.sides.iter().any(|side| side.displacement.is_some()) || self.origin_material(solid, control)? {
+        if solid.sides.iter().any(|side| side.displacement.is_some())
+            || self.origin_material(solid, control)?
+        {
             report.diagnostics.push(Diagnostic::error(
                 "Occluders require ordinary convex brush geometry without terrain or origin materials",
                 Some(object), entity.origin(),
             ));
             return Ok(());
         }
-        let Some(geometry) = origins::checked_geometry(solid, report) else { return Ok(()); };
+        let Some(geometry) = origins::checked_geometry(solid, report) else {
+            return Ok(());
+        };
         if geometry.faces.len() > MAX_POLYGONS_PER_OCCLUDER
-            || geometry.faces.iter().map(|face| face.vertices.len()).sum::<usize>() > MAX_VERTICES_PER_OCCLUDER
+            || geometry
+                .faces
+                .iter()
+                .map(|face| face.vertices.len())
+                .sum::<usize>()
+                > MAX_VERTICES_PER_OCCLUDER
         {
             report.diagnostics.push(Diagnostic::error(
                 "Occluder geometry exceeds HammeRR's per-entity budget of 256 polygons or 4096 polygon vertices",
@@ -118,17 +137,20 @@ impl Map<'_> {
             if info.surface & surf::NODRAW != 0 && info.surface & surf::TRIGGER == 0 {
                 continue;
             }
-            let Some(plane) = support::find_authored(&mut self.planes, &geometry, face, control)? else {
+            let Some(plane) = support::find_authored(&mut self.planes, &geometry, face, control)?
+            else {
                 report.diagnostics.push(Diagnostic::error(
                     "Cannot preserve the occluder's native plane support; simplify its brush",
-                    Some(object), Some(geometry.center()),
+                    Some(object),
+                    Some(geometry.center()),
                 ));
                 return Ok(());
             };
             if self.planes.len() > super::bevels::MAX_PLANES {
                 report.diagnostics.push(Diagnostic::error(
                     "Occluder exceeds the shared BSP plane limit; simplify map geometry",
-                    Some(object), Some(geometry.center()),
+                    Some(object),
+                    Some(geometry.center()),
                 ));
                 return Ok(());
             }
@@ -145,13 +167,27 @@ impl Map<'_> {
         if polygons.is_empty() {
             report.diagnostics.push(Diagnostic::error(
                 "Occluder has no active faces; apply tools/toolsoccluder to at least one side",
-                Some(object), Some(geometry.center()),
+                Some(object),
+                Some(geometry.center()),
             ));
             return Ok(());
         }
-        let mut properties = entity.properties.iter().filter(|(key, _)| {
-            !["model", "occludernumber", "classname", "hammerid", "StartActive"].iter().any(|name| key.eq_ignore_ascii_case(name))
-        }).map(|(key, value)| (key.to_owned(), value.to_owned())).collect::<Vec<_>>();
+        let mut properties = entity
+            .properties
+            .iter()
+            .filter(|(key, _)| {
+                ![
+                    "model",
+                    "occludernumber",
+                    "classname",
+                    "hammerid",
+                    "StartActive",
+                ]
+                .iter()
+                .any(|name| key.eq_ignore_ascii_case(name))
+            })
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect::<Vec<_>>();
         properties.extend([
             ("classname".into(), "func_occluder".into()),
             ("hammerid".into(), entity.id.to_string()),
@@ -161,16 +197,26 @@ impl Map<'_> {
         for connection in entity.connections.iter().flatten() {
             properties.push((connection.output.clone(), connection.value.clone()));
         }
-        let (mins, maxs) = polygons.iter().flat_map(|polygon| polygon.winding.0.iter()).fold(
-            (DVec3::MAX, DVec3::MIN), |(mins, maxs), &point| (mins.min(point), maxs.max(point)),
-        );
+        let (mins, maxs) = polygons
+            .iter()
+            .flat_map(|polygon| polygon.winding.0.iter())
+            .fold((DVec3::MAX, DVec3::MIN), |(mins, maxs), &point| {
+                (mins.min(point), maxs.max(point))
+            });
         self.occluders.push(Definition {
-            entity: self.entities.len(), polygons, mins, maxs, area: 0,
+            entity: self.entities.len(),
+            polygons,
+            mins,
+            maxs,
+            area: 0,
             flags: if active { 0 } else { OCCLUDER_INACTIVE },
         });
         self.entities.push(MapEntity {
-            id: entity.id, classname: "func_occluder".into(), properties,
-            brushes: Vec::new(), origin: None,
+            id: entity.id,
+            classname: "func_occluder".into(),
+            properties,
+            brushes: Vec::new(),
+            origin: None,
         });
         Ok(())
     }
@@ -178,18 +224,28 @@ impl Map<'_> {
 
 fn consume(work: &mut usize, amount: usize, control: &Control) -> Result<(), String> {
     control.checkpoint()?;
-    *work = work.checked_add(amount).ok_or("Occluder area work count overflow")?;
+    *work = work
+        .checked_add(amount)
+        .ok_or("Occluder area work count overflow")?;
     if *work > MAX_AREA_WORK {
-        return Err("Occluder area assignment exceeds HammeRR's four-million work-unit budget".into());
+        return Err(
+            "Occluder area assignment exceeds HammeRR's four-million work-unit budget".into(),
+        );
     }
     Ok(())
 }
 
 pub(crate) fn assign_areas(
-    map: &mut Map<'_>, tree: &Tree, portals: &[Portal], areas: &Areas,
-    report: &mut Report, control: &Control,
+    map: &mut Map<'_>,
+    tree: &Tree,
+    portals: &[Portal],
+    areas: &Areas,
+    report: &mut Report,
+    control: &Control,
 ) -> Result<(), String> {
-    if map.occluders.is_empty() { return Ok(()); }
+    if map.occluders.is_empty() {
+        return Ok(());
+    }
     let mut work = 0;
     let mut neighbors = vec![Vec::new(); tree.nodes.len()];
     for portal in portals {
@@ -213,10 +269,15 @@ pub(crate) fn assign_areas(
                 let plane = map.planes.get(plane);
                 let halves = match winding.classify(plane.normal, plane.dist) {
                     Side::On => [Some(winding.clone()), Some(winding)],
-                    _ => { let (front, back) = winding.split(plane.normal, plane.dist); [front, back] }
+                    _ => {
+                        let (front, back) = winding.split(plane.normal, plane.dist);
+                        [front, back]
+                    }
                 };
                 for (child, half) in children.into_iter().zip(halves) {
-                    if let Some(half) = half { pending.push((child, half)); }
+                    if let Some(half) = half {
+                        pending.push((child, half));
+                    }
                 }
             }
         }
@@ -225,12 +286,18 @@ pub(crate) fn assign_areas(
             for &leaf in &leaves {
                 for other in std::iter::once(leaf).chain(neighbors[leaf].iter().copied()) {
                     consume(&mut work, 1, control)?;
-                    if !cross_portals && tree.nodes[other].contents & contents::AREAPORTAL != 0 { continue; }
+                    if !cross_portals && tree.nodes[other].contents & contents::AREAPORTAL != 0 {
+                        continue;
+                    }
                     let area = areas.indices[other];
-                    if area > 0 { found.insert(area); }
+                    if area > 0 {
+                        found.insert(area);
+                    }
                 }
             }
-            if !found.is_empty() { break; }
+            if !found.is_empty() {
+                break;
+            }
         }
         if found.len() != 1 {
             let entity = &map.entities[definition.entity];

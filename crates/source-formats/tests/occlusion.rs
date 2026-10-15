@@ -4,15 +4,30 @@ use source_formats::bsp::{
 
 fn fixture() -> (Bsp, Occlusion) {
     let mut bsp = Bsp::new();
-    bsp.set_records(&[Plane { normal: [0.0, 0.0, 1.0], dist: 16.0, kind: 2 }]);
-    bsp.set_values(lump::VERTEXES, &[[0.0f32, 0.0, 16.0], [0.0, 8.0, 16.0], [8.0, 0.0, 16.0]]);
+    bsp.set_records(&[Plane {
+        normal: [0.0, 0.0, 1.0],
+        dist: 16.0,
+        kind: 2,
+    }]);
+    bsp.set_values(
+        lump::VERTEXES,
+        &[[0.0f32, 0.0, 16.0], [0.0, 8.0, 16.0], [8.0, 0.0, 16.0]],
+    );
     bsp.set_records(&[Area::default(); 2]);
     let data = Occlusion {
         occluders: vec![Occluder {
-            flags: OCCLUDER_INACTIVE, first_polygon: 0, polygon_count: 1,
-            mins: [0.0, 0.0, 16.0], maxs: [8.0, 8.0, 16.0], area: 1,
+            flags: OCCLUDER_INACTIVE,
+            first_polygon: 0,
+            polygon_count: 1,
+            mins: [0.0, 0.0, 16.0],
+            maxs: [8.0, 8.0, 16.0],
+            area: 1,
         }],
-        polygons: vec![OccluderPolygon { first_vertex_index: 0, vertex_count: 3, plane: 0 }],
+        polygons: vec![OccluderPolygon {
+            first_vertex_index: 0,
+            vertex_count: 3,
+            plane: 0,
+        }],
         vertex_indices: vec![0, 1, 2],
     };
     bsp.set_occlusion(&data).unwrap();
@@ -53,7 +68,10 @@ fn truncation_counts_versions_compression_and_trailing_bytes_are_rejected() {
     for length in 1..bsp.lumps[lump::OCCLUSION].data.len() {
         let mut invalid = bsp.clone();
         invalid.lumps[lump::OCCLUSION].data.truncate(length);
-        assert!(invalid.occlusion().is_err(), "accepted {length}-byte payload");
+        assert!(
+            invalid.occlusion().is_err(),
+            "accepted {length}-byte payload"
+        );
     }
     for count in [-1, i32::MAX, MAX_OCCLUDERS as i32 + 1] {
         let mut invalid = bsp.clone();
@@ -117,7 +135,10 @@ fn empty_native_records_preserve_the_unassigned_area_and_empty_bounds_sentinels(
     let mut bsp = Bsp::new();
     let data = Occlusion {
         occluders: vec![Occluder {
-            area: -1, mins: [f32::MAX; 3], maxs: [-f32::MAX; 3], ..Occluder::default()
+            area: -1,
+            mins: [f32::MAX; 3],
+            maxs: [-f32::MAX; 3],
+            ..Occluder::default()
         }],
         ..Occlusion::default()
     };
@@ -139,13 +160,22 @@ fn nonfinite_referenced_geometry_is_rejected_before_native_emission() {
 
 #[test]
 fn installed_css_occlusion_fixtures_round_trip_including_empty_sentinels() {
-    let directory = std::env::var_os("CSS_DIR").map(std::path::PathBuf::from).or_else(|| {
-        std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share/Steam/steamapps/common/Counter-Strike Source"))
-    });
-    let Some(directory) = directory else { return; };
+    let directory = std::env::var_os("CSS_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| {
+                std::path::PathBuf::from(home)
+                    .join(".local/share/Steam/steamapps/common/Counter-Strike Source")
+            })
+        });
+    let Some(directory) = directory else {
+        return;
+    };
     for name in ["cs_assault", "cs_compound", "de_aztec", "de_port"] {
         let path = directory.join(format!("cstrike/maps/{name}.bsp"));
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         let mut bsp = Bsp::read(&path).unwrap();
         let original = bsp.lumps[lump::OCCLUSION].clone();
         let data = bsp.occlusion().unwrap().unwrap();

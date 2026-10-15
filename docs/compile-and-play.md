@@ -118,6 +118,11 @@ An areaportal controls visibility through a sealed opening between two areas.
 
 Limits: one visible convex brush per portal, exactly two distinct areas, one planar interface, at most 511 portals and 255 open areas. Overlapping, touching or leaking portal boundaries fail without replacing the previous BSP. Hidden portals are omitted. A closed portal hides the other area; link it to a door or another opaque barrier when players could otherwise see through the opening.
 
+[Compile regions](compile-regions.md#include-overlays-and-visibility-helpers)
+retain whole contained portal/window brush bounds independently of editor origins.
+Disjoint helpers are omitted; crossing bounds stop the build. The retained opening
+must still separate two areas, and window render models must remain available.
+
 ### Distance-fading windows
 
 A window portal fades a brush model to opaque as the player moves away, then hides the area behind it.

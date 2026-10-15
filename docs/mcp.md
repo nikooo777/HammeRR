@@ -540,8 +540,13 @@ One finite axis-aligned box is supported, at least 16 units per axis and within
 point origins and resolved model pivots determine entity inclusion. References
 remain unchanged. Fully contained structural world water retains the normal
 native water/physics path. World/detail terrain needs its complete cage and grid
-contained; wholly disjoint combined bounds are omitted. Crossing terrain/water,
-detail/model water, slime, overlays, areaportals/windows, occluders, instances and visclusters
+contained; wholly disjoint combined bounds are omitted. Areaportals/windows and
+occluders use complete visible brush bounds rather than editor origins: contained
+helpers remain whole, disjoint helpers are omitted and crossings reject.
+Imported overlays retain their complete definitions regardless of marker origin;
+every target must resolve to an emitted world/detail/terrain surface. Missing
+window render targets and ordinary helper validation errors retain prior output.
+Crossing terrain/water, detail/model water, slime, overlay transitions, instances and visclusters
 reject before publication.
 Runtime-model terrain remains unsupported by the normal compiler too.
 Sun and water LOD controllers retain original origins/settings even outside
@@ -552,9 +557,10 @@ Disable regions for full-map leak checks. Globally disabled imported plural
 metadata retains full-map behavior even with enabled children. Explicit Clear
 is required before replacing imported plural/multiple records. See
 [Compile regions](compile-regions.md).
-For plural imports containing additional disabled boxes, a valid `build_scope`
-can coexist with `committed.error`. Compilation works, while
-`frame_compile_region` and the saved viewport guide remain unavailable.
+For imports with one effective active box, `committed`, `build_scope`,
+`frame_compile_region` and the viewport guide agree even when additional disabled
+boxes or roots remain. Readback preserves all imported metadata. Malformed active
+records and ambiguous disabled-only sets return inspection errors.
 
 ### Material asset errors
 

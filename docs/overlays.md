@@ -17,6 +17,11 @@ Overlays project a material onto selected world surfaces. Use them for markings,
 
 Brush-face bindings follow compiled face splitting and lightmap subdivision. Adjacent faces with different overlay memberships remain separate. World brushes, `func_detail` surfaces and imported displacements are supported. Named overlays receive a runtime accessor with the compiled overlay ID; the VMF keeps its original entity and properties.
 
+[Compile regions](compile-regions.md#include-overlays-and-visibility-helpers)
+keep the complete imported projection independently of its marker position.
+Include every target surface; an omitted or buried target stops the build
+without replacing the previous BSP.
+
 ## Limits
 
 - Overlay placement, corner handles, viewport projection and automatic rebinding after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields are read-only.

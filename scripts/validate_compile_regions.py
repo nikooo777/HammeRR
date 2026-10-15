@@ -163,10 +163,10 @@ def validate(args):
             check(wait_job(client)["status"] == "failed" and crossing.read_bytes() == previous, "Background crossing-terrain rejection preserves prior output")
             client.call("undo")
             check(detail(client, [terrain]) == [row for row in original_objects if row["id"] == terrain], "Undo restores the exact terrain cage and grid after the control")
-        helper = client.call("create_entity", {"classname": "info_overlay", "origin": [400, 400, 64]})["id"]
+        helper = client.call("create_entity", {"classname": "info_overlay_transition", "origin": [400, 400, 64]})["id"]
         region_path.write_bytes(b"previous region output")
         rejected = client.call("compile_map", {"path": str(region_path)}, error=True)
-        check("info_overlay" in json.dumps(rejected) and region_path.read_bytes() == b"previous region output", "Unsupported consumed helpers fail explicitly and preserve the previous BSP")
+        check("info_overlay_transition" in json.dumps(rejected) and region_path.read_bytes() == b"previous region output", "Unsupported consumed helpers fail explicitly and preserve the previous BSP")
         client.call("delete_objects", {"ids": [helper]})
         client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"})
         native_path = args.output / "native-region.bsp"
@@ -188,13 +188,19 @@ def validate(args):
         client.call("save_map", {"path": str(native_source)})
         legacy = args.output / "legacy-import.bsp"
         client.call("compile_map", {"path": str(legacy)})
-        metadata = f'cordons {{ "active" "1" cordon {{ "name" "Imported region" "active" "1" box {{ "mins" "({" ".join(map(str, LOW))})" "maxs" "({" ".join(map(str, HIGH))})" }} }} }}'
+        metadata = f'cordons {{ "active" "1" cordon {{ "name" "Imported region" "active" "1" box {{ "mins" "({" ".join(map(str, LOW))})" "maxs" "({" ".join(map(str, HIGH))})" }} }} cordon {{ "name" "Disabled region" "active" "0" }} }}'
         imported, replaced = re.subn(r"(?ms)^cordon\s*\{.*?^\}", lambda _: metadata, native_source.read_text())
         assert replaced == 1
         plural = args.output / "plural-source.vmf"
         plural.write_text(imported)
         client.call("open_map", {"path": str(plural), "discard_changes": True})
-        check(client.call("get_compile_region")["build_scope"]["enabled"], "An imported single active plural box has the same effective region")
+        imported_state = client.call("get_compile_region")
+        check(imported_state["committed"] == imported_state["build_scope"] and imported_state["committed"]["mins"] == LOW, "A plural import with disabled siblings exposes its effective active box")
+        imported_history = client.call("get_map_info")["undo"]
+        client.call("frame_compile_region", {"aspect": 1.5})
+        check(client.call("get_map_info")["undo"] == imported_history and plural.read_text() == imported, "Framing imported box sets preserves history and every saved named entry")
+        if args.render:
+            client.render(args.output / "imported-region-preview.png", width=1000, height=700)
         plural_bsp = args.output / "plural-import.bsp"
         client.call("compile_map", {"path": str(plural_bsp)})
         synchronous = plural_bsp.read_bytes()

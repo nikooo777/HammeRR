@@ -6,6 +6,39 @@ use source_formats::{
 
 use crate::test_common as common;
 
+#[test]
+fn disjoint_fixed_helpers_preserve_invalid_origin_errors() {
+    let (_directory, game, source) = fixture();
+    for classname in ["func_occluder", "func_areaportal", "func_areaportalwindow"] {
+        let mut document = Document::new(source.clone());
+        document
+            .edit("invalid outside helper", |tx| {
+                let map_core::ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::new(400.0, 400.0, 32.0),
+                    DVec3::new(416.0, 416.0, 64.0),
+                    "tools/toolsblack",
+                )?
+                else {
+                    unreachable!()
+                };
+                edit::tie_to_entity(tx, &[id], classname, &[("origin".into(), "invalid".into())])
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let output = crate::compile(&before, &game);
+        assert!(output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.message.contains("valid finite origin"))
+        );
+        assert_eq!(document.vmf(), &before);
+    }
+}
+
 fn fixture() -> (tempfile::TempDir, GameFs, Vmf) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("materials/tools")).unwrap();
@@ -560,7 +593,11 @@ fn disabled_regions_borrow_input_and_unsupported_scopes_or_id_exhaustion_preserv
         output.report
     );
     source.entities.pop();
-    for classname in ["info_overlay", "func_areaportal", "func_occluder"] {
+    for classname in [
+        "info_overlay_transition",
+        "func_instance",
+        "func_viscluster",
+    ] {
         let mut unsafe_source = source.clone();
         unsafe_source
             .entities

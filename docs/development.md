@@ -517,6 +517,7 @@ clipboard or game launch.
 ```sh
 cargo test -p compiler --test cordons
 cargo test -p compiler --lib cordons::tests
+cargo test -p compiler --test region_overlays --test region_occluders --test region_areaportals
 cargo test -p map-core --lib compile_region::tests
 cargo test -p editor-core --features mcp --lib session::compile_region::tests
 cargo test -p editor --bin editor compile_region_ui::tests
@@ -526,6 +527,8 @@ python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-hea
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-global-check --water --global-markers --runtime
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-terrain-check --terrain --global-markers --render --runtime
 python3 -B scripts/validate_compile_regions.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-mixed-check --terrain --water --global-markers --runtime
+python3 -B scripts/validate_region_overlays.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-overlay-check --runtime
+python3 -B scripts/validate_region_helpers.py --binary target/debug/hammerr-headless --output /tmp/hammerr-region-helper-check --runtime
 ```
 
 Compiler regressions cover native legacy/plural parsing, disabled identity,
@@ -539,6 +542,13 @@ captures an offscreen region guide; `--runtime` uses a private display with
 `--water` adds a contained world pool, crossing-volume publication guards,
 native fluid counters and a 60-second buoyancy observation above which the
 boundary traces remain dry. Water in detail/model brushes remains rejected.
+
+The imported-box checks include additional disabled entries and effective-scope
+inspection/framing without source or history edits. Region overlay checks retain
+whole imported projections and reject unavailable final face bindings. The helper
+workflow combines portals/windows with native occluder arrays, geometry-based
+inclusion, boundary rejection and missing window render targets. Its `--runtime`
+mode uses isolated displays to observe native area controls and window fading.
 `--global-markers` places sun/water controls outside the region, verifies
 retained origins and authored distances, and checks exact shared output with
 the rendered black boundary. Compiler cases cover unavailable/incompatible

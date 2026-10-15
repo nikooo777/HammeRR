@@ -180,8 +180,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Source models |
 | --- |
-| ![Model browser and reference pose](docs/images/reference-model-browser.png) |
-| Browse models and skins with static or reference pose previews, then select and frame their meshes. |
+| ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) |
+| Browse models, skins and named bodygroups with static or reference pose previews. |
 
 | Terrain triangles |
 | --- |
@@ -269,8 +269,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 The editor covers most everyday brush work. Notable gaps:
 
-- **Terrain**: creation, resolution edits, sculpting and blending work; live brush strokes, subdivision and other fractional edge tools remain planned.
-- **Models**: static meshes, reference poses, skins and visual browsing work; animation and other bodygroups remain planned.
+- **Terrain**: creation, resolution edits, live sculpt/blend strokes, vertex handles and full-edge subdivision work; other fractional edge tools remain planned.
+- **Models**: static meshes, reference poses, skins, bodygroups and visual browsing work; animation and scaling remain planned.
 - **Compiler**: Fast and Detailed visibility are available; lighting covers direct light, sky ambient and up to four optional diffuse bounces; HDR remains unfinished.
 
 The full picture is in [Status and roadmap](docs/status.md).

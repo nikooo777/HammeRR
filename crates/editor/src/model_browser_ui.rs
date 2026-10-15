@@ -1,10 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 use crate::{
-    ModelBrowserWindow, ModelChoiceRow,
+    ModelBodygroupRow, ModelBrowserWindow, ModelChoiceRow,
     mcp::{SharedSession, lock},
     model_preview::PreviewRenderer,
     session::{Actor, Session},
@@ -16,6 +16,7 @@ pub struct Controller {
     pub window: ModelBrowserWindow,
     token: Rc<Cell<Option<u64>>>,
     catalog: Rc<RefCell<Catalog>>,
+    preview: Rc<RefCell<Preview>>,
 }
 
 #[derive(Default)]
@@ -95,73 +96,168 @@ fn refresh_catalog(window: &ModelBrowserWindow, session: &mut Session, state: &m
     });
 }
 
+#[derive(Default)]
+struct Preview {
+    renderer: PreviewRenderer,
+    seen: Option<(u64, String, usize, u32)>,
+}
+
+fn choice_key(report: &serde_json::Value) -> Option<(u64, String, usize, u32)> {
+    let asset = &report["asset"];
+    (!asset.is_null()).then(|| {
+        (
+            report["token"].as_u64().unwrap(),
+            asset["path"].as_str().unwrap().to_owned(),
+            asset["skin"].as_u64().unwrap() as usize,
+            asset["body"].as_u64().unwrap() as u32,
+        )
+    })
+}
+
+fn fit_window(window: &ModelBrowserWindow, groups: usize) {
+    let height = (690.0
+        + groups as f32 * 70.0
+        + if window.get_show_materials() {
+            100.0
+        } else {
+            0.0
+        })
+    .min(900.0);
+    let size = window.window().size();
+    let scale = window.window().scale_factor();
+    if size.height as f32 / scale < height {
+        window
+            .window()
+            .set_size(slint::LogicalSize::new(size.width as f32 / scale, height));
+    }
+}
+
+fn present(
+    window: &ModelBrowserWindow,
+    session: &Session,
+    report: &serde_json::Value,
+    preview: &mut Preview,
+) {
+    let asset = &report["asset"];
+    if asset.is_null() {
+        return;
+    }
+    let path = asset["path"].as_str().unwrap();
+    let skin = asset["skin"].as_u64().unwrap() as usize;
+    let body = asset["body"].as_u64().unwrap() as u32;
+    let key = (
+        report["token"].as_u64().unwrap(),
+        path.to_owned(),
+        skin,
+        body,
+    );
+    window.set_path(path.into());
+    window.set_skin_count(asset["skins"].as_u64().unwrap() as i32);
+    window.set_skin(skin as i32);
+    window.set_body(body as i32);
+    let rows = asset["bodygroups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|group| group["variants"].as_array().unwrap().len() > 1)
+        .map(|group| ModelBodygroupRow {
+            index: group["index"].as_u64().unwrap() as i32,
+            label: group["label"].as_str().unwrap().into(),
+            choices: slint::ModelRc::new(slint::VecModel::from(
+                group["variants"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|variant| variant["label"].as_str().unwrap().into())
+                    .collect::<Vec<slint::SharedString>>(),
+            )),
+            selected: group["selected"].as_u64().unwrap() as i32,
+        })
+        .collect::<Vec<_>>();
+    fit_window(window, rows.len());
+    window.set_bodygroups(slint::ModelRc::new(slint::VecModel::from(rows)));
+    window.set_geometry(if asset["blank"] == true {
+        "No model geometry · entity helper".into()
+    } else {
+        format!(
+            "{} triangles · {} vertices · {} meshes",
+            asset["triangles"], asset["vertices"], asset["meshes"]
+        )
+        .into()
+    });
+    window.set_dimensions(if asset["blank"] == true {
+        "Blank body selection".into()
+    } else {
+        let low = &asset["local_bounds"][0];
+        let high = &asset["local_bounds"][1];
+        format!(
+            "Size · {:.1} × {:.1} × {:.1} units",
+            high[0].as_f64().unwrap() - low[0].as_f64().unwrap(),
+            high[1].as_f64().unwrap() - low[1].as_f64().unwrap(),
+            high[2].as_f64().unwrap() - low[2].as_f64().unwrap()
+        )
+        .into()
+    });
+    window.set_materials(
+        asset["materials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into(),
+    );
+    window.set_material_count(asset["materials"].as_array().unwrap().len() as i32);
+    window.set_can_apply(true);
+    if preview.seen.as_ref() != Some(&key) {
+        window.set_has_preview(false);
+        preview.seen = Some(key);
+        match preview.renderer.render(session, path, skin, body, 640, 400) {
+            Ok(pixels) => {
+                window.set_preview(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+                    slint::Rgba8Pixel,
+                >::clone_from_slice(
+                    &pixels, 640, 400
+                )));
+                window.set_has_preview(true);
+            }
+            Err(error) => {
+                window.set_message(error.into());
+                return;
+            }
+        }
+    }
+    window.set_message(if asset["blank"]==true {"Blank bodygroups show an editor helper. Use model applies the model, skin and bodygroups together.".into()}else if asset["pose"]=="reference" {"Reference pose; animation sequences are not played. Use model applies model, skin and bodygroups together.".into()}else{"Preview only. Use model applies model, skin and bodygroups together.".into()});
+}
+
 fn preview(
     window: &ModelBrowserWindow,
     session: &mut Session,
     token: Option<u64>,
-    renderer: &mut PreviewRenderer,
+    state: &mut Preview,
 ) {
+    state.seen = None;
     let result = token
         .ok_or("Reopen the model browser".to_owned())
         .and_then(|token| {
-            session.choose_model(token, &window.get_path(), window.get_skin().max(0) as usize)
+            session.choose_model_body(
+                token,
+                &window.get_path(),
+                window.get_skin().max(0) as usize,
+                window.get_body().max(0) as u32,
+            )
         });
-    window.set_can_apply(false);
-    window.set_has_preview(false);
     match result {
-        Ok(report) => {
-            let asset = &report["asset"];
-            let path = asset["path"].as_str().unwrap();
-            let skin = asset["skin"].as_u64().unwrap() as usize;
-            window.set_path(path.into());
-            window.set_skin_count(asset["skins"].as_u64().unwrap() as i32);
-            window.set_geometry(
-                format!(
-                    "{} triangles · {} vertices · {} meshes",
-                    asset["triangles"], asset["vertices"], asset["meshes"]
-                )
-                .into(),
-            );
-            let low = &asset["local_bounds"][0];
-            let high = &asset["local_bounds"][1];
-            window.set_dimensions(
-                format!(
-                    "Size · {:.1} × {:.1} × {:.1} units",
-                    high[0].as_f64().unwrap() - low[0].as_f64().unwrap(),
-                    high[1].as_f64().unwrap() - low[1].as_f64().unwrap(),
-                    high[2].as_f64().unwrap() - low[2].as_f64().unwrap()
-                )
-                .into(),
-            );
-            window.set_materials(
-                asset["materials"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|value| value.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into(),
-            );
-            window.set_can_apply(true);
-            match renderer.render(session, path, skin, 640, 400) {
-                Ok(pixels) => {
-                    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                        &pixels, 640, 400,
-                    );
-                    window.set_preview(slint::Image::from_rgba8(buffer));
-                    window.set_has_preview(true);
-                    window.set_message(if asset["pose"] == "reference" {
-                        "Reference pose; animation sequences are not played. Use model applies the model and skin together.".into()
-                    } else {"Preview only. Use model applies the model and skin together.".into()});
-                }
-                Err(error) => window.set_message(error.into()),
-            }
-        }
+        Ok(report) => present(window, session, &report, state),
         Err(error) => {
+            window.set_can_apply(false);
+            window.set_has_preview(false);
             window.set_geometry("".into());
             window.set_dimensions("".into());
             window.set_materials("".into());
+            window.set_material_count(0);
+            window.set_bodygroups(Default::default());
             window.set_message(error.into());
         }
     }
@@ -170,9 +266,19 @@ fn preview(
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = ModelBrowserWindow::new()?;
+        window
+            .window()
+            .set_size(slint::LogicalSize::new(960.0, 690.0));
         let token = Rc::new(Cell::new(None));
         let catalog = Rc::new(RefCell::new(Catalog::default()));
-        let renderer = Rc::new(RefCell::new(PreviewRenderer::default()));
+        let renderer = Rc::new(RefCell::new(Preview::default()));
+        window.on_resize_details({
+            let window = window.as_weak();
+            move || {
+                let window = window.unwrap();
+                fit_window(&window, window.get_bodygroups().row_count());
+            }
+        });
         window.on_search({
             let (window, shared, catalog) = (window.as_weak(), shared.clone(), catalog.clone());
             move || {
@@ -213,12 +319,47 @@ impl Controller {
                 )
             }
         });
+        window.on_bodygroup_changed({
+            let (window, shared, token, renderer) = (
+                window.as_weak(),
+                shared.clone(),
+                token.clone(),
+                renderer.clone(),
+            );
+            move |group, variant| {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let result = token
+                    .get()
+                    .ok_or("Reopen the model browser".to_owned())
+                    .and_then(|token| {
+                        session.choose_model_bodygroup(
+                            token,
+                            group.max(0) as usize,
+                            variant.max(0) as usize,
+                        )
+                    });
+                match result {
+                    Ok(report) => present(&window, &session, &report, &mut renderer.borrow_mut()),
+                    Err(error) => {
+                        window.set_can_apply(false);
+                        if let Some(token) = token.get()
+                            && let Ok(report) = session.model_choice(token)
+                        {
+                            present(&window, &session, &report, &mut renderer.borrow_mut());
+                        }
+                        window.set_message(error.into());
+                    }
+                }
+            }
+        });
         window.on_choose({
             let window = window.as_weak();
             move |path| {
                 let window = window.unwrap();
                 window.set_path(path);
                 window.set_skin(0);
+                window.set_body(0);
                 window.invoke_preview_model();
             }
         });
@@ -241,7 +382,12 @@ impl Controller {
             }
         });
         window.on_apply({
-            let (window, shared, token) = (window.as_weak(), shared.clone(), token.clone());
+            let (window, shared, token, renderer) = (
+                window.as_weak(),
+                shared.clone(),
+                token.clone(),
+                renderer.clone(),
+            );
             move || {
                 let window = window.unwrap();
                 let result = token
@@ -249,18 +395,21 @@ impl Controller {
                     .ok_or("Reopen the model browser".to_owned())
                     .and_then(|token| {
                         let mut session = lock(&shared);
-                        session.choose_model(
-                            token,
-                            &window.get_path(),
-                            window.get_skin().max(0) as usize,
-                        )?;
-                        session.apply_model_choice(Actor::User, token)
+                        let report = session.model_choice(token)?;
+                        if renderer.borrow().seen.as_ref() != choice_key(&report).as_ref() {
+                            present(&window, &session, &report, &mut renderer.borrow_mut());
+                            return Ok(None);
+                        }
+                        session.apply_model_choice(Actor::User, token).map(Some)
                     });
                 match result {
-                    Ok(_) => {
+                    Ok(Some(_)) => {
                         token.set(None);
                         let _ = window.hide();
                     }
+                    Ok(None) => window.set_message(
+                        "Model choice changed. Review the preview before Use model.".into(),
+                    ),
                     Err(error) => {
                         window.set_can_apply(false);
                         window.set_message(error.into());
@@ -279,15 +428,19 @@ impl Controller {
             window,
             token,
             catalog,
+            preview: renderer,
         })
     }
 
     pub fn initialize(&self, session: &mut Session, id: u32) -> Result<(), String> {
-        if let Some(token) = self.token.take() {
-            let _ = session.cancel_model_choice(token);
+        let report = session.resume_model_choice(id)?;
+        let token = report["token"].as_u64().unwrap();
+        if let Some(previous) = self.token.get()
+            && previous != token
+        {
+            let _ = session.cancel_model_choice(previous);
         }
-        let report = session.begin_model_choice(id)?;
-        self.token.set(report["token"].as_u64());
+        self.token.set(Some(token));
         self.window.set_query("".into());
         self.window.set_group_index(0);
         *self.catalog.borrow_mut() = Catalog::default();
@@ -297,22 +450,44 @@ impl Controller {
         let skin = report["skin"].as_u64().unwrap().min(i32::MAX as u64 - 1) as i32;
         self.window.set_skin_count(skin + 1);
         self.window.set_skin(skin);
+        self.window
+            .set_body(report["body"].as_u64().unwrap().min(i32::MAX as u64) as i32);
+        self.window.set_bodygroups(Default::default());
         self.window.set_can_apply(false);
         self.window.set_has_preview(false);
+        self.preview.borrow_mut().seen = None;
         self.window.set_geometry("".into());
         self.window.set_dimensions("".into());
         self.window.set_materials("".into());
+        self.window.set_material_count(0);
+        self.window.set_show_materials(false);
         self.window
             .set_message("Choose a model. The map stays unchanged until Use model.".into());
+        if !report["asset"].is_null() {
+            present(
+                &self.window,
+                session,
+                &report,
+                &mut self.preview.borrow_mut(),
+            );
+        }
         Ok(())
     }
 
     pub fn refresh(&self, session: &Session) {
-        if let Some(token) = self.token.get()
-            && let Err(error) = session.model_choice(token)
-        {
-            self.window.set_can_apply(false);
-            self.window.set_message(error.into());
+        if let Some(token) = self.token.get() {
+            match session.model_choice(token) {
+                Ok(report) => present(
+                    &self.window,
+                    session,
+                    &report,
+                    &mut self.preview.borrow_mut(),
+                ),
+                Err(error) => {
+                    self.window.set_can_apply(false);
+                    self.window.set_message(error.into());
+                }
+            }
         }
     }
 }
@@ -450,6 +625,72 @@ mod tests {
         controller.window.show().unwrap();
         crate::tests::save_ui_snapshot(controller.window.window(), "reference-model-browser");
         controller.window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        let token = lock(&shared).begin_model_choice(dynamic).unwrap()["token"]
+            .as_u64()
+            .unwrap();
+        lock(&shared)
+            .choose_model_body(token, "models/kleiner.mdl", 0, 0)
+            .unwrap();
+        controller.initialize(&mut lock(&shared), dynamic).unwrap();
+        assert_eq!(controller.token.get(), Some(token));
+        assert_eq!(controller.window.get_path(), "models/kleiner.mdl");
+        let groups = controller.window.get_bodygroups();
+        assert_eq!(groups.row_count(), 1);
+        let group = groups.row_data(0).unwrap().index;
+        let pixels = controller.window.get_preview().to_rgba8().unwrap();
+        assert_eq!(lock(&shared).current_model_choice()["token"], token);
+        lock(&shared)
+            .choose_model_bodygroup(token, group as usize, 1)
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert_eq!(controller.window.get_body(), 1);
+        assert_eq!(
+            controller
+                .window
+                .get_bodygroups()
+                .row_data(0)
+                .unwrap()
+                .selected,
+            1
+        );
+        assert_ne!(
+            pixels.as_bytes(),
+            controller
+                .window
+                .get_preview()
+                .to_rgba8()
+                .unwrap()
+                .as_bytes()
+        );
+        controller.window.set_query("kleiner".into());
+        controller.window.set_group_index(0);
+        controller.window.invoke_search();
+        controller.window.show().unwrap();
+        crate::tests::save_ui_snapshot(controller.window.window(), "bodygroup-model-browser");
+        lock(&shared)
+            .choose_model_bodygroup(token, group as usize, 0)
+            .unwrap();
+        controller.window.invoke_apply();
+        assert!(controller.window.window().is_visible());
+        assert_eq!(controller.window.get_body(), 0);
+        assert_eq!(lock(&shared).document().vmf(), &before);
+        controller.window.invoke_bodygroup_changed(group, 1);
+        assert_eq!(controller.window.get_body(), 1);
+        let history = lock(&shared).document().undo_labels().count();
+        controller.window.invoke_apply();
+        assert!(!controller.window.window().is_visible());
+        assert_eq!(
+            lock(&shared)
+                .document()
+                .entity(dynamic)
+                .unwrap()
+                .properties
+                .get("body"),
+            Some("1")
+        );
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        lock(&shared).undo(Actor::User).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &before);
     }
 }

@@ -1995,6 +1995,7 @@ pub struct EntityArgs {
 pub struct InspectModelArgs {
     pub path: String,
     pub skin: Option<usize>,
+    pub body: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2014,6 +2015,29 @@ pub struct ChooseModelArgs {
     pub token: u64,
     pub path: String,
     pub skin: Option<usize>,
+    pub body: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BeginModelChoiceArgs {
+    pub id: Option<String>,
+    #[serde(default)]
+    pub resume: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelChoiceQueryArgs {
+    pub token: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelBodygroupArgs {
+    pub token: u64,
+    pub group: usize,
+    pub variant: usize,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -2027,6 +2051,7 @@ pub struct ModelChoiceTokenArgs {
 pub struct RenderModelArgs {
     pub path: String,
     pub skin: Option<usize>,
+    pub body: Option<u32>,
     /// 64 to 1024, default 640.
     pub width: Option<u32>,
     /// 64 to 1024, default 400.
@@ -4666,8 +4691,13 @@ impl EditorServer {
     )]
     fn inspect_model(&self, Parameters(args): Parameters<InspectModelArgs>) -> ToolResult {
         run(|| {
-            self.session()
-                .inspect_model(&args.path, args.skin.unwrap_or(0))
+            let session = self.session();
+            let skin = args.skin.unwrap_or(0);
+            if args.body.unwrap_or(0) == 0 {
+                session.inspect_model(&args.path, skin)
+            } else {
+                session.inspect_model_body(&args.path, skin, args.body.unwrap())
+            }
         })
     }
 
@@ -4706,32 +4736,60 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Begin an isolated model choice for a point entity's World Model field, including an empty field. Returns an owned token; replaces only the previous model choice. Does not change source, selection, camera or geometry previews. Finish active geometry previews first."
+        description = "Begin an isolated model choice for a point entity's World Model field, including an empty field. Returns an owned token; resume=true reuses a valid same-target choice, otherwise replaces only the previous model choice. Does not change source, selection, camera or geometry previews. Finish active geometry previews first."
     )]
-    fn begin_model_choice(&self, Parameters(args): Parameters<EntityArgs>) -> ToolResult {
+    fn begin_model_choice(&self, Parameters(args): Parameters<BeginModelChoiceArgs>) -> ToolResult {
         run(|| {
             let mut session = self.session();
             let id = single_entity(&session, args.id.as_deref())?;
-            session.begin_model_choice(id)
+            if args.resume {
+                session.resume_model_choice(id)
+            } else {
+                session.begin_model_choice(id)
+            }
         })
     }
 
     #[tool(
-        description = "Choose a supported model and zero-based skin in an owned model-choice draft. Validates the captured entity pose, asset and skin without changing source/history/camera. Returns CPU asset details; render_model_preview provides the browser image."
+        description = "Choose a supported model, zero-based skin and native body value (defaults 0) in an owned model-choice draft. Validates the captured entity pose, asset, skin and body without changing source/history/camera. Returns CPU asset details; render_model_preview provides the browser image."
     )]
     fn choose_model(&self, Parameters(args): Parameters<ChooseModelArgs>) -> ToolResult {
         run(|| {
-            self.session()
-                .choose_model(args.token, &args.path, args.skin.unwrap_or(0))
+            let mut session = self.session();
+            let skin = args.skin.unwrap_or(0);
+            if args.body.unwrap_or(0) == 0 {
+                session.choose_model(args.token, &args.path, skin)
+            } else {
+                session.choose_model_body(args.token, &args.path, skin, args.body.unwrap())
+            }
         })
     }
 
     #[tool(
-        description = "Inspect an owned model choice and check that map, selection, definitions and geometry-preview guards still match.",
+        description = "Choose a named bodygroup variant by its group/variant indices from inspect_model.bodygroups in an owned model choice. Preserves other group contributions and the skin; validates entity eligibility and updates the shared UI preview without editing source. UI: bodygroup dropdowns in Browse…."
+    )]
+    fn choose_model_bodygroup(
+        &self,
+        Parameters(args): Parameters<ModelBodygroupArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .choose_model_bodygroup(args.token, args.group, args.variant)
+        })
+    }
+
+    #[tool(
+        description = "Inspect a model choice and its shared model/skin/body draft. Omit token to discover the active token, including stale choices with valid=false and an error; explicit token checks map, selection, definitions and geometry-preview guards.",
         annotations(read_only_hint = true)
     )]
-    fn get_model_choice(&self, Parameters(args): Parameters<ModelChoiceTokenArgs>) -> ToolResult {
-        run(|| self.session().model_choice(args.token))
+    fn get_model_choice(&self, Parameters(args): Parameters<ModelChoiceQueryArgs>) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            args.token.map_or_else(
+                || Ok(session.current_model_choice()),
+                |token| session.model_choice(token),
+            )
+        })
     }
 
     #[tool(
@@ -4762,14 +4820,15 @@ impl EditorServer {
         let width = args.width.unwrap_or(640);
         let height = args.height.unwrap_or(400);
         let skin = args.skin.unwrap_or(0);
+        let body = args.body.unwrap_or(0);
         let result = (|| {
             let mut renderer = self
                 .model_renderer
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
             let session = self.session();
-            let pixels = renderer.render(&session, &args.path, skin, width, height)?;
-            let report = session.inspect_model(&args.path, skin)?;
+            let pixels = renderer.render(&session, &args.path, skin, body, width, height)?;
+            let report = session.inspect_model_body(&args.path, skin, body)?;
             let mut bytes = Vec::new();
             let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), width, height);
             encoder.set_color(png::ColorType::Rgba);

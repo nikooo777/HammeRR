@@ -2,6 +2,8 @@ import argparse
 import base64
 import hashlib
 import json
+import re
+import struct
 from pathlib import Path
 
 from validate_face_lighting import ROOT, Client
@@ -10,12 +12,12 @@ from validate_terrain_lod import build
 from validate_visibility import ROOM
 
 
-def image(client, output, path, skin):
+def image(client, output, path, skin, body=0):
     result = client.rpc(
         "tools/call",
         {
             "name": "render_model_preview",
-            "arguments": {"path": path, "skin": skin},
+            "arguments": {"path": path, "skin": skin, "body": body},
         },
     )
     assert not result.get("isError"), result
@@ -27,6 +29,7 @@ def image(client, output, path, skin):
     )
     output.write_bytes(pixels)
     assert metadata["asset"]["skin"] == skin
+    assert metadata["asset"]["body"] == body
     assert (metadata["width"], metadata["height"]) == (640, 400)
     return hashlib.sha256(pixels).hexdigest()
 
@@ -90,6 +93,71 @@ def reference_checks(client, output, static_entity):
         camera={"position": [-220, -210, 148], "look_at": [0, 64, 44]},
     )
     return ids, assets
+
+
+def bodygroup_checks(client, output):
+    path = "models/kleiner.mdl"
+    plain = client.call("inspect_model", {"path": path, "body": 0})
+    clipboard = next(
+        group for group in plain["bodygroups"] if group["name"] == "clipboard"
+    )
+    assert [variant["label"] for variant in clipboard["variants"]] == [
+        "None",
+        "Clipboard",
+    ]
+    first = image(client, output / "clipboard-off.png", path, 0)
+    second = image(client, output / "clipboard-on.png", path, 0, 1)
+    assert first != second
+    entity = client.call(
+        "create_entity",
+        {
+            "classname": "prop_dynamic",
+            "origin": [0, 128, 0],
+            "properties": {"model": "", "targetname": "bodygroup_demo", "solid": "0"},
+        },
+    )["id"]
+    before = client.call("get_objects", {"ids": [entity]})
+    history = client.call("get_map_info")["undo"]
+    token = client.call("begin_model_choice", {"id": entity})["token"]
+    client.call("choose_model", {"token": token, "path": path})
+    assert client.call("get_model_choice")["token"] == token
+    assert (
+        client.call("begin_model_choice", {"id": entity, "resume": True})["token"]
+        == token
+    )
+    chosen = client.call(
+        "choose_model_bodygroup",
+        {"token": token, "group": clipboard["index"], "variant": 1},
+    )
+    assert (
+        chosen["asset"]["body"] == 1
+        and chosen["asset"]["triangles"] > plain["triangles"]
+    )
+    client.call(
+        "choose_model_bodygroup",
+        {"token": token, "group": clipboard["index"], "variant": 99},
+        error=True,
+    )
+    assert client.call("get_model_choice", {"token": token})["asset"]["body"] == 1
+    assert client.call("get_objects", {"ids": [entity]}) == before
+    assert client.call("get_map_info")["undo"] == history
+    client.call("apply_model_choice", {"token": token})
+    assert client.call("get_map_info")["undo"][1:] == history[:9]
+    assert client.call("inspect_entity_model", {"id": entity})["asset"]["body"] == 1
+    assert client.call("get_model_choice")["token"] is None
+    client.call("undo")
+    assert client.call("get_objects", {"ids": [entity]}) == before
+    client.call("redo")
+    token = client.call("begin_model_choice", {"id": entity})["token"]
+    client.call("choose_model", {"token": token, "path": path, "body": 1})
+    client.call(
+        "set_entity_properties", {"id": entity, "set": {"targetname": "stale_body"}}
+    )
+    stale = client.call("get_model_choice")
+    assert stale["token"] == token and not stale["valid"]
+    client.call("cancel_model_choice", {"token": stale["token"]})
+    client.call("undo")
+    return entity
 
 
 def validate(args):
@@ -168,6 +236,7 @@ def validate(args):
         client.call("begin_model_choice", {"id": entity}, error=True)
         client.call("cancel_transform_preview")
         reference_ids, references = reference_checks(client, args.output, entity)
+        body_entity = bodygroup_checks(client, args.output)
         client.call("set_compile_settings", {"lighting": "direct_ldr"})
         bsp, stats = build(client, args.output, "model-browser")
         props = static_records(bsp.read_bytes())
@@ -176,6 +245,24 @@ def validate(args):
         assert props["props"][0][11] == 5
         data = bsp.read_bytes()
         assert all(asset["path"].encode() in data for asset in references)
+        offset, length = struct.unpack_from("<ii", data, 8)
+        entities = data[offset : offset + length].decode("utf-8").rstrip("\0")
+        body_entity_text = next(
+            block
+            for block in re.findall(r"\{[^{}]*\}", entities)
+            if '"bodygroup_demo"' in block
+        )
+        assert '"models/kleiner.mdl"' in body_entity_text
+        assert re.search(r'"body"\s+"1"', body_entity_text)
+        client.call("set_entity_properties", {"id": entity, "set": {"body": "1"}})
+        failed = client.call("compile_map", {"path": str(bsp)}, error=True)
+        failure = json.loads(failed["content"][0]["text"])
+        assert any(
+            row["object"] == entity and "body 0" in row["message"]
+            for row in failure["diagnostics"]
+        )
+        assert bsp.read_bytes() == data
+        client.call("undo")
         client.call(
             "set_entity_properties",
             {"id": entity, "set": {"model": references[0]["path"], "skin": "0"}},
@@ -195,6 +282,8 @@ def validate(args):
         for object_id in reference_ids:
             report = client.call("inspect_entity_model", {"id": object_id})
             assert report["displayed"] and report["asset"]["pose"] == "reference"
+        body = client.call("inspect_entity_model", {"id": body_entity})
+        assert body["displayed"] and body["asset"]["body"] == 1
         inspector = client.call("get_entity_inspector", {"id": entity})
         model = next(
             field for field in inspector["properties"] if field["key"] == "model"

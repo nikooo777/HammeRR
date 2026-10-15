@@ -15,6 +15,32 @@ pub(super) struct Models {
     pub issues: BTreeMap<u32, String>,
 }
 
+fn label(name: &str, fallback: &str) -> String {
+    let name = name.rsplit(['/', '\\']).next().unwrap_or(name).trim();
+    let name = name.strip_suffix(".smd").unwrap_or(name);
+    let name = name
+        .strip_suffix("_reference")
+        .unwrap_or(name)
+        .replace('_', " ");
+    if name.is_empty() {
+        return fallback.into();
+    }
+    let mut chars = name.chars();
+    chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str()
+}
+
+fn bodygroups(model: &source_formats::model::Model, body: u32) -> Vec<Value> {
+    model.body_groups.iter().enumerate().map(|(index,group)| {
+        let group_label=label(&group.name,&format!("Body group {}",index+1));
+        let single=group.variants.iter().filter(|variant|variant.bounds.is_some()).count()==1;
+        let variants=group.variants.iter().enumerate().map(|(index,variant)| {
+            let variant_label=if variant.bounds.is_none(){"None".into()}else if single && !["","body","studio"].contains(&group.name.to_ascii_lowercase().as_str()){group_label.clone()}else{label(&variant.name,&format!("Variant {}",index+1))};
+            json!({"index":index,"name":variant.name,"label":variant_label,"blank":variant.bounds.is_none(),"triangles":model.parts[variant.parts.clone()].iter().map(|part|part.indices.len()/3).sum::<usize>()})
+        }).collect::<Vec<_>>();
+        json!({"index":index,"name":group.name,"label":group_label,"base":group.base,"selected":group.selected(body),"variants":variants})
+    }).collect()
+}
+
 impl Session {
     pub(super) fn model_instances(&self, document: &Document) -> Models {
         let mut models = Models {
@@ -46,11 +72,15 @@ impl Session {
                     let count = instance
                         .asset
                         .model
-                        .parts
-                        .iter()
+                        .parts_for_body(instance.body)
                         .map(|part| part.indices.len())
                         .sum::<usize>();
-                    if vertices + instance.asset.model.vertices.len() > MAX_SCENE_VERTICES
+                    let vertex_count = if instance.has_geometry() {
+                        instance.asset.model.vertices.len()
+                    } else {
+                        0
+                    };
+                    if vertices + vertex_count > MAX_SCENE_VERTICES
                         || indices + count > MAX_SCENE_INDICES
                     {
                         models.issues.insert(
@@ -59,7 +89,7 @@ impl Session {
                                 .into(),
                         );
                     } else {
-                        vertices += instance.asset.model.vertices.len();
+                        vertices += vertex_count;
                         indices += count;
                         models.instances.push(instance);
                     }
@@ -73,14 +103,23 @@ impl Session {
     }
 
     pub fn inspect_model(&self, path: &str, skin: usize) -> Result<Value, String> {
+        self.inspect_model_body(path, skin, 0)
+    }
+
+    pub fn inspect_model_body(&self, path: &str, skin: usize, body: u32) -> Result<Value, String> {
+        if body > i32::MAX as u32 {
+            return Err("Model body must fit a nonnegative native integer".into());
+        }
         let asset = self.models.borrow_mut().get(&self.game, path)?;
         let family = asset
             .model
             .skins
             .get(skin)
             .ok_or("Skin is outside the model's skin families")?;
+        let parts = asset.model.parts_for_body(body).collect::<Vec<_>>();
+        let bounds = asset.model.bounds_for_body(body);
         Ok(
-            json!({"path":asset.path,"static_prop":asset.model.header.is_static_prop(),"pose":if asset.model.header.is_static_prop(){"static"}else{"reference"},"reference_bones":asset.model.reference_bones,"vertices":asset.model.vertices.len(),"triangles":asset.model.parts.iter().map(|part|part.indices.len()/3).sum::<usize>(),"meshes":asset.model.parts.len(),"body_parts":asset.model.body_parts,"body":0,"lod":0,"skins":asset.model.skins.len(),"skin":skin,"materials":asset.model.parts.iter().map(|part|&asset.materials[family[part.material]]).collect::<BTreeSet<_>>(),"local_bounds":asset.model.bounds,"hull_bounds":[asset.model.header.hull_mins,asset.model.header.hull_maxs],"asset_bytes":asset.memory_bytes(),"limits":{"scene_vertices":MAX_SCENE_VERTICES,"scene_indices":MAX_SCENE_INDICES}}),
+            json!({"path":asset.path,"static_prop":asset.model.header.is_static_prop(),"pose":if asset.model.header.is_static_prop(){"static"}else{"reference"},"reference_bones":asset.model.reference_bones,"vertices":asset.model.vertices.len(),"triangles":parts.iter().map(|part|part.indices.len()/3).sum::<usize>(),"meshes":parts.len(),"body_parts":asset.model.body_parts,"body":body,"bodygroups":bodygroups(&asset.model,body),"blank":bounds.is_none(),"lod":0,"skins":asset.model.skins.len(),"skin":skin,"materials":parts.iter().map(|part|&asset.materials[family[part.material]]).collect::<BTreeSet<_>>(),"local_bounds":bounds,"hull_bounds":[asset.model.header.hull_mins,asset.model.header.hull_maxs],"asset_bytes":asset.memory_bytes(),"limits":{"scene_vertices":MAX_SCENE_VERTICES,"scene_indices":MAX_SCENE_INDICES}}),
         )
     }
 
@@ -98,14 +137,19 @@ impl Session {
                 .parse::<usize>()
                 .map_err(|_| "Model skin must be a nonnegative integer")
         })?;
-        let asset = self.inspect_model(path, skin)?;
+        let body = entity.properties.get("body").map_or(Ok(0), |value| {
+            value
+                .parse::<u32>()
+                .map_err(|_| "Model body must be a nonnegative native integer")
+        })?;
+        let asset = self.inspect_model_body(path, skin, body)?;
         let models = self.model_instances(document);
         let instance = models
             .instances
             .iter()
             .find(|instance| instance.id == ObjectId::Entity(id));
         Ok(
-            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some(),"error":models.issues.get(&id),"hidden":entity.hidden,"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
+            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":instance.is_some_and(|instance|!instance.has_geometry()),"error":models.issues.get(&id),"hidden":entity.hidden,"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
         )
     }
 

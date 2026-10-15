@@ -13,6 +13,7 @@ impl PreviewRenderer {
         session: &Session,
         path: &str,
         skin: usize,
+        body: u32,
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, String> {
@@ -20,7 +21,7 @@ impl PreviewRenderer {
             return Err("Model preview dimensions must be between 64 and 1024 pixels".into());
         }
         let (mesh, materials, camera) =
-            session.model_preview_scene(path, skin, width as f32 / height as f32)?;
+            session.model_preview_scene(path, skin, body, width as f32 / height as f32)?;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if self.gpu.is_none() {
                 let context = GpuContext::new().map_err(|error| error.to_string())?;

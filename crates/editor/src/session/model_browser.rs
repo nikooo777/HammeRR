@@ -24,7 +24,7 @@ struct Draft {
     revision: u64,
     definitions: u64,
     scene: u64,
-    choice: Option<(String, usize)>,
+    choice: Option<(String, usize, u32)>,
 }
 
 fn folder(path: &str) -> &str {
@@ -145,11 +145,21 @@ impl Session {
         });
         self.view_serial += 1;
         Ok(
-            json!({"token":token,"entity":format!("entity:{entity}"),"path":target.properties.get("model"),"skin":target.properties.get("skin").and_then(|value|value.parse::<usize>().ok()).unwrap_or(0)}),
+            json!({"token":token,"entity":format!("entity:{entity}"),"path":target.properties.get("model"),"skin":target.properties.get("skin").and_then(|value|value.parse::<usize>().ok()).unwrap_or(0),"body":target.properties.get("body").and_then(|value|value.parse::<u32>().ok()).unwrap_or(0),"asset":null,"valid":true}),
         )
     }
 
     pub fn choose_model(&mut self, token: u64, path: &str, skin: usize) -> Result<Value, String> {
+        self.choose_model_body(token, path, skin, 0)
+    }
+
+    pub fn choose_model_body(
+        &mut self,
+        token: u64,
+        path: &str,
+        skin: usize,
+        body: u32,
+    ) -> Result<Value, String> {
         let id = self.checked_model_choice(token)?.entity;
         let asset = self.models.borrow_mut().get(&self.game, path)?;
         let mut entity = self
@@ -159,11 +169,48 @@ impl Session {
             .clone();
         entity.properties.set("model", &asset.path);
         entity.properties.set("skin", skin.to_string());
+        entity.properties.set("body", body.to_string());
         Instance::new(&entity, asset.clone())?;
-        let report = self.inspect_model(&asset.path, skin)?;
-        self.model_browser.draft.as_mut().unwrap().choice = Some((asset.path.clone(), skin));
+        let report = self.inspect_model_body(&asset.path, skin, body)?;
+        self.model_browser.draft.as_mut().unwrap().choice = Some((asset.path.clone(), skin, body));
         self.view_serial += 1;
-        Ok(json!({"token":token,"entity":format!("entity:{id}"),"asset":report}))
+        Ok(json!({"token":token,"entity":format!("entity:{id}"),"asset":report,"valid":true}))
+    }
+
+    pub fn choose_model_bodygroup(
+        &mut self,
+        token: u64,
+        group: usize,
+        variant: usize,
+    ) -> Result<Value, String> {
+        let (path, skin, body) = self
+            .checked_model_choice(token)?
+            .choice
+            .clone()
+            .ok_or("Choose a model first")?;
+        let asset = self.models.borrow_mut().get(&self.game, &path)?;
+        let body = asset
+            .model
+            .set_bodygroup(body, group, variant)
+            .map_err(|error| error.to_string())?;
+        self.choose_model_body(token, &path, skin, body)
+    }
+
+    pub fn current_model_choice(&self) -> Value {
+        let Some(draft) = &self.model_browser.draft else {
+            return json!({"token":null,"asset":null,"valid":false});
+        };
+        self.model_choice(draft.token).unwrap_or_else(|error|json!({"token":draft.token,"entity":format!("entity:{}",draft.entity),"asset":null,"valid":false,"error":error}))
+    }
+
+    pub fn resume_model_choice(&mut self, entity: u32) -> Result<Value, String> {
+        if let Some(draft) = &self.model_browser.draft
+            && draft.entity == entity
+            && self.checked_model_choice(draft.token).is_ok()
+        {
+            return self.model_choice(draft.token);
+        }
+        self.begin_model_choice(entity)
     }
 
     pub fn model_choice(&self, token: u64) -> Result<Value, String> {
@@ -171,9 +218,36 @@ impl Session {
         let asset = draft
             .choice
             .as_ref()
-            .map(|(path, skin)| self.inspect_model(path, *skin))
+            .map(|(path, skin, body)| self.inspect_model_body(path, *skin, *body))
             .transpose()?;
-        Ok(json!({"token":token,"entity":format!("entity:{}",draft.entity),"asset":asset}))
+        let source = self.document.entity(draft.entity).unwrap();
+        let path = asset
+            .as_ref()
+            .and_then(|asset| asset["path"].as_str())
+            .or_else(|| source.properties.get("model"));
+        let skin = asset
+            .as_ref()
+            .and_then(|asset| asset["skin"].as_u64())
+            .or_else(|| {
+                source
+                    .properties
+                    .get("skin")
+                    .and_then(|value| value.parse().ok())
+            })
+            .unwrap_or(0);
+        let body = asset
+            .as_ref()
+            .and_then(|asset| asset["body"].as_u64())
+            .or_else(|| {
+                source
+                    .properties
+                    .get("body")
+                    .and_then(|value| value.parse().ok())
+            })
+            .unwrap_or(0);
+        Ok(
+            json!({"token":token,"entity":format!("entity:{}",draft.entity),"path":path,"skin":skin,"body":body,"asset":asset,"valid":true}),
+        )
     }
 
     pub fn cancel_model_choice(&mut self, token: u64) -> Result<(), String> {
@@ -193,33 +267,36 @@ impl Session {
     pub fn apply_model_choice(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
         let draft = self.checked_model_choice(token)?;
         let id = draft.entity;
-        let (path, skin) = draft
+        let (path, skin, body) = draft
             .choice
             .clone()
             .ok_or("Choose a supported model first")?;
-        self.choose_model(token, &path, skin)?;
+        self.choose_model_body(token, &path, skin, body)?;
         self.set_entity_properties(
             actor,
             id,
             &[
                 ("model".into(), Some(path.clone())),
                 ("skin".into(), Some(skin.to_string())),
+                ("body".into(), Some(body.to_string())),
             ],
         )?;
         self.model_browser.draft = None;
-        Ok(json!({"entity":format!("entity:{id}"),"path":path,"skin":skin}))
+        Ok(json!({"entity":format!("entity:{id}"),"path":path,"skin":skin,"body":body}))
     }
 
     pub fn model_preview_scene(
         &self,
         path: &str,
         skin: usize,
+        body: u32,
         aspect: f32,
     ) -> Result<(SceneMesh, MaterialLibrary, Camera), String> {
         let asset = self.models.borrow_mut().get(&self.game, path)?;
         let mut entity = Entity::new(2, "prop_dynamic");
         entity.properties.set("origin", "0 0 0");
         entity.properties.set("skin", skin.to_string());
+        entity.properties.set("body", body.to_string());
         let instance = Instance::new(&entity, asset)?;
         let (low, high) = instance.bounds();
         let camera = Camera::looking_at(

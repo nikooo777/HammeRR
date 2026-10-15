@@ -226,6 +226,9 @@ fn record(
             "scaled static props and per-texel prop lightmaps are not supported yet".into(),
         );
     }
+    if integer(entity, "body", 0)? != 0 {
+        return Err("Static props require body 0; use prop_dynamic for bodygroups".into());
+    }
     if let Some(name) = entity
         .properties
         .get("lightingorigin")

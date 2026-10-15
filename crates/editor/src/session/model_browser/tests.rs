@@ -41,7 +41,7 @@ fn model_choices_catalog_preview_and_atomic_apply_preserve_the_active_scene() {
         assert!(session.apply_model_choice(actor, token).is_err());
         let path = "models/props_junk/wood_crate001a.mdl";
         session.choose_model(token, path, 1).unwrap();
-        let (scene, _, _) = session.model_preview_scene(path, 1, 1.6).unwrap();
+        let (scene, _, _) = session.model_preview_scene(path, 1, 0, 1.6).unwrap();
         assert_eq!(scene.stats.model_entities, 1);
         assert_eq!(scene.stats.brushes, 0);
         assert_eq!(session.document.vmf(), &source);
@@ -138,4 +138,70 @@ fn model_choice_tokens_stale_maps_and_geometry_previews_cannot_cross_ownership()
             .unwrap_err()
             .contains("Scaled")
     );
+}
+
+#[test]
+fn model_bodygroups_resume_and_apply_as_one_shared_guarded_choice() {
+    for actor in [Actor::User, Actor::Agent] {
+        let Some((mut session, id)) = session() else {
+            return;
+        };
+        session
+            .set_entity_properties(
+                actor,
+                id,
+                &[("classname".into(), Some("prop_dynamic".into()))],
+            )
+            .unwrap();
+        let source = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let token = session.begin_model_choice(id).unwrap()["token"]
+            .as_u64()
+            .unwrap();
+        session
+            .choose_model_body(token, "models/kleiner.mdl", 0, 0)
+            .unwrap();
+        let report = session.model_choice(token).unwrap();
+        let groups = report["asset"]["bodygroups"].as_array().unwrap();
+        let group = groups
+            .iter()
+            .find(|group| group["name"] == "clipboard")
+            .unwrap()["index"]
+            .as_u64()
+            .unwrap() as usize;
+        assert_eq!(session.resume_model_choice(id).unwrap()["token"], token);
+        assert_eq!(session.current_model_choice()["token"], token);
+        let chosen = session.choose_model_bodygroup(token, group, 1).unwrap();
+        assert_eq!(chosen["asset"]["body"], 1);
+        assert!(
+            chosen["asset"]["triangles"].as_u64().unwrap()
+                > report["asset"]["triangles"].as_u64().unwrap()
+        );
+        assert!(session.choose_model_bodygroup(token, group, 99).is_err());
+        assert_eq!(session.model_choice(token).unwrap()["asset"]["body"], 1);
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.document.undo_labels().count(), history);
+        session.apply_model_choice(actor, token).unwrap();
+        assert_eq!(
+            session.document.entity(id).unwrap().properties.get("body"),
+            Some("1")
+        );
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        session.undo(actor).unwrap();
+        assert_eq!(session.document.vmf(), &source);
+        assert!(session.current_model_choice()["token"].is_null());
+        let token = session.begin_model_choice(id).unwrap()["token"]
+            .as_u64()
+            .unwrap();
+        session
+            .choose_model_body(token, "models/kleiner.mdl", 0, 1)
+            .unwrap();
+        session
+            .set_entity_properties(actor, id, &[("targetname".into(), Some("changed".into()))])
+            .unwrap();
+        let stale = session.current_model_choice();
+        assert_eq!(stale["token"], token);
+        assert_eq!(stale["valid"], false);
+        session.cancel_model_choice(token).unwrap();
+    }
 }

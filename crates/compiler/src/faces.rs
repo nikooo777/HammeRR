@@ -13,6 +13,10 @@ const MAX_LIGHTMAP_EXTENT: i32 = 32;
 const MAX_PROVENANCE_WORK: usize = 4_000_000;
 pub(crate) const MAX_SMOOTH_SOURCE_POINTS: usize = 4_000_000;
 
+mod water_budget;
+#[cfg(test)]
+mod water_budget_tests;
+
 #[derive(Debug)]
 pub struct SmoothingSource {
     pub plane: usize,
@@ -148,6 +152,7 @@ pub fn build_with_smoothing(
     );
     let mut groups: BTreeMap<Group, Vec<Face>> = BTreeMap::new();
     let mut provenance_work = 0;
+    let mut water_budget = water_budget::Budget::default();
     for &brush_index in &map.entities[entity].brushes {
         control.checkpoint()?;
         let brush = &map.brushes[brush_index];
@@ -174,6 +179,9 @@ pub fn build_with_smoothing(
                 pending.pop()
             {
                 control.checkpoint()?;
+                if below_water {
+                    water_budget.visit(winding.0.len(), control)?;
+                }
                 let node = &tree.nodes[index];
                 match node.split {
                     Some((plane, children)) if face_plane & !1 == plane => {
@@ -194,6 +202,9 @@ pub fn build_with_smoothing(
                     }
                     Some((plane, children)) => {
                         let plane = map.planes.get(plane);
+                        if below_water {
+                            water_budget.split(winding.0.len(), control)?;
+                        }
                         let (front, back) = winding.split(plane.normal, plane.dist);
                         for (child, half) in children.into_iter().zip([front, back]) {
                             if let Some(half) = half {
@@ -216,6 +227,7 @@ pub fn build_with_smoothing(
                             && node.contents & (contents::WATER | contents::SLIME) == 0
                             && let Some(bottom) = bottom
                         {
+                            water_budget.polygon(winding.0.len(), control)?;
                             let mut reversed = winding.clone();
                             reversed.0.reverse();
                             pending.push((
@@ -263,13 +275,22 @@ pub fn build_with_smoothing(
         }
     }
     let mut output = Vec::new();
-    for (_, mut faces) in groups {
+    for (group, mut faces) in groups {
+        let generated_water = group.5.is_some();
         let mut i = 0;
         while i < faces.len() {
             let normal = map.planes.get(faces[i].plane).normal;
             let mut j = i + 1;
             while j < faces.len() {
                 control.checkpoint()?;
+                if generated_water {
+                    water_budget.merge(
+                        faces[i].winding.0.len(),
+                        faces[j].winding.0.len(),
+                        faces[i].leaves.len().saturating_add(faces[j].leaves.len()),
+                        control,
+                    )?;
+                }
                 if let Some(winding) = faces[i].winding.merge(&faces[j].winding, normal) {
                     let source_sides = merge_sources(
                         &faces[i].source_sides,
@@ -294,6 +315,9 @@ pub fn build_with_smoothing(
                 && (face.smoothing_groups != 0 || retention == SourceRetention::All)
                 && face.displacement.is_none()
             {
+                if generated_water {
+                    water_budget.clone_points(face.winding.0.len(), control)?;
+                }
                 *retained_points = retained_points
                     .checked_add(face.winding.0.len())
                     .filter(|&count| count <= MAX_SMOOTH_SOURCE_POINTS)

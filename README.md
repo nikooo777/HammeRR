@@ -188,6 +188,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Terrain vertex move handles](docs/images/terrain-move-handles.png) |
 | Pick and drag terrain vertices with shared axis and plane handles, or enter exact world offsets. |
 
+| Terrain subdivision |
+| --- |
+| ![Rounded connected terrain](docs/images/subdivided-terrain.png) |
+| Round connected base faces into editable terrain while keeping blend values and materials. |
+
 | Terrain brush strokes |
 | --- |
 | ![Live terrain sculpting with a brush-radius guide](docs/images/terrain-stroke-guide.png) |

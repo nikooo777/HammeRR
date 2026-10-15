@@ -26,6 +26,21 @@ pub struct TerrainTriangles {
     pub triangles: Vec<map_core::displacement::triangles::Triangle>,
 }
 
+pub struct TerrainSubdivision {
+    pub changed: usize,
+    pub shared_edges: usize,
+    pub vertices: usize,
+}
+
+impl TerrainSubdivision {
+    pub fn summary(&self) -> String {
+        format!(
+            "Preview: {} surfaces rounded across {} shared edges; {} samples. Apply to replace their sculpted positions.",
+            self.changed, self.shared_edges, self.vertices
+        )
+    }
+}
+
 impl TerrainSew {
     pub fn summary(&self) -> String {
         format!(
@@ -142,6 +157,36 @@ impl Session {
             corner_joins: plan.corner_joins,
             vertices: plan.vertices,
             interpolated_vertices: plan.interpolated_vertices,
+        })
+    }
+
+    pub fn preview_terrain_subdivision(
+        &mut self,
+        actor: Actor,
+        faces: &[FaceId],
+    ) -> Result<TerrainSubdivision, String> {
+        let plan = map_core::displacement::subdivide::plan(&self.document, faces)
+            .map_err(|error| error.to_string())?;
+        let edits = plan
+            .edits
+            .into_iter()
+            .map(|(face, info)| {
+                (
+                    face,
+                    SurfaceEdit {
+                        terrain: Some(map_core::displacement::Operation::Subdivided(Box::new(
+                            info,
+                        ))),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let changed = self.preview_or_apply_faces(actor, edits, true)?;
+        Ok(TerrainSubdivision {
+            changed,
+            shared_edges: plan.shared_edges,
+            vertices: plan.vertices,
         })
     }
 
@@ -370,6 +415,78 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terrain_subdivision_shares_markers_owned_previews_and_history_for_both_actors() {
+        for actor in [Actor::User, Actor::Agent] {
+            let mut session = Session::new(Err("no assets".into()));
+            let ObjectId::Solid(solid) = session
+                .create_block(actor, DVec3::ZERO, DVec3::splat(64.0), "brick/test", false)
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            let side = session
+                .document
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id;
+            let face = FaceId { solid, side };
+            session.create_terrain(actor, &[face], 2, 2).unwrap();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            session
+                .preview_terrain_resolution(actor, &[face], 3)
+                .unwrap();
+            let foreign = session.face_preview_token();
+            assert!(
+                session
+                    .preview_terrain_subdivision(
+                        actor,
+                        &[
+                            face,
+                            FaceId {
+                                solid,
+                                side: u32::MAX
+                            }
+                        ]
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), foreign);
+            let preview = session.preview_terrain_subdivision(actor, &[face]).unwrap();
+            assert_eq!(
+                (preview.changed, preview.shared_edges, preview.vertices),
+                (1, 0, 25)
+            );
+            assert!(session.terrain_grids(&[face], true).unwrap()[0].subdivided);
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+            session.cancel_face_preview();
+            assert_eq!(session.document.vmf(), &before);
+            session.preview_terrain_subdivision(actor, &[face]).unwrap();
+            session.commit_face_preview(actor).unwrap();
+            let rounded = session.document.vmf().clone();
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            assert!(session.terrain_grids(&[face], false).unwrap()[0].subdivided);
+            assert_eq!(
+                session
+                    .preview_terrain_subdivision(actor, &[face])
+                    .unwrap()
+                    .changed,
+                0
+            );
+            session.cancel_face_preview();
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &rounded);
+        }
+    }
 
     #[test]
     fn terrain_creation_is_shared_atomic_and_undoable_without_changing_selection() {

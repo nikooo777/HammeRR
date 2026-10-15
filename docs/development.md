@@ -251,3 +251,10 @@ python3 -B scripts/validate_terrain_handles.py --output /tmp/hammerr-terrain-han
 ```
 
 Checks all seven numeric handle constraints on rotated powers 2–4, shared snapping, unchanged neighbors/source/history, invalid updates, pointer hit-testing and resized viewport guards, owned review, one-step Undo, foreign preview preservation and save/reopen. Session tests cover axis/plane/screen pointer movement in all four projections; software UI tests exercise compact resizing, handle review and silent cancellation. The numeric vertex-move check covers native XYZ output from the shared preview operation.
+
+```sh
+python3 -B scripts/validate_terrain_subdivision.py --output /tmp/hammerr-terrain-subdivision-check
+python3 -B scripts/validate_subdivided_terrain.py --output /tmp/hammerr-subdivided-compatibility-check
+```
+
+Checks connected folded power-2/3/4 cages, shared samples and pinned base boundaries, preserved metadata, repeated-generation no-ops, invalid previews, generated-grid editing, Cancel/Undo/Redo/reopen and active native positions with LOD snapping through both build paths. The saved-grid check compares marked/unmarked native output and exercises supported sewing/resizing on imported marked rows. Core checks cover subdivision stencils, manifold/half-edge rejection and actual cache guards; software UI drives the operation and Cancel.

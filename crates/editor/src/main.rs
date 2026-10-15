@@ -10122,11 +10122,16 @@ mod tests {
         lock(&shared).undo(Actor::User).unwrap();
         assert_eq!(*lock(&shared).document().vmf(), before);
         controller.initialize(&mut lock(&shared)).unwrap();
-        for mode in [2, 3, 4, 5, 6, 7] {
+        for mode in [2, 3, 4, 5, 6, 7, 12] {
             window.set_operation_index(mode);
             window.invoke_edited();
             window.invoke_preview_edit();
             assert!(window.get_ready(), "mode {mode}: {}", window.get_message());
+            if mode == 12 {
+                assert!(lock(&shared).terrain_grids(&[target], true).unwrap()[0].subdivided);
+                window.show().unwrap();
+                save_ui_snapshot(window.window(), "terrain-subdivision-controls");
+            }
             window.invoke_cancel();
             assert_eq!(*lock(&shared).document().vmf(), before);
         }

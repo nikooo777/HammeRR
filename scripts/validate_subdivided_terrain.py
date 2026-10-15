@@ -39,8 +39,18 @@ def validate(args):
         assert path.read_bytes() == baseline.read_bytes()
         assert client.call("get_terrain_grids", {}) == grids
         assert client.call("get_map_info")["undo"] == history
-        client.call("preview_terrain_sew", {}, error=True)
-        client.call("preview_terrain_resolution", {"power": 3}, error=True)
+        for tool, arguments in [
+            ("preview_terrain_sew", {}),
+            ("preview_terrain_resolution", {"power": 3}),
+        ]:
+            draft = client.call(tool, arguments)
+            assert all(
+                face["subdivided"]
+                for face in client.call("get_terrain_grids", {"preview": True})["faces"]
+            )
+            client.call(
+                "cancel_face_preview", {"token": draft["state"]["preview_token"]}
+            )
         assert client.call("get_terrain_grids", {}) == grids
         saved = marked / "saved.vmf"
         client.call("save_map", {"path": str(saved)})

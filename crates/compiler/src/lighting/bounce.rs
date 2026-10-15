@@ -1,5 +1,5 @@
 use glam::DVec3;
-use source_formats::bsp::{Bsp, Face, RgbExp32, TexInfo};
+use source_formats::bsp::{Bsp, Face, Lighting, LightingKind, RgbExp32, TexInfo};
 
 use super::Occluder;
 use super::bake::{Budget, Plan};
@@ -11,6 +11,7 @@ const LIGHTMAP_SCALE: f64 = 255.0;
 const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
 
 pub(super) struct Context<'a> {
+    pub kind: LightingKind,
     pub map: &'a Map<'a>,
     pub plans: &'a [Plan],
     pub faces: &'a mut [Face],
@@ -66,10 +67,38 @@ fn gather(
     Ok(total / directions.len() as f64)
 }
 
+pub(super) struct Direct {
+    faces: Vec<Face>,
+    colors: Vec<u8>,
+    _allocation: super::bake::Allocation,
+}
+
+impl Direct {
+    pub(super) fn new(
+        faces: &[Face],
+        colors: &[RgbExp32],
+        budget: &mut Budget<'_>,
+    ) -> Result<Self, String> {
+        budget.consume(faces.len() + colors.len())?;
+        let allocation =
+            budget.reserve_bytes(std::mem::size_of_val(faces) + std::mem::size_of_val(colors))?;
+        let mut bytes = Vec::with_capacity(std::mem::size_of_val(colors));
+        for color in colors {
+            bytes.extend_from_slice(&color.rgb);
+            bytes.push(color.exponent as u8);
+        }
+        Ok(Self {
+            faces: faces.to_vec(),
+            colors: bytes,
+            _allocation: allocation,
+        })
+    }
+}
+
 pub(super) fn bake(
     ctx: &mut Context<'_>,
     bsp: &Bsp,
-    direct: &Bsp,
+    direct: Option<&Direct>,
     colors: &mut Vec<RgbExp32>,
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
@@ -91,7 +120,7 @@ pub(super) fn bake(
             ));
         }
     }
-    let surfaces = super::radiance::build_styled(ctx.map, bsp, budget)?;
+    let surfaces = super::radiance::build_styled(ctx.map, bsp, ctx.kind, budget)?;
     let directions = directions(ctx.quality.directions());
     let cone = (1.0 - 1.0 / directions.len() as f64).acos().tan();
     let mut stats = Stats {
@@ -100,14 +129,27 @@ pub(super) fn bake(
         model_faces: 0,
         model_samples: 0,
     };
-    let lighting = direct
-        .lighting(source_formats::bsp::LightingKind::Ldr)
-        .map_err(|error| error.to_string())?
-        .ok_or("Bounce source lighting is missing")?;
-    let mut emitted = Vec::with_capacity(colors.len());
-    let direct_faces = direct
-        .lighting_faces(source_formats::bsp::LightingKind::Ldr)
-        .map_err(|error| error.to_string())?;
+    let lighting = match direct {
+        Some(direct) => Lighting::parse(&direct.colors).map_err(|error| error.to_string())?,
+        None => bsp
+            .lighting(ctx.kind)
+            .map_err(|error| error.to_string())?
+            .ok_or("Bounce source lighting is missing")?,
+    };
+    let _emitted_allocation = budget.reserve_bytes(source_formats::bsp::MAX_LIGHTING_BYTES)?;
+    let mut emitted =
+        Vec::with_capacity(source_formats::bsp::MAX_LIGHTING_BYTES / size_of::<RgbExp32>());
+    let _face_allocation = budget.reserve::<Face>(ctx.faces.len())?;
+    let current_faces;
+    let direct_faces = match direct {
+        Some(direct) => &direct.faces,
+        None => {
+            current_faces = bsp
+                .lighting_faces(ctx.kind)
+                .map_err(|error| error.to_string())?;
+            &current_faces
+        }
+    };
     for plan in ctx.plans {
         budget.consume(1)?;
         stats.model_faces += usize::from(plan.model != 0);
@@ -181,6 +223,27 @@ pub(super) fn bake(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_snapshot_preserves_channel_samples_and_checks_cancellation() {
+        let control = crate::Control::default();
+        let mut budget = Budget::new(&control);
+        let colors = [
+            RgbExp32 {
+                rgb: [3, 7, 19],
+                exponent: -4,
+            },
+            RgbExp32 {
+                rgb: [11, 0, 200],
+                exponent: 12,
+            },
+        ];
+        let direct = Direct::new(&[Face::default()], &colors, &mut budget).unwrap();
+        assert_eq!(Lighting::parse(&direct.colors).unwrap().samples(), colors);
+        assert_eq!(direct.faces.len(), 1);
+        control.cancel().unwrap();
+        assert!(Direct::new(&[], &colors, &mut budget).is_err());
+    }
 
     #[test]
     fn cosine_gather_preserves_uniform_reflected_energy_in_every_frame() {

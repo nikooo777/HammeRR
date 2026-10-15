@@ -141,6 +141,12 @@ pub(super) struct ShadowIndex<T> {
 }
 
 impl<T: ShadowObject> ShadowIndex<T> {
+    pub(super) fn allocation_bytes(count: usize) -> Result<usize, String> {
+        count
+            .checked_mul(size_of::<T>() + size_of::<usize>() + 2 * size_of::<Node>())
+            .ok_or_else(|| "Shadow-index allocation size overflow".into())
+    }
+
     pub(super) fn new(
         hulls: Vec<T>,
         consume: &mut impl FnMut(usize) -> Result<(), String>,

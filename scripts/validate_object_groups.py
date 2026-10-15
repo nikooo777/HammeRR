@@ -2,7 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 
 
 def validate(args):
@@ -144,7 +144,7 @@ def validate(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Validate object groups through an isolated headless MCP session.")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)

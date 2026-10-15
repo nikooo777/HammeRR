@@ -1,5 +1,8 @@
 use super::*;
 use crate::identity::id_string;
+use source_formats::fgd::Catalog;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 #[test]
 pub(crate) fn manipulation_controls_share_agent_previews_and_selection_without_desktop_input() {
@@ -1267,7 +1270,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     )))
     .unwrap();
     let mut state = Session::new(if std::env::var_os("HAMMERR_UI_SNAPSHOTS").is_some() {
-        mount_game(None)
+        editor_core::startup::mount_game(None)
     } else {
         Err("no assets needed".into())
     });
@@ -3015,7 +3018,7 @@ pub(crate) fn compile_controls_share_cancel_status_and_guard_replaced_jobs() {
         },
     )))
     .unwrap();
-    let (directory, mut game, _) = game::tests::fixture(true);
+    let (directory, mut game, _) = crate::test_assets::game_process(true);
     let materials = directory.path().join("materials");
     std::fs::create_dir(&materials).unwrap();
     std::fs::write(materials.join("water.vmt"), "Water { $abovewater 1 }").unwrap();
@@ -3721,7 +3724,7 @@ pub(crate) fn material_replacement_controls_preview_cancel_and_reject_foreign_dr
         },
     )))
     .unwrap();
-    let mut session = Session::new(mount_game(None));
+    let mut session = Session::new(editor_core::startup::mount_game(None));
     session
         .create_block(
             Actor::User,
@@ -4005,7 +4008,7 @@ pub(crate) fn primitive_controls_preview_validate_frame_apply_and_cancel_shared_
         },
     )))
     .unwrap();
-    let session = Session::new(mount_game(None));
+    let session = Session::new(editor_core::startup::mount_game(None));
     let shared = Arc::new(Mutex::new(session));
     let window = PrimitiveWindow::new().unwrap();
     primitive_ui::bind(&window, &shared);
@@ -4640,7 +4643,7 @@ pub(crate) fn material_catalog_and_texture_dialog_render_without_desktop_input()
     )))
     .unwrap();
     let material = MaterialWindow::new().unwrap();
-    let mut session = Session::new(mount_game(None));
+    let mut session = Session::new(editor_core::startup::mount_game(None));
     session
         .create_block(
             Actor::User,

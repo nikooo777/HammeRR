@@ -4,7 +4,7 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 
 
 @contextmanager
@@ -327,7 +327,7 @@ def main():
         description="Validate material replacement through MCP; HTTP requires a clean saved map and empty undo history."
     )
     parser.add_argument("--url")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     output = args.output.resolve()

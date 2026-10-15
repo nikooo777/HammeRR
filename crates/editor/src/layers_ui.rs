@@ -509,7 +509,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let (session, id, _) = crate::session::clipboard::tests::fixture();
+        let (session, id, _) = crate::test_assets::clipboard();
         let shared = Arc::new(Mutex::new(session));
         let controller = Controller::new(&shared).unwrap();
         controller.show(&lock(&shared)).unwrap();

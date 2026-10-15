@@ -31,18 +31,28 @@ Use `--mcp-port <port>` to change the port, or `--no-mcp` to turn the server off
 
 ### Without a window
 
-`--headless` runs the editor without a window and serves MCP over stdin/stdout, giving the agent a private session. Rendering still works; graphics start on the first render.
+`hammerr-headless` serves MCP over stdin/stdout in a private session. It uses the same tools and editing operations as the desktop editor. Rendering still works; graphics start on the first render.
 
-```json
-{
-  "mcpServers": {
-    "hammerr": {
-      "command": "/path/to/hammerr/target/release/editor",
-      "args": ["/path/to/map.vmf", "--headless"]
-    }
-  }
-}
-```
+1. Build the standalone server without compiling the desktop UI:
+
+   ```sh
+   cargo build --release -p editor-core --features mcp --bin hammerr-headless
+   ```
+
+2. Add the executable to your MCP client. Leave out the map argument to start an empty map.
+
+   ```json
+   {
+     "mcpServers": {
+       "hammerr": {
+         "command": "/path/to/hammerr/target/release/hammerr-headless",
+         "args": ["/path/to/map.vmf"]
+       }
+     }
+   }
+   ```
+
+The server accepts `--game` and `--fgd` as described in [Getting started](getting-started.md). `editor --headless` remains available with the same stdio tools. The standalone server opens no editor window and serves no HTTP endpoint. Engine-physics builds need `hammerr-physics` beside the executable; build it with `cargo build --release -p compiler`.
 
 ## What agents know
 

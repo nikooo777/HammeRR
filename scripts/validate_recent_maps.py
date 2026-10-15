@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from validate_face_lighting import ROOT, Client
+from validate_face_lighting import DEFAULT_BINARY, Client
 
 
 @contextmanager
@@ -169,7 +169,7 @@ def validate(binary, output):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     output = args.output.resolve() if args.output else Path(tempfile.mkdtemp(prefix="hammerr-recent-maps-"))

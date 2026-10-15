@@ -12,7 +12,7 @@ import validate_areaportals as areas
 import validate_native_runtime as runtime
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 
 OBSERVER = areas.OBSERVER.replace(
     "setpos -160 0 32; setang 0 0 0; r_drawothermodels 0;",
@@ -211,7 +211,7 @@ def worker(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument(
         "--output", type=Path, default=Path("/tmp/hammerr-window-portals")
     )

@@ -518,7 +518,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let Ok(game) = crate::mount_game(None) else {
+        let Ok(game) = editor_core::startup::mount_game(None) else {
             return;
         };
         let mut session = Session::new(Ok(game));

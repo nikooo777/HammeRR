@@ -14,7 +14,7 @@ from validate_authored_planes import records
 from validate_bounced_lighting import model_top_color
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import FACE_FORMAT, lightmaps
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_visibility import ROOM
 
 
@@ -373,7 +373,7 @@ def worker(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument(
         "--output", type=Path, default=Path("/tmp/hammerr-light-styles")
     )

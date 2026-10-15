@@ -483,7 +483,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let (_directory, session, id) = crate::session::sounds::tests::fixture();
+        let (_directory, session, id) = crate::test_assets::sounds();
         let source = session.document().vmf().clone();
         let history = session.document().undo_labels().count();
         let shared = Arc::new(Mutex::new(session));
@@ -536,7 +536,7 @@ mod tests {
         controller.window.invoke_cancel();
         assert!(lock(&shared).sound_choice(replacement).is_ok());
         if std::env::var_os("HAMMERR_UI_SNAPSHOTS").is_some()
-            && let Ok(game) = crate::mount_game(None)
+            && let Ok(game) = editor_core::startup::mount_game(None)
         {
             let mut session = Session::new(Ok(game));
             session.set_definitions(

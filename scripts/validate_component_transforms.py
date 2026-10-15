@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 
 
 def validate(client, output, render=False):
@@ -365,7 +365,7 @@ def validate(client, output, render=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument(
         "--output", type=Path, default=Path("/tmp/hammerr-component-transforms")
     )

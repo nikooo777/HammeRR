@@ -11,6 +11,7 @@ HammeRR is in active development.
 
 | Area | State |
 | --- | --- |
+| AI access | Shared Session operations serve desktop HTTP MCP and private stdio MCP. `hammerr-headless` builds independently of the Slint UI; editing and compilation leave graphics uninitialized until rendering is requested. |
 | Opening and saving VMFs | Works. Imported properties and extra blocks are retained; saves increment the map version and use standard VMF formatting. File symlinks and target permissions are retained; broken or looping save links are refused. Round trips through other editors haven't been verified yet. |
 | Recent maps | Up to twenty paths retain compatible build settings, with shared reopen, remove and clear controls. Game content and custom FGD files do not switch automatically; automatic relocation and coordinated writes from multiple editors are unavailable. |
 | Cut, copy and paste | Shared capture, guarded Cut, detached cross-map payloads, native VMF text and owned Paste previews work for bounded whole-object sets. Native group ancestors, owned-brush notes, terrain and exact internal links transfer. Native layer ancestry and owned-brush memberships transfer with independent IDs. Private Hammer clipboard formats, component copies and saved partitions are unsupported. |

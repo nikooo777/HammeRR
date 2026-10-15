@@ -320,7 +320,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let Ok(game) = crate::mount_game(None) else {
+        let Ok(game) = editor_core::startup::mount_game(None) else {
             eprintln!("CS:S not installed; skipping");
             return;
         };

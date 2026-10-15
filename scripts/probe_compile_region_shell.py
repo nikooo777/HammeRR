@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import validate_native_runtime as runtime
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_terrain_lod import build
 
 LOW = [-128, -128, 0]
@@ -103,7 +103,7 @@ def fixture(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Disposable MCP shell experiment; does not implement compile regions")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")

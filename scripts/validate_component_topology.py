@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 
 
 def validate(client, output, render=False):
@@ -663,7 +663,7 @@ def validate_splitting(client, output, check, render):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument(
         "--render",
         action="store_true",

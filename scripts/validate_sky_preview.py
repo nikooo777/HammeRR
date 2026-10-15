@@ -4,7 +4,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from validate_face_lighting import ROOT, Client
+from validate_face_lighting import DEFAULT_BINARY, Client
 from validate_material_replacement import preserved_map
 
 
@@ -142,7 +142,7 @@ def validate(client, output, sky):
 def main():
     parser = argparse.ArgumentParser(description="Validate 2D sky preview through MCP without desktop input.")
     parser.add_argument("--url")
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--gameinfo", type=Path)
     parser.add_argument("--sky", default="sky_dust")
     parser.add_argument("--output", type=Path, required=True)

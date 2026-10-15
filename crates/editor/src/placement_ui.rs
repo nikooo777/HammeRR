@@ -366,7 +366,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let (session, id) = crate::session::placement::tests::fixture();
+        let (session, id) = crate::test_assets::placement();
         let source = session.document().vmf().clone();
         let history = session.document().undo_labels().count();
         let shared = Arc::new(Mutex::new(session));

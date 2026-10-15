@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import validate_native_runtime as runtime
-from validate_face_lighting import ROOT, Client
+from validate_face_lighting import DEFAULT_BINARY, Client
 from validate_occluders import native_occlusion, occluder
 from validate_terrain_lod import build
 from validate_visibility import ROOM
@@ -144,7 +144,7 @@ def worker(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/editor")
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--multi-brush", action="store_true", help="Check two separated strips with a visible center gap prop")

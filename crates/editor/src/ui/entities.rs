@@ -1,4 +1,5 @@
 use super::*;
+use source_formats::fgd::Catalog;
 
 pub(super) fn selection_summary(session: &Session) -> (String, String, Option<Vec<KeyValue>>) {
     let doc = session.document();

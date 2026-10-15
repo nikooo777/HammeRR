@@ -306,7 +306,7 @@ mod tests {
             },
         )))
         .unwrap();
-        let (mut session, directory, brush) = crate::session::prefabs::tests::fixture();
+        let (mut session, directory, brush) = crate::test_assets::prefabs();
         let mut ids = vec![brush];
         for x in [0.0, 32.0] {
             ids.push(

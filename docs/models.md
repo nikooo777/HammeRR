@@ -10,7 +10,7 @@ View Source static model meshes with their materials and skins, inspect their bo
 4. Click **Use model** to apply its path and skin together. **Cancel** or **Escape** closes the browser without changing the entity. The map and camera stay unchanged while browsing.
 5. The mesh appears automatically when its MDL, VVD and DX90 VTX files are supported. You can still type a path directly into **World Model**.
 6. Set **Position**, **Rotation** and **Skin** in the inspector. Skin numbers start at **0**. Source origins and angles drive the same mesh in the editor and agent renders.
-7. Click the visible mesh to select it. Click **Frame · F** to inspect its full bounds. Hidden model entities stay hidden.
+7. Click the visible mesh to select it. Area/volume rules test its model bounds. Click **Frame · F** to inspect its full bounds. Hidden model entities stay hidden.
 8. Click **Model details…** for geometry counts, the active skin's materials and transformed bounds. **Reload models** rereads model files after external changes. **Cancel** closes the read-only window.
 
 ![Searchable model selection with an isolated skin preview](images/model-browser.png)
@@ -19,7 +19,7 @@ View Source static model meshes with their materials and skins, inspect their bo
 
 ![Model geometry, skin materials and bounds](images/model-details.png)
 
-Limits: static-prop MDL versions 44/48 with VVD4 and DX90 VTX7 companions, body 0, LOD 0 and scale 1. Unsupported, missing or malformed assets retain a helper; inspection reports the reason. Skeletal animation, flexes, other bodygroups, scaling, entity tint/transparency overrides, baked prop lighting remain planned. Marquee and volume tests still use point-entity helper bounds. Reload refreshes model geometry and material search paths; changed VMT/VTF contents retain the existing texture cache.
+Limits: static-prop MDL versions 44/48 with VVD4 and DX90 VTX7 companions, body 0, LOD 0 and scale 1. Unsupported, missing or malformed assets retain a helper; inspection reports the reason. Skeletal animation, flexes, other bodygroups, scaling, entity tint/transparency overrides, baked prop lighting remain planned. Marquee and volume selection use loaded models’ transformed asset bounds; point picking intersects triangles. Hidden models are excluded from region matching. Unsupported assets retain their existing helper bounds. Reload refreshes model geometry and material search paths; changed VMT/VTF contents retain the existing texture cache.
 
 HammeRR limits each companion file to 64 MiB, the model cache to 128 entries and 256 MiB, and a scene to one million model vertices and six million model indices. Entities beyond those budgets retain helpers. These are editor resource limits. Inspection and rendering preserve map properties and Undo history.
 

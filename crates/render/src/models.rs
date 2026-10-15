@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use glam::{DQuat, DVec3, EulerRot};
+use glam::{DMat3, DQuat, DVec3, EulerRot};
 use map_core::{
     ObjectId,
     query::{Hit, Ray},
@@ -258,13 +258,17 @@ impl Instance {
     }
 
     pub fn bounds(&self) -> (DVec3, DVec3) {
+        self.bounds_in_basis(DMat3::IDENTITY)
+    }
+
+    pub fn bounds_in_basis(&self, basis: DMat3) -> (DVec3, DVec3) {
         let [mins, maxs] = self.asset.model.bounds;
         let mut low = DVec3::splat(f64::INFINITY);
         let mut high = DVec3::splat(f64::NEG_INFINITY);
         for x in [mins[0], maxs[0]] {
             for y in [mins[1], maxs[1]] {
                 for z in [mins[2], maxs[2]] {
-                    let point = self.point([x, y, z]);
+                    let point = basis.transpose() * self.point([x, y, z]);
                     low = low.min(point);
                     high = high.max(point);
                 }

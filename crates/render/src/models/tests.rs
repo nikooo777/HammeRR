@@ -54,6 +54,14 @@ fn model_instances_share_source_angles_bounds_front_faces_and_actual_mesh_picks(
     let (mins, maxs) = instance.bounds();
     assert!(mins.abs_diff_eq(DVec3::new(84.0, 168.0, 32.0), 1e-10));
     assert!(maxs.abs_diff_eq(DVec3::new(116.0, 232.0, 32.0), 1e-10));
+    let mut angled = entity.clone();
+    angled.properties.set("angles", "0 45 0");
+    let angled = Instance::new(&angled, asset()).unwrap();
+    let basis = glam::DMat3::from_quat(angled.rotation);
+    let (low, high) = angled.bounds_in_basis(basis);
+    let center = basis.transpose() * angled.origin;
+    assert!(low.abs_diff_eq(center - DVec3::new(32.0, 16.0, 0.0), 1e-10));
+    assert!(high.abs_diff_eq(center + DVec3::new(32.0, 16.0, 0.0), 1e-10));
     let ray = Ray {
         origin: DVec3::new(100.0, 222.0, 100.0),
         direction: DVec3::NEG_Z * 5.0,

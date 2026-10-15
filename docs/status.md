@@ -20,7 +20,7 @@ HammeRR is in active development.
 | Entities, connections and renaming | Works. |
 | Map checks | Geometry, IDs, textures, entity logic, asset paths, terrain metadata and authored spawn clearance against static brushes/world/detail terrain. Models, compiler LOD changes, runtime placement, objectives, full dependencies and engine limits are planned. |
 | Terrain (displacements) | Creation, chosen corners, resolution edits, sculpting, blend paint, full/half-edge and corner-only sewing across grid resolutions and collision/border-shading controls and per-triangle walkability/buildability work with guarded previews and Undo. Viewport center picking and framing follow displaced terrain. Native triangle subsets retain checks across surfaces, with viewport picks, yellow outlines and framing. Retained triangle unions or exact checked vertices can mask sculpting and blend edits, with cyan vertex guides, picking, framing and box selection. Volume/marquee matching follows actual sheets, and volume boxes select native triangle subsets. Indexed paint/texture strokes also pick displaced surfaces instead of parent boxes. Compatible mixed-power full and whole-to-half edges compile with native LOD masks and snapping. Live sculpt/blend strokes share bounded paths, masks, radius guides, owned review and one-step Undo. Exact world XYZ vertex movement and viewport axis/plane/screen handles share owned previews, masks, grid snapping and Undo. Connected full-edge base-cage subdivision generates editable rounded grids. Half-edge cage subdivision, other partial spans and restricted-topology remapping remain planned. |
-| Models | Searchable folder/used groups, isolated model/skin previews and one-step Apply/Cancel share Session/MCP. Static-prop meshes draw with materials, skins, Source origins/angles, selection and hiding; inspection/reload, mesh picking and framing work. Animation, bodygroups, scaling, tint/transparency overrides and model-aware marquee/volume bounds remain planned. |
+| Models | Searchable folder/used groups, isolated model/skin previews and one-step Apply/Cancel share Session/MCP. Static-prop meshes draw with materials, skins, Source origins/angles, selection and hiding; inspection/reload, mesh picking, bounds-based marquee/volume matching, object reports, framing and local transform bounds work. Animation, bodygroups, scaling and tint/transparency overrides remain planned. |
 
 ## Compiler
 
@@ -41,6 +41,6 @@ HammeRR is in active development.
 
 ## Next
 
-**Editor:** free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, model-aware area selection, broader model formats and broader map checks.
+**Editor:** free-form flat partitions, inward extrusion, per-piece texture editing, terrain clipping and authoring, broader model formats and poses and broader map checks.
 
 **Compiler:** HDR, broader physics collision, broader terrain topology, prop lighting, brush-model overlays and water transitions.

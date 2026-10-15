@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use glam::DVec3;
+use glam::{DMat3, DVec3};
 use map_core::{Document, ObjectId};
 use render::models::{Instance, MAX_SCENE_INDICES, MAX_SCENE_VERTICES};
 use serde_json::{Value, json};
@@ -122,14 +122,70 @@ impl Session {
         document: &Document,
         ids: &[ObjectId],
     ) -> Option<(DVec3, DVec3)> {
-        let models = self.model_instances(document);
+        let bounds = self.model_bounds_in(document);
         map_core::query::union(ids.iter().filter_map(|&id| {
-            models
-                .instances
-                .iter()
-                .find(|instance| instance.id == id)
-                .map(Instance::bounds)
+            bounds
+                .get(&id)
+                .copied()
                 .or_else(|| map_core::query::bounds(document, id))
         }))
+    }
+
+    pub fn model_bounds_in(&self, document: &Document) -> BTreeMap<ObjectId, (DVec3, DVec3)> {
+        self.model_instances(document)
+            .instances
+            .into_iter()
+            .map(|instance| (instance.id, instance.bounds()))
+            .collect()
+    }
+
+    pub fn object_bounds_in_basis(
+        &self,
+        document: &Document,
+        ids: &[ObjectId],
+        basis: DMat3,
+    ) -> Option<(DVec3, DVec3)> {
+        let models = self.model_instances(document);
+        let bounds = models
+            .instances
+            .iter()
+            .map(|instance| (instance.id, instance.bounds_in_basis(basis)))
+            .collect::<BTreeMap<_, _>>();
+        let ordinary = ids
+            .iter()
+            .copied()
+            .filter(|id| !bounds.contains_key(id))
+            .collect::<Vec<_>>();
+        map_core::query::union(
+            map_core::query::bounds_in_basis(document, &ordinary, basis)
+                .into_iter()
+                .chain(ids.iter().filter_map(|id| bounds.get(id).copied())),
+        )
+    }
+
+    pub(super) fn select_region(
+        &mut self,
+        region: &map_core::region::Region,
+        rule: map_core::region::Match,
+        faces: bool,
+    ) -> map_core::region::Selection {
+        let hidden = self.hidden_tool_brushes();
+        let bounds = if faces {
+            BTreeMap::new()
+        } else {
+            self.model_bounds_in(&self.document)
+        };
+        region.select_with_entity_bounds(
+            &self.document,
+            rule,
+            faces,
+            |solid| !hidden.contains(&solid.id),
+            |entity| {
+                bounds
+                    .get(&ObjectId::Entity(entity.id))
+                    .copied()
+                    .or_else(|| map_core::query::entity_bounds(entity))
+            },
+        )
     }
 }

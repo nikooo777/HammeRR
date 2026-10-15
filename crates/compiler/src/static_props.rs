@@ -229,6 +229,12 @@ fn record(
     if integer(entity, "body", 0)? != 0 {
         return Err("Static props require body 0; use prop_dynamic for bodygroups".into());
     }
+    if source_formats::render_color::rgb(entity.properties.get("rendercolor"))
+        .map_err(|error| error.to_string())?
+        != [255; 3]
+    {
+        return Err("Tinted static props are not supported by the current static-prop output; use prop_dynamic for model tint".into());
+    }
     if let Some(name) = entity
         .properties
         .get("lightingorigin")

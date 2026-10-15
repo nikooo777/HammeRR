@@ -181,7 +181,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Source models |
 | --- |
 | ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) |
-| Browse models, skins and named bodygroups with static or reference pose previews. |
+| Browse models, skins and named bodygroups with reference poses and dynamic-model tints. |
 
 | Sound exploration |
 | --- |

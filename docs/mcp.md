@@ -335,3 +335,9 @@ Attachment inspection uses the same checked default bone pose as model rendering
 7. `reload_sound_assets` clears the catalog, invalidates pending choices and stops playback. The human equivalent is **Reload sounds**.
 
 Audio helpers require FFmpeg/ffplay. Input files are limited to 16 MiB, output to 2 MiB/ten seconds/stereo 44.1 kHz, and decoding to five seconds. Paths stay relative to mounted sound content; script loading and traversal are bounded. Previews do not simulate native channel mixing, sound level, pitch/random ranges, DSP, distance, looping, sentences/voice or soundscapes. See [Sounds](sounds.md) for catalog limits and supported scope.
+
+### Model tint
+
+`get_entity_inspector` exposes dynamic-model `rendercolor` as the common **Tint** color control. Use the existing `set_entity_color` with `id`, `key: "rendercolor"` and byte `color: [r,g,b]`; omit `intensity`. This RGB edit preserves an authored fourth component and commits in one Undo step. `set_entity_component` and `set_entity_properties` retain their existing generic access. `render_view` shows the same modulation as the viewport, and `inspect_entity_model.tint` reports RGB bytes for supported model instances (`null` when unavailable). `opacity_preview: false` distinguishes the current RGB-only support. Asset-only browser images keep their untinted source materials.
+
+Tint fields use three integer channels from 0 to 255 with an optional preserved fourth component. White/default static props are unchanged. The current static-prop writer has no color field, so nonwhite static tints return helper diagnostics and fail compilation without replacing an earlier BSP. Opacity/render modes and scaling remain separate gaps.

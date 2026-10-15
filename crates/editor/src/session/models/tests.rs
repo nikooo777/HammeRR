@@ -2,6 +2,58 @@ use super::*;
 use map_core::query::Ray;
 
 #[test]
+fn model_tint_picker_preserves_fourth_components_and_undo() {
+    let mut session = Session::new(Err("no model assets needed".into()));
+    session.set_definitions(Actor::User,source_formats::fgd::Catalog::parse(r#"@PointClass = prop_dynamic [ model(studio) : "World Model" rendercolor(color255) : "FX Color (R G B)" : "255 255 255" ]"#).unwrap());
+    let ObjectId::Entity(id) = session
+        .create_entity(
+            Actor::User,
+            "prop_dynamic",
+            Some(DVec3::ZERO),
+            BTreeMap::from([
+                ("model".into(), "models/test.mdl".into()),
+                ("rendercolor".into(), "255 255 255 064".into()),
+            ]),
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let inspector = session.entity_inspector(id).unwrap();
+    let tint = inspector
+        .properties
+        .iter()
+        .find(|field| field.key == "rendercolor")
+        .unwrap();
+    assert_eq!(tint.label, "Tint");
+    assert!(!tint.advanced);
+    assert!(tint.intensity.is_none());
+    assert_eq!(tint.control, crate::inspector::Control::Color);
+    assert!(
+        session
+            .set_entity_color(Actor::Agent, id, "rendercolor", [64, 128, 255], Some(100.0))
+            .is_err()
+    );
+    session
+        .set_entity_color(Actor::Agent, id, "rendercolor", [64, 128, 255], None)
+        .unwrap();
+    assert_eq!(
+        session
+            .document()
+            .entity(id)
+            .unwrap()
+            .properties
+            .get("rendercolor"),
+        Some("64 128 255 064")
+    );
+    assert_eq!(session.document().undo_labels().count(), history + 1);
+    session.undo(Actor::User).unwrap();
+    assert_eq!(session.document().vmf(), &source);
+}
+
+#[test]
 fn model_previews_share_real_assets_picks_bounds_cache_and_source_history() {
     for actor in [Actor::User, Actor::Agent] {
         let Ok(game) = crate::mount_game(None) else {

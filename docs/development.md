@@ -289,3 +289,9 @@ python3 -B scripts/validate_sounds.py --output /tmp/hammerr-sounds-check
 ```
 
 Requires FFmpeg/ffplay. Uses `SDL_AUDIODRIVER=dummy` for silent playback checks; it does not use the desktop or speakers. Checks real WAV/MP3 files and manifest wave variants, PCM export and volume amplitude, ten-second bounds, playback ownership, invalid/stale/replaced choices, unchanged source/history/camera, Apply/Undo/reopen and native entity sound names through both compile paths. Core fixtures cover malformed manifests, ambiguous names, nesting/path/chunk guards, oversized-file rejection before allocation and cached draft reads with fresh Apply validation. The software UI check exercises search, variants, shared volume, resumed/changed choices, Apply and foreign Cancel.
+
+```sh
+python3 -B scripts/validate_model_tints.py --output /tmp/hammerr-model-tints-check
+```
+
+Checks real model RGB image changes, common color-control metadata, fourth-component preservation, invalid intensity, Undo/Redo/reopen, native dynamic rendercolor fields through both build paths and colored-static rejection preserving prior BSP output. Renderer checks cover exact vertex modulation and legible selection for black models; shared Session checks keep native alpha separate from light brightness.

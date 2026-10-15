@@ -49,6 +49,59 @@ fn asset() -> Arc<Asset> {
 }
 
 #[test]
+fn model_tints_modulate_vertices_and_keep_black_selection_visible() {
+    let mut entity = Entity::new(2, "prop_dynamic");
+    entity.properties.set("origin", "0 0 0");
+    entity.properties.set("rendercolor", "64 128 255 032");
+    let instance = Instance::new(&entity, asset()).unwrap();
+    assert_eq!(instance.tint, [64, 128, 255]);
+    let mut vmf = map_core::Document::empty().vmf().clone();
+    vmf.entities.push(entity.clone());
+    let game = GameFs {
+        game_dir: Default::default(),
+        base_dir: Default::default(),
+        mounts: Vec::new(),
+    };
+    let mesh = crate::SceneMesh::build_with_models(
+        &vmf,
+        &game,
+        &mut crate::MaterialLibrary::default(),
+        &Default::default(),
+        &Default::default(),
+        &[],
+        &[instance],
+    );
+    assert!(
+        mesh.vertices
+            .iter()
+            .all(|vertex| vertex.color == [64, 128, 255, 0])
+    );
+    entity.properties.set("rendercolor", "0 0 0");
+    let instance = Instance::new(&entity, asset()).unwrap();
+    let mesh = crate::SceneMesh::build_with_models(
+        &vmf,
+        &game,
+        &mut crate::MaterialLibrary::default(),
+        &[ObjectId::Entity(2)].into_iter().collect(),
+        &Default::default(),
+        &[],
+        &[instance],
+    );
+    assert!(
+        mesh.vertices
+            .iter()
+            .all(|vertex| vertex.color == [96, 80, 64, 0])
+    );
+    entity.properties.set("classname", "prop_static");
+    assert!(
+        Instance::new(&entity, asset())
+            .err()
+            .unwrap()
+            .contains("Tinted static props")
+    );
+}
+
+#[test]
 fn attachments_compose_entity_rotations_and_native_world_alignment() {
     let mut asset = asset();
     let model = &mut Arc::get_mut(&mut asset).unwrap().model;

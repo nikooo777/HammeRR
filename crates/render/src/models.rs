@@ -177,11 +177,21 @@ pub struct Instance {
     pub rotation: DQuat,
     pub skin: usize,
     pub body: u32,
+    pub tint: [u8; 3],
     helper_bounds: (DVec3, DVec3),
 }
 
 impl Instance {
     pub fn new(entity: &Entity, asset: Arc<Asset>) -> Result<Self, String> {
+        let tint = source_formats::render_color::rgb(entity.properties.get("rendercolor"))
+            .map_err(|error| error.to_string())?;
+        if tint != [255; 3]
+            && entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
+        {
+            return Err("Tinted static props are not supported by the current compiler output; use prop_dynamic for model tint".into());
+        }
         if entity
             .classname()
             .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
@@ -253,6 +263,7 @@ impl Instance {
             rotation: DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z),
             skin,
             body,
+            tint,
             helper_bounds: map_core::query::entity_bounds(entity)
                 .unwrap_or_else(|| map_core::query::point_entity_bounds(origin)),
         };

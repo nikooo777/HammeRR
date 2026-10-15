@@ -18,6 +18,8 @@ const HELPER_SEGMENTS: usize = 16;
 const DEFAULT_ENTITY_COLOR: [u8; 3] = [220, 30, 220];
 const SELECTED_TINT: [u8; 3] = [255, 130, 130];
 const SELECTED_EDGE: [u8; 4] = [255, 64, 64, 255];
+const SELECTED_MODEL_TINT: [u8; 3] = [255, 210, 150];
+const SELECTED_MODEL_MIN: [u8; 3] = [96, 80, 64];
 const WIRE_EDGE: [u8; 4] = [151, 169, 191, 255];
 
 fn lightmap_vertex(side: &source_formats::vmf::Side, point: DVec3) -> [f32; 3] {
@@ -620,11 +622,18 @@ impl Builder<'_> {
                     .as_vec3()
                     .to_array(),
                 uv: vertex.uv,
-                color: if selected {
-                    [255, 210, 150, 0]
-                } else {
-                    [255, 255, 255, 0]
-                },
+                color: std::array::from_fn(|channel| {
+                    if channel == 3 {
+                        0
+                    } else if selected {
+                        ((u16::from(instance.tint[channel])
+                            * u16::from(SELECTED_MODEL_TINT[channel])
+                            / 255) as u8)
+                            .max(SELECTED_MODEL_MIN[channel])
+                    } else {
+                        instance.tint[channel]
+                    }
+                }),
                 lightmap: [0.0, 0.0, -1.0],
                 smoothing: 0,
             });

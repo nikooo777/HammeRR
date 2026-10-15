@@ -4540,7 +4540,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set an entity color and optional brightness using the same color picker operation as the GUI. Supports color255 and normalized color1; preserves brightness when omitted."
+        description = "Set an entity color and optional brightness using the same color picker operation as the GUI. Supports color255 and normalized color1; preserves light brightness when omitted. rendercolor edits RGB only, preserves an authored fourth component and rejects intensity."
     )]
     fn set_entity_color(&self, Parameters(args): Parameters<EntityColorArgs>) -> ToolResult {
         run(|| {

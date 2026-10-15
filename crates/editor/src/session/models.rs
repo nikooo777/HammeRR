@@ -158,7 +158,7 @@ impl Session {
             .iter()
             .find(|instance| instance.id == ObjectId::Entity(id));
         Ok(
-            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":instance.is_some_and(|instance|!instance.has_geometry()),"error":models.issues.get(&id),"hidden":entity.hidden,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
+            json!({"entity":format!("entity:{id}"),"asset":asset,"displayed":instance.is_some_and(Instance::has_geometry),"helper":instance.is_some_and(|instance|!instance.has_geometry()),"error":models.issues.get(&id),"hidden":entity.hidden,"tint":instance.map(|instance|instance.tint),"opacity_preview":false,"attachments":instance.map(|instance|instance.asset.model.attachments.iter().enumerate().map(|(index,attachment)|super::model_attachments::report(attachment,index+1,instance.attachment(index+1).unwrap())).collect::<Vec<_>>()).unwrap_or_default(),"world_bounds":instance.map(|instance|{let(a,b)=instance.bounds();[a.to_array(),b.to_array()]})}),
         )
     }
 

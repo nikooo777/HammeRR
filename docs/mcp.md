@@ -311,3 +311,15 @@ Skeletal models use composed default bone transforms, inverse bind matrices and 
 `inspect_model.bodygroups` lists group indices/names/labels, variant indices/labels, active choices, blank flags and triangle counts. `choose_model_bodygroup` takes `token`, `group` and `variant` indices, preserves other group contributions, and uses the same operation as the picker’s named dropdowns. Blank selections return `blank: true` and null `local_bounds`; their previews show an editor helper. Entity inspection distinguishes `displayed` mesh state from `helper` state.
 
 `get_model_choice` accepts an optional `token`. Omitting it reports the active token and `valid` state, including a stale token that can still be cancelled. With an explicit token it retains strict source/ownership checks. `begin_model_choice` with `resume: true` reuses a valid choice for the same entity, as opening the human picker does. An open picker mirrors agent changes to its token; an unseen change at Apply refreshes the preview for review before applying. Static props require body 0; use a compatible dynamic entity for bodygroup changes.
+
+### Model attachment points
+
+`inspect_model.attachments` lists the local MDL attachment records: native `index` starting at **1**, `name`, zero-based `bone`, raw `flags`, `world_aligned`, model-space `position` and X/Y/Z `axes`. `inspect_entity_model.attachments` gives the corresponding world positions/axes for a supported visible entity in the rendered draft. World-aligned attachments retain their transformed position and identity world axes. Hidden/unsupported entities have no world attachment list.
+
+1. Inspect the entity and choose a named attachment's one-based index.
+2. Call `show_model_attachment` with `id` and `attachment` to show the same axes as **Model details… → Attachment → Show attachment axes**. It returns an owned `token`; source, camera, selection and history remain unchanged. Finish geometry previews first.
+3. Call `get_model_attachment_guide` to retrieve its current token, attachment data and `valid` state. Changed source, selection, assets or geometry previews invalidate the guide and hide it. Stale tokens remain available for cleanup.
+4. Call `frame_model_attachment` with `id`, `attachment` and optional positive `aspect` (default 1) to frame the point. It changes camera only and does not require or replace a guide.
+5. Call `clear_model_attachment` with the captured `token`. Foreign/replaced tokens fail without removing the replacement.
+
+Attachment inspection uses the same checked default bone pose as model rendering. It does not evaluate animation, IK, procedural or included-model virtual attachments, and does not parent or move map entities. The decoder permits at most 1024 local attachments per model as a HammeRR resource cap.

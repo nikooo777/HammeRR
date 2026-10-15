@@ -34,6 +34,7 @@ mod favorites;
 pub mod hollowing;
 mod management;
 pub mod material_search;
+mod model_attachments;
 pub mod model_browser;
 pub mod models;
 pub mod paint;
@@ -127,6 +128,7 @@ pub enum SelectMode {
 
 pub struct Session {
     model_browser: model_browser::State,
+    model_attachments: model_attachments::State,
     models: std::cell::RefCell<render::models::Library>,
     game: Arc<GameFs>,
     game_error: Option<String>,
@@ -244,6 +246,7 @@ impl Session {
             terrain_strokes: terrain_strokes::State::default(),
             models: std::cell::RefCell::default(),
             model_browser: model_browser::State::default(),
+            model_attachments: model_attachments::State::default(),
             terrain_handles: terrain_handles::State::default(),
             surface_sample: None,
             recovery: recovery::State::default(),
@@ -1949,6 +1952,7 @@ impl Session {
             mesh.set_leak_path(points);
         }
         self.append_context_guides(&mut mesh);
+        self.append_model_attachment_guide(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_component_guides(&mut mesh);
         self.append_terrain_triangle_guides(&mut mesh);

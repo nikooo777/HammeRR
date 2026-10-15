@@ -4033,10 +4033,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let ui = ui.borrow();
-            let session = lock(&shared);
+            let mut session = lock(&shared);
             if let Some(id) = single_selected_entity(&session) {
                 let controller = ui.model.as_ref().unwrap();
-                controller.initialize(&session, id);
+                controller.window.set_aspect(
+                    app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0),
+                );
+                controller.initialize(&mut session, id);
                 let _ = controller.window.show();
             }
         }

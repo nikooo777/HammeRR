@@ -2,6 +2,7 @@ use std::io;
 
 use crate::mdl::ModelHeader;
 
+mod attachments;
 mod bones;
 mod reader;
 #[cfg(test)]
@@ -44,6 +45,20 @@ pub struct BodyGroup {
     pub variants: Vec<BodyVariant>,
 }
 
+#[derive(Debug)]
+pub struct Attachment {
+    pub name: String,
+    pub bone: usize,
+    pub flags: u32,
+    pub transform: glam::DAffine3,
+}
+
+impl Attachment {
+    pub fn world_aligned(&self) -> bool {
+        self.flags & attachments::WORLD_ALIGN != 0
+    }
+}
+
 impl BodyGroup {
     pub fn selected(&self, body: u32) -> usize {
         if self.variants.len() <= 1 {
@@ -66,6 +81,7 @@ pub struct Model {
     pub body_parts: usize,
     pub reference_bones: usize,
     pub body_groups: Vec<BodyGroup>,
+    pub attachments: Vec<Attachment>,
 }
 
 struct Mesh {
@@ -81,10 +97,15 @@ fn invalid(message: &str) -> io::Error {
 impl Model {
     pub fn parse(mdl: &[u8], vvd: &[u8], vtx: &[u8]) -> io::Result<Self> {
         let header = ModelHeader::parse(mdl)?;
-        let reader = reader::Reader::new(mdl, 240)?;
-        let reference = (!header.is_static_prop())
+        let reader = reader::Reader::new(mdl, 248)?;
+        let attachment_count = reader.count(240, attachments::MAX_ATTACHMENTS)?;
+        let reference = (!header.is_static_prop() || attachment_count > 0)
             .then(|| bones::reference(&reader))
             .transpose()?;
+        let attachments = attachments::parse(
+            &reader,
+            reference.as_ref().map_or(&[], |pose| pose.poses.as_slice()),
+        )?;
         let textures = reader.table(0, 204, 208, 64, MAX_MATERIALS)?;
         let mut materials = Vec::with_capacity(textures.len);
         for index in 0..textures.len {
@@ -123,7 +144,9 @@ impl Model {
             }
             skins.push(skin);
         }
-        let vertices = vvd::parse(vvd, header.checksum, reference.as_deref())?;
+        let skinning =
+            (!header.is_static_prop()).then(|| reference.as_ref().unwrap().skinning.as_slice());
+        let vertices = vvd::parse(vvd, header.checksum, skinning)?;
         let bodies = reader.table(0, 232, 236, 16, MAX_BODY_PARTS)?;
         let mut meshes = Vec::with_capacity(bodies.len);
         let mut body_groups = Vec::with_capacity(bodies.len);
@@ -232,8 +255,9 @@ impl Model {
             skins,
             bounds: [mins, maxs],
             body_parts: bodies.len,
-            reference_bones: reference.as_ref().map_or(0, Vec::len),
+            reference_bones: skinning.map_or(0, <[_]>::len),
             body_groups,
+            attachments,
         };
         result.bounds = result.bounds_for_body(0).unwrap_or(result.bounds);
         Ok(result)
@@ -288,6 +312,12 @@ impl Model {
         std::mem::size_of::<Self>()
             + self.vertices.capacity() * std::mem::size_of::<Vertex>()
             + self.parts.capacity() * std::mem::size_of::<Part>()
+            + self.attachments.capacity() * std::mem::size_of::<Attachment>()
+            + self
+                .attachments
+                .iter()
+                .map(|attachment| attachment.name.capacity())
+                .sum::<usize>()
             + self.body_groups.capacity() * std::mem::size_of::<BodyGroup>()
             + self
                 .body_groups

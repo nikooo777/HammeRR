@@ -278,6 +278,16 @@ impl Instance {
         self.asset.model.bounds_for_body(self.body).is_some()
     }
 
+    pub fn attachment(&self, index: usize) -> Option<glam::DAffine3> {
+        let attachment = self.asset.model.attachments.get(index.checked_sub(1)?)?;
+        let mut transform = glam::DAffine3::from_rotation_translation(self.rotation, self.origin)
+            * attachment.transform;
+        if attachment.world_aligned() {
+            transform.matrix3 = DMat3::IDENTITY;
+        }
+        Some(transform)
+    }
+
     pub fn bounds_in_basis(&self, basis: DMat3) -> (DVec3, DVec3) {
         let Some([mins, maxs]) = self.asset.model.bounds_for_body(self.body) else {
             return transform_bounds(self.helper_bounds, |point| basis.transpose() * point);

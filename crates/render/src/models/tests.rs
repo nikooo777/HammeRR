@@ -11,6 +11,7 @@ fn asset() -> Arc<Asset> {
         model: Model {
             reference_bones: 0,
             body_groups: Vec::new(),
+            attachments: Vec::new(),
             header: ModelHeader {
                 checksum: 0,
                 flags: 16,
@@ -45,6 +46,39 @@ fn asset() -> Arc<Asset> {
             body_parts: 1,
         },
     })
+}
+
+#[test]
+fn attachments_compose_entity_rotations_and_native_world_alignment() {
+    let mut asset = asset();
+    let model = &mut Arc::get_mut(&mut asset).unwrap().model;
+    for flags in [0, 0x10000] {
+        model.attachments.push(source_formats::model::Attachment {
+            name: "point".into(),
+            bone: 0,
+            flags,
+            transform: glam::DAffine3::from_rotation_translation(
+                DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2),
+                DVec3::new(4.0, 2.0, 8.0),
+            ),
+        });
+    }
+    let mut entity = Entity::new(2, "prop_dynamic");
+    entity.properties.set("origin", "100 200 20");
+    entity.properties.set("angles", "0 90 0");
+    let instance = Instance::new(&entity, asset).unwrap();
+    let normal = instance.attachment(1).unwrap();
+    let aligned = instance.attachment(2).unwrap();
+    assert!(
+        normal
+            .translation
+            .abs_diff_eq(DVec3::new(98.0, 204.0, 28.0), 1e-10)
+    );
+    assert_eq!(aligned.translation, normal.translation);
+    assert!(normal.matrix3.x_axis.abs_diff_eq(-DVec3::X, 1e-10));
+    assert_eq!(aligned.matrix3, DMat3::IDENTITY);
+    assert!(instance.attachment(0).is_none());
+    assert!(instance.attachment(3).is_none());
 }
 
 #[test]

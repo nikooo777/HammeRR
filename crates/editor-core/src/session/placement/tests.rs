@@ -542,6 +542,14 @@ fn corner_snap_rejects_the_first_supported_model_mesh_without_reaching_the_floor
 
 #[test]
 fn corner_snap_target_queries_share_visibility_and_reject_terrain_or_ambiguous_hits() {
+    let (directory, game) = crate::test_assets::game();
+    std::fs::create_dir_all(directory.path().join("materials/tools")).unwrap();
+    std::fs::write(
+        directory.path().join("materials/tools/toolsnodraw.vmt"),
+        "LightmappedGeneric { %compilenodraw 1 }",
+    )
+    .unwrap();
+    let game = std::sync::Arc::new(game);
     for mode in [
         "owned",
         "owner_hidden",
@@ -552,12 +560,13 @@ fn corner_snap_target_queries_share_visibility_and_reject_terrain_or_ambiguous_h
         "ambiguous",
     ] {
         let (mut session, selected) = fixture();
+        session.game = game.clone();
         let ObjectId::Solid(source_solid) = selected else {
             unreachable!()
         };
-        let (owner, target) = session
+        let owner = session
             .edit(Actor::User, "corner target", |tx| {
-                let solid = map_core::edit::block_solid(
+                let ObjectId::Solid(id) = map_core::edit::create_block(
                     tx,
                     DVec3::new(-200.0, -200.0, 16.0),
                     DVec3::new(-160.0, -160.0, 24.0),
@@ -566,11 +575,21 @@ fn corner_snap_target_queries_share_visibility_and_reject_terrain_or_ambiguous_h
                     } else {
                         "brick/test"
                     },
-                )?;
-                let id = solid.id;
-                let owner =
-                    map_core::edit::create_entity(tx, "func_detail", None, &[], vec![solid])?;
-                Ok((owner, id))
+                )?
+                else {
+                    unreachable!()
+                };
+                if mode == "terrain" {
+                    let side = tx.document().solid(id).unwrap().sides[0].id;
+                    map_core::displacement::edit::create(
+                        tx,
+                        &[map_core::surface::FaceId { solid: id, side }],
+                        2,
+                        0,
+                    )?;
+                }
+                let owner = map_core::edit::tie_to_entity(tx, &[id], "func_detail", &[])?;
+                Ok(owner)
             })
             .unwrap();
         let ObjectId::Entity(owner_id) = owner else {
@@ -587,17 +606,6 @@ fn corner_snap_target_queries_share_visibility_and_reject_terrain_or_ambiguous_h
                         _ => unreachable!(),
                     }
                     Ok(())
-                })
-                .unwrap();
-        }
-        if mode == "terrain" {
-            let face = map_core::surface::FaceId {
-                solid: target,
-                side: session.document().entity(owner_id).unwrap().solids[0].sides[0].id,
-            };
-            session
-                .edit(Actor::User, "target terrain", |tx| {
-                    map_core::displacement::edit::create(tx, &[face], 2, 0)
                 })
                 .unwrap();
         }

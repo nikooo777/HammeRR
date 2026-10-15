@@ -333,6 +333,7 @@ impl SurfaceIndex {
         direction: DVec3,
         cone: f64,
         shadows: &ShadowIndex<Occluder>,
+        props: &ShadowIndex<super::props::PropTriangle>,
         budget: &mut Budget<'_>,
     ) -> Result<Option<Hit>, String> {
         budget.consume(11)?;
@@ -382,6 +383,9 @@ impl SurfaceIndex {
         }
         let distance = fraction * super::sky::TRACE_LENGTH;
         let position = point + direction * distance;
+        if props.blocked(point, position, &mut |amount| budget.consume(amount))? {
+            return Ok(None);
+        }
         Ok(Some(Hit {
             color: radiance.at(position, uv, distance, cone),
             point: position,

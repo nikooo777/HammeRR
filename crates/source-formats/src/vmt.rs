@@ -52,14 +52,18 @@ impl Material {
 
     /// Loads `materials/<name>.vmt`, following `patch` includes.
     pub fn load(fs: &GameFs, name: &str) -> Result<Option<Self>, Error> {
-        Self::load_depth(fs, &material_path(name), 0)
+        Self::load_limited(fs, name, usize::MAX)
     }
 
-    fn load_depth(fs: &GameFs, path: &str, depth: usize) -> Result<Option<Self>, Error> {
+    pub fn load_limited(fs: &GameFs, name: &str, maximum: usize) -> Result<Option<Self>, Error> {
+        Self::load_depth(fs, &material_path(name), 0, maximum)
+    }
+
+    fn load_depth(fs: &GameFs, path: &str, depth: usize, maximum: usize) -> Result<Option<Self>, Error> {
         if depth > MAX_PATCH_DEPTH {
             return Err(Error::PatchTooDeep);
         }
-        let Some(bytes) = fs.read(path)? else {
+        let Some(bytes) = fs.read_limited(path, maximum)? else {
             return Ok(None);
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -74,7 +78,7 @@ impl Material {
             .find(|n| n.key.eq_ignore_ascii_case("include"))
             .and_then(Node::as_str)
             .ok_or(Error::NoShader)?;
-        let mut base = Self::load_depth(fs, &normalize(include), depth + 1)?
+        let mut base = Self::load_depth(fs, &normalize(include), depth + 1, maximum)?
             .ok_or_else(|| Error::MissingInclude(include.to_owned()))?;
         for node in children {
             match (&node.value, node.key.to_ascii_lowercase().as_str()) {
@@ -195,6 +199,23 @@ fn asset_path(name: &str, extension: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_material_load_checks_patch_includes() {
+        use crate::gamefs::{Mount, MountedPath};
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("materials")).unwrap();
+        std::fs::write(directory.path().join("materials/base.vmt"), "VertexLitGeneric { $alphatest 1 }".to_owned() + &" ".repeat(256)).unwrap();
+        std::fs::write(directory.path().join("materials/patch.vmt"), "Patch { include materials/base.vmt replace { $alphatest 0 } }").unwrap();
+        let game = GameFs {
+            game_dir: directory.path().to_owned(),
+            base_dir: directory.path().to_owned(),
+            mounts: vec![MountedPath { ids: vec!["game".into()], mount: Mount::Directory(directory.path().to_owned()) }],
+        };
+        assert!(Material::load_limited(&game, "patch", 128).is_err());
+        assert!(!Material::load_limited(&game, "patch", 512).unwrap().unwrap().alpha_test());
+        assert!(Material::load_limited(&game, "missing", 128).unwrap().is_none());
+    }
 
     #[test]
     fn parses_tool_material() {

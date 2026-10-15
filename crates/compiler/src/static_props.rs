@@ -393,7 +393,7 @@ pub(crate) fn bake(
         return Ok(Stats::default());
     }
     if !props.props.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Static props use model assets and conservative bound-based leaf membership; baked prop lighting, prop shadows and exact model-hull leaf clipping are unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Static props use model assets and conservative bound-based leaf membership; Direct LDR adds opaque mesh shadows; baked prop lighting and exact model-hull leaf clipping are unfinished", None, None));
     }
     bsp.set_static_props(&props).map_err(|e| e.to_string())?;
     Ok(Stats {

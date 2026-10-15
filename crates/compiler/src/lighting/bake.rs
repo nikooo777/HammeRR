@@ -42,6 +42,7 @@ pub(crate) struct BakeStats {
     pub smoothed_faces: usize,
     pub smoothed_corners: usize,
     pub normal_work: usize,
+    pub prop_shadows: super::props::Stats,
     pub culling: super::culling::Stats,
 }
 
@@ -145,6 +146,10 @@ pub(super) struct Budget<'a> {
 impl Budget<'_> {
     pub(super) fn new(control: &Control) -> Budget<'_> {
         Budget { work: 0, control }
+    }
+
+    pub(super) fn work(&self) -> usize {
+        self.work
     }
 
     pub(super) fn consume(&mut self, amount: usize) -> Result<(), String> {
@@ -474,6 +479,7 @@ fn sky_visible(
     origin: DVec3,
     shadows: &ShadowIndex<Occluder>,
     terrain: &ShadowIndex<Triangle>,
+    props: &ShadowIndex<super::props::PropTriangle>,
     model: &Option<ShadowIndex<Occluder>>,
     budget: &mut Budget<'_>,
 ) -> Result<bool, String> {
@@ -485,6 +491,7 @@ fn sky_visible(
         let hit = origin.lerp(end, fraction) + direction * super::sky::SKY_HIT_BIAS;
         Ok(
             !terrain.blocked(origin, hit, &mut |amount| budget.consume(amount))?
+                && !props.blocked(origin, hit, &mut |amount| budget.consume(amount))?
                 && !model_blocked(model, origin, hit, budget)?,
         )
     } else {
@@ -523,6 +530,8 @@ fn mapped_colors(
 }
 
 pub(crate) struct Settings<'a> {
+    pub fs: &'a source_formats::gamefs::GameFs,
+    pub vmf: &'a source_formats::vmf::Vmf,
     pub options: crate::Options,
     pub model_entities: &'a [usize],
     pub smoothing_sources: &'a [Option<std::sync::Arc<crate::faces::SmoothingSource>>],
@@ -611,6 +620,7 @@ pub(crate) fn bake(
     let mut colors = Vec::with_capacity(count);
     let shadows = ShadowIndex::new(world_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = terrain_shadows(map, &mut budget)?;
+    let (prop_shadows, prop_stats) = super::props::build(bsp, settings.vmf, settings.fs, report, &mut budget)?;
     let ambient_directions = super::sky::ambient_directions(sky_quality);
     let sun_directions = lights
         .iter()
@@ -662,6 +672,7 @@ pub(crate) fn bake(
                                     origin,
                                     &shadows,
                                     &terrain_shadows,
+                                    &prop_shadows,
                                     &model_shadows[plan.model],
                                     &mut budget,
                                 )
@@ -683,6 +694,7 @@ pub(crate) fn bake(
                                             origin,
                                             &shadows,
                                             &terrain_shadows,
+                                    &prop_shadows,
                                             &model_shadows[plan.model],
                                             budget,
                                         )
@@ -704,6 +716,7 @@ pub(crate) fn bake(
                                     light.origin,
                                     &mut |amount| budget.consume(amount),
                                 )?
+                                && !prop_shadows.blocked(origin, light.origin, &mut |amount| budget.consume(amount))?
                                 && !model_blocked(
                                     &model_shadows[plan.model],
                                     origin,
@@ -736,6 +749,7 @@ pub(crate) fn bake(
                                         origin,
                                         &shadows,
                                         &terrain_shadows,
+                                    &prop_shadows,
                                         &model_shadows[plan.model],
                                         &mut budget,
                                     )
@@ -756,6 +770,7 @@ pub(crate) fn bake(
                                                 origin,
                                                 &shadows,
                                                 &terrain_shadows,
+                                    &prop_shadows,
                                                 &model_shadows[plan.model],
                                                 budget,
                                             )
@@ -809,6 +824,7 @@ pub(crate) fn bake(
                     infos: &infos,
                     shadows: &shadows,
                     model_shadows: &model_shadows,
+                    prop_shadows: &prop_shadows,
                     quality: sky_quality,
                 },
                 bsp,
@@ -904,6 +920,7 @@ pub(crate) fn bake(
             visibility,
             shadows: &shadows,
             terrain: &terrain_shadows,
+            prop_shadows: &prop_shadows,
             directions: &ambient_directions,
             quality: sky_quality,
             sky_radiance,
@@ -936,6 +953,7 @@ pub(crate) fn bake(
         smoothed_faces: normals.faces,
         smoothed_corners: normals.corners,
         normal_work,
+        prop_shadows: prop_stats,
         culling: candidates.stats,
     })
 }

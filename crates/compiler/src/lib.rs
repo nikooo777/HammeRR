@@ -328,6 +328,11 @@ pub struct Stats {
     pub static_props: usize,
     pub static_prop_models: usize,
     pub static_prop_leaf_refs: usize,
+    pub prop_shadow_props: usize,
+    pub prop_shadow_models: usize,
+    pub prop_shadow_triangles: usize,
+    pub prop_shadow_disabled: usize,
+    pub prop_shadow_work: usize,
     pub displacements: usize,
     pub displacement_vertices: usize,
     pub displacement_triangles: usize,
@@ -682,6 +687,8 @@ fn build(
             &mut output.report,
             control,
             lighting::Settings {
+                fs,
+                vmf,
                 options,
                 smoothing_sources: &emission.smoothing_sources,
                 model_entities: &emission.model_entities,
@@ -700,6 +707,11 @@ fn build(
         output.stats.lightmap_samples = stats.samples;
         output.stats.lighting_bytes = stats.bytes;
         output.stats.lighting_work = stats.work;
+        output.stats.prop_shadow_props = stats.prop_shadows.props;
+        output.stats.prop_shadow_models = stats.prop_shadows.models;
+        output.stats.prop_shadow_triangles = stats.prop_shadows.triangles;
+        output.stats.prop_shadow_disabled = stats.prop_shadows.disabled;
+        output.stats.prop_shadow_work = stats.prop_shadows.work;
         output.stats.light_evaluations = stats.culling.evaluated;
         output.stats.light_pvs_skipped = stats.culling.pvs_skipped;
         output.stats.light_range_skipped = stats.culling.range_skipped;

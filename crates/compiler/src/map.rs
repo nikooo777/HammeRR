@@ -172,8 +172,8 @@ pub struct Map<'a> {
 }
 
 impl<'a> Map<'a> {
-    pub fn load(vmf: &Vmf, fs: &'a GameFs, report: &mut Report) -> Self {
-        Self::load_controlled(vmf, fs, report, &Control::default()).expect("uncancelled map load")
+    pub fn load(vmf: &Vmf, fs: &'a GameFs, report: &mut Report) -> Result<Self, String> {
+        Self::load_controlled(vmf, fs, report, &Control::default())
     }
 
     pub fn load_controlled(
@@ -393,7 +393,7 @@ impl<'a> Map<'a> {
         for face in &geometry.faces {
             control.checkpoint()?;
             let side = &solid.sides[face.side];
-            let material = self.materials.load(&side.material);
+            let material = self.materials.load(&side.material)?;
             let info = self.materials.get(material);
             brush_contents |= info.contents;
             solid_sides |= info.contents == contents::SOLID;

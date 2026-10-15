@@ -7,6 +7,7 @@ use map_core::{ObjectId, Plane};
 use serde_json::{Value, json};
 use source_formats::fgd::ClassKind;
 use source_formats::vmf::UvAxis;
+use source_formats::vmt::material_path;
 
 use super::{Actor, SelectMode, Session};
 
@@ -57,13 +58,6 @@ pub fn issue_json(index: usize, issue: &Issue) -> Value {
         "fix": issue.fix.map(|fix| match fix { Fix::ResetProjection(_) => "reset_projection", Fix::ResetLightmapScale(_) => "reset_lightmap_scale" })})
 }
 
-fn material_path(name: &str) -> String {
-    let name = name.replace('\\', "/").to_ascii_lowercase();
-    let name = name.strip_prefix("materials/").unwrap_or(&name);
-    let name = name.strip_suffix(".vmt").unwrap_or(name);
-    format!("materials/{name}.vmt")
-}
-
 impl Session {
     pub fn map_check_serial(&self) -> u64 {
         self.checks.serial
@@ -102,6 +96,7 @@ impl Session {
             *face_counts.entry(side.id).or_default() += 1;
         }
         let asset_checks = self.game_error.is_none();
+        let mut material_errors = BTreeMap::<String, Option<String>>::new();
         let materials = if asset_checks {
             self.game
                 .list("materials", ".vmt")
@@ -353,15 +348,17 @@ impl Session {
             }
             if asset_checks {
                 for side in &solid.sides {
-                    if !side.material.trim().is_empty()
-                        && !materials.contains(&material_path(&side.material))
-                    {
-                        let mut location = base.clone();
-                        location.ambiguous |= side.id == 0 || face_counts[&side.id] != 1;
-                        location.face = Some(FaceId {
-                            solid: solid.id,
-                            side: side.id,
-                        });
+                    if side.material.trim().is_empty() {
+                        continue;
+                    }
+                    let path = material_path(&side.material);
+                    let mut location = base.clone();
+                    location.ambiguous |= side.id == 0 || face_counts[&side.id] != 1;
+                    location.face = Some(FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    });
+                    if !materials.contains(&path) {
                         result.add(
                             Severity::Warning,
                             "missing_material",
@@ -370,6 +367,16 @@ impl Session {
                                 "Material {:?} was not found on the game search path.",
                                 side.material
                             ),
+                            None,
+                        );
+                    } else if let Some(error) = material_errors.entry(path).or_insert_with(|| {
+                        render::materials::MaterialInfo::load(&self.game, &side.material).error
+                    }) {
+                        result.add(
+                            Severity::Error,
+                            "invalid_material",
+                            &location,
+                            error.clone(),
                             None,
                         );
                     }

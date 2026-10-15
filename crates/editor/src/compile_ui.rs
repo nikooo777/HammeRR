@@ -604,9 +604,8 @@ impl Controller {
                 let cluster_label = if count == 1 { "cluster" } else { "clusters" };
                 let portal_label = if portals == 1 { "portal" } else { "portals" };
                 let removed = result["stats"]["visibility_removed_pairs"].as_u64().unwrap_or_default();
-                let fallbacks = result["stats"]["visibility_fallbacks"].as_u64().unwrap_or_default();
                 let workers = result["stats"]["visibility_workers"].as_u64().unwrap_or(1);
-                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · Workers: {workers} · {removed} cluster pairs removed · {fallbacks} conservative fallbacks")
+                format!("\nVisibility: {count} {cluster_label} · {portals} {portal_label} · Workers: {workers} · {removed} cluster pairs removed")
             })
             .unwrap_or_default();
         let bumps = result["stats"]["bump_faces"]

@@ -27,45 +27,70 @@ pub struct MaterialInfo {
     pub translucent: bool,
     pub tool: bool,
     pub sky: bool,
-    /// Neither the VMT nor its texture could be found.
+    /// No usable display texture is available.
     pub missing: bool,
+    pub error: Option<String>,
     pub(crate) helper: Option<&'static HelperMaterial>,
 }
 
 impl MaterialInfo {
     pub fn load(fs: &GameFs, name: &str) -> Self {
         let name = name.to_ascii_lowercase();
-        let material = Material::load(fs, &name).ok().flatten();
-        let read_vtf = |path: &str| -> Option<Vtf> { Vtf::parse(fs.read(path).ok()??).ok() };
+        match Self::load_checked(fs, &name) {
+            Ok(material) => material,
+            Err(error) => {
+                let mut material = Self::untextured(&name);
+                material.width = FALLBACK_SIZE;
+                material.height = FALLBACK_SIZE;
+                material.missing = true;
+                material.error = Some(error);
+                material
+            }
+        }
+    }
 
-        let base = material
-            .as_ref()
-            .and_then(|m| m.editor_textures().iter().find_map(|t| read_vtf(t)));
+    fn load_checked(fs: &GameFs, name: &str) -> Result<Self, String> {
+        let material =
+            Material::load(fs, name).map_err(|error| format!("Material {name}: {error}"))?;
+        let mut base = None;
+        if let Some(material) = &material {
+            for path in material.editor_textures() {
+                if let Some(texture) = read_vtf(fs, &path)? {
+                    base = Some(texture);
+                    break;
+                }
+            }
+        }
         let blend = material
             .as_ref()
             .filter(|m| m.shader == "worldvertextransition")
             .and_then(|m| m.get("$basetexture2"))
-            .and_then(|t| read_vtf(&texture_path(t)));
+            .map(|texture| {
+                let path = texture_path(texture);
+                read_vtf(fs, &path)?.ok_or_else(|| format!("Blend texture {path} was not found"))
+            })
+            .transpose()?;
         let (width, height) = base
             .as_ref()
             .map_or((FALLBACK_SIZE, FALLBACK_SIZE), |v| (v.width, v.height));
         let sky = material.as_ref().is_some_and(|material| {
             material.compile_semantics().surface & source_formats::bsp::surf::SKY != 0
-        }) || matches!(name.as_str(), "tools/toolsskybox" | "tools/toolsskybox2d");
+        }) || matches!(name, "tools/toolsskybox" | "tools/toolsskybox2d");
 
-        Self {
+        Ok(Self {
             helper: None,
+            error: None,
             missing: base.is_none(),
             alpha_test: material.as_ref().is_some_and(Material::alpha_test),
             translucent: material.as_ref().is_some_and(Material::translucent),
             tool: sky || material.as_ref().is_some_and(Material::is_tool),
             sky,
-            name,
+            name: name.to_owned(),
             base,
             blend,
             width,
             height,
-        }
+        })
     }
 
     /// A flat-colored material for editor helpers such as entity boxes.
@@ -82,8 +107,16 @@ impl MaterialInfo {
             tool: false,
             sky: false,
             missing: false,
+            error: None,
         }
     }
+}
+
+fn read_vtf(fs: &GameFs, path: &str) -> Result<Option<Vtf>, String> {
+    fs.read(path)
+        .map_err(|error| format!("{path}: {error}"))?
+        .map(|bytes| Vtf::parse(bytes).map_err(|error| format!("{path}: {error}")))
+        .transpose()
 }
 
 /// Index of a material in a [`MaterialLibrary`].

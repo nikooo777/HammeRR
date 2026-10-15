@@ -261,7 +261,7 @@ fn axial_boxes_and_unrotated_ramps_retain_their_existing_axial_sides() {
     for (shape, expected_sides) in [(Shape::Box(DVec3::splat(64.0)), 6), (Shape::Ramp, 7)] {
         let (document, _) = fixture(shape, DVec3::ZERO, [false; 3], false);
         let mut report = compiler::Report::default();
-        let map = Map::load(document.vmf(), &fs, &mut report);
+        let map = Map::load(document.vmf(), &fs, &mut report).unwrap();
         assert!(!report.has_errors(), "{report:?}");
         let brush = &map.brushes[0];
         assert_eq!(
@@ -304,7 +304,7 @@ fn sloped_edge_bevels_remove_axial_only_false_hits_and_correct_entry_fractions()
     let source = document.solid(id).unwrap();
     let geometry = BrushGeometry::from_solid(source).unwrap();
     let fs = common::empty_game();
-    let map = Map::load(document.vmf(), &fs, &mut compiler::Report::default());
+    let map = Map::load(document.vmf(), &fs, &mut compiler::Report::default()).unwrap();
     let brush = &map.brushes[0];
     assert_eq!(brush.sides.len(), 10);
     assert_eq!(
@@ -388,7 +388,7 @@ fn rotated_reflected_thin_and_sloped_hull_sweeps_match_separating_axes() {
         let (document, id) = fixture(shape, rotation, reflection, false);
         let geometry = BrushGeometry::from_solid(source_solid(&document, id)).unwrap();
         let mut report = compiler::Report::default();
-        let map = Map::load(document.vmf(), &fs, &mut report);
+        let map = Map::load(document.vmf(), &fs, &mut report).unwrap();
         assert!(!report.has_errors(), "{report:?}");
         let complete = brush_planes(&map.brushes[0], &map.planes, false);
         let axial = brush_planes(&map.brushes[0], &map.planes, true);
@@ -439,7 +439,7 @@ fn bevels_preserve_authored_sides_materials_and_support_every_vertex() {
         let source = document.solid(id).unwrap();
         let geometry = BrushGeometry::from_solid(source).unwrap();
         let mut report = compiler::Report::default();
-        let map = Map::load(document.vmf(), &fs, &mut report);
+        let map = Map::load(document.vmf(), &fs, &mut report).unwrap();
         assert!(!report.has_errors(), "{report:?}");
         assert_eq!(document.vmf(), &before);
         let brush = &map.brushes[0];
@@ -521,7 +521,7 @@ fn distant_near_parallel_edge_bevels_reject_unsafe_global_plane_reuse() {
         vmf.world.solids.push(solid);
         let fs = common::empty_game();
         let mut report = compiler::Report::default();
-        let map = Map::load(&vmf, &fs, &mut report);
+        let map = Map::load(&vmf, &fs, &mut report).unwrap();
         assert!(!report.has_errors(), "{report:?}");
         assert_eq!(map.brushes.len(), 2);
         let first_plane = map.brushes[0]
@@ -593,7 +593,7 @@ fn near_axial_edge_bevels_preserve_required_hull_facets() {
     let geometry = BrushGeometry::from_solid(solid).unwrap();
     let fs = common::empty_game();
     let mut report = compiler::Report::default();
-    let map = Map::load(&vmf, &fs, &mut report);
+    let map = Map::load(&vmf, &fs, &mut report).unwrap();
     assert!(!report.has_errors(), "{report:?}");
     let normal = DVec3::new(1.0, 0.001, 0.0).normalize();
     let side = map.brushes[0]
@@ -629,7 +629,7 @@ fn slightly_rotated_boxes_keep_authored_planes_on_their_faces() {
     );
     let fs = common::empty_game();
     let mut report = compiler::Report::default();
-    let map = Map::load(document.vmf(), &fs, &mut report);
+    let map = Map::load(document.vmf(), &fs, &mut report).unwrap();
     assert!(!report.has_errors(), "{report:?}");
     let brush = &map.brushes[0];
     let geometry = BrushGeometry::from_solid(&document.vmf().world.solids[0]).unwrap();
@@ -692,7 +692,7 @@ fn authored_plane_checks_the_whole_face_when_snapped_support_is_safe() {
     );
     let fs = common::empty_game();
     let mut report = compiler::Report::default();
-    let map = Map::load(&vmf, &fs, &mut report);
+    let map = Map::load(&vmf, &fs, &mut report).unwrap();
     assert!(!report.has_errors(), "{report:?}");
     assert_authored_planes(&map, &map.brushes[0], &geometry);
     assert_eq!(
@@ -743,7 +743,7 @@ fn distant_authored_faces_reject_unsafe_near_normal_reuse() {
         vmf.world.solids.push(solid);
         let fs = common::empty_game();
         let mut report = compiler::Report::default();
-        let map = Map::load(&vmf, &fs, &mut report);
+        let map = Map::load(&vmf, &fs, &mut report).unwrap();
         assert!(!report.has_errors(), "{report:?}");
         assert_eq!(map.brushes.len(), 2);
         assert_authored_planes(&map, &map.brushes[1], &geometry);
@@ -799,7 +799,7 @@ fn authored_distance_snapping_checks_native_f32_support() {
     );
     let fs = common::empty_game();
     let mut report = compiler::Report::default();
-    let map = Map::load(&vmf, &fs, &mut report);
+    let map = Map::load(&vmf, &fs, &mut report).unwrap();
     assert!(!report.has_errors(), "{report:?}");
     let brush_index = map.brushes.iter().position(|brush| brush.id == id).unwrap();
     let brush = &map.brushes[brush_index];
@@ -859,7 +859,7 @@ fn distant_bevel_distance_supports_the_emitted_f32_plane() {
     assert!(emitted_support - unsafe_dist > compiler::winding::ON_EPSILON);
     let fs = common::empty_game();
     let mut report = compiler::Report::default();
-    let map = Map::load(&vmf, &fs, &mut report);
+    let map = Map::load(&vmf, &fs, &mut report).unwrap();
     assert!(!report.has_errors(), "{report:?}");
     let target_index = map.brushes.iter().position(|brush| brush.id == id).unwrap();
     let side = map.brushes[target_index]
@@ -906,7 +906,7 @@ fn native_bsp_edge_bevels_round_trip_without_visible_faces() {
     let (document, id) = fixture(Shape::Tetrahedron, DVec3::ZERO, [false; 3], true);
     let fs = common::empty_game();
     let mut report = compiler::Report::default();
-    let map = Map::load(document.vmf(), &fs, &mut report);
+    let map = Map::load(document.vmf(), &fs, &mut report).unwrap();
     let brush_index = map.brushes.iter().position(|brush| brush.id == id).unwrap();
     let output = compiler::compile(document.vmf(), &fs);
     assert!(!output.report.has_errors(), "{:?}", output.report);
@@ -999,7 +999,7 @@ fn rotated_native_brush_models_keep_authored_surface_geometry_and_supporting_bev
         let (document, id) = fixture(shape, rotation, [true, false, false], true);
         let geometry = BrushGeometry::from_solid(source_solid(&document, id)).unwrap();
         let mut report = compiler::Report::default();
-        let map = Map::load(document.vmf(), &fs, &mut report);
+        let map = Map::load(document.vmf(), &fs, &mut report).unwrap();
         let brush_index = map.brushes.iter().position(|brush| brush.id == id).unwrap();
         let output = compiler::compile(document.vmf(), &fs);
         assert!(!output.report.has_errors(), "{:?}", output.report);
@@ -1100,7 +1100,7 @@ fn collision_bevel_loading_cost() {
         let fs = common::empty_game();
         let mut report = compiler::Report::default();
         let start = std::time::Instant::now();
-        let map = Map::load(&vmf, &fs, &mut report);
+        let map = Map::load(&vmf, &fs, &mut report).unwrap();
         let elapsed = start.elapsed();
         assert!(!report.has_errors(), "{report:?}");
         assert_eq!(map.brushes.len(), 1_000);

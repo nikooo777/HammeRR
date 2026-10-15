@@ -41,6 +41,10 @@ Checks cover geometry, IDs, textures, entity logic, asset paths and player spawn
 
 Some issues can be repaired automatically. **Review repair…** shows the exact before and after values, and **Apply repair** fixes it in one undo step. This currently covers invalid texture projections and zero lightmap scales. Other issues link you to the content so you can fix it by hand.
 
+Invalid material definitions, patch includes and display textures appear as
+face-linked errors. Repair the content file and click **Run checks** again;
+external asset edits do not automatically refresh a report.
+
 Unknown terrain materials, unsupported flags or malformed geometry are reported as unchecked. Invalid terrain border-smoothing values appear as face issues; repair them through **Edit terrain… → Border smoothing**. Compiler warnings identify actual unsupported owners, flags or removed triangles.
 
 Not checked yet: spawns blocked by models or other brush entities, removed terrain triangles, compiler LOD changes, runtime placement, gameplay objectives, full asset dependencies and engine limits. Compile and test in CS:S to find leaks and playability problems.

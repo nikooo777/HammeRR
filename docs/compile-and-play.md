@@ -54,7 +54,7 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 **Visibility quality**
 
 - **Fast (conservative)** (default): uses portal-facing bounds and keeps some occluded areas in visible sets.
-- **Detailed (portal clipping)**: clips sight volumes through portal paths to remove more hidden areas. Larger jobs refine independent source rows on up to eight available CPU workers; small jobs and Fast stay serial. Complex or degenerate apertures use conservative fallbacks.
+- **Detailed (portal clipping)**: clips sight volumes through portal paths to remove more hidden areas. Larger jobs refine independent source rows on up to eight available CPU workers; small jobs stay serial. Invalid apertures and exceeded work/allocation limits stop the build.
 
 Visibility quality applies to both lighting modes. It is separate from the light sampling quality below.
 
@@ -80,9 +80,15 @@ A previous build counts as out of date once its settings differ from the current
 
 - Brushes become BSP geometry. Out-of-range or invalid objects are reported before building starts.
 - The world is split into visibility clusters, with visible and audible sets computed from portals. `func_detail` and brush entities don't split visibility.
-- **Detailed** visibility refines the conservative sets with portal separator clipping. **Build details…** reports **Workers**, **cluster pairs removed** and **conservative fallbacks**. A removed pair counts one directed cluster-to-cluster entry; reciprocal entries are counted separately.
+- **Detailed** visibility refines the conservative sets with portal separator clipping. **Build details…** reports **Workers** and **cluster pairs removed**. A removed pair counts one directed cluster-to-cluster entry; reciprocal entries are counted separately.
 - Larger Fast and Detailed builds compute independent portal-facing rows on up to eight available CPUs; Detailed also parallelizes separator flow. Small jobs stay serial.
 - Visibility work is bounded. Exceeded work or stack limits keep the previous BSP; choose **Fast (conservative)** or use `func_detail` for non-sealing decoration to simplify structural geometry. [Occluders](occluders.md) compile separately and provide runtime prop culling with activation inputs.
+
+Unreadable or malformed material definitions, broken patch includes and malformed
+base textures needed for compilation stop the build and retain the previous
+BSP. Nonfinite texture reflectivity is also rejected. Absent material or base
+texture files produce explicit missing-content warnings; mount the required
+content before relying on its flags, dimensions or lighting.
 
 ### Hint planes
 

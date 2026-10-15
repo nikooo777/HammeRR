@@ -109,7 +109,7 @@ fn origin_volumes_and_explicit_keys_preserve_local_geometry_uvs_and_bsp_models()
                 let (vmf, body, origin, owner) = fixture(class, volume, oblique);
                 let source = vmf.clone();
                 let mut report = compiler::Report::default();
-                let map = Map::load(&vmf, &game, &mut report);
+                let map = Map::load(&vmf, &game, &mut report).unwrap();
                 assert!(!report.has_errors(), "{report:?}");
                 let entity = map
                     .entities
@@ -227,7 +227,7 @@ fn hidden_origin_volumes_do_not_override_explicit_entity_origins() {
         .unwrap()
         .hidden = true;
     let mut report = compiler::Report::default();
-    let map = Map::load(&vmf, &game, &mut report);
+    let map = Map::load(&vmf, &game, &mut report).unwrap();
     assert!(!report.has_errors());
     assert_eq!(
         map.entities

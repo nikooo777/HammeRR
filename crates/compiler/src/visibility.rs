@@ -27,7 +27,6 @@ pub(crate) struct Visibility {
     pub sky: Vec<i16>,
     pub work: usize,
     pub removed_pairs: usize,
-    pub fallbacks: usize,
     pub workers: usize,
 }
 
@@ -35,7 +34,6 @@ struct Solution {
     data: Vec<u8>,
     work: usize,
     removed_pairs: usize,
-    fallbacks: usize,
     workers: usize,
 }
 
@@ -101,6 +99,7 @@ pub(crate) fn build(
     let mut directed = Vec::new();
     for portal in portals {
         control.checkpoint()?;
+        flow::validate(&portal.winding)?;
         let [a, b] = portal
             .leaves
             .map(|index| clusters.get(index).copied().flatten());
@@ -137,7 +136,6 @@ pub(crate) fn build(
         sky: vec![0; count],
         work: solution.work,
         removed_pairs: solution.removed_pairs,
-        fallbacks: solution.fallbacks,
         workers: solution.workers,
     })
 }
@@ -244,7 +242,6 @@ fn solve_workers(
         set(row, index);
     }
     let mut refined = (mode == VisibilityMode::Detailed).then(|| rows.clone());
-    let mut fallbacks = 0;
     let mut workers = if portals.len() >= 64 {
         requested_workers.clamp(1, 8).min(portals.len())
     } else {
@@ -287,12 +284,12 @@ fn solve_workers(
         workers = workers.max(flow_workers);
         if flow_workers == 1 {
             for (cluster, row) in refined.iter_mut().enumerate() {
-                fallbacks += graph.refine(cluster, row, &mut work)?;
+                graph.refine(cluster, row, &mut work)?;
             }
         } else {
             let remaining = Arc::new(budget::Budget::new(work.remaining(), control.clone()));
             work = Work::Shared(budget::Lease::new(remaining.clone()));
-            fallbacks = graph.parallel(refined, flow_workers, remaining)?;
+            graph.parallel(refined, flow_workers, remaining)?;
         }
     }
 
@@ -353,7 +350,6 @@ fn solve_workers(
         data,
         work: budget - work.remaining(),
         removed_pairs,
-        fallbacks,
         workers,
     })
 }
@@ -639,7 +635,6 @@ mod tests {
             assert_eq!(solution.workers, 8);
             assert_eq!(solution.work, serial.work);
             assert_eq!(solution.data, serial.data);
-            assert_eq!(solution.fallbacks, serial.fallbacks);
             let exact = solve_workers(
                 SIZE * SIZE,
                 &portals,

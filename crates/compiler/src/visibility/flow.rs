@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use super::{Control, DirectedPortal, Plane, VISIBILITY_EPSILON, Winding, Work, bit, set};
 
-const MAX_APERTURE_POINTS: usize = 128;
 const MAX_STACK_POINTS: usize = 262_144;
 
 struct Frame {
@@ -14,7 +13,6 @@ struct Frame {
 
 pub(super) struct Context<'a> {
     pub work: &'a mut Work,
-    pub fallbacks: &'a mut usize,
     pub control: &'a Control,
     pub possible: &'a [u8],
     pub bounds: &'a [Vec<u8>],
@@ -36,7 +34,6 @@ pub(super) fn refine(
 ) -> Result<(), String> {
     let Context {
         work,
-        fallbacks,
         control,
         possible,
         bounds,
@@ -75,26 +72,22 @@ pub(super) fn refine(
         if !bit(eligible, index) || on_path[target.to] {
             continue;
         }
-        let Some(mut pass) = clip(target.winding, base.plane, work, fallbacks)? else {
+        let Some(mut pass) = clip(target.winding, base.plane, work)? else {
             continue;
         };
         let back = Plane {
             normal: -target.plane.normal,
             dist: -target.plane.dist,
         };
-        let Some(source) = clip(&frame.source, back, work, fallbacks)? else {
+        let Some(source) = clip(&frame.source, back, work)? else {
             continue;
         };
         if let Some(previous) = &frame.pass {
-            let Some(clipped) =
-                separators(&source, previous, pass, false, work, fallbacks, control)?
-            else {
+            let Some(clipped) = separators(&source, previous, pass, false, work, control)? else {
                 continue;
             };
             pass = clipped;
-            let Some(clipped) =
-                separators(previous, &source, pass, true, work, fallbacks, control)?
-            else {
+            let Some(clipped) = separators(previous, &source, pass, true, work, control)? else {
                 continue;
             };
             pass = clipped;
@@ -134,18 +127,17 @@ fn complete_intersection(row: &[u8], source: &[u8], target: &[u8]) -> bool {
         .all(|((visible, source), target)| visible & (source & target) == source & target)
 }
 
-fn clip(
-    winding: &Winding,
-    plane: Plane,
-    work: &mut Work,
-    fallbacks: &mut usize,
-) -> Result<Option<Winding>, String> {
+fn clip(winding: &Winding, plane: Plane, work: &mut Work) -> Result<Option<Winding>, String> {
+    validate(winding)?;
     work.consume(winding.0.len())?;
     let distances = winding
         .0
         .iter()
         .map(|point| plane.distance_to(*point) + VISIBILITY_EPSILON)
         .collect::<Vec<_>>();
+    if distances.iter().any(|distance| !distance.is_finite()) {
+        return Err("Visibility aperture clipping produced a nonfinite distance".into());
+    }
     if distances.iter().all(|distance| *distance >= 0.0) {
         return Ok(Some(winding.clone()));
     }
@@ -163,16 +155,27 @@ fn clip(
         if (da >= 0.0) != (db >= 0.0) {
             points.push(a + (b - a) * (da / (da - db)));
         }
-        if points.len() > MAX_APERTURE_POINTS {
-            *fallbacks += 1;
-            return Ok(Some(winding.clone()));
-        }
     }
-    if points.len() < 3 || points.iter().any(|point| !point.is_finite()) {
-        *fallbacks += 1;
-        return Ok(Some(winding.clone()));
+    points.dedup();
+    if points.len() > 1 && points.first() == points.last() {
+        points.pop();
     }
-    Ok(Some(Winding(points)))
+    if points.len() < 3 {
+        return Ok(None);
+    }
+    let clipped = Winding(points);
+    validate(&clipped)?;
+    Ok(Some(clipped))
+}
+
+pub(super) fn validate(winding: &Winding) -> Result<(), String> {
+    if winding.0.len() < 3 || winding.0.iter().any(|point| !point.is_finite()) {
+        return Err("Visibility aperture requires at least three finite points".into());
+    }
+    if winding.0.len() > MAX_STACK_POINTS {
+        return Err("Visibility aperture exceeds its 262,144-point allocation budget".into());
+    }
+    Ok(())
 }
 
 fn separators(
@@ -181,13 +184,11 @@ fn separators(
     mut target: Winding,
     flip: bool,
     work: &mut Work,
-    fallbacks: &mut usize,
     control: &Control,
 ) -> Result<Option<Winding>, String> {
-    if source.0.len() > MAX_APERTURE_POINTS || pass.0.len() > MAX_APERTURE_POINTS {
-        *fallbacks += 1;
-        return Ok(Some(target));
-    }
+    validate(source)?;
+    validate(pass)?;
+    validate(&target)?;
     for index in 0..source.0.len() {
         let start = source.0[index];
         let edge = source.0[(index + 1) % source.0.len()] - start;
@@ -195,10 +196,12 @@ fn separators(
             control.checkpoint()?;
             work.consume(source.0.len() + pass.0.len())?;
             let normal = edge.cross(point - start);
-            if normal.length_squared() < VISIBILITY_EPSILON {
-                continue;
+            if !normal.is_finite() || !normal.length_squared().is_finite() {
+                return Err("Visibility separator produced a nonfinite normal".into());
             }
-            let normal = normal.normalize();
+            let Some(normal) = normal.try_normalize() else {
+                continue;
+            };
             let mut plane = Plane {
                 normal,
                 dist: normal.dot(point),
@@ -226,7 +229,7 @@ fn separators(
                     dist: -plane.dist,
                 };
             }
-            let Some(clipped) = clip(&target, plane, work, fallbacks)? else {
+            let Some(clipped) = clip(&target, plane, work)? else {
                 return Ok(None);
             };
             target = clipped;
@@ -251,30 +254,38 @@ mod tests {
     use glam::DVec3;
 
     #[test]
-    fn bounded_clip_preserves_tiny_apertures_and_falls_back_on_excess_points() {
-        let winding = Winding(
-            (0..MAX_APERTURE_POINTS)
-                .map(|index| {
-                    let angle = index as f64 * std::f64::consts::TAU / MAX_APERTURE_POINTS as f64;
-                    DVec3::new(angle.cos(), angle.sin(), 0.0)
-                })
-                .collect(),
-        );
+    fn clipping_keeps_tiny_apertures_and_cuts_polygons_beyond_128_points() {
+        for count in [128, 256] {
+            let winding = Winding(
+                (0..count)
+                    .map(|index| {
+                        let angle = index as f64 * std::f64::consts::TAU / count as f64;
+                        DVec3::new(angle.cos(), angle.sin(), 0.0)
+                    })
+                    .collect(),
+            );
+            let mut work = Work::Local(10_000);
+            let clipped = clip(
+                &winding,
+                Plane {
+                    normal: DVec3::X,
+                    dist: -0.8999,
+                },
+                &mut work,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(clipped.0.len(), count + 1);
+            assert_ne!(clipped, winding);
+            assert!(clipped.0.iter().all(|point| point.x >= -0.9999 - 1e-12));
+            assert!(
+                clipped
+                    .0
+                    .iter()
+                    .any(|point| (point.x + 0.9999).abs() < 1e-12)
+            );
+        }
         let mut work = Work::Local(10_000);
-        let mut fallbacks = 0;
-        let clipped = clip(
-            &winding,
-            Plane {
-                normal: DVec3::X,
-                dist: -0.8999,
-            },
-            &mut work,
-            &mut fallbacks,
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(clipped, winding);
-        assert_eq!(fallbacks, 1);
         let tiny = Winding(vec![
             DVec3::ZERO,
             DVec3::new(0.00001, 0.0, 0.0),
@@ -288,22 +299,92 @@ mod tests {
                     dist: 0.0
                 },
                 &mut work,
-                &mut fallbacks
             )
             .unwrap()
             .unwrap(),
             tiny
         );
         let mut exhausted = Work::Local(0);
+        let touching = Winding(vec![
+            DVec3::ZERO,
+            DVec3::new(-1.0, -1.0, 0.0),
+            DVec3::new(-1.0, 1.0, 0.0),
+        ]);
         assert!(
             clip(
-                &winding,
+                &touching,
+                Plane {
+                    normal: DVec3::X,
+                    dist: VISIBILITY_EPSILON
+                },
+                &mut work
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            clip(
+                &tiny,
                 Plane {
                     normal: DVec3::X,
                     dist: 0.0
                 },
                 &mut exhausted,
-                &mut fallbacks
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn large_separators_reject_occluded_apertures_and_invalid_data_errors() {
+        let circle = |x| {
+            Winding(
+                (0..256)
+                    .map(|index| {
+                        let angle = index as f64 * std::f64::consts::TAU / 256.0;
+                        DVec3::new(x, angle.cos(), angle.sin())
+                    })
+                    .collect(),
+            )
+        };
+        let target = Winding(vec![
+            DVec3::new(2.0, 9.0, -1.0),
+            DVec3::new(2.0, 11.0, -1.0),
+            DVec3::new(2.0, 11.0, 1.0),
+            DVec3::new(2.0, 9.0, 1.0),
+        ]);
+        let mut work = Work::Local(MAX_STACK_POINTS * 1024);
+        assert!(
+            separators(
+                &circle(0.0),
+                &circle(1.0),
+                target.clone(),
+                false,
+                &mut work,
+                &Control::default()
+            )
+            .unwrap()
+            .is_none()
+        );
+        let plane = Plane {
+            normal: DVec3::X,
+            dist: 0.0,
+        };
+        for winding in [
+            Winding(vec![]),
+            Winding(vec![DVec3::NAN; 3]),
+            Winding(vec![DVec3::ZERO; MAX_STACK_POINTS + 1]),
+        ] {
+            assert!(clip(&winding, plane, &mut work).is_err());
+        }
+        assert!(
+            clip(
+                &target,
+                Plane {
+                    normal: DVec3::NAN,
+                    dist: 0.0
+                },
+                &mut work
             )
             .is_err()
         );

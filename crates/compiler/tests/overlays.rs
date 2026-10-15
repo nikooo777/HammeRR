@@ -120,7 +120,7 @@ fn source_membership_prevents_spill_and_final_indices_follow_native_emission() {
         }
         let game = common::empty_game();
         let mut report = Report::default();
-        let mut map = Map::load(&vmf, &game, &mut report);
+        let mut map = Map::load(&vmf, &game, &mut report).unwrap();
         let mut tree =
             Tree::build(&map.brushes, &map.entities[0].brushes, &mut map.planes).unwrap();
         let links = portals::build(&tree, &map.planes);

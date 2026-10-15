@@ -1,10 +1,7 @@
 import argparse
 import json
 import math
-import os
 import struct
-import subprocess
-import sys
 from pathlib import Path
 
 import validate_native_runtime as runtime
@@ -167,30 +164,7 @@ def fixture(args):
 
 
 def worker(args):
-    args.capture_ppm = True
-    runtime.OBSERVER = runtime.OBSERVER.replace(
-        "setpos -64 -64 32; setang 25 45 0; mat_fullbright",
-        "setpos -192 -176 32; setang 8 42 0; r_drawothermodels 0; r_drawviewmodel 0; mat_fullbright",
-    )
-    runtime.worker(args)
-
-
-def compare(output):
-    frames = []
-    for name in ["flat", "smooth"]:
-        magic, dimensions, maximum, pixels = (
-            (output / name / "game.ppm").read_bytes().split(b"\n", 3)
-        )
-        assert magic == b"P6" and maximum == b"255"
-        frames.append((dimensions, pixels))
-    assert frames[0][0] == frames[1][0]
-    differences = [abs(a - b) for a, b in zip(frames[0][1], frames[1][1], strict=True)]
-    changed = sum(max(pixel) > 3 for pixel in zip(*[iter(differences)] * 3))
-    assert changed > 1000, changed
-    return {
-        "changed_pixels": changed,
-        "mean_component_difference": sum(differences) / len(differences),
-    }
+    runtime.capture_worker(args, "setpos -192 -176 32; setang 8 42 0; r_drawothermodels 0; r_drawviewmodel 0; mat_fullbright")
 
 
 def main():
@@ -215,40 +189,10 @@ def main():
         return
     files = fixture(args)
     if args.runtime:
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
         for name, bsp in files:
-            output = args.output / name
-            output.mkdir(exist_ok=True)
-            with (output / "compositor.log").open("w") as log:
-                subprocess.run(
-                    [
-                        "cage",
-                        "--",
-                        sys.executable,
-                        "-B",
-                        str(Path(__file__).resolve()),
-                        "--worker",
-                        "--bsp",
-                        str(bsp),
-                        "--output",
-                        str(output),
-                        "--game-dir",
-                        str(args.game_dir),
-                    ],
-                    cwd=ROOT,
-                    env=env,
-                    stdout=log,
-                    stderr=log,
-                    check=True,
-                    timeout=55,
-                )
+            runtime.private_display(Path(__file__), args, bsp, output=args.output / name)
         (args.output / "render-results.json").write_text(
-            json.dumps(compare(args.output), indent=2) + "\n"
+            json.dumps(runtime.compare_frames(args.output), indent=2) + "\n"
         )
     print(json.dumps({"output": str(args.output), "brush_smoothing": True}))
 

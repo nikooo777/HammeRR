@@ -497,3 +497,27 @@ for player grounding, stable prop contact and native traces of all four lateral
 boundaries. This does not implement region metadata, authoring controls or
 general entity/terrain/helper inclusion; it is
 an experiment for the planned compiler path. Use a fresh output directory.
+
+### Visibility and material failure checks
+
+```sh
+cargo test -p compiler --lib visibility
+cargo test -p compiler --test material_failures
+cargo test -p editor --bin editor malformed_materials
+python3 -B scripts/validate_material_failures.py --binary target/debug/editor --output /tmp/hammerr-material-errors
+```
+
+Visibility checks require real clipping beyond 128 vertices, small-edge
+separators, tiny-aperture preservation and errors for nonfinite or over-budget
+inputs. Material checks cover VMT/patch/VTF errors, finite reflectivity, cached
+and uncached preview diagnostics, affected-face reports, retained BSPs/source/
+history and asset repairs through both MCP build paths.
+
+Native smoothing checks share the private compositor, capture-view setup and
+frame comparator in `validate_native_runtime.py`. The clipboard wrapper uses
+that compositor too. Each worker has a private runtime directory and no inherited
+desktop display; failed or timed-out workers are stopped and reaped. Feature
+fixtures and assertions remain independent. The frame comparator checks complete
+RGB captures before comparing pixels. Whole-frame change counts are diagnostics,
+not lighting pass/fail criteria: HUD changes and unrelated noise can change those
+pixels too. Retain the exact BSP checks and inspect the native captures.

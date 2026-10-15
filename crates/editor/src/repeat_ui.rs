@@ -56,6 +56,11 @@ fn options(window: &RepeatWindow) -> Result<(Options, bool), String> {
                 window.get_rotate_y(),
                 window.get_rotate_z(),
             ])?,
+            scale: vector([
+                window.get_scale_x(),
+                window.get_scale_y(),
+                window.get_scale_z(),
+            ])?,
             pivot: vector([
                 window.get_pivot_x(),
                 window.get_pivot_y(),
@@ -101,6 +106,11 @@ fn present(window: &RepeatWindow, report: &serde_json::Value) {
             preview["frame_source"].as_str().unwrap_or_default()
         ));
     }
+    let scale = &preview["scale"];
+    lines.push(format!(
+        "Scale factor per copy · X {} · Y {} · Z {}",
+        scale[0], scale[1], scale[2]
+    ));
     if let Some(copies) = preview["copies"].as_array() {
         for copy in copies {
             lines.push(format!(
@@ -129,7 +139,7 @@ impl Controller {
         let window = RepeatWindow::new()?;
         window
             .window()
-            .set_size(slint::LogicalSize::new(660.0, 780.0));
+            .set_size(slint::LogicalSize::new(660.0, 860.0));
         let context = Rc::new(RefCell::new(None));
         let token = Rc::new(Cell::new(None));
         let prepared = Rc::new(Cell::new(None));
@@ -318,6 +328,14 @@ impl Controller {
         self.window.set_rotate_x(rotation.x.to_string().into());
         self.window.set_rotate_y(rotation.y.to_string().into());
         self.window.set_rotate_z(rotation.z.to_string().into());
+        let scale = if resume {
+            read_vector("scale", DVec3::ONE)
+        } else {
+            DVec3::ONE
+        };
+        self.window.set_scale_x(scale.x.to_string().into());
+        self.window.set_scale_y(scale.y.to_string().into());
+        self.window.set_scale_z(scale.z.to_string().into());
         self.window.set_pivot_x(pivot.x.to_string().into());
         self.window.set_pivot_y(pivot.y.to_string().into());
         self.window.set_pivot_z(pivot.z.to_string().into());
@@ -388,6 +406,19 @@ mod tests {
         assert_eq!(lock(&shared).repeat_array()["preview"]["space"], "local");
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
+        let valid = lock(&shared).repeat_array();
+        controller.window.set_scale_x("1.1".into());
+        controller.window.invoke_preview();
+        assert!(!controller.window.get_ready());
+        assert!(
+            controller
+                .window
+                .get_message()
+                .contains("no scalable brush geometry")
+        );
+        assert_eq!(lock(&shared).repeat_array(), valid);
+        controller.window.set_scale_x("1".into());
+        controller.window.invoke_preview();
         controller.window.show().unwrap();
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "repeat-array");
         controller.window.set_space_index(0);
@@ -436,5 +467,69 @@ mod tests {
         controller.window.invoke_cancel();
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert!(lock(&shared).repeat_array()["preview"].is_null());
+
+        let brush = lock(&shared)
+            .edit(Actor::User, "scale source", |tx| {
+                let brush = map_core::edit::create_block(
+                    tx,
+                    DVec3::new(-4.125, 2.25, 1.5),
+                    DVec3::new(12.5, 15.75, 24.125),
+                    "brick/wall",
+                )?;
+                let ObjectId::Solid(id) = brush else {
+                    unreachable!()
+                };
+                map_core::edit::tie_to_entity(
+                    tx,
+                    &[id],
+                    "func_detail",
+                    &[("targetname".into(), "array_scaled".into())],
+                )
+            })
+            .unwrap();
+        lock(&shared)
+            .select(&[brush], crate::session::SelectMode::Replace)
+            .unwrap();
+        let scale_before = lock(&shared).document().vmf().clone();
+        let scale_history = lock(&shared).document().undo_labels().count();
+        controller.initialize(&lock(&shared)).unwrap();
+        assert_eq!(controller.window.get_scale_x(), "1");
+        controller.window.set_space_index(1);
+        controller.window.set_move_x("0".into());
+        controller.window.set_scale_x("1.1".into());
+        controller.window.set_scale_y("0.9".into());
+        controller.window.set_scale_z("1.25".into());
+        controller.window.invoke_preview();
+        assert!(controller.window.get_ready());
+        assert_eq!(
+            lock(&shared).repeat_array()["preview"]["scale"],
+            serde_json::json!([1.1, 0.9, 1.25])
+        );
+        let valid = lock(&shared).repeat_array();
+        let expected = lock(&shared).render_document().vmf().clone();
+        controller.window.set_scale_y("0".into());
+        controller.window.invoke_preview();
+        assert!(!controller.window.get_ready());
+        assert_eq!(lock(&shared).repeat_array(), valid);
+        controller.window.set_scale_y("0.9".into());
+        controller.initialize(&lock(&shared)).unwrap();
+        assert_eq!(controller.window.get_scale_x(), "1.1");
+        assert!(controller.window.get_ready());
+        controller.window.show().unwrap();
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "repeat-array-scale");
+        controller.window.set_scale_x("1.2".into());
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &scale_before);
+        controller.window.set_scale_x("1.1".into());
+        controller.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &expected);
+        assert_eq!(
+            lock(&shared).document().undo_labels().count(),
+            scale_history + 1
+        );
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &scale_before);
+        lock(&shared).redo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &expected);
     }
 }

@@ -10,7 +10,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview bounded repeated placement using the latest get_repeat_array.snapshot. Copy n uses the committed originals, rotates by n × XYZ degrees in the chosen frame about one fixed world pivot, then translates by n × the step in that same frame. space is world (default) or local: local captures the first original source in stable object-ID order (brushes before entities), using its existing transform frame once for every copy. The frame never follows earlier copies. Defaults to source center pivot and attached textures. Count is 1–64 additional copies, at most 16 sources, 256 generated objects including owned brushes and 8192 sides, within ±65536. Names become unique name_copyN values, exact internal links follow each copy, external links remain. Ambiguous source names/links and new-name reference acquisitions reject atomically. Invalid updates retain the last valid preview. UI: Repeat array… → World / Source local → Preview array. Inspect get_repeat_array and render_view, then apply_repeat_array or cancel_repeat_array with the returned token."
+        description = "Preview bounded repeated placement using the latest get_repeat_array.snapshot. Copy n uses the committed originals, scales each XYZ axis by its per-copy factor raised to n, then rotates by n × XYZ degrees about one fixed world pivot, then translates by n × the step. All steps use the chosen frame. Scale factors are finite and positive, default [1,1,1]; nonidentity scaling supports brushes and brush entities only, including checked terrain. Point/model entity scaling rejects. Keep textures attached also stretches their projection with scaling. space is world (default) or local: local captures the first original source in stable object-ID order (brushes before entities), using its existing transform frame once for every copy. The frame never follows earlier copies. Defaults to source center pivot and attached textures. Count is 1–64 additional copies, at most 16 sources, 256 generated objects including owned brushes and 8192 sides, within ±65536. Names become unique name_copyN values, exact internal links follow each copy, external links remain. Ambiguous source names/links and new-name reference acquisitions reject atomically. Invalid updates retain the last valid preview. UI: Repeat array… → World / Source local → Preview array. Inspect get_repeat_array and render_view, then apply_repeat_array or cancel_repeat_array with the returned token."
     )]
     pub(in crate::mcp) fn preview_repeat_array(
         &self,
@@ -34,6 +34,7 @@ impl EditorServer {
                     count: args.count,
                     translation: args.translation.map(vec3).unwrap_or(DVec3::ZERO),
                     rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
+                    scale: args.scale.map(vec3).unwrap_or(DVec3::ONE),
                     pivot,
                     basis: glam::DMat3::IDENTITY,
                     texture_lock: args.texture_lock.unwrap_or(true),

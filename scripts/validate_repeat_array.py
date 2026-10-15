@@ -24,6 +24,7 @@ def validate(args):
         check(all(name in tools for name in ["get_repeat_array", "preview_repeat_array", "apply_repeat_array", "cancel_repeat_array"]), "shared array tools")
         check(tools["preview_repeat_array"].get("additionalProperties") is False, "unknown preview fields rejected")
         check("space" in tools["preview_repeat_array"]["properties"], "array space is exposed in MCP")
+        check("scale" in tools["preview_repeat_array"]["properties"], "array scale factors are exposed in MCP")
         brush = client.call("create_block", {"mins": [-16, -16, 0], "maxs": [16, 16, 24], "material": "dev/dev_measuregeneric01"})["id"]
         parent = client.call("create_entity", {"classname": "info_target", "origin": [0, 0, 32], "properties": {"targetname": "array_parent"}})["id"]
         child = client.call("create_entity", {"classname": "info_target", "origin": [32, 0, 32], "properties": {"targetname": "array_child", "parentname": "array_parent,attachment"}})["id"]
@@ -168,7 +169,60 @@ def validate(args):
         client.call("set_entity_properties", {"id": local_parent, "set": {"angles": "0 61 0"}})
         client.call("apply_repeat_array", {"token": stale["preview"]["token"]}, error=True)
         check(client.call("get_repeat_array")["preview"] is None, "changed source orientation prevents stale local Apply")
-        results = {"checks": checks, "count": len(checks), "preview": replacement, "local_preview": local}
+
+        scale_source = client.call("create_block", {"mins": [3.125, -7.25, 2.5], "maxs": [19.5, 3.75, 13.625], "material": "dev/dev_measuregeneric01"})["id"]
+        client.call("transform_objects", {"ids": [scale_source], "rotation": [17, 29, -11], "pivot": [0, 0, 0]})
+        client.call("select", {"ids": [scale_source]})
+        scale_original = detail(client, [scale_source])[0]
+        scale_history = client.call("get_map_info")["undo"]
+        scale_camera = client.call("get_camera")
+        scale_arguments = {"ids": [scale_source], "count": 3, "space": "local", "scale": [2, 0.5, 1.25], "rotation": [90, 0, 0], "translation": [4.5, -1.25, 2], "pivot": [-5.25, 8.125, 1.5]}
+        scaled = preview(client, **scale_arguments)
+        check(scaled["preview"]["scale"] == [2, 0.5, 1.25], "scale preview reports per-copy factors")
+        for copy in scaled["preview"]["copies"]:
+            check(all(math.isclose(actual, factor ** copy["index"], abs_tol=1e-12) for actual, factor in zip(copy["scale"], scale_arguments["scale"])), f"copy {copy['index']} reports factor to the copy number")
+        check(detail(client, [scale_source])[0] == scale_original and client.call("get_map_info")["undo"] == scale_history and client.call("get_camera") == scale_camera, "scale preview preserves committed source history and camera")
+        client.render(args.output / "repeat-array-scale.png", camera=render_camera)
+        for changes in [
+            {"scale": [0, 1, 1]}, {"scale": [-1, 1, 1]}, {"scale": [1e300, 1, 1]},
+            {"scale": [1e-300, 1, 1]}, {"scale": [1000, 1000, 1000]},
+            {"ids": [scale_source, local_parent]}, {"scale": [1, 2]},
+        ]:
+            client.call("preview_repeat_array", {"snapshot": scaled["snapshot"], **scale_arguments, **changes}, error=True)
+            check(client.call("get_repeat_array") == scaled, "invalid or unsupported scale preserves valid draft")
+        applied_scale = client.call("apply_repeat_array", {"token": scaled["preview"]["token"]})
+        scale_copies = detail(client, applied_scale["objects"])
+        basis = scaled["preview"]["basis"]
+        pivot = scale_arguments["pivot"]
+        for copied, copy in zip(scale_copies, scaled["preview"]["copies"]):
+            index = copy["index"]
+            for before, after in zip(scale_original["faces"], copied["faces"]):
+                for point, actual in zip(before["plane"], after["plane"]):
+                    relative = [value - origin for value, origin in zip(point, pivot)]
+                    local_point = [sum(column[axis] * relative[axis] for axis in range(3)) * factor ** index for column, factor in zip(basis, scale_arguments["scale"])]
+                    x, y, z = local_point
+                    rotated = {1: [x, -z, y], 2: [x, -y, -z], 3: [x, z, -y]}[index]
+                    moved = [value + step * index for value, step in zip(rotated, scale_arguments["translation"])]
+                    expected = [pivot[axis] + sum(basis[column][axis] * moved[column] for column in range(3)) for axis in range(3)]
+                    check(all(math.isclose(a, b, abs_tol=1e-8) for a, b in zip(actual, expected)), f"scaled copy {index} starts from immutable source and scales before local rotation")
+        check(detail(client, [scale_source])[0] == scale_original and client.call("get_map_info")["undo"] == ["repeat array", *scale_history], "scale Apply preserves original and adds one Undo step")
+        client.call("undo")
+        check(detail(client, [scale_source])[0] == scale_original and client.call("get_map_info")["undo"] == scale_history, "scale Undo removes whole array")
+        client.call("redo")
+        check(detail(client, applied_scale["objects"]) == scale_copies, "scale Redo restores all geometry")
+        scale_path = args.output / "repeat-array-scale.vmf"
+        client.call("save_map", {"path": str(scale_path)})
+        client.call("open_map", {"path": str(scale_path), "discard_changes": True})
+        check(detail(client, applied_scale["objects"]) == scale_copies, "scaled geometry survives save and reopen")
+        default_arguments = {"ids": [scale_source], "count": 2, "space": "local", "translation": [16, 0, 0], "rotation": [0, 0, 15]}
+        implicit_scale = preview(client, **default_arguments)
+        identity_scale = preview(client, scale=[1, 1, 1], **default_arguments)
+        check(implicit_scale["preview"]["scale"] == [1, 1, 1] and all(implicit_scale["preview"][key] == identity_scale["preview"][key] for key in ["copies", "entities", "bounds", "basis"]), "omitted scale is exactly identity scale")
+        scale_only = preview(client, ids=[scale_source], count=2, scale=[1.1, 1.1, 1.1])
+        check(scale_only["preview"]["valid"] and all(math.isclose(value, 1.21, abs_tol=1e-12) for value in scale_only["preview"]["copies"][1]["scale"]), "scale-only array accepts ten percent growth per copy")
+        client.call("cancel_repeat_array", {"token": scale_only["preview"]["token"]})
+        check(detail(client, [scale_source])[0] == scale_original, "scale-only Cancel preserves source")
+        results = {"checks": checks, "count": len(checks), "preview": replacement, "local_preview": local, "scale_preview": scaled}
         (args.output / "validation.json").write_text(json.dumps(results, indent=2) + "\n")
         return len(checks)
     finally:

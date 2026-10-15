@@ -7,7 +7,7 @@ component VectorRow inherits HorizontalLayout {
     in-out property <string> value-z:"0";
     callback edited();
     spacing:8px;
-    Text {text:root.label;width:108px;vertical-alignment:center;}
+    Text {text:root.label;width:160px;vertical-alignment:center;}
     Text {text:"X";vertical-alignment:center;}
     LineEdit {min-width:60px;preferred-width:100px;horizontal-stretch:1;text<=>root.value-x;input-type:decimal;edited=>{root.edited();}}
     Text {text:"Y";vertical-alignment:center;}
@@ -17,7 +17,7 @@ component VectorRow inherits HorizontalLayout {
 }
 
 export component RepeatWindow inherits Window {
-    title:"Repeat array";preferred-width:660px;preferred-height:780px;
+    title:"Repeat array";preferred-width:660px;preferred-height:860px;
     in property <string> selection;
     in-out property <int> count:3;
     in-out property <int> space-index:0;
@@ -27,6 +27,9 @@ export component RepeatWindow inherits Window {
     in-out property <string> rotate-x:"0";
     in-out property <string> rotate-y:"0";
     in-out property <string> rotate-z:"0";
+    in-out property <string> scale-x:"1";
+    in-out property <string> scale-y:"1";
+    in-out property <string> scale-z:"1";
     in-out property <string> pivot-x:"0";
     in-out property <string> pivot-y:"0";
     in-out property <string> pivot-z:"0";
@@ -55,8 +58,10 @@ export component RepeatWindow inherits Window {
             }
             VectorRow {label:"Move step · units";value-x<=>root.move-x;value-y<=>root.move-y;value-z<=>root.move-z;edited=>{root.invalidate();}}
             VectorRow {label:"Rotate step · °";value-x<=>root.rotate-x;value-y<=>root.rotate-y;value-z<=>root.rotate-z;edited=>{root.invalidate();}}
+            VectorRow {label:"Scale factor per copy";value-x<=>root.scale-x;value-y<=>root.scale-y;value-z<=>root.scale-z;edited=>{root.invalidate();}}
+            Text {text:"1 keeps size. 1.1 adds 10% per copy: copy 2 uses 1.21. Scaling requires brushes or brush entities; point and model entities are unsupported.";wrap:word-wrap;color:#aeb8c6;}
             VectorRow {label:"Fixed world pivot";value-x<=>root.pivot-x;value-y<=>root.pivot-y;value-z<=>root.pivot-z;edited=>{root.invalidate();}}
-            Text {text:root.space-index==1?"Copy n rotates then moves the originals by n × the steps in one fixed source frame, around the world pivot. The preview identifies the source; its original axes stay fixed for every copy.":"Copy n rotates the originals by n × the step about this pivot, then moves by n × the world move step.";wrap:word-wrap;color:#aeb8c6;}
+            Text {text:root.space-index==1?"Copy n scales the originals by factorⁿ, rotates by n × the step about the world pivot, then moves by n × the move step. All axes use the same original source frame identified in the preview.":"Copy n scales the originals by factorⁿ, rotates by n × the step about the world pivot, then moves by n × the world move step.";wrap:word-wrap;color:#aeb8c6;}
             CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
             Text {text:"Names become unique name_copyN values. Exact internal entity links follow each copy; external links stay. Shared names and ambiguous internal links must be resolved first.";wrap:word-wrap;color:#aeb8c6;}
             Text {text:"Named sets with scripts or dynamic I/O cannot be repeated. Other custom metadata stays verbatim. Context notes copy within the map budget; saved partitions stay on originals.";wrap:word-wrap;color:#aeb8c6;}

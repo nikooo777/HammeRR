@@ -16,9 +16,16 @@ pub struct Options {
     pub count: u32,
     pub translation: DVec3,
     pub rotation: DVec3,
+    pub scale: DVec3,
     pub pivot: DVec3,
     pub basis: DMat3,
     pub texture_lock: bool,
+}
+
+impl Options {
+    pub fn copy_scale(&self, index: u32) -> DVec3 {
+        self.scale.map(|factor| factor.powf(f64::from(index)))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,10 +91,22 @@ pub(crate) fn validate(
             "Array steps and pivot must be finite and within ±65536",
         ));
     }
+    if !options.scale.is_finite() || !options.scale.cmpgt(DVec3::ZERO).all() {
+        return Err(invalid("Array scale factors must be finite and positive"));
+    }
+    let last_scale = options.copy_scale(options.count);
+    if !last_scale.is_finite() || !last_scale.cmpgt(DVec3::ZERO).all() {
+        return Err(invalid(
+            "Array copy scale overflows or collapses; reduce factors or copy count",
+        ));
+    }
     if options.translation == DVec3::ZERO
         && options.rotation.map(|angle| angle.rem_euclid(360.0)) == DVec3::ZERO
+        && options.scale == DVec3::ONE
     {
-        return Err(invalid("Choose a nonzero translation or rotation step"));
+        return Err(invalid(
+            "Choose a nonzero translation or rotation step, or a scale factor other than 1",
+        ));
     }
     let mut sides = 0;
     let mut objects = 0;
@@ -104,6 +123,11 @@ pub(crate) fn validate(
                 let entity = document
                     .entity(id)
                     .ok_or(EditError::NotFound(ObjectId::Entity(id)))?;
+                if options.scale != DVec3::ONE && entity.solids.is_empty() {
+                    return Err(invalid(format!(
+                        "Repeat scaling supports brushes and brush entities; entity {id} has no scalable brush geometry",
+                    )));
+                }
                 if entity
                     .properties
                     .0
@@ -413,6 +437,7 @@ pub fn create(
                     options.basis * (options.translation * factor)
                 },
                 rotation: options.rotation * factor,
+                scale: options.copy_scale(index),
                 pivot: options.pivot,
                 basis: options.basis,
                 texture_lock: options.texture_lock,

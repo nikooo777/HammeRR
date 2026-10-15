@@ -49,6 +49,7 @@ impl Session {
                 "count": preview.options.count,
                 "translation": preview.options.translation.to_array(),
                 "rotation": preview.options.rotation.to_array(),
+                "scale": preview.options.scale.to_array(),
                 "pivot": preview.options.pivot.to_array(),
                 "space": if preview.local { "local" } else { "world" },
                 "basis": preview.options.basis.to_cols_array_2d(),
@@ -57,6 +58,7 @@ impl Session {
                 "bounds": self.object_bounds_in(&preview.document, &objects).map(|(mins, maxs)| [mins.to_array(), maxs.to_array()]),
                 "copies": preview.result.copies.iter().map(|copy| json!({
                     "index": copy.index,
+                    "scale": preview.options.copy_scale(copy.index).to_array(),
                     "objects": copy.objects.iter().copied().map(id_string).collect::<Vec<_>>(),
                     "names": copy.names.iter().map(|name| json!({"source":id_string(ObjectId::Entity(name.source)), "copy":id_string(ObjectId::Entity(name.copy)), "before":name.before, "after":name.after})).collect::<Vec<_>>(),
                     "remapped_references": copy.remapped_references,
@@ -74,7 +76,7 @@ impl Session {
             "snapshot": self.repeat_stamp(),
             "preview": preview,
             "limits": {"sources":repeat::MAX_SOURCES,"copies":repeat::MAX_COPIES,"objects_including_owned_brushes":repeat::MAX_OBJECTS,"sides":repeat::MAX_SIDES,"name_bytes":repeat::MAX_NAME_BYTES},
-            "transform_policy":"Copy n uses the original objects, rotates by n × XYZ degrees in the chosen world or source-local frame about one fixed world pivot, then translates by n × the step in that same frame. Source local uses the first source in stable object-ID order (brushes before entities), with its existing transform frame captured once for every copy. Count excludes originals.",
+            "transform_policy":"Copy n uses the original objects, scales each XYZ axis by its per-copy factor raised to n, then rotates by n × XYZ degrees, then translates by n × the move step. Scale and rotation share one fixed world pivot; all steps use the chosen world or captured source-local frame. Source local uses the first source in stable object-ID order (brushes before entities), captured once for every copy. Scale defaults to 1 and nonidentity factors support only brushes and brush entities. Count excludes originals.",
             "reference_policy":"Unique source targetnames become name_copyN, with a collision suffix when needed. Certain exact internal FGD/I/O/parent references follow that copy; external links and procedural references remain unchanged. Shared names, ambiguous internal matches, wildcard captures of new names, overlay face-ID references and node IDs reject. Named source sets with scripts or dynamic I/O also reject.",
             "metadata_policy":"Object and owned-brush context notes copy with their existing authorship/observations and full map budgets. Saved partitions remain attached to originals. Other opaque custom metadata and embedded text stay verbatim; their semantics are not inferred or remapped.",
         })
@@ -211,6 +213,7 @@ pub(crate) mod tests {
             count: 3,
             translation: DVec3::X * 32.0,
             rotation: DVec3::Z * 15.0,
+            scale: DVec3::ONE,
             pivot: DVec3::ZERO,
             basis: glam::DMat3::IDENTITY,
             texture_lock: true,
@@ -486,6 +489,101 @@ pub(crate) mod tests {
         let actual_point = copies.document.entity(copy).unwrap().origin().unwrap();
         assert!(actual_point.abs_diff_eq(expected_point, 1e-8));
         assert!(actual_point.abs_diff_eq(DVec3::X * 16.0 + delta, 1e-8));
+    }
+
+    #[test]
+    fn scale_arrays_preserve_sources_and_valid_drafts_for_both_actors() {
+        for actor in [Actor::User, Actor::Agent] {
+            let (mut session, point) = fixture();
+            let source = session
+                .edit(actor, "oblique scale source", |tx| {
+                    let source = edit::create_block(
+                        tx,
+                        DVec3::new(-4.125, 2.25, 1.5),
+                        DVec3::new(12.5, 15.75, 24.125),
+                        "brick/wall",
+                    )?;
+                    edit::transform(
+                        tx,
+                        &[source],
+                        edit::Transform {
+                            rotation: DVec3::new(17.0, 29.0, -11.0),
+                            ..edit::Transform::default()
+                        },
+                    )?;
+                    Ok(source)
+                })
+                .unwrap();
+            session.select(&[source], SelectMode::Replace).unwrap();
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let camera = session.camera();
+            let request = repeat::Options {
+                translation: DVec3::ZERO,
+                rotation: DVec3::ZERO,
+                scale: DVec3::new(1.1, 0.9, 1.25),
+                pivot: DVec3::new(1.25, -3.5, 2.125),
+                ..options()
+            };
+            let report = session
+                .preview_repeat_array_in_space(&[source], request, true, &session.repeat_stamp())
+                .unwrap();
+            assert_eq!(report["preview"]["scale"], json!([1.1, 0.9, 1.25]));
+            let third: [f64; 3] =
+                serde_json::from_value(report["preview"]["copies"][2]["scale"].clone()).unwrap();
+            assert!(
+                DVec3::from_array(third).abs_diff_eq(DVec3::new(1.331, 0.729, 1.953125), 1e-12)
+            );
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+            assert_eq!(session.camera(), camera);
+            let expected = session.render_document().vmf().clone();
+            for (sources, scale) in [
+                (vec![source], DVec3::ZERO),
+                (vec![source], DVec3::NAN),
+                (vec![source], DVec3::splat(1e300)),
+                (vec![source, point], DVec3::splat(1.1)),
+            ] {
+                assert!(
+                    session
+                        .preview_repeat_array_in_space(
+                            &sources,
+                            repeat::Options { scale, ..request },
+                            true,
+                            &session.repeat_stamp()
+                        )
+                        .is_err()
+                );
+                assert_eq!(session.repeat_array(), report);
+                assert_eq!(session.render_document().vmf(), &expected);
+                assert_eq!(session.document.vmf(), &before);
+                assert_eq!(session.document.undo_labels().count(), history);
+            }
+            let token = report["preview"]["token"].as_u64().unwrap();
+            session.apply_repeat_array(actor, token).unwrap();
+            assert_eq!(session.document.vmf(), &expected);
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &expected);
+            let report = session
+                .preview_repeat_array_in_space(&[source], request, true, &session.repeat_stamp())
+                .unwrap();
+            let ObjectId::Solid(id) = source else {
+                unreachable!()
+            };
+            session
+                .edit(actor, "move scale source", |tx| {
+                    edit::translate(tx, &[ObjectId::Solid(id)], DVec3::X, true)
+                })
+                .unwrap();
+            assert!(
+                session
+                    .apply_repeat_array(actor, report["preview"]["token"].as_u64().unwrap())
+                    .is_err()
+            );
+        }
     }
 
     #[test]

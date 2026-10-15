@@ -131,6 +131,7 @@ impl Payload {
                 count: 1,
                 translation: DVec3::X,
                 rotation: DVec3::ZERO,
+                scale: DVec3::ONE,
                 pivot: DVec3::ZERO,
                 basis: glam::DMat3::IDENTITY,
                 texture_lock: true,

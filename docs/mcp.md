@@ -110,7 +110,7 @@ To build the map, set the build options once, then compile:
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
-| Overlay authoring | `get_overlay_state`, `preview_overlay`, `preview_overlay_refit`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
+| Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
@@ -123,7 +123,7 @@ To build the map, set the build options once, then compile:
 | Vertices, edges and faces | `get_component_sources`, `update_component_scope`, `get_brush_components`, `set_component_picking`, `pick_brush_components`, `select_brush_components`, `preview_component_move`, `commit_component_move`, `cancel_component_move` |
 | Component move handles | `get_component_handles`, `set_component_move_options`, `begin_component_drag`, `update_component_drag`, `commit_component_drag`, `cancel_component_drag` |
 | Scale, rotate, weld, split, ridge | `preview_component_scale`, `preview_component_rotate`, `preview_component_weld`, `preview_component_split`, `preview_component_crease`, `commit_component_edit`, `cancel_component_edit` |
-| Flat partitions | `preview_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture`, `raise_component_partition`, `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `commit_component_edit`, `cancel_component_edit` |
+| Flat partitions | `preview_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture`, `place_component_partition_texture`, `raise_component_partition`, `preview_partition_extrusion`, `select_component_partitions`, `frame_component_partitions`, `pick_component_partitions`, `commit_component_edit`, `cancel_component_edit` |
 | Saved flat pieces | `get_saved_component_partitions`, `store_component_partition`, `resume_component_partitions`, `remove_saved_component_partitions` |
 | Face textures | `select_faces`, `get_face_selection`, `set_material`, `edit_faces`, `sample_face_texture`, `get_surface_sample`, `paint_face_texture`, `propagate_face_texture`, `project_face_group`, `commit_face_preview`, `cancel_face_preview` |
 | Texture paint strokes | `begin_texture_stroke`, `update_texture_stroke`, `get_texture_stroke`, `commit_texture_stroke`, `cancel_texture_stroke` |
@@ -133,6 +133,7 @@ To build the map, set the build options once, then compile:
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite`, `reload_material_assets` |
 | Entities | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
 | Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
+| Particle definitions and choices | `browse_particles`, `inspect_particle`, `begin_particle_choice`, `choose_particle`, `get_particle_choice`, `apply_particle_choice`, `cancel_particle_choice`, `reload_particle_assets` |
 | Connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
 | Safe renaming | `get_entity_references`, `begin_entity_rename`, `update_entity_rename`, `commit_entity_rename`, `cancel_entity_rename` |
 | World settings and property batches | `get_property_inspector`, `begin_property_edit`, `update_property_edit`, `get_property_edit`, `commit_property_edit`, `cancel_property_edit` |
@@ -141,6 +142,8 @@ To build the map, set the build options once, then compile:
 | Design notes | `get_context_state`, `list_context_notes`, `get_context_note`, `get_context`, `begin_context_edit`, `update_context_edit`, `apply_context_edit`, `cancel_context_edit`, `delete_context_note`, `set_context_view`, `focus_context` |
 | Recovery | `get_recovery`, `set_recovery_settings`, `create_recovery_snapshot`, `restore_recovery_snapshot`, `delete_recovery_snapshot` |
 | Camera and visual checks | `get_camera`, `set_camera`, `frame_selection`, `set_view`, `render_view`, `pick_at_pixel`, `raycast` |
+| Working region | `get_working_region`, `set_working_region` |
+| Fog preview | `get_fog_preview`, `set_fog_preview`; temporary overrides through `render_view` |
 | Saved camera views | `get_camera_views`, `save_camera_view`, `restore_camera_view`, `rename_camera_view`, `delete_camera_view` |
 | Pointfiles | `load_pointfile`, `get_pointfile`, `navigate_pointfile`, `frame_pointfile`, `clear_pointfile` |
 | Compile and play | `get_compile_settings`, `set_compile_settings`, `start_compile`, `get_compile_status`, `cancel_compile`, `compile_map`, `run_map`, `launch_game`, `game_log`, `stop_game` |
@@ -182,6 +185,8 @@ These details aren't obvious from the tool list.
 - `raise_component_partition` with `rise: 0` returns to flat; otherwise use 0.125–4096.
 - `update_component_partition_cut` takes `edge_parameters: [first, second]`, each strictly between 0 and 1.
 - `store_component_partition` keeps the pieces. `resume_component_partitions` and `remove_saved_component_partitions` take `sources: [{solid, side}]`.
+- `place_component_partition_texture` takes the current `token`, 1–32 distinct `partitions: [{solid, partition}]`, and `fit: true` and/or `justify_u` / `justify_v`: `start`, `center` or `end`. Fit maps one tile over each piece's projected bounds; justification places a tile edge or center without changing scale. Fit runs first when combined. Actual loop corners and each effective material's dimensions are used, preserving projection axes, rotation and signed mirroring.
+- Read each loop's `effective_texture`, `texture_plan` and `texture_inherited` from the replacement preview, then use its new token for Keep, raise/extrude, Apply or Cancel. Placement requires a flat draft and available texture dimensions; empty, duplicate, stale or unsupported requests preserve the previous draft. Omitted justification axes retain their shifts unless Fit changes them. Saved plans and replay retain these settings; arbitrary projection-axis authoring is unavailable.
 
 **Carve, hollow and clip**
 
@@ -318,7 +323,7 @@ Source, mask, camera, viewport-size, visibility and grid changes guard the gestu
 - `inspect_model` takes a `path` under `models/` and optional zero-based `skin` and native `body` number. It reads MDL44/48, VVD4 and DX90 VTX7 LOD0 data on the CPU, returning geometry counts, selected-body material paths, skin count, local/hull bounds and resource limits. `pose` is `static` or `reference`; `reference_bones` counts decoded pose bones, and `static_prop` reports asset eligibility. It preserves map/history and does not initialize graphics.
 - `inspect_entity_model` takes optional `id` (defaults to the selected entity). It reports the shared asset, authored skin, transformed bounds, displayed/hidden state and helper fallback reason from the rendered draft. Static meshes, checked reference poses and selected bodygroups at scale 1 and LOD 0 are supported. Unsupported/missing/malformed assets remain helpers and inspection errors explain unavailable data.
 - Existing `create_entity`, `set_entity_properties`, transforms, `pick_at_pixel`, `raycast`, camera focus and `render_view` author, inspect and view the same model instances as the editor. Loaded meshes replace helper-box picking; model bounds drive framing and shared selection/transform bounds. `select_area` and `select_volume` match transformed asset bounds for loaded models. Contained tests require the full box; intersecting tests include touching bounds and empty space inside them. Hidden models are excluded; unsupported assets retain helper bounds.
-- `reload_model_assets` clears the bounded CPU model cache and refreshes geometry/picks after model-file changes, without editing source/history. It refreshes MDL/VVD/VTX data and material search paths. Use `reload_material_assets` for changed VMT/VTF texture contents; use both operations when newly available content changes model material-path resolution. It cancels pending grid-snap previews and reports `snap_preview_cancelled`; other transform drafts remain intact.
+- `reload_model_assets` clears the bounded CPU model cache and refreshes geometry/picks after MDL/VVD/VTX changes, without editing source/history. Use `reload_material_assets` for changed VMT/VTF contents or newly available/deleted model material paths; that operation re-resolves cached model bindings while retaining decoded geometry. Model inspection reports `material_error` when resolution fails, and the mesh retains its bounds and picking with missing textures. Reloading model geometry cancels pending grid-snap previews and reports `snap_preview_cancelled`; other transform drafts remain intact.
 - UI: model entity → **World Model**, **Position**, **Rotation**, **Skin**, **Model details… → Reload models / Cancel**. Files are limited to 64 MiB each; the cache holds at most 128 entries/256 MiB, and a scene has at most one million model vertices/six million indices. These are HammeRR resource caps.
 
 Model selection uses the same Session draft as **World Model → Browse…**:
@@ -364,6 +369,42 @@ Attachment inspection uses the same checked default bone pose as model rendering
 
 Audio helpers require FFmpeg/ffplay. Input files are limited to 16 MiB, output to 2 MiB/ten seconds/stereo 44.1 kHz, and decoding to five seconds. Paths stay relative to mounted sound content; script loading and traversal are bounded. Previews do not simulate native channel mixing, sound level, pitch/random ranges, DSP, distance, looping, sentences/voice or soundscapes. See [Sounds](sounds.md) for catalog limits and supported scope.
 
+### Particle definitions and choices
+
+`browse_particles` searches system names, PCF paths and materials with `query`,
+`group` (`all`, `used`, `folder:particles/...` or `file:particles/...pcf`),
+`offset` and `limit` (default 60, range 1–100). It returns paged `entries`, exact
+`total`, groups/counts, active `manifest`, file count and limits. Each entry
+identifies `name`, `source`, `material`, `precache` and `ambiguous` state.
+`inspect_particle {name}` adds authored `max_particles`, function names, child
+systems, encoded size, element count, fingerprint and encoding/version fields.
+Search and inspection are CPU-only and preserve map/history/camera.
+
+1. Call `begin_particle_choice` with an `info_particle_system` point entity `id`
+   (selection by default); `resume: true` reuses its valid choice.
+2. Call `choose_particle {token, name}`, then inspect `get_particle_choice`.
+   The shared draft reports captured entity, field/value and particle metadata.
+3. Call `apply_particle_choice {token}` for one undoable `effect_name` edit, or
+   `cancel_particle_choice {token}`. A stale owned token remains cancellable;
+   replaced tokens cannot clear another choice. The human equivalent is the
+   entity field's **Browse… → Apply / Cancel**.
+
+Map, selection, FGD, geometry-preview or particle-asset changes invalidate a
+choice. Omit the token from `get_particle_choice` to discover its current token
+and validity. Apply rereads the manifest/definition and rejects changed data.
+`reload_particle_assets` clears the catalog and invalidates choices; reopen the
+choice afterward. Failed choices retain prior drafts; failed catalog loads
+remain retryable. Duplicate names are listed but cannot be chosen.
+
+Discovery reads only mounted `particles/particles_manifest.txt` and supported
+DMX binary 2 / PCF 1 files. Map manifests and unlisted PCFs are outside discovery;
+includes, other encodings/versions and external element references reject.
+Budgets are 128 files, 16 MiB per PCF,
+64 MiB total, 16,384 systems and 16 MiB catalog metadata; names are at most
+255 bytes and must be representable in VMF. Definition metadata is available;
+particle simulation, animation and viewport rendering are not. See
+[Particle effects](particles.md).
+
 ### Model tint
 
 `get_entity_inspector` exposes dynamic-model `rendercolor` as the common **Tint** color control. Use the existing `set_entity_color` with `id`, `key: "rendercolor"` and byte `color: [r,g,b]`; omit `intensity`. This RGB edit preserves an authored fourth component and commits in one Undo step. `set_entity_component` and `set_entity_properties` retain their existing generic access. `render_view` shows the same modulation as the viewport, and `inspect_entity_model.tint` reports RGB bytes for supported model instances (`null` when unavailable). `opacity_preview: false` distinguishes the current RGB-only support. Asset-only browser images keep their untinted source materials.
@@ -397,11 +438,64 @@ The lowest brush ID supplies brush/editor metadata. Outer faces keep their origi
 
 ### Repeated placement
 
-Call `get_repeat_array`, then pass its `snapshot` to `preview_repeat_array` with `count` and optional `ids`, `space`, `translation`, `rotation`, `pivot` and `texture_lock`. IDs default to the selection; translation and rotation default to zero, pivot to the source center and texture lock to true. `count` is the number of additional copies. `space` is `world` (default) or `local`. Copy n starts from the originals, rotates by n times the XYZ degree step about the fixed world pivot, then moves by n times the translation step. Both steps use the chosen frame. Local mode captures the original source frame once, from the first object in stable ID order (world brushes before entities), and keeps those axes for every copy. `preview.space`, `basis` (column vectors) and `frame_source` expose that frame. Malformed effective source orientation rejects local previews without replacing a valid draft.
+Call `get_repeat_array`, then pass its `snapshot` to `preview_repeat_array` with
+`count` and optional `ids`, `space`, `translation`, `rotation`, `scale`, `pivot`
+and `texture_lock`. IDs default to selection, translation/rotation to zero,
+scale to `[1,1,1]`, pivot to the source center and texture lock to true. `count`
+is the number of additional copies; `space` is `world` (default) or `local`.
+Copy n starts from the originals, scales each axis by its factor raised to n,
+rotates by n times the XYZ degree step, then moves by n times the translation
+step. Scale and rotation share the fixed world pivot; all steps use the chosen
+frame. Local mode captures the first original source's axes once, in stable ID
+order (world brushes before entities). `preview.space`, `basis` (column vectors),
+`frame_source` and `scale` expose the plan; `preview.copies[].scale` gives each
+copy's effective factors.
+
+Scale factors must be finite and positive. Nonidentity scaling supports brushes
+and brush entities, including checked terrain; point/model entities reject.
+With `texture_lock: true`, textures stretch with scaled geometry. Overflow,
+invalid geometry and malformed local source orientation retain the valid draft.
 
 Inspect `preview.copies`, generated names, copied entity fields and bounds, or render the shared draft. Pass its numeric `preview.token` to `apply_repeat_array` or `cancel_repeat_array`. Apply rechecks the complete result, selects the copies and adds one Undo step. Invalid requests retain the previous valid draft; stale tokens cannot apply or cancel replacements. `get_map_info.repeat_array` exposes the same state; `get_objects`, saving and compiling use committed geometry.
 
-Unique targetnames become `name_copyN` with collision suffixes. Supported exact internal FGD/I/O/parent references follow each copy; external links remain. Ambiguous names, uncertain internal references, internal wildcards, generated-name reference captures, overlays and numeric node/side references reject. Named source sets with scripts or dynamic I/O also reject. Design notes copy within their normal budgets; saved face partitions stay on originals. Limits are 16 sources, 64 additional copies, 256 generated objects including owned brushes, 8192 sides and 128 UTF-8 bytes per generated name. World and source-local translation/rotation arrays are supported; scale and surface sprinkle remain unavailable; see [Repeated placement](repeated-placement.md).
+Unique targetnames become `name_copyN` with collision suffixes. Supported exact internal FGD/I/O/parent references follow each copy; external links remain. Ambiguous names, uncertain internal references, internal wildcards, generated-name reference captures, overlays and numeric node/side references reject. Named source sets with scripts or dynamic I/O also reject. Design notes copy within their normal budgets; saved face partitions stay on originals. Limits are 16 sources, 64 additional copies, 256 generated objects including owned brushes, 8192 sides, coordinates within ±65,536 and 128 UTF-8 bytes per generated name. Surface sprinkle remains unavailable; see [Repeated placement](repeated-placement.md).
+
+### Working region
+
+`get_working_region` reports one temporary viewport box, its `snapshot`,
+`enabled`, `mins` / `maxs`, and paged `objects` with `id`, optional `owner`,
+`included`, `reasons`, `bounds`, `bounds_source` and `bounds_error`. Pagination
+uses `offset`, `limit` (default 50, maximum 200) and `next_offset`; `total`,
+`excluded` and `selected_excluded` count the complete report. Reasons distinguish
+`authored_hidden`, `owner_hidden`, `tool_filter`, `outside_working_region` and
+`unresolved_bounds`.
+
+Pass the latest snapshot to `set_working_region` with one action:
+
+- `set`: ordered finite `mins` and `maxs` within ±65,536, and optional `enabled`
+  (default true).
+- `selection_bounds`: capture current object/face selection bounds; accepts
+  `enabled`, requires a nonempty selection and accepts no explicit bounds.
+- `clear`: remove the box and disable filtering; accepts no bounds or enabled flag.
+
+Whole world brushes and whole brush owners remain when their bounds touch or
+intersect the box. Hidden children do not expand an owner's visible bounds.
+Terrain uses displaced bounds; loaded models use transformed mesh bounds, with
+explicit helper fallback when unavailable. Unresolved bounds remain visible
+and are reported.
+The existing tool-texture filter still applies. Scene rendering, spatial
+picking and component/partition/paint queries share the filter; active spatial
+gestures are cancelled when it changes. Authored source, saved hide/show,
+selection, camera, Undo, compile scope and owned geometry/overlay drafts remain.
+Map replacement clears the filter.
+
+`get_map_info.working_region` and `render_view` metadata's `working_region` are
+lightweight summaries with `counts_scope: "working_region_and_authored_visibility"`;
+their counts are null when disabled. Full inspection uses
+`counts_scope: "all_display_filters"`, including tool-filter reasons.
+The human controls are **Working region…** and **Clear working region**.
+This is a display filter, independent of compile regions; see
+[Working region](working-region.md).
 
 ### 2D sky preview
 
@@ -410,6 +504,36 @@ Unique targetnames become `name_copyN` with collision suffixes. Supported exact 
 `get_map_info.skybox` and `render_view` image metadata report `name`, `ready`, `summary` and per-face `suffix`, `material`, `issue` and `size`. An empty `skyname` returns `name: null` and `ready: false`. Missing or unsupported faces leave the ordinary tool surfaces visible. Axis-aligned VMT scale/translation and unequal face dimensions are supported, within 4096 pixels per axis and 64 MiB per texture file.
 
 Preview controls leave VMF and Undo unchanged; author `skyname` through the existing world-property draft. Sky surfaces retain depth, picking and visibility filtering. Planar, flat, wireframe and diagnostic views retain their usual behavior. 3D sky-camera transforms, HDR, fog, exposure and animated materials are outside this preview; see [2D sky preview](sky.md).
+
+### Fog preview
+
+`get_fog_preview` returns shared `enabled` and explicit `controller`, a review
+`snapshot`, parsed `settings`, `ready`, `active`, `issue`, `summary`, `defaults`,
+and all authored `controllers` with per-choice settings/errors. No controller is
+chosen automatically; preview starts off. `set_fog_preview` takes `enabled`,
+the latest snapshot and a `controller: "entity:<id>"` when enabling. Unsupported
+controllers and stale snapshots preserve current settings. Disable with a fresh
+snapshot. These are the same controls as **Fog preview… → Apply preview**;
+**Cancel** leaves shared settings unchanged.
+
+`render_view` accepts temporary `fog_preview` and `fog_controller` overrides.
+Its `fog_preview` metadata identifies the effective settings/controller and
+`applied` state; `view.fog` contains parsed parameters or null.
+`get_map_info.fog_preview` reports shared state. Overrides leave the shared
+choice unchanged. Authored edits and Undo refresh the selected controller;
+invalid/deleted selections report an issue and draw no fog. Opening another map
+clears the choice. Preview never changes source/history, selection or picking.
+
+Only perspective Textured surfaces and model meshes receive this static
+view-depth approximation. Sky/background, helpers, selection outlines, grid,
+planar views and other surface modes retain their output. Explicit RGB and
+finite `0 ≤ fogstart < fogend` with a finite inverse range are required;
+`fogmaxdensity` is 0–1 and enabled flags are 0/1. Missing `fogenable` defaults
+to 0 and missing density to 1. Invalid/duplicate keys, radial or
+directional blending, positive `farz` and nonidentity HDR/zoom scales reject.
+The capped linear range factor is squared for linear-space color blending;
+fog volumes, water fog, runtime I/O, transitions and native parity are outside
+this preview. See [Fog preview](fog.md).
 
 ### Recent maps
 
@@ -436,7 +560,27 @@ Custom recipes use `build-recipes.json` in recovery storage; `HAMMERR_BUILD_RECI
 
 ### Prop shadows and occluders
 
-Existing synchronous and background compile results expose `prop_shadow_props`, `prop_shadow_models`, `prop_shadow_triangles`, `prop_shadow_disabled` and `prop_shadow_work`, also shown in **Build details…**. Direct LDR uses supported opaque LOD0 prop meshes for direct, sky, bounce and ambient occlusion, honoring native `disableshadows`. Material approximations generate warnings; missing or invalid required companions fail without replacing prior output. No new setting or tool is required. See [Static-prop shadows](prop-shadows.md).
+Existing synchronous and background compile results expose `prop_shadow_props`,
+`prop_shadow_models`, `prop_shadow_triangles`, `prop_shadow_disabled` and
+`prop_shadow_work`, also shown in **Build details…**. Direct LDR shares LOD0
+prop blockers across direct, sky, bounce and ambient rays, honoring native
+`disableshadows`. No new compile setting or tool is required.
+
+Models compiled with `$casttextureshadows` request supported alpha-tested
+materials through their native MDL flag; there is no editor toggle. Results expose
+`prop_shadow_alpha_triangles`, `prop_shadow_alpha_materials`,
+`prop_shadow_alpha_textures` and decoded `prop_shadow_alpha_bytes`. Cutouts use
+barycentric mesh UVs, mip-0 nearest alpha, VTF wrap/clamp and an inclusive
+`$alphatestreference` threshold. They remain two-sided blockers with no fractional
+transmission. Unflagged models retain opaque mesh shadows and material warnings.
+
+Requested cutouts support bounded VertexLitGeneric/UnlitGeneric materials,
+axis-aligned scale/translation, and one-frame 2D textures up to 4096 pixels per
+axis / 64 MiB total decoded alpha. Unsupported shaders, rotated transforms,
+animation/conditional blocks, translucent/additive effects and missing/corrupt
+required assets fail the build without replacing prior output. Prop vertex/
+lightmap baking and animated props remain unavailable. See
+[Static-prop shadows](prop-shadows.md).
 
 Create `func_occluder` through the existing brush-entity operations, set `StartActive`, and author its Activate/Deactivate/Toggle connections through the existing entity tools. Compiles report `occluders`, `occluder_polygons` and `occluder_vertex_refs` with the same entity-linked diagnostics as the human build panel. Each helper supports 1–16 visible convex brushes in one unambiguous world area. Pairwise world bounds must be separated on an axis by more than 0.01 units; touching/overlapping bounds require separate entities until CSG support. Combined limits are 256 input sides/polygons and 4096 polygon vertices. Native records, activation indices and Activate/Deactivate/Toggle control runtime culling. See [Occluders](occluders.md).
 
@@ -529,10 +673,12 @@ See [Prefab library](prefabs.md).
 | Tool | Inputs and result |
 | --- | --- |
 | `get_overlay_state` | Current `snapshot`, eligible selected source or `selection_error`, eligible `selected_overlay` or `refit_error`, and draft operation/entity, owner/token/validity, options, corners, basis and bounds. |
+| `browse_overlay_targets` | Search existing overlays by `query` (name/material/ID, at most 256 bytes), `offset` and `limit` (default 20, maximum 50). Returns snapshot, exact total and `entries` with numeric `id`, `entity` identity, name/material, source/settings, `eligible` and rejection `error`. Does not change selection. |
 | `preview_overlay` | Latest `snapshot`, explicit `source:{solid,side}` and `material`; optional `targetname`, `render_order` (0–3), `u`/`v` endpoint pairs and `fade_min`/`fade_max` world distances. Fits a new owned draft without editing source/history/selection. |
 | `preview_overlay_refit` | Latest `snapshot` and optional overlay `id` (defaults to selection); previews refitting its one existing visible world/detail quad binding. Keeps identity, raw settings and metadata. |
+| `preview_overlay_rebind` | Latest `snapshot`, existing overlay `id: "entity:<id>"` and a different destination `source:{solid,side}`. Both bindings must be eligible visible world/detail quads. Returns `operation: "rebind"`, same entity and `previous_source`; preserves raw settings and metadata. |
 | `review_overlay` | A valid draft `token`; transfers ownership and issues a fresh token without editing the map. |
-| `apply_overlay` | Current owned `token`; one Undo step. `operation: "create"` returns `created`; `operation: "refit"` returns `updated` for the same entity. |
+| `apply_overlay` | Current owned `token`; one Undo step. `operation: "create"` returns `created`; `refit` and `rebind` return `updated` for the same entity. |
 | `cancel_overlay` | Matching owned `token`; discards only that draft, including a stale owned draft. |
 
 Creation supports one visible convex planar world or `func_detail` quad,
@@ -545,10 +691,13 @@ Map/selection changes stale Apply and Review. Invalid requests preserve valid
 drafts; replaced tokens cannot cancel their successors. Explicit sources work
 without changing face selection; humans can open **Overlay…** and review that
 draft directly. `render_view` shows the cyan outline; `preview_material` exposes
-the same material thumbnail. Refit changes only the existing projection/origin/side fields, preserving raw
-material/name/UV/order/fade strings, connections and metadata. Multiside and
-nonquad refits reject. Projected viewport materials, new face bindings,
-terrain/model creation or refitting and automatic rebinding remain unavailable.
+the same material thumbnail. Refit and rebind change only projection/origin/side
+fields, preserving raw material/name/UV/order/fade strings, connections and
+metadata. Humans can select the destination face, open **Overlay…**, choose an
+existing named overlay and use **Preview rebind → Apply rebind**. Missing,
+hidden, multiside, terrain, model and nonquad existing bindings reject; rebind
+cannot repair those bindings. Projected viewport materials, terrain/model
+creation or refitting, and automatic rebinding remain unavailable.
 See [Overlays](overlays.md).
 
 ### Compile regions
@@ -606,27 +755,35 @@ records and ambiguous disabled-only sets return inspection errors.
 
 Call `reload_material_assets` without arguments after changing VMT/VTF files in
 mounted content. It reloads cached display materials and sky faces, rescans the
-material catalog and refreshes desktop/offscreen textures and thumbnails. The
-human equivalent is **Browse materials… → Reload material assets**.
+material catalog, re-resolves cached model material paths and refreshes
+desktop/offscreen textures and thumbnails. Decoded model geometry stays shared;
+preferred paths appearing or disappearing are resolved from the existing mounts.
+The human equivalent is **Browse materials… → Reload material assets**.
 
 The response contains `generation` (the display-cache generation), `reloaded`
-(cached material entries reread), `failed` (the full unavailable-preview count),
-`failures` (the first 100 `{material, error}` details) and `summary`. Catalog
-discovery errors also appear in these diagnostics. `get_map_info.material_reload`
+(cached material entries reread), `models_refreshed` (cached model material sets
+resolved), `models_changed` (sets whose paths/error changed), `failed` (the full
+unavailable-preview/read-failure count), `failures` (the first 100
+`{material, error}` details) and `summary`. Catalog
+and model-path errors also appear in these diagnostics; a failure's `material`
+can identify the model path. `get_map_info.material_reload`
 and `render_view` metadata's `material_reload` retain the last report, or `null`
 before the first reload.
 
 Unavailable previews are not a compiler-validity verdict: valid untextured/tool
 materials can have no display texture. Broken display assets replace stale
-images with the missing-texture fallback. Repair files and reload again; rerun
-map checks or compile to validate the map.
+images with the missing-texture fallback. Model resolution failures replace old
+bindings visibly, retain geometry/bounds/picking, and appear as `material_error`
+in model inspection. Repair files and reload again; rerun map checks or compile
+to validate the map.
 
 Reload preserves map data, selection, camera, Undo history and active draft
 geometry. View-dependent snapshots may need renewed review. It uses existing
 mounts only, with no file watcher, archive/content remount, model-geometry or
-particle reload, or running-game cache refresh. Model textures use their cached
-resolved material paths; use `reload_model_assets` too when newly available
-content changes which model material path should be chosen.
+particle reload, or running-game cache refresh. Changed MDL/VVD/VTX data still
+requires `reload_model_assets`. Valid model choices and attachment guides remain
+usable; stale choices remain stale, and open material/model choices require
+review of refreshed previews before use.
 
 ### Material asset errors
 

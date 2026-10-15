@@ -176,6 +176,16 @@ impl Session {
     }
 
     fn corner_translation_bounds(&self, owner: ObjectId, delta: DVec3) -> Result<(), String> {
+        let check = |point: DVec3| {
+            let point = point + delta;
+            if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT {
+                return Err(
+                    "Corner snapping would move part of the selected owner outside ±65536 units"
+                        .to_string(),
+                );
+            }
+            Ok(())
+        };
         let brushes = match owner {
             ObjectId::Solid(id) => {
                 std::slice::from_ref(self.document.solid(id).ok_or("Source brush is missing")?)
@@ -189,20 +199,31 @@ impl Session {
         };
         for brush in brushes {
             let geometry = BrushGeometry::from_solid(brush).map_err(|error| error.to_string())?;
-            let terrain = if brush.sides.iter().any(|side| side.displacement.is_some()) {
-                Some(
-                    query::solid_bounds(brush)
-                        .ok_or("Source owner has unresolved terrain bounds")?,
-                )
-            } else {
-                None
-            };
-            for (mins, maxs) in std::iter::once((geometry.mins, geometry.maxs)).chain(terrain) {
-                for point in [mins + delta, maxs + delta] {
-                    if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT
-                    {
-                        return Err("Corner snapping would move part of the selected owner outside ±65536 units".into());
-                    }
+            for point in [geometry.mins, geometry.maxs] {
+                check(point)?;
+            }
+            for (index, side) in brush.sides.iter().enumerate() {
+                let Some(info) = &side.displacement else {
+                    continue;
+                };
+                let face = geometry
+                    .faces
+                    .iter()
+                    .find(|face| face.side == index)
+                    .ok_or_else(|| {
+                        format!(
+                            "Source brush {} terrain face {} has no effective geometry",
+                            brush.id, side.id
+                        )
+                    })?;
+                let mesh = DisplacementMesh::build(face, info).map_err(|error| {
+                    format!(
+                        "Source brush {} terrain face {}: {error}",
+                        brush.id, side.id
+                    )
+                })?;
+                for point in mesh.positions {
+                    check(point)?;
                 }
             }
         }

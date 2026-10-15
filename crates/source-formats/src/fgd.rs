@@ -146,7 +146,7 @@ impl Class {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct Catalog {
     classes: BTreeMap<String, Class>,
     pub sources: Vec<PathBuf>,

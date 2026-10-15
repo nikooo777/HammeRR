@@ -141,8 +141,8 @@ impl Controller {
                     let mut session = lock(&shared);
                     let ids = validate(&session, &context, token.get())?;
                     let requested = options(&window)?;
-                    let report =
-                        session.preview_repeat_array(&ids, requested, &session.repeat_stamp())?;
+                    let snapshot = session.repeat_stamp();
+                    let report = session.preview_repeat_array(&ids, requested, &snapshot)?;
                     Ok::<_, String>((requested, report))
                 })();
                 match result {

@@ -317,6 +317,62 @@ fn corner_snap_owner_overflow_rejects_before_replacing_a_valid_plan() {
 }
 
 #[test]
+fn corner_snap_keeps_tiny_real_axis_moves_independent_of_other_axis_magnitude() {
+    let mut session = Session::new(Err("No assets needed".into()));
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(0.0, -16.0, -16.0),
+            DVec3::new(16.0, 16.0, 0.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let selected = session
+        .create_block(
+            Actor::User,
+            DVec3::new(1e-12, 65500.0, 32.0),
+            DVec3::new(16.0 + 1e-12, 65516.0, 48.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let ObjectId::Solid(solid) = selected else {
+        unreachable!()
+    };
+    session
+        .select(&[selected], super::super::SelectMode::Replace)
+        .unwrap();
+    let shape = session.component_topology(&[solid]).unwrap().remove(0);
+    let vertex = shape
+        .vertices
+        .iter()
+        .min_by(|a, b| a.position.x.total_cmp(&b.position.x))
+        .unwrap();
+    let options = Options {
+        source_corner: Some(Component {
+            solid,
+            sides: vertex.sides.clone(),
+        }),
+        ..options()
+    };
+    let report = session
+        .preview_surface_placement(
+            Actor::User,
+            &[selected],
+            Method::BrushCorner,
+            Some(Ray {
+                origin: DVec3::new(0.5, -15.5, 100.0),
+                direction: DVec3::NEG_Z,
+            }),
+            options,
+        )
+        .unwrap();
+    let delta = report["plan"]["translation"][0].as_f64().unwrap();
+    assert!(delta < -1e-14 && delta > -1e-11, "{delta}");
+}
+
+#[test]
 fn corner_snap_rejects_the_first_supported_model_mesh_without_reaching_the_floor() {
     let Ok(game) = crate::startup::mount_game(None) else {
         return;

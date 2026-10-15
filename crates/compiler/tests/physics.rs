@@ -29,6 +29,12 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
     let directory = tempfile::tempdir().unwrap();
     let materials = directory.path().join("materials");
     std::fs::create_dir(&materials).unwrap();
+    std::fs::create_dir(materials.join("dev")).unwrap();
+    std::fs::write(
+        materials.join("dev/dev_measuregeneric01.vmt"),
+        "LightmappedGeneric { }",
+    )
+    .unwrap();
     std::fs::write(
         materials.join("clip.vmt"),
         "UnlitGeneric { %compileclip 1 $surfaceprop metal }",
@@ -37,6 +43,18 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
     std::fs::write(
         materials.join("ice.vmt"),
         "LightmappedGeneric { $surfaceprop ice }",
+    )
+    .unwrap();
+    let scripts = directory.path().join("scripts");
+    std::fs::create_dir(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("surfaceproperties_manifest.txt"),
+        "surfaceproperties_manifest { file scripts/mass_surfaces.txt }",
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("mass_surfaces.txt"),
+        "default { density 2000 } ice { density 917 } metal { density 2700 }",
     )
     .unwrap();
     let mut fs = common::empty_game();
@@ -113,7 +131,19 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
     assert!(world_keys.contains("\"ice\" \"2\"") && world_keys.contains("\"metal\" \"3\""));
     assert_eq!(output.stats.physics_surface_properties, 3);
     let body_keys = std::str::from_utf8(physics.models[1].key_data).unwrap();
-    assert!(body_keys.contains("solid {") && body_keys.contains("\"mass\" \"1\""));
+    assert!(body_keys.contains("solid {"));
+    let keys = source_formats::keyvalues::parse(body_keys.trim_end_matches('\0')).unwrap();
+    let mass = keys[0]
+        .children()
+        .unwrap()
+        .iter()
+        .find(|field| field.key == "mass")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    assert!((mass - 1073.942626304).abs() < 0.001, "{mass}");
     let model = bsp.records::<Model>().unwrap()[1];
     assert_eq!(model.mins, [-16.0; 3]);
     assert_eq!(model.maxs, [16.0; 3]);
@@ -186,7 +216,10 @@ fn engine_worker_emits_checked_world_clip_and_local_brush_bodies() {
     );
     let mixed_bsp = mixed.bsp.unwrap();
     let mixed_physics = mixed_bsp.physics().unwrap().unwrap();
-    assert_eq!(mixed_physics.models[1].key_data, physics.models[1].key_data);
+    assert_eq!(
+        mixed_physics.models[1].key_data,
+        uniform_physics.models[1].key_data
+    );
     assert_ne!(mixed_physics.models[1].solids, physics.models[1].solids);
     assert_ne!(
         mixed_physics.models[1].solids,

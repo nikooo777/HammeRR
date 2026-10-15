@@ -146,7 +146,7 @@ impl Session {
         }));
         json!({"snapshot":self.clipboard_stamp(),"payload":payload,"preview":preview,"can_restore_cut_names":self.can_restore_cut_names(),
             "native_format":"UTF-8 VMF text; system access is explicit and may be unavailable on headless displays. Private Hammer clipboard formats are unsupported.",
-            "limits":{"bytes":transfer::MAX_BYTES,"objects":map_core::repeat::MAX_SOURCES,"objects_including_owned_brushes":map_core::repeat::MAX_OBJECTS,"sides":map_core::repeat::MAX_SIDES,"groups":transfer::MAX_GROUPS,"depth":transfer::MAX_DEPTH,"nodes":transfer::MAX_NODES},
+            "limits":{"bytes":transfer::MAX_BYTES,"objects":map_core::repeat::MAX_SOURCES,"objects_including_owned_brushes":map_core::repeat::MAX_OBJECTS,"sides":map_core::repeat::MAX_SIDES,"groups":transfer::MAX_GROUPS,"layers":transfer::MAX_GROUPS,"depth":transfer::MAX_DEPTH,"nodes":transfer::MAX_NODES},
             "reference_policy":"Unique names and exact internal FGD/I/O/parent links remap. External links require explicit keep-by-name. Uncertain/script-driven links, numeric references, saved partitions reject. Opaque metadata remains verbatim.",
         })
     }

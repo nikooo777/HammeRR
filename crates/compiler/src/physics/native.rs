@@ -489,7 +489,8 @@ pub(super) fn write(request: &Request, directory: &Path, output: &Path) -> Resul
                     body.contents
                 ));
             } else {
-                keys.push_str(&format!("solid {{\n\"index\" \"{index}\"\n\"mass\" \"1\"\n\"surfaceprop\" \"default\"\n\"volume\" \"{volume}\"\n}}\n"));
+                let property = body.surface_property.as_deref().unwrap_or("default");
+                keys.push_str(&format!("solid {{\n\"index\" \"{index}\"\n\"mass\" \"1\"\n\"surfaceprop\" \"{property}\"\n\"volume\" \"{volume}\"\n}}\n"));
             }
             solids.push(solid);
         }

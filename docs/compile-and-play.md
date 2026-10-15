@@ -270,7 +270,7 @@ With **CS:S engine physics**:
 
 - Collision bodies are built for the world, player and NPC clips, brush entities (around their pivots), water and terrain. Static props use the collision that ships with their models.
 - The helper checks the collision library's version and the generated geometry, limits its memory and work, and stops after 30 seconds or when the build is cancelled. A missing or unrecognized library fails the build clearly and keeps the previous output. Editing never needs the library.
-- World brush faces and terrain triangles keep the material's `$surfaceprop` for physics contact. Missing properties use **default**; brush entities keep default body surfaces and a one-kilogram base mass.
+- World brush faces and terrain triangles keep the material's `$surfaceprop` for physics contact. Missing properties use **default**. Brush entities retain per-face contact properties through their native collision triangles; generated base masses remain one kilogram.
 
 1. Select the world or terrain faces under **Selection → Faces · materials & textures**.
 2. Click **Browse materials…**, choose a material with the desired surface property, then **Use material** and **Apply**. **Cancel** keeps the previous material.
@@ -279,7 +279,9 @@ With **CS:S engine physics**:
 
 ![Physics build details with the surface-property count](images/build-status.png)
 
-Limits: at most 127 world surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings are checked before and after native serialization. This preserves the primary `$surfaceprop`; blended secondary properties are unfinished. Material density, compiler-derived brush-model masses and model surface assignments, liquids in detail brushes or brush entities, and broader moving-body contact remain unfinished.
+For brush entities, use **Faces · materials & textures** to assign different physical surfaces to individual faces, or switch **Selection** to **Objects** and apply one material across the entity. A model with a single property also records that property on its native body.
+
+Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings are checked before and after native serialization. This preserves the primary `$surfaceprop`; blended secondary properties are unfinished. Blended secondary surface properties, material density, compiler-derived brush-model masses, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
 
 ### Brush entities and pivots
 
@@ -298,7 +300,7 @@ These fail with a diagnostic: more than one origin brush in an entity, origin br
    and **Close** inputs. **SetPosition** accepts 0–1, and **SetSpeed** changes
    speed. The platform's **OnFullyOpen** and **OnFullyClosed** outputs can
    drive other entities.
-4. Choose **Engine physics** in **Build settings…**, compile, then run the map.
+4. Choose **CS:S engine physics** under **Physics bodies** in **Build settings…**, compile, then run the map.
    A `prop_physics` placed above the platform can ride it up and down. Choose
    its **World Model** with **Browse…**.
 

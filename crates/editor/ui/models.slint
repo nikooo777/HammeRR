@@ -8,6 +8,7 @@ export component ModelWindow inherits Window {
     in property <string> geometry;
     in property <string> skin-info;
     in property <string> bounds;
+    in property <string> pose-info;
     in property <[string]> materials;
     in property <string> message;
     callback reload();
@@ -23,7 +24,7 @@ export component ModelWindow inherits Window {
             Text {text:root.bounds;wrap:word-wrap;color:#b6bac3;}
             Text {text:"Skin materials";}
             ListView {vertical-stretch:1;for material in root.materials:Text {text:material;wrap:word-wrap;color:#b6bac3;}}
-            Text {text:"Static model preview · body 0 · LOD 0. Animation, other bodygroups and scaling remain planned.";wrap:word-wrap;font-size:12px;color:#b6bac3;}
+            Text {text:root.pose-info;wrap:word-wrap;font-size:12px;color:#b6bac3;}
             Text {text:root.message;wrap:word-wrap;color:#a7adb8;}
             HorizontalLayout {
                 spacing:8px;

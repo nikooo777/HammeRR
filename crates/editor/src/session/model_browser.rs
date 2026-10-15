@@ -217,7 +217,7 @@ impl Session {
         aspect: f32,
     ) -> Result<(SceneMesh, MaterialLibrary, Camera), String> {
         let asset = self.models.borrow_mut().get(&self.game, path)?;
-        let mut entity = Entity::new(1, "prop_static");
+        let mut entity = Entity::new(2, "prop_dynamic");
         entity.properties.set("origin", "0 0 0");
         entity.properties.set("skin", skin.to_string());
         let instance = Instance::new(&entity, asset)?;

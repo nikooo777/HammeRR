@@ -95,7 +95,7 @@ export component ModelBrowserWindow inherits Window {
                 spacing:8px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}
                 Rectangle {horizontal-stretch:1;}
-                Text {text:"Static models · body 0 · scale 1";vertical-alignment:center;color:#8e99aa;font-size:12px;}
+                Text {text:"Body 0 · scale 1";vertical-alignment:center;color:#8e99aa;font-size:12px;}
                 Button {text:"Use model";enabled:root.can-apply;clicked=>{root.apply();}}
             }
         }

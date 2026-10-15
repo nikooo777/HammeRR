@@ -2,7 +2,11 @@ use std::io;
 
 use super::{MAX_VERTICES, Vertex, invalid, reader::Reader};
 
-pub fn parse(data: &[u8], checksum: i32) -> io::Result<Vec<Vertex>> {
+pub fn parse(
+    data: &[u8],
+    checksum: i32,
+    reference: Option<&[glam::DAffine3]>,
+) -> io::Result<Vec<Vertex>> {
     let reader = Reader::new(data, 64)?;
     if reader.bytes(0, 4)? != b"IDSV" || reader.int(4)? != 4 || reader.int(8)? != checksum {
         return Err(invalid(
@@ -66,6 +70,12 @@ pub fn parse(data: &[u8], checksum: i32) -> io::Result<Vec<Vertex>> {
             if !length.is_finite() || length < 1e-12 {
                 return Err(invalid("model vertex normals must be nonzero"));
             }
+            let (position, normal) = match reference {
+                Some(transforms) => {
+                    super::bones::vertex(&reader, offset, transforms, position, normal)?
+                }
+                None => (position, normal),
+            };
             Ok(Vertex {
                 position,
                 normal,

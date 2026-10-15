@@ -9,6 +9,7 @@ fn asset() -> Arc<Asset> {
         path: "models/test.mdl".into(),
         materials: vec!["dev/test".into()],
         model: Model {
+            reference_bones: 0,
             header: ModelHeader {
                 checksum: 0,
                 flags: 16,

@@ -151,9 +151,9 @@ fn preview(
                     );
                     window.set_preview(slint::Image::from_rgba8(buffer));
                     window.set_has_preview(true);
-                    window.set_message(
-                        "Preview only. Use model applies the model and skin together.".into(),
-                    );
+                    window.set_message(if asset["pose"] == "reference" {
+                        "Reference pose; animation sequences are not played. Use model applies the model and skin together.".into()
+                    } else {"Preview only. Use model applies the model and skin together.".into()});
                 }
                 Err(error) => window.set_message(error.into()),
             }
@@ -412,5 +412,44 @@ mod tests {
         controller.window.invoke_cancel();
         assert!(lock(&shared).model_choice(replacement).is_ok());
         assert_eq!(lock(&shared).document().vmf(), &source);
+        let ObjectId::Entity(dynamic) = lock(&shared)
+            .create_entity(
+                Actor::User,
+                "prop_dynamic",
+                Some(DVec3::ZERO),
+                BTreeMap::from([("model".into(), "".into())]),
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let before = lock(&shared).document().vmf().clone();
+        controller.initialize(&mut lock(&shared), dynamic).unwrap();
+        controller.window.set_query("ct_urban".into());
+        controller.window.invoke_search();
+        let group = controller
+            .catalog
+            .borrow()
+            .groups
+            .iter()
+            .position(|group| group == "folder:models/player")
+            .unwrap();
+        controller.window.set_group_index(group as i32);
+        controller.window.invoke_group_changed();
+        assert_eq!(controller.window.get_rows().row_count(), 1);
+        controller
+            .window
+            .invoke_choose("models/player/ct_urban.mdl".into());
+        assert!(
+            controller.window.get_can_apply(),
+            "{}",
+            controller.window.get_message()
+        );
+        assert!(controller.window.get_has_preview());
+        assert!(controller.window.get_message().contains("Reference pose"));
+        controller.window.show().unwrap();
+        crate::tests::save_ui_snapshot(controller.window.window(), "reference-model-browser");
+        controller.window.invoke_cancel();
+        assert_eq!(lock(&shared).document().vmf(), &before);
     }
 }

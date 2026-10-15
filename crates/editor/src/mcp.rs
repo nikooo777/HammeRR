@@ -4661,7 +4661,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect a static-prop MDL44/48 mesh with VVD4/VTX7 LOD0 geometry, selected skin family, materials, counts and local bounds. CPU-only and read-only; does not initialize graphics or edit source. Unsupported/missing/malformed assets return a recoverable error. UI: model entity → Model details….",
+        description = "Inspect an MDL44/48 mesh with VVD4/VTX7 LOD0 geometry, selected skin, materials, counts and bounds. Static meshes and checked reference poses are supported; pose/reference_bones distinguish them. CPU-only and read-only; does not initialize graphics or edit source. Unsupported/missing/malformed assets return a recoverable error. UI: model entity → Model details….",
         annotations(read_only_hint = true)
     )]
     fn inspect_model(&self, Parameters(args): Parameters<InspectModelArgs>) -> ToolResult {
@@ -4672,7 +4672,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the selected/explicit model entity's shared viewport asset, skin and transformed bounds, displayed state and fallback reason. Reads the rendered draft, preserving source/history. Static-prop models, body0, scale1 and LOD0 are currently supported. UI: Model details….",
+        description = "Inspect the selected/explicit model entity's shared viewport asset, skin and transformed bounds, displayed state and fallback reason. Reads the rendered draft, preserving source/history. Static meshes and checked reference poses, body0, scale1 and LOD0 are currently supported. UI: Model details….",
         annotations(read_only_hint = true)
     )]
     fn inspect_entity_model(&self, Parameters(args): Parameters<EntityArgs>) -> ToolResult {
@@ -4717,7 +4717,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Choose a supported static model and zero-based skin in an owned model-choice draft. Validates the captured entity pose, asset and skin without changing source/history/camera. Returns CPU asset details; render_model_preview provides the browser image."
+        description = "Choose a supported model and zero-based skin in an owned model-choice draft. Validates the captured entity pose, asset and skin without changing source/history/camera. Returns CPU asset details; render_model_preview provides the browser image."
     )]
     fn choose_model(&self, Parameters(args): Parameters<ChooseModelArgs>) -> ToolResult {
         run(|| {
@@ -4755,7 +4755,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Render the browser's isolated model/skin preview as a PNG using the same Session scene, camera framing and renderer as the UI. Does not replace the active map, selection, camera or render_view cache. GPU initializes lazily; CPU inspection works without it. Static body0/LOD0/scale1; 64–1024 pixels per side.",
+        description = "Render the browser's isolated model/skin preview as a PNG using the same Session scene, camera framing and renderer as the UI. Does not replace the active map, selection, camera or render_view cache. GPU initializes lazily; CPU inspection works without it. Static meshes or reference poses, body0/LOD0/scale1; 64–1024 pixels per side.",
         annotations(read_only_hint = true)
     )]
     fn render_model_preview(&self, Parameters(args): Parameters<RenderModelArgs>) -> ToolResult {

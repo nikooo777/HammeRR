@@ -173,6 +173,115 @@ fn vvd_fixups_restore_mesh_order_and_vtx_strips_alternate_winding() {
     assert!(Model::parse(&mdl, &vvd, &vtx).is_err());
 }
 
+fn reference_fixture() -> [Vec<u8>; 3] {
+    let [mut mdl, mut vvd, vtx] = fixture();
+    mdl.resize(1456, 0);
+    put_int(&mut mdl, 76, 1456);
+    put_int(&mut mdl, 152, 0);
+    put_int(&mut mdl, 156, 2);
+    put_int(&mut mdl, 160, 1024);
+    put_int(&mut mdl, 1028, -1);
+    put_int(&mut mdl, 1244, 0);
+    put_float(&mut mdl, 1056, 2.0);
+    put_float(&mut mdl, 1076, std::f32::consts::FRAC_1_SQRT_2);
+    put_float(&mut mdl, 1080, std::f32::consts::FRAC_1_SQRT_2);
+    put_float(&mut mdl, 1296, 1.0);
+    put_float(&mut mdl, 1276, 3.0);
+    for base in [1024, 1240] {
+        for offset in [96, 116, 136] {
+            put_float(&mut mdl, base + offset, 1.0);
+        }
+    }
+    for vertex in 0..4 {
+        let base = 64 + vertex * 48;
+        put_float(&mut vvd, base, 0.25);
+        put_float(&mut vvd, base + 4, 0.75);
+        vvd[base + 12] = 0;
+        vvd[base + 13] = 1;
+        vvd[base + 15] = 2;
+    }
+    [mdl, vvd, vtx]
+}
+
+#[test]
+fn reference_models_compose_parent_poses_inverse_binds_and_weighted_vertices() {
+    let [mut mdl, vvd, vtx] = reference_fixture();
+    let model = Model::parse(&mdl, &vvd, &vtx).unwrap();
+    assert_eq!(model.reference_bones, 2);
+    assert!(!model.header.is_static_prop());
+    for (vertex, expected) in model.vertices.iter().zip([
+        [-0.25, 0.0, 0.0],
+        [-0.25, 1.0, 0.0],
+        [-1.25, 1.0, 0.0],
+        [-1.25, 0.0, 0.0],
+    ]) {
+        assert!(
+            glam::Vec3::from_array(vertex.position)
+                .abs_diff_eq(glam::Vec3::from_array(expected), 1e-5)
+        );
+        assert_eq!(vertex.normal, [0.0, 0.0, 1.0]);
+    }
+    for (base, translation) in [(1024, 2.0), (1240, -1.0)] {
+        for offset in 96..144 {
+            mdl[base + offset] = 0;
+        }
+        put_float(&mut mdl, base + 100, 1.0);
+        put_float(&mut mdl, base + 112, -1.0);
+        put_float(&mut mdl, base + 136, 1.0);
+        put_float(&mut mdl, base + 124, translation);
+    }
+    let restored = Model::parse(&mdl, &vvd, &vtx).unwrap();
+    let original = fixture();
+    let original = Model::parse(&original[0], &original[1], &original[2]).unwrap();
+    for (a, b) in restored.vertices.iter().zip(original.vertices) {
+        assert!(
+            glam::Vec3::from_array(a.position)
+                .abs_diff_eq(glam::Vec3::from_array(b.position), 1e-5)
+        );
+    }
+}
+
+#[test]
+fn reference_models_reject_bad_hierarchies_transforms_and_vertex_weights() {
+    let [mdl, mut vvd, vtx] = reference_fixture();
+    vvd[79] = 1;
+    put_float(&mut vvd, 64, 1.0 + f32::EPSILON);
+    assert!(Model::parse(&mdl, &vvd, &vtx).is_ok());
+    for (file, offset, value) in [
+        (0, 156, 257),
+        (0, 1028, 0),
+        (0, 1028, 2),
+        (1, 76, 255),
+        (1, 79, 4),
+    ] {
+        let mut files = reference_fixture();
+        if file == 1 {
+            files[file][offset] = value as u8;
+        } else {
+            put_int(&mut files[file], offset, value);
+        }
+        assert!(
+            Model::parse(&files[0], &files[1], &files[2]).is_err(),
+            "file{file} offset{offset}"
+        );
+    }
+    for (file, offset, value) in [
+        (0, 1076, 0.0),
+        (0, 1120, f32::NAN),
+        (0, 1056, 1e20),
+        (1, 64, -0.5),
+        (1, 64, 0.0),
+        (1, 64, 1.5),
+    ] {
+        let mut files = reference_fixture();
+        put_float(&mut files[file], offset, value);
+        assert!(
+            Model::parse(&files[0], &files[1], &files[2]).is_err(),
+            "file{file} offset{offset}"
+        );
+    }
+}
+
 #[test]
 fn repeated_degenerate_strips_cannot_bypass_the_traversal_budget() {
     let [mdl, vvd, mut vtx] = fixture();

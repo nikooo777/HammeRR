@@ -83,6 +83,7 @@ fn path_key(path: &Path) -> String {
 
 impl Session {
     pub fn configure_recovery(&mut self, directory: Result<PathBuf, String>) {
+        self.configure_prefabs(directory.clone());
         self.configure_build_recipes(directory.clone());
         self.configure_material_favorites(directory.clone());
         self.configure_recent_maps(crate::recent_maps::directory(directory.clone()));

@@ -13,6 +13,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Selecting](selection.md) | Click, area, volume and paint selection |
 | [Cut, copy and paste](clipboard.md) | Detached object transfer, placement previews, native VMF text and safe references |
+| [Prefab library](prefabs.md) | Save, search and place reusable brush/entity assemblies |
 | [Layers](layers.md) | Nested colored layers, membership, scoped selection and map visibility |
 | [Object groups](groups.md) | Nested groups, membership editing, group selection and temporary bypass |
 | [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, mirror, shear, brush shapes |

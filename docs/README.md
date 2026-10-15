@@ -18,7 +18,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Object groups](groups.md) | Nested groups, membership editing, group selection and temporary bypass |
 | [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, mirror, shear, brush shapes |
 | [Polygon brushes](polygon-brushes.md) | Drawing convex or concave outlines and extruding editable brushes |
-| [Surface placement](placement.md) | Dropping groups to floors or ceilings, picking targets, normal alignment and offsets |
+| [Surface placement](placement.md) | Floor/ceiling placement, picked-surface alignment and real brush corner snapping |
 | [Repeated placement](repeated-placement.md) | Previewing translation, rotation and brush-scale arrays with copied names and internal links |
 | [Hollow, carve and clip](brush-tools.md) | Turning solids into rooms, subtracting shapes, cutting brushes with a plane |
 | [Merge brushes](merge.md) | Joining brushes whose combined volume is convex, with retained outer face settings |

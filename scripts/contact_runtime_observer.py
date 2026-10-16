@@ -158,6 +158,18 @@ def verify(output, release_mode):
             len(grouped.get("level_init", [])) == len(grouped.get("activate", [])) == 1
         )
         order = [row["event"] for row in records]
+        initial_shutdowns = grouped.get("initial_shutdown", [])
+        assert len(initial_shutdowns) <= 1
+        if initial_shutdowns:
+            initial = initial_shutdowns[0]
+            assert initial["frame"] == initial["sample"] == 0
+            assert initial["before_target_init"] is True
+            assert (
+                order.index("loaded")
+                < order.index("initial_shutdown")
+                < order.index("level_init")
+            )
+        report["initial_shutdowns_before_tracking"] = len(initial_shutdowns)
         assert (
             order.index("start")
             < order.index("loaded")

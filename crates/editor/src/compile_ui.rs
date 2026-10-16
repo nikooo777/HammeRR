@@ -8,6 +8,7 @@ use crate::runtime::{SharedSession, lock};
 use crate::session::{Actor, Session};
 
 mod capture;
+mod sky_packing;
 
 pub struct Controller {
     pub window: CompileWindow,
@@ -220,6 +221,7 @@ fn recipe_action(
         Err(error) => window.set_message(error.into()),
     }
     refresh_recipes(window, session, form);
+    sky_packing::refresh(window, session);
 }
 
 impl Controller {
@@ -228,6 +230,7 @@ impl Controller {
         let token = Rc::new(Cell::new(None));
         let recipes = Rc::new(RefCell::new(RecipeForm::default()));
         let capture = capture::bind(&window, shared);
+        sky_packing::bind(&window, shared);
         window.on_choose_recipe({
             let (shared, window, recipes) = (shared.clone(), window.as_weak(), recipes.clone());
             move |index| choose_recipe(&window.unwrap(), &lock(&shared), &recipes, index)
@@ -518,6 +521,7 @@ impl Controller {
         self.window.set_cancellable(session.compile_cancellable());
         let status = session.compile_status();
         let settings = &status["settings"];
+        sky_packing::refresh(&self.window, session);
         self.window
             .set_generate_reflections(settings["generate_reflections"] == true);
         self.window.set_reflection_description(
@@ -643,6 +647,7 @@ impl Controller {
             ""
         };
         let hdr = hdr_lighting_details(&result["stats"]);
+        let packed_sky = sky_packing::details(&result["stats"]);
         let samples = result["stats"]["cubemap_samples"]
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))
@@ -947,7 +952,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{reflections}{props}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{packed_sky}{samples}{reflections}{props}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

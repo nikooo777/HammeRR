@@ -399,7 +399,7 @@ reusing it.
 cargo test -p editor-core --features mcp --lib linked_path
 cargo test -p editor-core --features mcp --lib session::linked_path::picking::tests
 cargo test -p editor --bin editor linked_path_window_
-cargo test -p editor --bin editor row_position_pick_updates_owned_preview_before_one_undo_apply
+cargo test -p editor --bin editor row_surface_pick_cancel_miss_and_apply_share_the_owned_session_preview
 python3 -B scripts/validate_linked_paths.py --binary target/debug/hammerr-headless --output /tmp/hammerr-linked-paths-check
 python3 -B scripts/validate_linked_path_picking.py --binary target/debug/hammerr-headless --output /tmp/hammerr-linked-path-picking-check
 ```
@@ -433,7 +433,8 @@ unrelated staged property draft. Intentional map/definition/visibility changes
 are checked separately from that immutable baseline. `results.json` records
 surface receipts, actual PNG hashes/cameras and the source hash; no train
 movement or runtime path behavior is inferred.
-The software callback fixture captures `linked-path-surface-positioning.png`.
+The dialog fixtures capture `linked-path.png` and `linked-path-existing.png`.
+The position-pick fixture invokes the shared arm, cancel, hit and Apply callbacks.
 
 ### Generated reflections
 

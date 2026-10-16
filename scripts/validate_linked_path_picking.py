@@ -64,6 +64,7 @@ def validate(client, output):
 
     def assert_hit(before, picked, point, target, label, tolerance=1e-10):
         prior, after = before["preview"], picked["preview"]
+        (output / "latest-hit.json").write_text(json.dumps({"label": label, "expected_point": point, "expected_target": target, "row": after["nodes"][1], "last_pick": after["last_pick"]}, indent=2) + "\n")
         check(after["token"] != prior["token"] and after["picking"] is None, f"{label}: a successful hit finishes the gesture with a fresh token")
         check(close(after["nodes"][1]["origin"], point, tolerance) and close(after["last_pick"]["point"], point, tolerance) and after["last_pick"]["target"] == target and after["last_pick"]["row"] == 1, f"{label}: selected row and surface provenance match the independent expected world point")
         check(after["nodes"][0] == prior["nodes"][0] and after["nodes"][2] == prior["nodes"][2], f"{label}: other rows retain exact IDs, names, positions and links")

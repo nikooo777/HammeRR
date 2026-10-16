@@ -126,6 +126,8 @@ struct Globals {
     fog_color: [f32; 4],
     fog_range: [f32; 4],
     forward: [f32; 4],
+    right: [f32; 4],
+    up: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -256,8 +258,23 @@ struct DrawBatch {
     sky: bool,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct IconVertex {
+    center: [f32; 3],
+    offset: [f32; 2],
+    uv: [f32; 2],
+}
+struct IconDraw {
+    center: glam::Vec3,
+    first_vertex: u32,
+    binding: wgpu::BindGroup,
+}
+
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    icons: Option<wgpu::Buffer>,
+    icon_draws: Vec<IconDraw>,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     skybox: Option<wgpu::BindGroup>,
@@ -276,6 +293,9 @@ pub struct Renderer {
     globals_bind_group: wgpu::BindGroup,
     material_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    icon_sampler: wgpu::Sampler,
+    icon_pipeline: wgpu::RenderPipeline,
+    icon_bindings: std::collections::HashMap<u64, wgpu::BindGroup>,
     opaque_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
@@ -298,6 +318,7 @@ impl Renderer {
         self.material_generation = None;
         self.materials.clear();
         self.skyboxes.clear();
+        self.icon_bindings.clear();
     }
 
     pub fn new(ctx: &GpuContext) -> Self {
@@ -361,6 +382,15 @@ impl Renderer {
             ..Default::default()
         });
 
+        let icon_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("FGD icon image edges"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
         let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("2D sky"),
             entries: &[
@@ -463,6 +493,43 @@ impl Renderer {
             &shader,
         );
 
+        let icon_shader = device.create_shader_module(wgpu::include_wgsl!("icons.wgsl"));
+        let icon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("FGD editor icons"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &icon_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<IconVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2],
+                })],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &icon_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: COLOR_FORMAT,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let line_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lines"),
             bind_group_layouts: &[Some(&globals_layout)],
@@ -513,6 +580,9 @@ impl Renderer {
             globals_bind_group,
             material_layout,
             sampler,
+            icon_sampler,
+            icon_pipeline,
+            icon_bindings: std::collections::HashMap::new(),
             opaque_pipeline,
             translucent_pipeline,
             line_pipeline,
@@ -629,7 +699,54 @@ impl Renderer {
                 }
                 self.skyboxes.get(&skybox.name).cloned().flatten()
             });
+        let mut icon_vertices = Vec::new();
+        let mut icon_draws = Vec::new();
+        for instance in mesh.icons.iter().take(crate::icons::MAX_INSTANCES) {
+            let Some(material) = &instance.asset.material else {
+                continue;
+            };
+            let id = instance.asset.id;
+            if !self.icon_bindings.contains_key(&id) {
+                if self.icon_bindings.len() >= crate::icons::MAX_ASSETS {
+                    self.icon_bindings.clear();
+                }
+                let binding =
+                    self.material_bind_group_with_sampler(ctx, material, false, &self.icon_sampler);
+                self.icon_bindings.insert(id, binding);
+            }
+            let half = instance.asset.report.world_size.map(|size| size * 0.5);
+            let first_vertex = icon_vertices.len() as u32;
+            for (offset, uv) in [
+                ([-half[0], half[1]], [0.0, 0.0]),
+                ([-half[0], -half[1]], [0.0, 1.0]),
+                ([half[0], -half[1]], [1.0, 1.0]),
+                ([-half[0], half[1]], [0.0, 0.0]),
+                ([half[0], -half[1]], [1.0, 1.0]),
+                ([half[0], half[1]], [1.0, 0.0]),
+            ] {
+                icon_vertices.push(IconVertex {
+                    center: instance.center,
+                    offset,
+                    uv,
+                });
+            }
+            icon_draws.push(IconDraw {
+                center: instance.center.into(),
+                first_vertex,
+                binding: self.icon_bindings[&id].clone(),
+            });
+        }
+        let icons = (!icon_vertices.is_empty()).then(|| {
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("FGD icon instances"),
+                    contents: bytemuck::cast_slice(&icon_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+        });
         GpuScene {
+            icons,
+            icon_draws,
             skybox,
             vertices,
             indices,
@@ -705,6 +822,16 @@ impl Renderer {
         info: &MaterialInfo,
         editor: bool,
     ) -> wgpu::BindGroup {
+        self.material_bind_group_with_sampler(ctx, info, editor, &self.sampler)
+    }
+
+    fn material_bind_group_with_sampler(
+        &self,
+        ctx: &GpuContext,
+        info: &MaterialInfo,
+        editor: bool,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
         let (white, missing) = (&self.white, &self.missing);
         let untextured = info.base.is_none() && info.helper.is_none() && !info.missing;
         let base = match (info.helper, &info.base) {
@@ -766,7 +893,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -837,6 +964,8 @@ impl Renderer {
             fog_color,
             fog_range,
             forward: camera.forward().extend(0.0).to_array(),
+            right: camera.right().extend(0.0).to_array(),
+            up: camera.up().extend(0.0).to_array(),
             surface_view: [
                 match options.surface {
                     SurfaceView::Textured => 0,
@@ -938,6 +1067,18 @@ impl Renderer {
                         0,
                         0..1,
                     );
+                }
+            }
+            if let Some(icons) = &scene.icons {
+                pass.set_pipeline(&self.icon_pipeline);
+                pass.set_vertex_buffer(0, icons.slice(..));
+                let mut draws = scene.icon_draws.iter().collect::<Vec<_>>();
+                let depth =
+                    |draw: &&IconDraw| (draw.center - camera.position).dot(camera.forward());
+                draws.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+                for draw in draws {
+                    pass.set_bind_group(1, &draw.binding, &[]);
+                    pass.draw(draw.first_vertex..draw.first_vertex + 6, 0..1);
                 }
             }
             if options.surface == SurfaceView::Wireframe {

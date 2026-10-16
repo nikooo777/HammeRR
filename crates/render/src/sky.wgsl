@@ -6,6 +6,8 @@ struct Globals {
     fog_color: vec4<f32>,
     fog_range: vec4<f32>,
     forward: vec4<f32>,
+    right: vec4<f32>,
+    up: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;

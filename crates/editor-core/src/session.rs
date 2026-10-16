@@ -2078,13 +2078,15 @@ impl Session {
             HashSet::new()
         };
         let evaluation = self.working_evaluation(document);
-        let mut mesh = SceneMesh::build_with_helpers_filtered(
+        let icons = self.fgd_icon_instances(document, &evaluation);
+        let mut mesh = SceneMesh::build_with_helpers_and_icons_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
             (&selected, &selected_faces),
             &overlays,
             (&evaluation.models.instances, &evaluation.helpers),
+            &icons,
             |id| evaluation.objects.contains(&id),
         );
         if let Some(points) = self.pointfile_points() {

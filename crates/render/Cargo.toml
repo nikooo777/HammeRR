@@ -12,6 +12,7 @@ map-core.workspace = true
 pollster = "1.0.1"
 png = "0.18.1"
 source-formats.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
 wgpu = "30"
 
 [dev-dependencies]

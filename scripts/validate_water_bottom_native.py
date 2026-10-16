@@ -25,9 +25,12 @@ from validate_visibility import ROOM
 from validate_water_bottom import native_faces, raw_lump
 
 TOP = "hammerr/water_surface"
+SIDE = "hammerr/water_side"
+NEUTRAL_BOTTOM = "hammerr/water_below_neutral"
 BOTTOMS = {"red": "hammerr/water_below_red", "blue": "hammerr/water_below_blue"}
 SURFACE = 160
 VIEWS = {"above": (224, 75), "below": (112, -75), "away": (112, 75)}
+SIDE_VIEWS = {"above": (224, 75), "side": (112, 0), "away": (112, 75)}
 CONTROLS = {
     "sv_lan": 1,
     "mat_hdr_level": 0,
@@ -40,6 +43,7 @@ CONTROLS = {
     "r_drawothermodels": 0,
 }
 REGION = (400, 200, 880, 520)
+MAX_FIXTURE_FACE_VERTICES = 32
 COLLISION_LUMPS = (1, 3, 5, 10, 12, 13, 14, 18, 19, 29, 36, 46)
 WATER_PARAMETERS = """
     %tooltexture hammerr/water_white
@@ -112,6 +116,18 @@ def material_hashes(game):
     }
 
 
+def views(vertical_sides):
+    return SIDE_VIEWS if vertical_sides else VIEWS
+
+
+def observer_script(vertical_sides):
+    if not vertical_sides:
+        return OBSERVER
+    original = 'phase == 1 ? "setang -75 0 0"'
+    assert OBSERVER.count(original) == 1
+    return OBSERVER.replace(original, 'phase == 1 ? "setang 0 -90 0"')
+
+
 def verify_runtime_materials(actual, expected, preservation):
     assert preservation["success"] is True, preservation
     assert {name: actual.get(name) for name in expected} == expected, (
@@ -149,7 +165,10 @@ def assets(args):
     (folder / "water_receiver.vmt").write_text(
         "LightmappedGeneric { $basetexture hammerr/water_white }\n"
     )
-    for name, color in {"red": [255, 3, 3, 255], "blue": [3, 3, 255, 255]}.items():
+    colors = {"red": [255, 3, 3, 255], "blue": [3, 3, 255, 255]}
+    if args.vertical_sides:
+        colors["neutral"] = [32, 32, 32, 255]
+    for name, color in colors.items():
         (folder / f"water_signature_{name}.vtf").write_bytes(
             texture(bytes(color * 32 * 32))
         )
@@ -204,10 +223,123 @@ def check_native(data, bottom):
     }
 
 
+def check_vertical_native(data, bottom):
+    infos, faces, materials = native_faces(data)
+    planes = records(data, 1, "<4fi")
+    water = records(data, 36, "<ffhh")
+    assert len(water) == 1 and water[0][:2] == (SURFACE, 0)
+    selected = {
+        material: [i for i, name in enumerate(materials) if name == material]
+        for material in [TOP, NEUTRAL_BOTTOM, SIDE, bottom]
+    }
+    expected = {
+        TOP: ((0, 0, 1), 320 * 320, False),
+        NEUTRAL_BOTTOM: ((0, 0, -1), 320 * 320, True),
+        SIDE: ((0, -1, 0), 320 * SURFACE, False),
+        bottom: ((0, 1, 0), 320 * SURFACE, True),
+    }
+    leaves = records(data, 10, "<ihh6h4Hhh", expected_version=1)
+    leaf_faces = [index for (index,) in records(data, 16, "<H")]
+    vertices = records(data, 3, "<3f")
+    edges = records(data, 12, "<2H")
+    surfedges = [edge for (edge,) in records(data, 13, "<i")]
+    for material, indices in selected.items():
+        normal, area, wet = expected[material]
+        assert indices and sum(faces[i][13] for i in indices) == area
+        for i in indices:
+            face = faces[i]
+            assert planes[face[0]][:3] == normal and face[7] == 0
+            assert 3 <= face[4] <= MAX_FIXTURE_FACE_VERTICES, (material, face[4])
+            points = [
+                vertices[edges[abs(edge)][int(edge < 0)]]
+                for edge in surfedges[face[3] : face[3] + face[4]]
+            ]
+            axis, coordinate = (1, -160) if material in [SIDE, bottom] else (2, SURFACE)
+            assert all(point[axis] == coordinate for point in points)
+            references = [
+                leaf for leaf in leaves if i in leaf_faces[leaf[9] : leaf[9] + leaf[10]]
+            ]
+            assert references and all(
+                bool(leaf[0] & 32) == wet and (not wet or leaf[13] == 0)
+                for leaf in references
+            )
+    assert water[0][2] in [faces[i][5] for i in selected[TOP]]
+    for original, inward in [(TOP, NEUTRAL_BOTTOM), (SIDE, bottom)]:
+        projection = {tuple(infos[faces[i][5]][:17]) for i in selected[original]}
+        assert len(projection) == 1 and all(
+            tuple(infos[faces[i][5]][:17]) in projection for i in selected[inward]
+        )
+    assert all(other not in materials for other in BOTTOMS.values() if other != bottom)
+    return {
+        "top": TOP,
+        "horizontal_bottom": NEUTRAL_BOTTOM,
+        "side": SIDE,
+        "bottom": bottom,
+        "face_counts": {
+            material: len(indices) for material, indices in selected.items()
+        },
+        "maximum_water_face_vertices": max(
+            faces[i][4] for indices in selected.values() for i in indices
+        ),
+        "water": [list(row) for row in water],
+        "collision_sha256": {
+            str(index): digest(raw_lump(data, index)) for index in COLLISION_LUMPS
+        },
+    }
+
+
+def check_fixture(data, bottom, vertical_sides):
+    return (
+        check_vertical_native(data, bottom)
+        if vertical_sides
+        else check_native(data, bottom)
+    )
+
+
+def check_side_binding_only(cases):
+    assert set(cases) == set(BOTTOMS)
+    data = {name: Path(case["bsp"]).read_bytes() for name, case in cases.items()}
+    assert data["red"][:8] == data["blue"][:8]
+    assert data["red"][1032:1036] == data["blue"][1032:1036]
+    changed = [
+        index
+        for index in range(64)
+        if raw_lump(data["red"], index) != raw_lump(data["blue"], index)
+    ]
+    assert 43 in changed and set(changed) <= {43, 44}, changed
+    normalized = {}
+    for name, bsp in data.items():
+        strings = raw_lump(bsp, 43)
+        names = [
+            strings[offset:].split(b"\0", 1)[0].decode().lower()
+            for (offset,) in records(bsp, 44, "<i")
+        ]
+        assert names.count(BOTTOMS[name]) == 1
+        normalized[name] = [
+            "$selected_vertical_bottom" if material == BOTTOMS[name] else material
+            for material in names
+        ]
+    assert normalized["red"] == normalized["blue"]
+    for index in range(64):
+        start = 8 + index * 16
+        assert (
+            data["red"][start + 8 : start + 16] == data["blue"][start + 8 : start + 16]
+        )
+    return {
+        "changed_lumps": changed,
+        "only_selected_material_name_and_string_offsets_changed": True,
+    }
+
+
 def compile_fixture(args):
     game = assets(args)
     top_file = game / f"materials/{TOP}.vmt"
-    top_file.write_text(top_material(BOTTOMS["red"]))
+    top_file.write_text(
+        top_material(NEUTRAL_BOTTOM if args.vertical_sides else BOTTOMS["red"])
+    )
+    selected_file = game / f"materials/{SIDE}.vmt" if args.vertical_sides else top_file
+    if args.vertical_sides:
+        selected_file.write_text(top_material(BOTTOMS["red"]))
     with patch.dict(
         "os.environ",
         {
@@ -263,6 +395,13 @@ def compile_fixture(args):
             "select_faces", {"faces": [{"solid": brush["solid"], "side": top["side"]}]}
         )
         client.call("edit_faces", {"material": TOP})
+        if args.vertical_sides:
+            side = next(face for face in brush["faces"] if face["normal"] == [0, -1, 0])
+            client.call(
+                "select_faces",
+                {"faces": [{"solid": brush["solid"], "side": side["side"]}]},
+            )
+            client.call("edit_faces", {"material": SIDE})
         client.call(
             "set_compile_settings",
             {"lighting": "direct_ldr", "physics": "engine", "visibility": "fast"},
@@ -276,8 +415,13 @@ def compile_fixture(args):
         camera = client.call("get_camera")
         cases = {}
         for name, bottom in BOTTOMS.items():
-            top_file.write_text(top_material(bottom))
-            for material in [TOP, bottom]:
+            selected_file.write_text(top_material(bottom))
+            preview_materials = (
+                [TOP, bottom, SIDE, NEUTRAL_BOTTOM]
+                if args.vertical_sides
+                else [TOP, bottom]
+            )
+            for material in preview_materials:
                 preview = client.call("preview_material", {"material": material})
                 assert not preview["missing"] and (
                     preview["width"],
@@ -287,7 +431,7 @@ def compile_fixture(args):
             result = client.call("compile_map", {"path": str(bsp)})
             assert result["success"] and result["stats"]["water_regions"] == 1
             assert result["stats"]["physics_fluids"] == 1
-            native = check_native(bsp.read_bytes(), bottom)
+            native = check_fixture(bsp.read_bytes(), bottom, args.vertical_sides)
             fixture = args.output / "material-snapshots" / name
             shutil.copytree(game / "materials", fixture / "materials")
             cases[name] = {
@@ -310,11 +454,11 @@ def compile_fixture(args):
         assert {
             path: value
             for path, value in cases["red"]["materials_sha256"].items()
-            if path != f"materials/{TOP}.vmt"
+            if path != f"materials/{SIDE if args.vertical_sides else TOP}.vmt"
         } == {
             path: value
             for path, value in cases["blue"]["materials_sha256"].items()
-            if path != f"materials/{TOP}.vmt"
+            if path != f"materials/{SIDE if args.vertical_sides else TOP}.vmt"
         }
         report = {
             "cases": cases,
@@ -326,6 +470,9 @@ def compile_fixture(args):
             "collision_preserved": True,
             "signature": "$refracttexture through the Water shader; top/fog/overlay unchanged",
         }
+        if args.vertical_sides:
+            report["vertical_sides"] = True
+            report["binding_only"] = check_side_binding_only(cases)
         (args.output / "compile.json").write_text(json.dumps(report, indent=2) + "\n")
         return report
     finally:
@@ -349,17 +496,19 @@ def view_states(text):
     return [list(map(float, row.split())) for row in rows if len(row.split()) == 11]
 
 
-def valid_pose(row):
+def valid_pose(row, vertical_sides=False):
     phase, _, team, health, wet, x, y, z, pitch, yaw, roll = row
-    if phase not in range(len(VIEWS)):
+    configured = views(vertical_sides)
+    if phase not in range(len(configured)):
         return False
-    eye, angle = list(VIEWS.values())[int(phase)]
+    eye, angle = list(configured.values())[int(phase)]
+    expected_yaw = -90 if vertical_sides and phase == 1 else 0
     return (
         team == 2
         and health == 100
         and max(abs(x), abs(y), abs(z - eye)) < 1
         and abs(pitch - angle) < 1
-        and abs(yaw) < 1
+        and abs(yaw - expected_yaw) < 1
         and abs(roll) < 1
         and (0 <= wet < 3 if phase == 0 else wet == 3)
     )
@@ -424,10 +573,16 @@ def worker(args):
     ) == str(output / "wayland")
     game = runtime.private_game(root, output, args.bsp)
     shutil.copytree(args.fixture_game / "materials", game / "materials")
-    assert (game / f"materials/{TOP}.vmt").read_text() == top_material(BOTTOMS["red"])
-    check_native(args.bsp.read_bytes(), BOTTOMS[args.variant])
+    assert (game / f"materials/{TOP}.vmt").read_text() == top_material(
+        NEUTRAL_BOTTOM if args.vertical_sides else BOTTOMS["red"]
+    )
+    if args.vertical_sides:
+        assert (game / f"materials/{SIDE}.vmt").read_text() == top_material(
+            BOTTOMS["red"]
+        )
+    check_fixture(args.bsp.read_bytes(), BOTTOMS[args.variant], args.vertical_sides)
     (game / "scripts/vscripts/hammerr_observer.nut").write_text(
-        private_observer(OBSERVER)
+        private_observer(observer_script(args.vertical_sides))
     )
     for name in ["listenserver.cfg", "server.cfg"]:
         assert re.search(r"(?m)^toggle sv_lan 1$", (game / "cfg" / name).read_text())
@@ -469,6 +624,7 @@ def worker(args):
         "27589",
     ]
     captures = {}
+    configured = views(args.vertical_sides)
     with (output / "launcher.log").open("w") as log:
         process = subprocess.Popen(
             command,
@@ -480,7 +636,7 @@ def worker(args):
         )
         try:
             deadline = time.monotonic() + 53
-            while time.monotonic() < deadline and len(captures) < len(VIEWS) * 2:
+            while time.monotonic() < deadline and len(captures) < len(configured) * 2:
                 if process.poll() is not None:
                     raise RuntimeError(
                         f"Private CS:S exited {process.returncode}; inspect {output}"
@@ -490,11 +646,11 @@ def worker(args):
                 rows = view_states(text)
                 if (
                     len(rows) >= 3
-                    and all(valid_pose(row) for row in rows[-3:])
+                    and all(valid_pose(row, args.vertical_sides) for row in rows[-3:])
                     and len({row[0] for row in rows[-3:]}) == 1
                 ):
                     row = rows[-1]
-                    phase = list(VIEWS)[int(row[0])]
+                    phase = list(configured)[int(row[0])]
                     previous = captures.get(f"{phase}-0")
                     repeat = 0 if previous is None else 1
                     key = f"{phase}-{repeat}"
@@ -513,7 +669,7 @@ def worker(args):
                         )
                         captures[key] = {"state": row, "controls": values}
                 time.sleep(0.15)
-            assert len(captures) == len(VIEWS) * 2, {
+            assert len(captures) == len(configured) * 2, {
                 "captured": captures,
                 "last_states": view_states(text)[-10:],
                 "output": str(output),
@@ -605,8 +761,14 @@ def native_cases(args, fixture):
         Path(fixture["cases"]["red"]["fixture_game"]) / "materials",
         common / "materials",
     )
-    (common / f"materials/{TOP}.vmt").write_text(top_material(BOTTOMS["red"]))
+    (common / f"materials/{TOP}.vmt").write_text(
+        top_material(NEUTRAL_BOTTOM if args.vertical_sides else BOTTOMS["red"])
+    )
+    if args.vertical_sides:
+        (common / f"materials/{SIDE}.vmt").write_text(top_material(BOTTOMS["red"]))
+        assert check_side_binding_only(fixture["cases"]) == fixture["binding_only"]
     expected_materials = material_hashes(common)
+    configured = views(args.vertical_sides)
     results = {}
     for name, case in fixture["cases"].items():
         output = args.output / name
@@ -626,22 +788,25 @@ def native_cases(args, fixture):
             "--game-dir",
             str(args.game_dir.resolve()),
         ]
+        if args.vertical_sides:
+            command.append("--vertical-sides")
         runtime.private_compositor(command, output, timeout=63)
         results[name] = json.loads((output / "runtime.json").read_text())
-        assert material_hashes(Path(results[name]["game"])) == results[name][
-            "materials_sha256"
-        ]
+        assert (
+            material_hashes(Path(results[name]["game"]))
+            == results[name]["materials_sha256"]
+        )
         results[name]["cloud_material_imports"] = verify_runtime_materials(
             results[name]["materials_sha256"],
             expected_materials,
             json.loads((output / "private-preservation.json").read_text()),
         )
         results[name]["frames"] = {
-            view: frame_stats(output / f"{view}-0.ppm") for view in VIEWS
+            view: frame_stats(output / f"{view}-0.ppm") for view in configured
         }
         results[name]["repeat"] = {
             view: compare(output / f"{view}-0.ppm", output / f"{view}-1.ppm")
-            for view in VIEWS
+            for view in configured
         }
         assert all(
             row["mean_difference"] < 2 and row["changed"] < row["pixels"] * 0.01
@@ -654,24 +819,28 @@ def native_cases(args, fixture):
             args.output / "red" / f"{view}-0.ppm",
             args.output / "blue" / f"{view}-0.ppm",
         )
-        for view in VIEWS
+        for view in configured
     }
     for view in ["above", "away"]:
         assert (
             differences[view]["mean_difference"] < 2
             and differences[view]["changed"] < differences[view]["pixels"] * 0.01
         ), (view, differences)
-    red, blue = results["red"]["frames"]["below"], results["blue"]["frames"]["below"]
+    signature = "side" if args.vertical_sides else "below"
+    red, blue = (
+        results["red"]["frames"][signature],
+        results["blue"]["frames"][signature],
+    )
     assert red["red"] > red["pixels"] * 0.6 and red["blue"] < red["pixels"] * 0.01, red
     assert (
         blue["blue"] > blue["pixels"] * 0.6 and blue["red"] < blue["pixels"] * 0.01
     ), blue
-    assert differences["below"]["changed"] > differences["below"]["pixels"] * 0.6
-    return {
+    assert differences[signature]["changed"] > differences[signature]["pixels"] * 0.6
+    report = {
         "cases": results,
         "fixture_materials_sha256": expected_materials,
         "runtime_materials_sha256": results["red"]["materials_sha256"],
-        "runtime_top_bottom": BOTTOMS["red"],
+        "runtime_top_bottom": NEUTRAL_BOTTOM if args.vertical_sides else BOTTOMS["red"],
         "runtime_materials_identical": True,
         "roi": REGION,
         "differences": differences,
@@ -679,6 +848,11 @@ def native_cases(args, fixture):
         "above_control_stable": True,
         "submerged_away_control_stable": True,
     }
+    if args.vertical_sides:
+        report["runtime_side_bottom"] = BOTTOMS["red"]
+        report["vertical_side_material_dependent_pixels"] = True
+        report["binding_only"] = fixture["binding_only"]
+    return report
 
 
 def main():
@@ -694,6 +868,11 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument(
+        "--vertical-sides",
+        action="store_true",
+        help="Verify an exposed vertical side with a fixed neutral horizontal underside",
+    )
     parser.add_argument(
         "--reuse-fixture",
         type=Path,
@@ -713,9 +892,16 @@ def main():
         if args.reuse_fixture:
             assert args.runtime, "--reuse-fixture requires --runtime"
             fixture = json.loads(args.reuse_fixture.resolve(strict=True).read_text())
+            assert fixture.get("vertical_sides", False) == args.vertical_sides, (
+                "Reuse requires the same --vertical-sides mode as the compile fixture"
+            )
             for name, case in fixture["cases"].items():
                 assert (
-                    check_native(Path(case["bsp"]).read_bytes(), BOTTOMS[name])
+                    check_fixture(
+                        Path(case["bsp"]).read_bytes(),
+                        BOTTOMS[name],
+                        args.vertical_sides,
+                    )
                     == case["native"]
                 )
         else:

@@ -195,6 +195,57 @@ fn native_base_masses_follow_inherited_density_shell_area_and_mixed_material_dom
 }
 
 #[test]
+fn hidden_model_mass_ignores_omitted_liquid_and_nonsolid_brushes() {
+    let Some(root) = installed_game() else {
+        eprintln!("CS:S not installed; skipping native mass fixture");
+        return;
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let fs = assets(directory.path(), root);
+    std::fs::write(
+        directory.path().join("materials/hidden_bulk.vmt"),
+        "LightmappedGeneric { $surfaceprop bulk %compilenodraw 1 }",
+    )
+    .unwrap();
+    for flag in ["%compilewater", "%compilenonsolid"] {
+        std::fs::write(
+            directory.path().join("materials/omitted.vmt"),
+            format!(
+                "LightmappedGeneric {{ $surfaceprop undefined_omitted %compilenodraw 1 {flag} 1 }}"
+            ),
+        )
+        .unwrap();
+        let mut document = Document::new(common::room());
+        document
+            .edit("hidden model", |tx| {
+                let mut ids = Vec::new();
+                for (x, material) in [(16.0, "omitted"), (80.0, "hidden_bulk")] {
+                    let ObjectId::Solid(id) = edit::create_block(
+                        tx,
+                        DVec3::new(x, 80.0, 16.0),
+                        DVec3::new(x + 32.0, 112.0, 48.0),
+                        material,
+                    )?
+                    else {
+                        unreachable!()
+                    };
+                    ids.push(id);
+                }
+                edit::tie_to_entity(tx, &ids, "func_physbox", &[])?;
+                Ok(())
+            })
+            .unwrap();
+        let bsp = compile(document.vmf(), &fs);
+        let models = bsp.records::<source_formats::bsp::Model>().unwrap();
+        assert_eq!(models[1].face_count, 0);
+        let fields = solid(&bsp);
+        assert_eq!(fields["surfaceprop"], "bulk");
+        assert!((fields["volume"].parse::<f64>().unwrap() - 32768.0).abs() < 0.1);
+        assert!((fields["mass"].parse::<f64>().unwrap() - 536.971313152).abs() < 0.001);
+    }
+}
+
+#[test]
 fn invalid_mass_assets_and_native_surface_aliases_preserve_the_previous_bsp() {
     let Some(root) = installed_game() else {
         eprintln!("CS:S not installed; skipping native mass fixture");

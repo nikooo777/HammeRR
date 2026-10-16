@@ -87,7 +87,7 @@ pub fn prepare(
         return Err("Terrain LOD needs bounded finite grids and valid neighbor pairs".into());
     }
     let mut work = 0usize;
-    let mut consume = |amount| {
+    let mut consume = |amount| -> Result<(), String> {
         consume(amount)?;
         work = work
             .checked_add(amount)

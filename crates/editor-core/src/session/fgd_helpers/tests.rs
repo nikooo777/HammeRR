@@ -529,3 +529,37 @@ fn sphere_scene_budget_and_specialized_precedence_are_reported_deterministically
         assert!(sphere_vertices(&session.build_scene()).is_empty());
     }
 }
+
+#[test]
+fn sphere_model_helpers_remain_suppressed_when_assets_are_missing() {
+    for (helper, declaration, authored) in [
+        ("studio()", "", false),
+        ("studioprop(\"models/missing.mdl\")", "", false),
+        ("model()", "", false),
+        (
+            "",
+            "model(studio) : \"Model\" : \"models/missing.mdl\"",
+            false,
+        ),
+        ("", "", true),
+    ] {
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.set_definitions(Actor::Agent, Catalog::parse(&format!("@PointClass {helper} sphere(radius) = sample [ radius(float) : \"Radius\" : 128 screenspacefade(integer) : \"Screen fade\" : 1 {declaration} ]")).unwrap());
+        let properties = if authored {
+            BTreeMap::from([("model".into(), "models/missing.mdl".into())])
+        } else {
+            BTreeMap::new()
+        };
+        let ObjectId::Entity(id) = session
+            .create_entity(Actor::Agent, "sample", Some(DVec3::ZERO), properties)
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let report = session.entity_helper_report(id).unwrap();
+        assert_eq!(report.spheres[0].state, "ready");
+        assert_eq!(report.spheres[0].suppression_reason, Some("model_helper"));
+        assert!(report.sphere_limits.contains("screen pixels"));
+        assert!(sphere_vertices(&session.build_scene()).is_empty());
+    }
+}

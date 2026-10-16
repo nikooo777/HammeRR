@@ -21,9 +21,11 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 
 1. In the same window, click **Configure capture…**.
 2. Under **CS:S installation override**, enter an installation folder or click **Choose CS:S folder…**. Leave it empty to use the mounted game's base directory when that directory verifies as a supported CS:S installation. A custom source-content folder needs an explicit supported installation when it cannot supply this default.
-3. Under **Steam client override**, enter the existing Steam client root or click **Choose Steam folder…**. Leave it empty to resolve the root from the running Steam client when capture starts.
+3. Under **Steam client override**, enter the existing Steam client root or click **Choose Steam folder…**. Leave it empty to use the unique supported Steam client root validated from client configuration and the CS:S installation's library relationship.
 4. Click **Apply capture runtime** to validate and replace both overrides together. A rejected pair leaves the current configuration and your pending text intact. **Cancel runtime edit** discards the pending text.
 5. Review the resolved installation and readiness message before starting the build. If another actor changes the runtime while the form is open, cancel and reopen the form to review the new pair.
+
+**Close**, Escape and the window close button discard pending runtime edits. A folder chooser opened by a discarded edit cannot update a later edit.
 
 Runtime paths apply to this machine. They are separate from the source-content mounts and stay outside build recipes and recent-map settings. Configuration does not launch a game. Capture uses a private client with `-insecure` and `sv_lan 1`.
 

@@ -7,7 +7,7 @@ use slint::ComponentHandle;
 
 use super::{Actor, CompileWindow, Session, SharedSession, lock};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Form {
     baseline: Rc<RefCell<Option<Value>>>,
     serial: Rc<Cell<u64>>,
@@ -20,13 +20,41 @@ fn configuration(state: &Value) -> Value {
     })
 }
 
+fn accept_folder(
+    window: &CompileWindow,
+    serial: &Cell<u64>,
+    pending: u64,
+    kind: i32,
+    path: &Path,
+) -> bool {
+    if serial.get() != pending || !window.get_capture_editing() || !window.get_capture_editable() {
+        return false;
+    }
+    let path = path.display().to_string().into();
+    match kind {
+        0 => window.set_capture_engine_root(path),
+        1 => window.set_capture_steam_root(path),
+        _ => return false,
+    }
+    true
+}
+
 impl Form {
+    pub(super) fn discard(&self, window: &CompileWindow) {
+        *self.baseline.borrow_mut() = None;
+        self.serial.set(self.serial.get().wrapping_add(1));
+        window.set_capture_editing(false);
+        window.set_capture_current(true);
+        window.set_capture_engine_root("".into());
+        window.set_capture_steam_root("".into());
+    }
+
     pub(super) fn refresh(&self, window: &CompileWindow, session: &Session) {
         let state = session.native_capture_runtime();
         let engine = state["engine_root"].as_str().unwrap_or("Unavailable");
         let steam = state["steam_root"]
             .as_str()
-            .unwrap_or("Automatic from running Steam client at capture");
+            .unwrap_or("Automatic from checked Steam client configuration");
         let readiness = if state["ready"] == true {
             "Capture runtime ready".to_owned()
         } else {
@@ -37,7 +65,15 @@ impl Form {
                     .unwrap_or("Configure a supported CS:S installation")
             )
         };
-        window.set_capture_summary(format!("{readiness}\nCS:S: {engine}\nSteam: {steam}").into());
+        window.set_capture_summary(
+            if state["ready"] == true {
+                "Capture runtime ready. Configure capture… shows its folders."
+            } else {
+                "Capture runtime unavailable. Open Configure capture… for details."
+            }
+            .into(),
+        );
+        window.set_capture_details(format!("{readiness}\nCS:S: {engine}\nSteam: {steam}").into());
         window.set_capture_editable(session.compile_settings()["editable"] == true);
         let baseline = self.baseline.borrow();
         window.set_capture_editing(baseline.is_some());
@@ -129,18 +165,7 @@ pub(super) fn bind(window: &CompileWindow, shared: &SharedSession) -> Form {
                 let Some(window) = window.upgrade() else {
                     return;
                 };
-                if serial.get() != pending
-                    || !window.get_capture_editing()
-                    || !window.get_capture_editable()
-                {
-                    return;
-                }
-                let path = folder.path().display().to_string().into();
-                if kind == 0 {
-                    window.set_capture_engine_root(path);
-                } else {
-                    window.set_capture_steam_root(path);
-                }
+                accept_folder(&window, &serial, pending, kind, folder.path());
             })
             .expect("event loop is running");
         }
@@ -173,13 +198,10 @@ pub(super) fn bind(window: &CompileWindow, shared: &SharedSession) -> Form {
         }
     });
     window.on_cancel_capture_edit({
-        let (window, baseline, serial) =
-            (window.as_weak(), form.baseline.clone(), form.serial.clone());
+        let (window, form) = (window.as_weak(), form.clone());
         move || {
-            *baseline.borrow_mut() = None;
-            serial.set(serial.get().wrapping_add(1));
             let window = window.unwrap();
-            window.set_capture_editing(false);
+            form.discard(&window);
             window.set_message("Runtime edit cancelled. Capture settings are unchanged.".into());
         }
     });
@@ -241,6 +263,46 @@ mod tests {
             .set_capture_steam_root("/missing/hammerr-steam-client".into());
         assert_eq!(lock(&shared).native_capture_runtime(), runtime);
         controller.window.invoke_cancel_capture_edit();
+        for close in 0..3 {
+            controller.window.show().unwrap();
+            controller.refresh(&lock(&shared));
+            controller.window.invoke_begin_capture_edit();
+            let pending = controller.capture.serial.get();
+            controller
+                .window
+                .set_capture_engine_root("/unapplied/closed-install".into());
+            match close {
+                0 => controller.window.invoke_close_dialog(),
+                1 => controller.window.window().dispatch_event(
+                    slint::platform::WindowEvent::KeyPressed {
+                        text: slint::platform::Key::Escape.into(),
+                    },
+                ),
+                _ => controller
+                    .window
+                    .window()
+                    .dispatch_event(slint::platform::WindowEvent::CloseRequested),
+            }
+            assert!(!controller.window.window().is_visible());
+            assert!(!controller.window.get_capture_editing());
+            assert!(controller.capture.baseline.borrow().is_none());
+            assert_ne!(controller.capture.serial.get(), pending);
+            assert!(controller.window.get_capture_engine_root().is_empty());
+            controller.window.show().unwrap();
+            controller.refresh(&lock(&shared));
+            controller.window.invoke_begin_capture_edit();
+            let reviewed = controller.window.get_capture_engine_root();
+            assert!(!accept_folder(
+                &controller.window,
+                &controller.capture.serial,
+                pending,
+                0,
+                Path::new("/stale/chooser-result")
+            ));
+            assert_eq!(controller.window.get_capture_engine_root(), reviewed);
+            assert_eq!(lock(&shared).native_capture_runtime(), runtime);
+            controller.window.invoke_cancel_capture_edit();
+        }
         controller.refresh(&lock(&shared));
         assert!(!controller.window.get_capture_editing());
         assert_eq!(lock(&shared).native_capture_runtime(), runtime);

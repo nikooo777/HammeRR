@@ -36,8 +36,9 @@ def validate(binary, output, gameinfo):
                 "visibility": "detailed",
                 "bounces": 4,
                 "smoothing_angle": 45,
+                "generate_reflections": False,
             },
-            "Final lighting applies all six compiler settings atomically",
+            "Final lighting applies all seven compiler settings atomically",
         )
         client.call("set_compile_settings", {"physics": "none", "bounces": 1})
         check(
@@ -71,7 +72,9 @@ def validate(binary, output, gameinfo):
         )
         after = client.call("get_map_info")
         check(
-            all(after[key] == before[key] for key in ["undo", "redo", "unsaved_changes"]),
+            all(
+                after[key] == before[key] for key in ["undo", "redo", "unsaved_changes"]
+            ),
             "Recipe edits and applying settings preserve map history and dirty state",
         )
         client.call("apply_build_recipe", {"id": "fast"})
@@ -98,8 +101,13 @@ def validate(binary, output, gameinfo):
             "Compile jobs capture the recipe name at start",
         )
         completed = wait_job(client)
-        check(completed["status"] == "completed", "Fast custom recipe builds a sealed room")
-        client.call("rename_build_recipe", {"id": geometry_id, "name": "Geometry review"})
+        check(
+            completed["status"] == "completed",
+            "Fast custom recipe builds a sealed room",
+        )
+        client.call(
+            "rename_build_recipe", {"id": geometry_id, "name": "Geometry review"}
+        )
         status = client.call("get_compile_status")
         check(
             status["job"]["recipe"]["name"] == "Geometry pass"
@@ -108,9 +116,15 @@ def validate(binary, output, gameinfo):
             "Renaming preserves completed job provenance and build freshness",
         )
         client.call("set_compile_settings", {"lighting": "direct_ldr"})
-        check(client.call("get_compile_status")["job"]["stale"], "Different values stale output")
+        check(
+            client.call("get_compile_status")["job"]["stale"],
+            "Different values stale output",
+        )
         client.call("apply_build_recipe", {"id": geometry_id})
-        check(client.call("get_compile_status")["launch"]["ready"], "Restoring recipe values restores freshness")
+        check(
+            client.call("get_compile_status")["launch"]["ready"],
+            "Restoring recipe values restores freshness",
+        )
         client.call("delete_build_recipe", {"id": geometry_id})
         status = client.call("get_compile_status")
         check(
@@ -149,7 +163,9 @@ def validate(binary, output, gameinfo):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate named build recipes through isolated headless MCP sessions.")
+    parser = argparse.ArgumentParser(
+        description="Validate named build recipes through isolated headless MCP sessions."
+    )
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--gameinfo", type=Path)

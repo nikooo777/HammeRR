@@ -487,9 +487,20 @@ impl Controller {
             }
         });
         window.on_close_dialog({
-            let window = window.as_weak();
+            let (window, capture) = (window.as_weak(), capture.clone());
             move || {
-                let _ = window.unwrap().hide();
+                let window = window.unwrap();
+                capture.discard(&window);
+                let _ = window.hide();
+            }
+        });
+        window.window().on_close_requested({
+            let (window, capture) = (window.as_weak(), capture.clone());
+            move || {
+                if let Some(window) = window.upgrade() {
+                    capture.discard(&window);
+                }
+                slint::CloseRequestResponse::HideWindow
             }
         });
         Ok(Self {
@@ -636,6 +647,19 @@ impl Controller {
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))
             .unwrap_or_default();
+        let reflections = if job["settings"]["generate_reflections"] == true {
+            format!(
+                "\nLDR reflection capture: {} / {} samples",
+                job["reflections"]["samples_complete"]
+                    .as_u64()
+                    .unwrap_or_default(),
+                job["reflections"]["samples_total"]
+                    .as_u64()
+                    .unwrap_or_default()
+            )
+        } else {
+            String::new()
+        };
         let props = result["stats"]["static_props"]
             .as_u64()
             .filter(|&count| count > 0)
@@ -900,7 +924,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{reflections}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

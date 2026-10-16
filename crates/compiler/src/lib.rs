@@ -676,13 +676,14 @@ fn build(
     } else {
         retention
     };
-    let mut faces = faces::build_with_smoothing(
+    let mut faces = faces::build_with_water_regions(
         &map,
         &tree,
         0,
         control,
         world_retention,
         &mut retained_points,
+        &water.leaves,
     )?;
     faces.extend(map.terrain_faces(&tree, &mut output.report, control)?);
     if output.report.has_errors() {

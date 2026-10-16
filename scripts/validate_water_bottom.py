@@ -12,6 +12,9 @@ from validate_visibility import ROOM
 TOP = "audit/water_top"
 BOTTOM = "audit/water_below"
 TOP_TEXT = "Patch { include materials/audit/water_base.vmt }\n"
+SIDE = "audit/water_side"
+SIDE_BOTTOM = "audit/water_side_below"
+SIDE_TEXT = "Water { $abovewater 1 $bottommaterial audit/water_side_below }\n"
 
 
 def fixture(output):
@@ -25,6 +28,9 @@ def fixture(output):
         "water_top": TOP_TEXT,
         "water_below": "Patch { include materials/audit/water_below_base.vmt replace { $abovewater 0 } }",
         "water_below_base": "Water { $abovewater 1 }",
+        "water_other_top": TOP_TEXT,
+        "water_side": SIDE_TEXT,
+        "water_side_below": "Water { $abovewater 0 }",
     }.items():
         (materials / f"{name}.vmt").write_text(text)
     gameinfo = game / "gameinfo.txt"
@@ -52,7 +58,7 @@ def native_faces(data):
     return infos, faces, materials
 
 
-def validate(client, output, materials):
+def validate(client, output, materials, vertical_sides=False):
     checks = []
 
     def check(condition, label):
@@ -233,12 +239,155 @@ def validate(client, output, materials):
         and client.call("get_map_info")["undo"] == history,
         "Rejected builds and asset repair preserve authored water and history",
     )
+    if vertical_sides:
+        checks.extend(validate_vertical_sides(client, output, materials))
+    return checks
+
+
+def validate_vertical_sides(client, output, materials):
+    checks = []
+
+    def check(condition, label):
+        assert condition, label
+        checks.append(label)
+
+    client.call("new_map", {"discard_changes": True})
+    for mins, maxs in ROOM:
+        client.call(
+            "create_block", {"mins": mins, "maxs": maxs, "material": "audit/solid"}
+        )
+    client.call(
+        "create_entity", {"classname": "info_player_terrorist", "origin": [-192, 0, 8]}
+    )
+    client.call(
+        "create_entity",
+        {"classname": "info_player_counterterrorist", "origin": [192, 0, 8]},
+    )
+    pools = []
+    for mins, maxs, material, inner in [
+        ([-128, -128, 0], [0, 128, 64], TOP, [1, 0, 0]),
+        ([0, -128, 0], [128, 128, 64], "audit/water_other_top", [-1, 0, 0]),
+    ]:
+        pool = client.call(
+            "create_block", {"mins": mins, "maxs": maxs, "material": "audit/nodraw"}
+        )["id"]
+        pools.append(pool)
+        brush = detail(client, [pool])[0]
+        for normals, chosen in [([[0, 0, 1]], material), ([[0, -1, 0], inner], SIDE)]:
+            selected = [
+                {"solid": brush["solid"], "side": face["side"]}
+                for face in brush["faces"]
+                if face["normal"] in normals
+            ]
+            assert len(selected) == len(normals)
+            client.call("select_faces", {"faces": selected})
+            client.call("edit_faces", {"material": chosen})
+    client.call(
+        "set_compile_settings",
+        {"lighting": "fullbright", "physics": "none", "visibility": "fast"},
+    )
+    source = output / "vertical-source.vmf"
+    client.call("save_map", {"path": str(source)})
+    saved = source.read_bytes()
+    before = detail(client, pools)
+    history = client.call("get_map_info")["undo"]
+    camera = client.call("get_camera")
+    destination = output / "water-vertical.bsp"
+    result = client.call("compile_map", {"path": str(destination)})
+    check(
+        result["success"] and result["stats"]["water_regions"] == 2,
+        "MCP-authored vertical water preserves two top-material regions",
+    )
+    data = destination.read_bytes()
+    infos, faces, names = native_faces(data)
+    inward = [i for i, name in enumerate(names) if name == SIDE_BOTTOM]
+    outward = [i for i, name in enumerate(names) if name == SIDE]
+    planes = records(data, 1, "<4fi")
+    check(
+        bool(inward) and all(planes[faces[i][0]][:3] == (0, 1, 0) for i in inward),
+        "Vertical inward faces exclude the internal wet-to-wet boundary",
+    )
+    check(
+        bool(outward) and all(planes[faces[i][0]][:3] == (0, -1, 0) for i in outward),
+        "Outward vertical faces exclude the internal wet-to-wet boundary",
+    )
+    check(
+        all(
+            len({faces[i][7] for i in selected}) == 2
+            and all(
+                sum(faces[i][13] for i in selected if faces[i][7] == region) == 128 * 64
+                for region in range(2)
+            )
+            for selected in [inward, outward]
+        ),
+        "Both directions retain their own wet region before merging",
+    )
+    side_infos = {
+        tuple(infos[faces[i][5]][:17])
+        for i in outward
+        if planes[faces[i][0]][:3] == (0, -1, 0)
+    }
+    check(
+        len(side_infos) == 1
+        and all(tuple(infos[faces[i][5]][:17]) in side_infos for i in inward),
+        "Vertical faces use the side material's own projection and flags",
+    )
+    leaves = records(data, 10, "<ihh6h4Hhh", expected_version=1)
+    leaf_faces = [index for (index,) in records(data, 16, "<H")]
+    for selected, wet in [(inward, True), (outward, False)]:
+        for i in selected:
+            references = [
+                leaf for leaf in leaves if i in leaf_faces[leaf[9] : leaf[9] + leaf[10]]
+            ]
+            check(
+                bool(references)
+                and all(
+                    bool(leaf[0] & 32) == wet and (not wet or leaf[13] == faces[i][7])
+                    for leaf in references
+                ),
+                "Paired vertical faces retain dry/outside and checked submerged references",
+            )
+    background = output / "water-vertical-background.bsp"
+    client.call("start_compile", {"path": str(background)})
+    check(
+        wait_job(client)["status"] == "completed" and background.read_bytes() == data,
+        "Background vertical water compilation matches synchronous bytes",
+    )
+    side_file = materials / "water_side.vmt"
+    side_file.write_text("Water { $abovewater 1 $bottommaterial audit/absent }\n")
+    rejected = client.call("compile_map", {"path": str(destination)}, error=True)
+    rejected = json.loads(rejected["content"][0]["text"])
+    check(
+        not rejected["success"]
+        and destination.read_bytes() == data
+        and any(
+            row["level"] == "error"
+            and "$bottommaterial" in row["message"]
+            and row["object"] in pools
+            for row in rejected["diagnostics"]
+        ),
+        "A bad side-specific bottom asset fails atomically at its authored water solid",
+    )
+    side_file.write_text(SIDE_TEXT)
+    check(
+        client.call("compile_map", {"path": str(destination)})["success"]
+        and destination.read_bytes() == data,
+        "Repairing the side asset restores deterministic output",
+    )
+    check(
+        source.read_bytes() == saved
+        and detail(client, pools) == before
+        and client.call("get_map_info")["undo"] == history
+        and client.call("get_camera") == camera,
+        "Vertical builds and rejected assets preserve authored source, history, selection data and camera",
+    )
     return checks
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument("--vertical-sides", action="store_true")
     parser.add_argument(
         "--output", type=Path, default=Path("/tmp/hammerr-water-bottom")
     )
@@ -255,7 +404,7 @@ def main():
     ):
         client = Client(None, args.binary.resolve(), args.output, gameinfo=gameinfo)
     try:
-        checks = validate(client, args.output, materials)
+        checks = validate(client, args.output, materials, args.vertical_sides)
         report = {"checks": len(checks), "passed": checks, "desktop_input": False}
         (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({"checks": len(checks), "output": str(args.output)}))

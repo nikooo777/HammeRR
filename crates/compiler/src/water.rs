@@ -5,13 +5,35 @@ use source_formats::bsp::{self, contents, surf};
 use source_formats::vmt;
 
 use crate::faces::Face;
-use crate::map::Map;
+use crate::map::{Map, MapBrush};
 use crate::portals::Portal;
 use crate::tree::Tree;
 use crate::{Control, Diagnostic, Report};
 
 const LIQUID_CONTENTS: i32 = contents::WATER | contents::SLIME;
 const SURFACE_EPSILON: f64 = 0.01;
+const NORMAL_EPSILON: f64 = 1e-8;
+
+pub(crate) fn has_horizontal_surface(map: &Map, brush: &MapBrush) -> bool {
+    brush.entity == 0
+        && brush.structural()
+        && brush.contents & LIQUID_CONTENTS == contents::WATER
+        && brush.sides.iter().any(|side| {
+            !side.bevel
+                && side.visible
+                && side.winding.is_some()
+                && map.materials.get(side.material).contents & LIQUID_CONTENTS == contents::WATER
+                && map
+                    .planes
+                    .get(side.plane)
+                    .normal
+                    .abs_diff_eq(DVec3::Z, NORMAL_EPSILON)
+        })
+}
+
+pub(crate) fn inward_surface(normal: DVec3, vertical: bool) -> bool {
+    normal.abs_diff_eq(DVec3::Z, NORMAL_EPSILON) || (vertical && normal.z.abs() <= NORMAL_EPSILON)
+}
 
 pub(crate) fn prepare_materials(
     map: &mut Map,
@@ -24,15 +46,12 @@ pub(crate) fn prepare_materials(
         if brush.entity != 0 || !brush.structural() || brush.contents & contents::WATER == 0 {
             continue;
         }
+        let vertical = has_horizontal_surface(map, brush);
         for side in &brush.sides {
             if side.bevel
                 || !side.visible
                 || map.materials.get(side.material).contents & contents::WATER == 0
-                || !map
-                    .planes
-                    .get(side.plane)
-                    .normal
-                    .abs_diff_eq(DVec3::Z, 1e-8)
+                || !inward_surface(map.planes.get(side.plane).normal, vertical)
             {
                 continue;
             }
@@ -284,7 +303,7 @@ pub(crate) fn build(
         }
     }
     if !water.records.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; depth-specific material patches, exposed side below-water faces and broader CS:S rendering validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; depth-specific material patches, sloped below-water faces and broader CS:S rendering validation remain unfinished", None, None));
     }
     Ok(water)
 }
@@ -293,6 +312,9 @@ impl Water {
     pub(crate) fn face_volume(&self, face: &Face, map: &Map, tree: &Tree) -> i16 {
         if map.texinfos.infos[face.texinfo].flags & surf::WARP == 0 {
             return -1;
+        }
+        if let Some(region) = face.water_region {
+            return region;
         }
         let center = face.winding.center();
         let offset = map.planes.get(face.plane).normal * SURFACE_EPSILON;

@@ -291,6 +291,7 @@ impl Map<'_> {
                 winding: Winding(terrain.base.to_vec()),
                 node: None,
                 leaves,
+                water_region: None,
                 displacement: Some(terrain_index),
             });
         }

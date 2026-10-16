@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn resource_visibility_parameters_default_on_and_key_each_temporary_scene_variant() {
+    let default = ViewOptions::default();
+    assert_eq!(view_state(default)["entity_images"], true);
+    assert_eq!(view_state(default)["entity_model_guides"], true);
+    let args: SetViewArgs =
+        serde_json::from_value(json!({"entity_images":false,"entity_model_guides":false})).unwrap();
+    assert_eq!(args.entity_images, Some(false));
+    assert_eq!(args.entity_model_guides, Some(false));
+    let args: RenderArgs =
+        serde_json::from_value(json!({"entity_images":true,"entity_model_guides":false})).unwrap();
+    assert_eq!(args.entity_images, Some(true));
+    assert_eq!(args.entity_model_guides, Some(false));
+    for args in [
+        json!({"entity_images":"false"}),
+        json!({"entity_model_guides":1}),
+    ] {
+        assert!(serde_json::from_value::<SetViewArgs>(args.clone()).is_err());
+        assert!(serde_json::from_value::<RenderArgs>(args).is_err());
+    }
+    let mut keys = Vec::new();
+    for entity_images in [false, true] {
+        for entity_model_guides in [false, true] {
+            keys.push(
+                ViewOptions {
+                    entity_images,
+                    entity_model_guides,
+                    ..default
+                }
+                .scene_key(7),
+            );
+        }
+    }
+    for (index, key) in keys.iter().enumerate() {
+        assert!(!keys[..index].contains(key));
+    }
+}
+
+#[test]
 fn sky_inspection_tool_has_strict_empty_arguments_and_matches_read_only_session_report() {
     let _: InspectSkyAssetsArgs = serde_json::from_value(json!({})).unwrap();
     for value in [json!({"skyname":"sky_dust_hdr"}), json!({"channel":"hdr"})] {

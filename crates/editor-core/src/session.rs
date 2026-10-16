@@ -1473,6 +1473,15 @@ impl Session {
     }
 
     pub fn set_view(&mut self, view: ViewOptions) {
+        let previous = self.view();
+        let mut without_resource_changes = view;
+        without_resource_changes.entity_images = previous.entity_images;
+        without_resource_changes.entity_model_guides = previous.entity_model_guides;
+        if without_resource_changes == previous {
+            self.view = view;
+            self.view_serial += 1;
+            return;
+        }
         self.restore_clip_drag();
         self.clear_component_drag();
         if self.view.tool_textures != view.tool_textures {
@@ -2087,8 +2096,8 @@ impl Session {
             HashSet::new()
         };
         let evaluation = self.working_evaluation(document);
-        let icons = self.fgd_icon_instances(document, &evaluation);
-        let model_guides = self.fgd_model_guides(document, &evaluation);
+        let icons = self.fgd_icon_instances(document, &evaluation, view.entity_images);
+        let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
         let mut mesh = SceneMesh::build_with_visual_helpers_and_sky_filtered(
             document.vmf(),
             &self.game,

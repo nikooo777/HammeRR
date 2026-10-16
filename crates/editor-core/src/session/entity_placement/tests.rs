@@ -32,6 +32,32 @@ fn fixture() -> Session {
     session
 }
 
+#[test]
+fn resource_visibility_and_repeated_values_preserve_entity_placement_review() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = fixture();
+        let token = begin(&mut session, actor, request("info_target"));
+        let expected = session
+            .pick_entity_placement(actor, token, floor_ray())
+            .unwrap();
+        let document = session.render_document().vmf().clone();
+        let source = session.document().vmf().clone();
+        let serial = session.scene_serial();
+        for enabled in [false, false, true] {
+            session.set_view(render::ViewOptions {
+                entity_images: enabled,
+                entity_model_guides: enabled,
+                ..session.view()
+            });
+            assert_eq!(session.get_entity_placement(), expected);
+            assert_eq!(session.render_document().vmf(), &document);
+            assert_eq!(session.document().vmf(), &source);
+            assert_eq!(session.scene_serial(), serial);
+        }
+        session.cancel_entity_placement(actor, token).unwrap();
+    }
+}
+
 fn request(classname: &str) -> Request {
     Request {
         classname: classname.into(),

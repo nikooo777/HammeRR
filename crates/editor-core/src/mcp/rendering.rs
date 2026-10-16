@@ -3,7 +3,7 @@ use super::*;
 pub(in crate::mcp) struct Offscreen {
     pub(in crate::mcp) ctx: GpuContext,
     pub(in crate::mcp) renderer: Renderer,
-    pub(in crate::mcp) scene: Option<(u64, render::sky::Channel, GpuScene)>,
+    pub(in crate::mcp) scene: Option<(render::SceneKey, GpuScene)>,
     pub(in crate::mcp) issues: Vec<render::scene::SceneIssue>,
 }
 
@@ -105,21 +105,14 @@ impl EditorServer {
             .expect("renderer was initialized");
         {
             let mut session = self.session();
-            let serial = session.scene_serial();
-            if scene
-                .as_ref()
-                .is_none_or(|(s, channel, _)| *s != serial || *channel != view.sky_channel)
-            {
+            let key = view.scene_key(session.scene_serial());
+            if scene.as_ref().is_none_or(|(previous, _)| *previous != key) {
                 let mesh = session.build_scene_for_view(view);
                 *issues = mesh.issues.clone();
-                *scene = Some((
-                    serial,
-                    view.sky_channel,
-                    renderer.upload(ctx, &mesh, session.materials()),
-                ));
+                *scene = Some((key, renderer.upload(ctx, &mesh, session.materials())));
             }
         }
-        let gpu_scene = &scene.as_ref().expect("scene was just built").2;
+        let gpu_scene = &scene.as_ref().expect("scene was just built").1;
         let pixels = renderer.render_to_rgba(ctx, gpu_scene, camera, &view, size.0, size.1);
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(Cursor::new(&mut png), size.0, size.1);

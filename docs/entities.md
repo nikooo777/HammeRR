@@ -192,6 +192,27 @@ within ±65536 units. Visual bounds are reported separately from object bounds.
 Loaded catalog files provide declaration provenance; inherited helper
 file/line locations are not retained.
 
+### Control FGD resource visibility
+
+The **VIEWPORT** section has two default-on controls for literal FGD resources.
+
+1. Clear **Entity images** to replace `iconsprite` images with their ordinary
+   editable FGD boxes.
+2. Clear **Entity model guides** to hide literal `studio` and `studioprop` meshes.
+   Their ordinary boxes remain visible and pickable.
+3. Read the selected entity's helper summary for `view_disabled`. Resource
+   admission is deferred while its control is off; malformed declarations still
+   report their errors. Enable the control to inspect the actual asset again.
+4. Use **Reload material assets** for changed icon files or **Reload models** for
+   changed model files. Visibility toggles preserve cached successes and failures.
+
+These session view settings preserve source, history, selection, spatial bounds
+and pending reviews, model choices and placement tokens. Authored model entities,
+lights, ropes, overlays and line/sphere/projector guides remain independent.
+Agents use the same `set_view.entity_images` and `entity_model_guides` settings.
+The matching `render_view` arguments are temporary; returned view metadata reports
+their effective values, while the entity inspector describes the shared view.
+
 ### Inspect a property radius
 
 FGD `sphere(property)` declarations add three world-axis guide rings around a

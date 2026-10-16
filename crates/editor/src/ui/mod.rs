@@ -36,7 +36,7 @@ struct Ui {
     ctx: GpuContext,
     session: SharedSession,
     viewport: Viewport,
-    seen_scene: u64,
+    seen_scene: render::SceneKey,
     seen_camera: u64,
     seen_view: u64,
     brush_drag: Option<BrushDrag>,
@@ -142,6 +142,8 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     app.set_show_leak(session.view().leak_path);
     app.set_sky_preview(session.view().sky_preview);
     app.set_selection_outlines(session.view().selection_outlines);
+    app.set_entity_images(session.view().entity_images);
+    app.set_entity_model_guides(session.view().entity_model_guides);
     app.set_rope_preview(session.view().rope_preview);
     app.set_sky_channel(if session.view().sky_channel == render::sky::Channel::Hdr {
         1
@@ -196,6 +198,8 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
             view.sky_preview = app.get_sky_preview();
             view.rope_preview = app.get_rope_preview();
             view.selection_outlines = app.get_selection_outlines();
+            view.entity_images = app.get_entity_images();
+            view.entity_model_guides = app.get_entity_model_guides();
             view.leak_path = app.get_show_leak();
             let exposure = app
                 .get_sky_exposure_ev()
@@ -378,7 +382,7 @@ pub(super) fn run(
         viewport: Viewport::new(&ctx, camera),
         ctx,
         session,
-        seen_scene: 0,
+        seen_scene: render::ViewOptions::default().scene_key(0),
         seen_camera: 0,
         seen_view: 0,
         brush_drag: None,
@@ -2603,9 +2607,12 @@ pub(super) fn run(
                 } else {
                     session.publish_camera(ui.viewport.camera);
                 }
-                if session.scene_serial() != ui.seen_scene {
-                    ui.brush_drag = None;
-                    ui.seen_scene = session.scene_serial();
+                let scene_key = session.view().scene_key(session.scene_serial());
+                if scene_key != ui.seen_scene {
+                    if session.scene_serial() != ui.seen_scene.0 {
+                        ui.brush_drag = None;
+                    }
+                    ui.seen_scene = scene_key;
                     let mesh = session.build_scene();
                     let mut preview_error = mesh.issue_summary();
                     if let Some(report) = session.material_reload_report()

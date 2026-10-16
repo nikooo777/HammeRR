@@ -152,7 +152,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -257,6 +257,10 @@ pub struct BeginSurfacePlacementPickArgs {
 pub struct SetViewArgs {
     /// Show selected object/face edges and model brackets. Defaults on; selection, picking and tool guides remain active.
     pub selection_outlines: Option<bool>,
+    /// Show literal FGD icon images; false keeps ordinary boxes without resource admission.
+    pub entity_images: Option<bool>,
+    /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
+    pub entity_model_guides: Option<bool>,
     /// Draw clip, trigger, nodraw and skybox brushes.
     pub tool_textures: Option<bool>,
     /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six supported faces of the explicit editor sky channel.
@@ -279,6 +283,10 @@ pub struct SetViewArgs {
 pub struct RenderArgs {
     /// Temporary selected-edge/model-bracket visibility override; leaves shared settings and picking unchanged.
     pub selection_outlines: Option<bool>,
+    /// Show literal FGD icon images; false keeps ordinary boxes without resource admission.
+    pub entity_images: Option<bool>,
+    /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
+    pub entity_model_guides: Option<bool>,
     /// Camera overrides; defaults to the user's current view.
     pub camera: Option<CameraSpec>,
     /// Image size in pixels (default 1024x576).

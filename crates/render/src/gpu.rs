@@ -205,7 +205,7 @@ pub struct PaintGuide {
     pub camera: Camera,
 }
 
-/// Per-frame visibility filters, applied without rebuilding the scene.
+/// View filters and resource admission options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewOptions {
     pub surface: SurfaceView,
@@ -216,6 +216,8 @@ pub struct ViewOptions {
     pub sky_exposure_ev: f32,
     pub rope_preview: bool,
     pub selection_outlines: bool,
+    pub entity_images: bool,
+    pub entity_model_guides: bool,
     pub fog: Option<crate::fog::Fog>,
     pub leak_path: bool,
     pub grid_visible: bool,
@@ -240,6 +242,8 @@ impl Default for ViewOptions {
             sky_exposure_ev: 0.0,
             rope_preview: false,
             selection_outlines: true,
+            entity_images: true,
+            entity_model_guides: true,
             fog: None,
             leak_path: true,
             grid_visible: true,
@@ -252,6 +256,19 @@ impl Default for ViewOptions {
             area_preview: None,
             paint_preview: None,
         }
+    }
+}
+
+pub type SceneKey = (u64, crate::sky::Channel, bool, bool);
+
+impl ViewOptions {
+    pub fn scene_key(self, serial: u64) -> SceneKey {
+        (
+            serial,
+            self.sky_channel,
+            self.entity_images,
+            self.entity_model_guides,
+        )
     }
 }
 

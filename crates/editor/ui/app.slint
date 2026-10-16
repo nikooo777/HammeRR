@@ -1889,6 +1889,8 @@ export component AppWindow inherits Window {
     in property <string> sky-preview-error;
     in-out property <bool> rope-preview: false;
     in-out property <bool> selection-outlines: true;
+    in-out property <bool> entity-images: true;
+    in-out property <bool> entity-model-guides: true;
     in property <string> rope-preview-status: "Rope preview is off";
     in property <string> fog-preview-status: "Fog preview is off";
     callback fog-preview();
@@ -2507,6 +2509,17 @@ export component AppWindow inherits Window {
                         checked <=> root.selection-outlines;
                         toggled => { root.options-changed(); }
                     }
+                    CheckBox {
+                        text: "Entity images";
+                        checked <=> root.entity-images;
+                        toggled => { root.options-changed(); }
+                    }
+                    CheckBox {
+                        text: "Entity model guides";
+                        checked <=> root.entity-model-guides;
+                        toggled => { root.options-changed(); }
+                    }
+                    Text { text: "Literal FGD resources · boxes remain when off"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     CheckBox {
                         text: "2D sky preview";
                         checked <=> root.sky-preview;

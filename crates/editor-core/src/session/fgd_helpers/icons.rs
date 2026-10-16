@@ -12,6 +12,7 @@ impl Session {
         document: &Document,
         evaluation: &Evaluation,
         inspected: Option<u32>,
+        enabled: bool,
     ) -> BTreeMap<u32, (Report, Option<Instance>)> {
         let models = evaluation
             .models
@@ -82,6 +83,8 @@ impl Session {
                 .is_some_and(|origin| origin.is_finite() && origin.abs().max_element() <= 65536.0)
             {
                 Some("invalid_origin")
+            } else if !enabled {
+                Some("view_disabled")
             } else if displayed >= render::icons::MAX_INSTANCES {
                 Some("scene_icon_limit")
             } else {
@@ -144,7 +147,7 @@ impl Session {
     pub(super) fn inspected_icon(&self, id: u32) -> Option<Report> {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        self.icon_rows(document, &evaluation, Some(id))
+        self.icon_rows(document, &evaluation, Some(id), self.view().entity_images)
             .remove(&id)
             .map(|(report, _)| report)
     }
@@ -152,8 +155,12 @@ impl Session {
         &self,
         document: &Document,
         evaluation: &Evaluation,
+        enabled: bool,
     ) -> BTreeMap<u32, Instance> {
-        self.icon_rows(document, evaluation, None)
+        if !enabled {
+            return BTreeMap::new();
+        }
+        self.icon_rows(document, evaluation, None, enabled)
             .into_iter()
             .filter_map(|(id, (_, instance))| instance.map(|instance| (id, instance)))
             .collect()

@@ -345,3 +345,84 @@ fn source_failures_stay_cached_until_reload_and_never_seed_texture_prefetch() {
     assert_eq!(session.document().vmf(), &original);
     assert_eq!(session.document().undo_labels().count(), history);
 }
+
+#[test]
+fn entity_model_guides_off_defers_geometry_reads_and_preserves_authored_models() {
+    let Ok(installed) = crate::startup::mount_game(None) else {
+        return;
+    };
+    let (directory, game) = crate::test_assets::game();
+    let path = "models/props_junk/wood_crate001a.mdl";
+    let stem = path.strip_suffix(".mdl").unwrap();
+    let mut session = Session::new(Ok(game));
+    session.set_definitions(
+        Actor::Agent,
+        Catalog::parse(&format!(
+            "@PointClass size(4 4 4) studio(\"{path}\") = sample []"
+        ))
+        .unwrap(),
+    );
+    let id = entity(&mut session, Actor::Agent, "sample");
+    session.set_view(render::ViewOptions {
+        entity_model_guides: false,
+        ..session.view()
+    });
+    let source = session.document().vmf().clone();
+    let serial = session.scene_serial();
+    let report = session
+        .entity_helper_report(id)
+        .unwrap()
+        .model_guide
+        .unwrap();
+    assert_eq!(report.suppression_reason, Some("view_disabled"));
+    assert_eq!(report.state, "not_loaded");
+    assert!(report.error.is_none() && report.visual_bounds.is_none());
+    assert_eq!(session.build_scene().stats.fgd_model_helpers, 0);
+    for suffix in [".mdl", ".vvd", ".dx90.vtx"] {
+        let relative = format!("{stem}{suffix}");
+        let target = directory.path().join(&relative);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, installed.read(&relative).unwrap().unwrap()).unwrap();
+    }
+    session.set_view(render::ViewOptions {
+        entity_model_guides: true,
+        ..session.view()
+    });
+    assert!(
+        session
+            .entity_helper_report(id)
+            .unwrap()
+            .model_guide
+            .unwrap()
+            .displayed
+    );
+    let shared = session.view();
+    assert_eq!(
+        session
+            .build_scene_for_view(render::ViewOptions {
+                entity_model_guides: false,
+                ..shared
+            })
+            .stats
+            .fgd_model_helpers,
+        0
+    );
+    assert_eq!(session.view(), shared);
+    assert_eq!(session.scene_serial(), serial);
+    assert_eq!(session.document().vmf(), &source);
+    session
+        .create_entity(
+            Actor::Agent,
+            "prop_dynamic",
+            Some(DVec3::X * 128.0),
+            BTreeMap::from([("model".into(), path.into())]),
+        )
+        .unwrap();
+    session.set_view(render::ViewOptions {
+        entity_model_guides: false,
+        ..session.view()
+    });
+    let scene = session.build_scene();
+    assert_eq!(scene.stats.fgd_model_helpers, 0);
+    assert_eq!(scene.stats.model_entities, 1);
+}

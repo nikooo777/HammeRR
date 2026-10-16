@@ -5,7 +5,7 @@ use source_formats::bsp::PakEntry;
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-use super::material::{Graph, material_name, sample_texture};
+use super::material::{Graph, ensure_default_unmounted, material_name, sample_texture};
 use super::*;
 use crate::map::Map;
 use crate::{Control, Report};
@@ -163,6 +163,9 @@ pub(crate) fn prepare(
         return Err(
             "Generate LDR reflections requires 1–32 valid visible env_cubemap helpers".into(),
         );
+    }
+    if capture_scene {
+        ensure_default_unmounted(fs, context.namespace())?;
     }
     let mut positions = BTreeSet::new();
     let mut samples = Vec::with_capacity(helpers.len());

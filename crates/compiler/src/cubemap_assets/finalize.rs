@@ -9,6 +9,7 @@ use source_formats::gamefs::GameFs;
 use source_formats::vtf::Vtf;
 
 use super::manifest::{invalid, persist_manifest, rebase, validate_cube, validate_sample};
+use super::material::ensure_default_unmounted;
 use super::*;
 use crate::{Control, Diagnostic, Output, Stage};
 
@@ -50,6 +51,7 @@ pub fn finalize_reflections(
     if manifest.phase == CubemapAssetPhase::Verified {
         return Ok(output);
     }
+    ensure_default_unmounted(game, context.namespace()).map_err(invalid)?;
     let private_name = format!(
         "hammerr_capture_{}",
         tempfile::Builder::new()
@@ -62,6 +64,7 @@ pub fn finalize_reflections(
             .replace('.', "_")
     );
     let private = CompileContext::new(private_name).map_err(invalid)?;
+    ensure_default_unmounted(game, private.namespace()).map_err(invalid)?;
     let (request_bsp, private_manifest) =
         rebase(&original.to_bytes(), &manifest, &private, control)?;
     let expected_staging = native_runtime::capture_staging_bsp(&request_bsp)?;
@@ -191,6 +194,8 @@ pub(super) fn merge_capture(
         sample.sha256 = sha256;
     }
     if let Some(&data) = captured_entries.get(default_path.as_str()) {
+        ensure_default_unmounted(game, &manifest.namespace).map_err(invalid)?;
+        ensure_default_unmounted(game, &private_manifest.namespace).map_err(invalid)?;
         let default = Vtf::parse(data.to_vec()).map_err(|error| invalid(error.to_string()))?;
         let edge = u16::try_from(default.width)
             .map_err(|_| invalid("Native default cubemap width overflow"))?;

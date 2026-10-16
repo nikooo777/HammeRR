@@ -44,6 +44,20 @@ pub(super) fn sample_texture(namespace: &str, origin: [i32; 3]) -> String {
     )
 }
 
+pub(super) fn ensure_default_unmounted(fs: &GameFs, namespace: &str) -> Result<(), String> {
+    let path = format!("materials/maps/{namespace}/cubemapdefault.vtf");
+    if fs
+        .read_limited(&path, 1)
+        .map_err(|error| format!("Cannot reserve generated default cubemap {path}: {error}"))?
+        .is_some()
+    {
+        return Err(format!(
+            "Generated default cubemap collides with mounted content: {path}"
+        ));
+    }
+    Ok(())
+}
+
 pub(super) struct Graph<'a> {
     fs: &'a GameFs,
     control: &'a Control,

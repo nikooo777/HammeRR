@@ -748,3 +748,91 @@ fn final_source_guard_rejects_texture_replacement_after_output_preparation() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"previous output");
 }
+
+#[test]
+fn explicit_default_envmap_remains_inspectable_but_cannot_be_shadowed_by_generation() {
+    let (directory, game) = game();
+    let folder = directory.path().join("materials/maps/reflections");
+    std::fs::create_dir_all(&folder).unwrap();
+    let texture = manifest::bootstrap_cube(1).unwrap();
+    std::fs::write(folder.join("cubemapdefault.vtf"), &texture).unwrap();
+    std::fs::write(
+        directory.path().join("materials/dev/dev_measuregeneric01.vmt"),
+        "LightmappedGeneric { $envmap env_cubemap >=dx90 { $envmap maps/reflections/cubemapdefault } }",
+    )
+    .unwrap();
+    let (vmf, _) = source();
+    let before = vmf.clone();
+    let query = CubemapBindingQuery {
+        namespace: Some("reflections".into()),
+        ..Default::default()
+    };
+    assert!(inspect_cubemap_bindings(&vmf, &game, &query, &Control::default()).is_ok());
+    let output = compile_with_context_controlled(
+        &vmf,
+        &game,
+        Options {
+            lighting: LightingMode::DirectLdr,
+            generate_reflections: true,
+            ..Default::default()
+        },
+        Some(&CompileContext::new("reflections").unwrap()),
+        &Control::default(),
+    );
+    assert!(output.bsp.is_none() && output.report.has_errors());
+    assert!(output.report.diagnostics.iter().any(|diagnostic| {
+        diagnostic.message.contains("default cubemap")
+            && diagnostic
+                .message
+                .contains("materials/maps/reflections/cubemapdefault.vtf")
+    }));
+    assert_eq!(vmf, before);
+    assert_eq!(
+        std::fs::read(folder.join("cubemapdefault.vtf")).unwrap(),
+        texture
+    );
+}
+
+#[test]
+fn native_default_merge_rejects_mounted_logical_and_private_name_collisions() {
+    for namespace in ["reflections", "private_capture"] {
+        let (directory, game) = game();
+        let (vmf, _) = source();
+        let output = pending(&vmf, &game);
+        let manifest = output.cubemap_assets.clone().unwrap();
+        let (private, staged, mut receipt) = capture_fixture(&output);
+        let mut captured = Bsp::parse(&receipt.bsp).unwrap();
+        let mut archive = captured.pak_data(PakLimits::default()).unwrap();
+        let data = archive
+            .entries
+            .iter()
+            .find(|entry| entry.name == private.samples[0].texture)
+            .unwrap()
+            .data
+            .clone();
+        archive.entries.push(PakEntry {
+            name: "materials/maps/private_capture/cubemapdefault.vtf".into(),
+            data,
+        });
+        captured
+            .set_pak_data(&archive, PakLimits::default())
+            .unwrap();
+        receipt.bsp = captured.to_bytes();
+        let folder = directory.path().join(format!("materials/maps/{namespace}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("cubemapdefault.vtf");
+        std::fs::write(&path, b"authored default texture").unwrap();
+        let error = finalize::merge_capture(
+            output,
+            &manifest,
+            &private,
+            &staged,
+            receipt,
+            &game,
+            &Control::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("default cubemap"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"authored default texture");
+    }
+}

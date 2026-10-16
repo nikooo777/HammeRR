@@ -92,7 +92,7 @@ fn cached_pixels_require_exact_current_bytes_and_epochs_and_disappear_on_source_
     let path = directory.path().join("Fixture.vmf");
     let modified = path.metadata().unwrap().modified().unwrap();
     let original = std::fs::read_to_string(&path).unwrap();
-    let changed = original.replace("brick/test", "brick/best");
+    let changed = original.replace("BRICK/TEST", "BRICK/BEST");
     assert_ne!(original, changed);
     assert_eq!(original.len(), changed.len());
     std::fs::write(&path, changed).unwrap();
@@ -100,6 +100,8 @@ fn cached_pixels_require_exact_current_bytes_and_epochs_and_disappear_on_source_
         .unwrap()
         .set_times(std::fs::FileTimes::new().set_modified(modified))
         .unwrap();
+    assert_eq!(path.metadata().unwrap().len(), original.len() as u64);
+    assert_eq!(path.metadata().unwrap().modified().unwrap(), modified);
     assert!(
         session
             .cached_prefab_thumbnail("Fixture")

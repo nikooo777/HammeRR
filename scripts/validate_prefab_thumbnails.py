@@ -44,7 +44,8 @@ def validate(args):
         client.call("save_prefab", {"name": "Visual assembly", "ids": ids, "snapshot": report(client)["snapshot"]})
         client.call("save_prefab", {"name": "Smaller assembly", "ids": [brush], "snapshot": report(client)["snapshot"]})
         path = library / "Visual assembly.vmf"
-        original = path.read_text()
+        original = path.read_bytes()
+        original_text = original.decode()
         before = client.call("inspect_prefab_thumbnail", {"name": "Visual assembly"})
         check(before["brushes"] == 2 and before["point_helpers"] == 1, "CPU inspection uses actual brush geometry and point helpers")
         check(before["style"] == "flat_geometry" and before["textures_loaded"] is False, "Preview style explicitly omits external textures")
@@ -65,23 +66,24 @@ def validate(args):
             refreshed_png, refreshed = render(client, "Visual assembly", refresh=True)
             check(refreshed["cached"] is False and refreshed_png == png, "Explicit refresh regenerates the same geometry image")
             previous = path.stat()
-            changed = original.replace("dev/missing_a", "dev/missing_b")
+            changed = original.replace(b"DEV/MISSING_A", b"DEV/MISSING_B")
             check(changed != original and len(changed) == len(original), "Same-size source edit fixture changes real VMF bytes")
-            path.write_text(changed)
+            path.write_bytes(changed)
             os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            check(path.stat().st_size == previous.st_size and path.stat().st_mtime_ns == previous.st_mtime_ns, "Source edit preserves exact file size and mtime")
             inspected = client.call("inspect_prefab_thumbnail", {"name": "Visual assembly"})
             check(inspected["cached"] is False, "Exact-byte revalidation catches changed content with preserved size and mtime")
             changed_png, changed_report = render(client, "Visual assembly")
             check(changed_report["cached"] is False and changed_png == png, "Flat image is regenerated after a material-only source edit")
-            path.write_text((library / "Smaller assembly.vmf").read_text())
+            path.write_bytes((library / "Smaller assembly.vmf").read_bytes())
             smaller_png, smaller = render(client, "Visual assembly")
             check(smaller_png != png and smaller["brushes"] == 1, "Changed source shape produces changed actual PNG content")
 
         for text, expected in [
             ("invalid source", "source"),
             (" " * (2 * 1024 * 1024 + 1), "2 MiB"),
-            (original + '\nentity { "id" "1000" "classname" "func_instance" "origin" "0 0 0" "file" "missing.vmf" }', "func_instance"),
-            (original + '\nentity { "id" "1000" "classname" "prop_dynamic" "origin" "0 0 0" "model" "models/definitely_missing.mdl" }', "model"),
+            (original_text + '\nentity { "id" "1000" "classname" "func_instance" "origin" "0 0 0" "file" "missing.vmf" }', "func_instance"),
+            (original_text + '\nentity { "id" "1000" "classname" "prop_dynamic" "origin" "0 0 0" "model" "models/definitely_missing.mdl" }', "model"),
         ]:
             path.write_text(text)
             inspected = client.call("inspect_prefab_thumbnail", {"name": "Visual assembly"})
@@ -91,7 +93,7 @@ def validate(args):
             if args.cpu_only:
                 check(inspected["graphics"]["initialized"] is False, "Source failure does not initialize graphics")
 
-        path.write_text(original)
+        path.write_bytes(original)
         renamed = library / "Renamed assembly.vmf"
         path.rename(renamed)
         check("no longer exists" in client.call("inspect_prefab_thumbnail", {"name": "Visual assembly"})["error"], "Renamed source cannot retain old cached pixels")

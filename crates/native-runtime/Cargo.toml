@@ -1,0 +1,17 @@
+[package]
+name = "native-runtime"
+version = "0.1.0"
+description = "Private supervised Source client capture runtime"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+source-formats.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+regex = "1.13.1"
+libc = "0.2.190"
+libloading = "0.8.9"

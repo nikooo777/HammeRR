@@ -19,6 +19,8 @@ EXPERIMENTAL_SCHEMA = 6
 DISABLE_WAKE_RELEASE = "disable_braces_and_wake_same_crate_before_retry"
 DISABLE_SCHEMA = 7
 DISABLE_RELEASE = "disable_both_perpendicular_braces_without_wake"
+REFRESH_SCHEMA = 8
+REFRESH_RELEASE = "disable_braces_and_recheck_same_crate_contacts_once"
 SETTLED_SAMPLE_COUNT = 5
 SETTLED_SECONDS = 0.5
 MOVETYPE_VPHYSICS = 6
@@ -353,7 +355,7 @@ def fixture(args):
                 "OnTrigger",
                 "release_braces",
                 target=name,
-                input_name="Disable" if args.release_mode in {"disable", "disable-wake"} else "Kill",
+                input_name="Disable" if args.release_mode != "kill" else "Kill",
             )
         connection(client, relay, "OnTrigger", "release_braces")
         client.call(
@@ -394,6 +396,9 @@ def fixture(args):
         elif args.release_mode == "disable":
             report["schema"] = DISABLE_SCHEMA
             report["release"] = DISABLE_RELEASE
+        elif args.release_mode == "disable-refresh":
+            report["schema"] = REFRESH_SCHEMA
+            report["release"] = REFRESH_RELEASE
         (args.output / "compile.json").write_text(json.dumps(report, indent=2) + "\n")
         return report
     finally:
@@ -410,7 +415,7 @@ def distance(a, b):
 
 def check(args):
     release_mode = getattr(args, "release_mode", "kill")
-    experimental = release_mode in {"disable", "disable-wake"}
+    experimental = release_mode != "kill"
     text = (args.output / "cstrike/hammerr-runtime.log").read_text(errors="replace")
     samples, events, phases, braces, bounds, states = [], [], [], [], [], []
     wakes = []
@@ -516,8 +521,8 @@ def check(args):
     if release_mode == "disable-wake":
         assert len(wakes) == 1 and wakes[0]["name"] == "blocked_crate"
         assert wakes[0]["phase"] == 3 and wakes[0]["time"] == phases[2][0], wakes
-    elif release_mode == "disable":
-        assert not wakes, "Pure Disable must not queue Wake"
+    elif release_mode in {"disable", "disable-refresh"}:
+        assert not wakes, "This Disable mode must not queue Wake"
 
     def rows(name, phase, source=None):
         source = samples if source is None else source
@@ -753,7 +758,10 @@ def check(args):
                 "cause or Disable-only recovery. A failure does not prove a hull defect."
             )
         else:
-            report["release_method"] = "Disable without Wake"
+            report["release_method"] = (
+                "Disable plus one native RecheckContactPoints"
+                if release_mode == "disable-refresh" else "Disable without Wake"
+            )
             report["awake_state_observed"] = False
             report["wake_inputs_queued"] = 0
             report["experimental_limits"] = (
@@ -761,6 +769,14 @@ def check(args):
                 "teleport or replacement is authored. A pass applies to this "
                 "observed fixture and does not establish a contact-cache cause."
             )
+            if release_mode == "disable-refresh":
+                report["native_contact_refresh_telemetry_required"] = True
+                report["experimental_limits"] = (
+                    "One native RecheckContactPoints call is required by separate telemetry. "
+                    "The method itself requests waking; no separate Wake is authored. "
+                    "A pass does not isolate waking from contact reconciliation or "
+                    "establish a compiler defect."
+                )
     (args.output / "rotating-removal-recovery.json").write_text(
         json.dumps(report, indent=2) + "\n"
     )
@@ -781,7 +797,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument(
-        "--release-mode", choices=["kill", "disable", "disable-wake"], default="kill"
+        "--release-mode", choices=["kill", "disable", "disable-wake", "disable-refresh"], default="kill"
     )
     parser.add_argument("--reuse-fixture", type=Path)
     parser.add_argument("--contact-observer-library", type=Path)
@@ -792,6 +808,8 @@ def main():
     args.game_dir = args.game_dir.resolve()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.release_mode == "disable-refresh":
+        assert args.contact_observer_library, "disable-refresh requires the native contact library"
     if args.contact_observer_library:
         args.contact_observer_library = args.contact_observer_library.resolve(strict=True)
         assert args.runtime or args.worker, "--contact-observer-library requires --runtime"
@@ -839,6 +857,8 @@ def main():
         )
         if args.release_mode == "disable":
             expected_schema, expected_release = DISABLE_SCHEMA, DISABLE_RELEASE
+        elif args.release_mode == "disable-refresh":
+            expected_schema, expected_release = REFRESH_SCHEMA, REFRESH_RELEASE
         assert compiled["schema"] == expected_schema
         assert compiled["release"] == expected_release
         for kind in ["bsp", "source"]:

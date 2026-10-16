@@ -42,7 +42,7 @@ typedef struct {
 typedef struct {
     const char *name;
     void *entity, *edict, *object, *environment, *collide, *collideable;
-    int index, object_count;
+    int index, object_count, solid_type, solid_flags;
     bool seen, freed, present;
 } Tracked;
 typedef struct {
@@ -71,6 +71,12 @@ static int report_fd = -1;
 static bool invalidated, activated, entered, loaded, level_init_seen, initial_shutdown_seen;
 static unsigned long frame_count, sample_count;
 static long simulation_thread;
+static bool refresh_enabled, refresh_called, refresh_solid_seen, refresh_disabled_seen;
+static float last_solid_time, first_disabled_time, last_active_contact_time = NAN;
+static float settled_since = NAN;
+static unsigned long refresh_frame;
+static const char *snapshot_stage;
+static size_t blocked_brace_contacts;
 
 static void report_failure(void) {
     static const char message[] = "{\"event\":\"invalidated\",\"reason\":\"report_integrity\"}\n";
@@ -288,6 +294,10 @@ static bool process_guard(void) {
     const char *game = getenv("HAMMERR_CONTACT_PRIVATE_GAME");
     const char *report = getenv("HAMMERR_CONTACT_REPORT");
     const char *root = getenv("HAMMERR_CONTACT_GAME_ROOT");
+    const char *mode = getenv("HAMMERR_CONTACT_INTERVENTION");
+    if (mode && strcmp(mode, "none") && strcmp(mode, "single-recheck"))
+        return false;
+    refresh_enabled = mode && !strcmp(mode, "single-recheck");
     char executable[PATH_MAX], actual_game[PATH_MAX], actual_root[PATH_MAX],
         expected_report[PATH_MAX], path[PATH_MAX];
     ssize_t count = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
@@ -337,8 +347,8 @@ static bool process_guard(void) {
     report_fd = open(report, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (report_fd < 0)
         return false;
-    emit("{\"event\":\"start\",\"schema\":1,\"pid\":%ld,\"observation_only\":true}\n",
-         (long)getpid());
+    emit("{\"event\":\"start\",\"schema\":1,\"pid\":%ld,\"observation_only\":%s}\n",
+         (long)getpid(), refresh_enabled ? "false" : "true");
     Module *modules[] = {&engine, &server, &physics};
     const char *relative[] = {"bin/linux64/engine.so", "cstrike/bin/linux64/server.so",
                               "bin/linux64/vphysics.so"};
@@ -572,7 +582,7 @@ static bool finite_vector(Vector vector) {
     return isfinite(vector.x) && isfinite(vector.y) && isfinite(vector.z);
 }
 
-static bool observe_brace_solid(Tracked *brace) {
+static bool observe_brace_solid(Tracked *brace, bool record) {
     typedef void *(*PointerQuery)(void *);
     typedef int (*SolidQuery)(const void *);
     PointerQuery base_at = (PointerQuery)method(brace->entity, 0xbc6ef8, 6, &server, 0x3a9960);
@@ -601,12 +611,15 @@ static bool observe_brace_solid(Tracked *brace) {
         return false;
     }
     brace->collideable = collideable;
+    brace->solid_type = solid;
+    brace->solid_flags = flags;
     bool not_solid = (flags & FSOLID_NOT_SOLID) != 0;
-    emit(
-        "{\"event\":\"brace_solid\",\"sample\":%lu,\"name\":\"%s\",\"owner\":\"%p\",\"edict\":\"%p\",\"index\":%d,\"collideable\":\"%p\",\"entity_handle\":\"%p\",\"solid_type\":%d,\"solid_flags\":%d,\"not_solid\":%s,\"is_solid\":%s}\n",
-        sample_count, brace->name, brace->entity, brace->edict, brace->index, collideable, handle,
-        solid, flags, not_solid ? "true" : "false",
-        solid != SOLID_NONE && !not_solid ? "true" : "false");
+    if (record)
+        emit(
+            "{\"event\":\"brace_solid\",\"sample\":%lu,\"name\":\"%s\",\"owner\":\"%p\",\"edict\":\"%p\",\"index\":%d,\"collideable\":\"%p\",\"entity_handle\":\"%p\",\"solid_type\":%d,\"solid_flags\":%d,\"not_solid\":%s,\"is_solid\":%s}\n",
+            sample_count, brace->name, brace->entity, brace->edict, brace->index, collideable, handle,
+            solid, flags, not_solid ? "true" : "false",
+            solid != SOLID_NONE && !not_solid ? "true" : "false");
     return !invalidated;
 }
 
@@ -630,7 +643,7 @@ static bool copy_mapped_string(const char *source, char *value, size_t capacity,
     return false;
 }
 
-static bool verify_physics_name(const Tracked *crate) {
+static bool verify_physics_name(const Tracked *crate, bool record) {
     typedef const char *(*Name)(const void *);
     Name name_at = (Name)method(crate->object, 0x1948a8, 75, &physics, 0x370f0);
     if (!name_at)
@@ -641,7 +654,7 @@ static bool verify_physics_name(const Tracked *crate) {
     bool readable = copy_mapped_string(address, name, sizeof(name), &copied);
     const char *expected = "models/props_junk/wood_crate001a.mdl";
     bool matches = readable && !strcmp(name, expected);
-    if (readable && (!sample_count || !matches))
+    if (readable && ((!sample_count && record) || !matches))
         query_diagnostic(crate, crate->entity, crate->index, "physics_debug_name", name,
                          sizeof(name), true, expected);
     if (!matches) {
@@ -652,10 +665,11 @@ static bool verify_physics_name(const Tracked *crate) {
         fail("unexpected_physics_debug_name");
         return false;
     }
-    emit(
-        "{\"event\":\"physics_name\",\"sample\":%lu,\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\",\"returned_pointer\":\"%p\",\"name\":\"%s\",\"bounded_read_success\":true,\"bytes_read\":%zu,\"fixture_label_only\":true}\n",
-        sample_count, crate->object, crate->entity, crate->collide, (const void *)address, name,
-        copied);
+    if (record)
+        emit(
+            "{\"event\":\"physics_name\",\"sample\":%lu,\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\",\"returned_pointer\":\"%p\",\"name\":\"%s\",\"bounded_read_success\":true,\"bytes_read\":%zu,\"fixture_label_only\":true}\n",
+            sample_count, crate->object, crate->entity, crate->collide, (const void *)address, name,
+            copied);
     return !invalidated;
 }
 
@@ -674,6 +688,7 @@ static bool contacts(void *object, size_t *count) {
         return false;
     void *snapshot = create(object);
     *count = 0;
+    blocked_brace_contacts = 0;
     if (!snapshot) {
         fail("null_friction_snapshot");
         return false;
@@ -732,11 +747,30 @@ static bool contacts(void *object, size_t *count) {
                 fail("unrepresentable_contact_name");
                 break;
             }
+            if (refresh_enabled) {
+                for (size_t tracked_index = 0; tracked_index < TRACKED_COUNT; tracked_index++) {
+                    Tracked *item = &tracked[tracked_index];
+                    if (strcmp(name, item->name))
+                        continue;
+                    if (!item->present || owner != item->entity || edict != item->edict ||
+                        item->index != index || other != item->object ||
+                        other_collide != item->collide) {
+                        fail("refresh_contact_identity_mismatch");
+                        break;
+                    }
+                }
+                if (invalidated)
+                    break;
+            }
+            if (!strcmp(name, tracked[3].name) || !strcmp(name, tracked[4].name))
+                blocked_brace_contacts++;
+            const char *event = snapshot_stage ? "refresh_contact" : "contact";
+            const char *stage = snapshot_stage ? "\"stage\":\"after\"," : "";
             emit(
-                "{\"event\":\"contact\",\"sample\":%lu,\"source\":\"%p\",\"other\":\"%p\","
+                "{\"event\":\"%s\",%s\"sample\":%lu,\"source\":\"%p\",\"other\":\"%p\","
                 "\"owner\":\"%p\",\"edict\":\"%p\",\"index\":%d,\"name\":\"%s\",\"classname\":\"%"
                 "s\",\"other_awake\":%s,\"other_collide\":\"%p\",\"point\":[%.9g,%.9g,%.9g],\"normal\":[%.9g,%.9g,%.9g]}\n",
-                sample_count, source, other, owner, edict, index, name, classname,
+                event, stage, sample_count, source, other, owner, edict, index, name, classname,
                 other_sleeping ? "false" : "true", other_collide, point.x, point.y, point.z,
                 normal.x, normal.y, normal.z);
             (*count)++;
@@ -744,6 +778,157 @@ static bool contacts(void *object, size_t *count) {
         }
     }
     destroy(object, snapshot);
+    return !invalidated;
+}
+
+static bool settled_vector(Vector value) {
+    return fabsf(value.x) <= 0.05f && fabsf(value.y) <= 0.05f && fabsf(value.z) <= 0.05f;
+}
+
+static bool refresh_identities(void) {
+    size_t environment_count, object_count;
+    if (!refresh_mappings() || !resolve_tracked() ||
+        !enumerate_objects(&environment_count, &object_count))
+        return false;
+    for (size_t index = 0; index < TRACKED_COUNT; index++) {
+        Tracked *item = &tracked[index];
+        if (!item->present || item->object_count != 1 || !item->collide) {
+            fail("refresh_missing_same_object");
+            return false;
+        }
+        if (index >= STABLE_COUNT &&
+            (!observe_brace_solid(item, false) || !(item->solid_flags & FSOLID_NOT_SOLID))) {
+            fail("refresh_brace_not_disabled");
+            return false;
+        }
+    }
+    return verify_physics_name(&tracked[0], false);
+}
+
+static bool maybe_refresh(float time, bool sleeping, Vector velocity, Vector angular,
+                          size_t contact_count) {
+    if (!refresh_enabled)
+        return true;
+    bool all_solid = true, all_disabled = true;
+    for (size_t index = STABLE_COUNT; index < TRACKED_COUNT; index++) {
+        Tracked *item = &tracked[index];
+        if (!item->present) {
+            fail("refresh_brace_missing");
+            return false;
+        }
+        bool disabled = (item->solid_flags & FSOLID_NOT_SOLID) != 0;
+        all_solid &= item->solid_type != SOLID_NONE && !disabled;
+        all_disabled &= disabled;
+    }
+    if (!all_solid && !all_disabled) {
+        fail("refresh_mixed_brace_transition");
+        return false;
+    }
+    if (all_solid) {
+        if (refresh_disabled_seen) {
+            fail("refresh_brace_reenabled");
+            return false;
+        }
+        refresh_solid_seen = true;
+        last_solid_time = time;
+        if (!sleeping && blocked_brace_contacts)
+            last_active_contact_time = time;
+        return true;
+    }
+    if (!refresh_disabled_seen) {
+        if (!refresh_solid_seen || !isfinite(last_active_contact_time) ||
+            time - last_solid_time <= 0 ||
+            time - last_solid_time > 0.2f) {
+            fail("refresh_missing_solid_transition");
+            return false;
+        }
+        first_disabled_time = time;
+        refresh_disabled_seen = true;
+        emit("{\"event\":\"refresh_arm\",\"sample\":%lu,\"frame\":%lu,\"last_solid_time\":%.9g,"
+             "\"first_disabled_time\":%.9g,\"last_active_brace_contact_time\":%.9g}\n",
+             sample_count, frame_count, last_solid_time, first_disabled_time,
+             last_active_contact_time);
+    }
+    bool settled = sleeping && settled_vector(velocity) && settled_vector(angular);
+    if (!settled)
+        settled_since = NAN;
+    else if (!isfinite(settled_since))
+        settled_since = time;
+    if (refresh_called || time - first_disabled_time < 2.0f)
+        return !invalidated;
+    if (time - first_disabled_time > 2.2f || !settled || !isfinite(settled_since) ||
+        time - settled_since < 0.5f || !blocked_brace_contacts ||
+        !isfinite(last_active_contact_time) ||
+        last_active_contact_time <= first_disabled_time - 7.5f ||
+        last_active_contact_time >= last_solid_time || !refresh_identities()) {
+        fail("refresh_preconditions_failed");
+        return false;
+    }
+    Tracked *crate = &tracked[0];
+    typedef void (*Recheck)(void *);
+    typedef bool (*InSimulation)(const void *);
+    typedef bool (*Asleep)(const void *);
+    typedef void (*Velocity)(const void *, Vector *, Vector *);
+    typedef float (*SimulationTime)(const void *);
+    Recheck recheck = (Recheck)method(crate->object, 0x1948a8, 28, &physics, 0x38100);
+    InSimulation in_simulation =
+        (InSimulation)method(crate->environment, 0x198288, 36, &physics, 0x2bb80);
+    Asleep asleep = (Asleep)method(crate->object, 0x1948a8, 3, &physics, 0x37a20);
+    Velocity velocity_at = (Velocity)method(crate->object, 0x1948a8, 52, &physics, 0x37cc0);
+    SimulationTime time_at =
+        (SimulationTime)method(crate->environment, 0x198288, 39, &physics, 0x2bb40);
+    if (!recheck || !in_simulation || !asleep || !velocity_at || !time_at ||
+        in_simulation(crate->environment)) {
+        fail("refresh_unsafe_call_phase");
+        return false;
+    }
+    if (!emit("{\"event\":\"refresh_call\",\"stage\":\"enter\",\"sample\":%lu,\"frame\":%lu,"
+              "\"simulation_time\":%.9g,\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\","
+              "\"crate_index\":%d,\"contacts\":%zu,\"brace_contacts\":%zu,\"asleep\":true,"
+              "\"settled_since\":%.9g,\"snapshot_destroyed\":true,\"in_simulation\":false,"
+              "\"slot\":28,\"target_elf\":229632}\n",
+              sample_count, frame_count, time, crate->object, crate->entity, crate->collide,
+              crate->index, contact_count, blocked_brace_contacts, settled_since))
+        return false;
+    refresh_called = true;
+    refresh_frame = frame_count;
+    recheck(crate->object);
+    float return_time = time_at(crate->environment);
+    if (!isfinite(return_time)) {
+        emit("{\"event\":\"refresh_call\",\"stage\":\"return\",\"sample\":%lu,\"frame\":%lu,"
+             "\"finite_time\":false}\n", sample_count, frame_count);
+        fail("refresh_nonfinite_return_time");
+        return false;
+    }
+    if (!emit("{\"event\":\"refresh_call\",\"stage\":\"return\",\"sample\":%lu,\"frame\":%lu,"
+              "\"simulation_time\":%.9g,\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\"}\n",
+              sample_count, frame_count, return_time, crate->object,
+              crate->entity, crate->collide) ||
+        !refresh_identities() || in_simulation(crate->environment)) {
+        fail("refresh_return_identity_or_phase");
+        return false;
+    }
+    velocity = (Vector){NAN, NAN, NAN};
+    angular = (Vector){NAN, NAN, NAN};
+    velocity_at(crate->object, &velocity, &angular);
+    time = time_at(crate->environment);
+    sleeping = asleep(crate->object);
+    if (!finite_vector(velocity) || !finite_vector(angular) || !isfinite(time)) {
+        fail("refresh_nonfinite_return_state");
+        return false;
+    }
+    snapshot_stage = "after";
+    bool captured = contacts(crate->object, &contact_count);
+    snapshot_stage = NULL;
+    if (!captured)
+        return false;
+    emit("{\"event\":\"refresh_after\",\"sample\":%lu,\"frame\":%lu,\"simulation_time\":%.9g,"
+         "\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\",\"awake\":%s,"
+         "\"velocity\":[%.9g,%.9g,%.9g],\"angular_velocity\":[%.9g,%.9g,%.9g],"
+         "\"contacts\":%zu,\"brace_contacts\":%zu,\"snapshot_destroyed\":true,\"in_simulation\":false}\n",
+         sample_count, frame_count, time, crate->object, crate->entity, crate->collide,
+         sleeping ? "false" : "true", velocity.x, velocity.y, velocity.z, angular.x, angular.y,
+         angular.z, contact_count, blocked_brace_contacts);
     return !invalidated;
 }
 
@@ -761,7 +946,7 @@ static void observe(void) {
             fail("ambiguous_or_missing_physics_owner");
             return;
         }
-        if (index >= STABLE_COUNT && item->present && !observe_brace_solid(item))
+        if (index >= STABLE_COUNT && item->present && !observe_brace_solid(item, true))
             return;
         emit("{\"event\":\"entity\",\"sample\":%lu,\"name\":\"%s\",\"present\":%s,\"entity\":\"%"
              "p\",\"edict\":\"%p\",\"index\":%d,\"object_count\":%d,\"object\":\"%p\",\"collide\":"
@@ -770,7 +955,7 @@ static void observe(void) {
              item->index, item->object_count, item->object, item->collide);
     }
     Tracked *crate = &tracked[0];
-    if (!verify_physics_name(crate))
+    if (!verify_physics_name(crate, true))
         return;
     typedef bool (*Asleep)(const void *);
     typedef void (*Velocity)(const void *, Vector *, Vector *);
@@ -800,6 +985,8 @@ static void observe(void) {
          sample_count, frame_count, simulation_thread, time, environment_count, object_count,
          crate->index, crate->object, crate->entity, crate->collide, sleeping ? "false" : "true",
          velocity.x, velocity.y, velocity.z, angular.x, angular.y, angular.z, contact_count);
+    if (invalidated || !maybe_refresh(time, sleeping, velocity, angular, contact_count))
+        return;
     sample_count++;
 }
 
@@ -841,7 +1028,8 @@ static void plugin_unpause(void *self) {
 }
 static const char *plugin_description(void *self) {
     (void)self;
-    return "HammeRR private read-only contact observer";
+    return refresh_enabled ? "HammeRR private single contact refresh experiment"
+                           : "HammeRR private read-only contact observer";
 }
 static void plugin_level_init(void *self, const char *name) {
     (void)self;
@@ -873,7 +1061,8 @@ static void plugin_frame(void *self, bool simulating) {
     }
     simulation_thread = thread;
     entered = true;
-    if (frame_count++ % SAMPLE_STRIDE == 0)
+    if (frame_count++ % SAMPLE_STRIDE == 0 ||
+        (refresh_called && frame_count == refresh_frame + 1))
         observe();
     entered = false;
 }

@@ -46,6 +46,8 @@ def digest(path):
 
 
 def prepare(library, release_mode, root, game, output, command, environment):
+    assert release_mode in {"kill", "disable", "disable-wake", "disable-refresh"}
+    intervention = release_mode == "disable-refresh"
     assert not environment.get("LD_PRELOAD"), (
         "Contact observation cannot inherit LD_PRELOAD"
     )
@@ -80,7 +82,7 @@ def prepare(library, release_mode, root, game, output, command, environment):
     receipt = {
         "schema": 1,
         "release_mode": release_mode,
-        "observation_only": True,
+        "observation_only": not intervention,
         "library": str(library),
         "private_plugin": str(plugin),
         "library_sha256": library_hash,
@@ -100,6 +102,7 @@ def prepare(library, release_mode, root, game, output, command, environment):
         "HAMMERR_CONTACT_GAME_ROOT": str(root),
         "HAMMERR_CONTACT_PRIVATE_GAME": str(game),
         "HAMMERR_CONTACT_REPORT": str(output / "contact-observer.jsonl"),
+        "HAMMERR_CONTACT_INTERVENTION": "single-recheck" if intervention else "none",
     }
 
 
@@ -115,16 +118,18 @@ def vector(value):
 
 
 def verify(output, release_mode):
+    intervention = release_mode == "disable-refresh"
     report = {
         "schema": 1,
-        "observation_only": True,
+        "observation_only": not intervention,
         "success": False,
         "release_mode": release_mode,
     }
     try:
         receipt = json.loads((output / "contact-observer-launch.json").read_text())
         assert receipt["release_mode"] == release_mode
-        assert receipt["observation_only"] and receipt["load_before_private_map"]
+        assert receipt["observation_only"] is (not intervention)
+        assert receipt["load_before_private_map"]
         assert digest(Path(receipt["library"])) == receipt["library_sha256"]
         assert digest(Path(receipt["private_plugin"])) == receipt["library_sha256"]
         assert (
@@ -152,7 +157,9 @@ def verify(output, release_mode):
         assert not report["invalidations"], report["invalidations"]
         assert not grouped.get("unload"), "Observer unloaded before capture termination"
         assert len(grouped.get("start", [])) == 1 and grouped["start"][0]["schema"] == 1
-        assert grouped["start"][0]["observation_only"]
+        assert grouped["start"][0]["observation_only"] is (not intervention)
+        if not intervention:
+            assert not any(name.startswith("refresh_") for name in grouped)
         assert len(grouped.get("loaded", [])) == 1 and grouped["loaded"][0]["success"]
         assert (
             len(grouped.get("level_init", [])) == len(grouped.get("activate", [])) == 1
@@ -229,6 +236,7 @@ def verify(output, release_mode):
             vector(row["angular_velocity"])
             assert 0 <= row["contacts"] <= 4096
         contacts = grouped.get("contact", [])
+        refresh_contacts = grouped.get("refresh_contact", [])
         entities = grouped.get("entity", [])
         assert len(entities) == len(samples) * len(STABLE | BRACES)
         by_sample, contacts_by_sample = {}, {}
@@ -274,9 +282,10 @@ def verify(output, release_mode):
                 )
                 == 1
             )
-        for row in contacts:
+        for row in contacts + refresh_contacts:
             assert 0 <= row["sample"] < len(samples)
-            contacts_by_sample.setdefault(row["sample"], []).append(row)
+            if row["event"] == "contact":
+                contacts_by_sample.setdefault(row["sample"], []).append(row)
             assert pointer(row["source"]) == samples[row["sample"]]["object"]
             for field in ["other", "owner", "edict", "other_collide"]:
                 pointer(row[field])
@@ -492,6 +501,95 @@ def verify(output, release_mode):
                 "awake_samples": sum(row["awake"] for row in before_retry),
             }
             report["obstruction_brace_contacts"] = len(definite)
+            if intervention:
+                arms = grouped.get("refresh_arm", [])
+                calls = grouped.get("refresh_call", [])
+                afters = grouped.get("refresh_after", [])
+                assert len(arms) == len(afters) == 1 and len(calls) == 2
+                arm, after = arms[0], afters[0]
+                enter, returned = calls
+                assert enter["stage"] == "enter" and returned["stage"] == "return"
+                assert arm["sample"] == first_disabled["sample"]
+                assert arm["frame"] == first_disabled["frame"]
+                assert arm["last_solid_time"] == last_solid["simulation_time"]
+                assert arm["first_disabled_time"] == first_disabled["simulation_time"]
+                active_time = arm["last_active_brace_contact_time"]
+                assert math.isfinite(active_time)
+                assert any(
+                    samples[row["sample"]]["simulation_time"] == active_time
+                    and samples[row["sample"]]["awake"]
+                    for row in definite
+                ), "Refresh did not retain awake initial-obstruction contact proof"
+                call_id = enter["sample"]
+                assert first_disabled["sample"] < call_id < len(samples) - 2
+                before, next_frame = samples[call_id : call_id + 2]
+                assert enter["frame"] == before["frame"]
+                assert enter["simulation_time"] == before["simulation_time"]
+                assert 2.0 - 1e-6 <= (
+                    enter["simulation_time"] - first_disabled["simulation_time"]
+                ) <= 2.2 + 1e-6
+                assert release[0] < enter["simulation_time"] - offset[1]
+                assert enter["simulation_time"] - offset[0] < retry
+                assert enter["slot"] == 28 and enter["target_elf"] == 0x38100
+                assert enter["snapshot_destroyed"] and enter["in_simulation"] is False
+                assert enter["asleep"] and before["awake"] is False
+                settled = [
+                    row for row in samples
+                    if enter["settled_since"] <= row["simulation_time"] <= enter["simulation_time"]
+                ]
+                assert len(settled) >= 5
+                assert enter["simulation_time"] - enter["settled_since"] >= 0.5
+                assert settled[0]["simulation_time"] == enter["settled_since"]
+                assert all(
+                    row["awake"] is False
+                    and all(abs(value) <= 0.05 for value in row["velocity"] + row["angular_velocity"])
+                    for row in settled
+                )
+                before_contacts = contacts_by_sample[call_id]
+                brace_names = {"blocked_door_side_brace", "blocked_door_back_brace"}
+                before_braces = [row for row in before_contacts if row["name"] in brace_names]
+                assert enter["contacts"] == before["contacts"] == len(before_contacts)
+                assert enter["brace_contacts"] == len(before_braces) > 0
+                assert next_frame["frame"] == before["frame"] + 1
+                assert 0 < next_frame["simulation_time"] - before["simulation_time"] <= 0.03
+                for row in [enter, returned, after]:
+                    assert row["sample"] == call_id and row["frame"] == before["frame"]
+                    assert (row["object"], row["owner"], row["collide"]) == (
+                        before["object"], before["owner"], before["collide"]
+                    )
+                    assert math.isfinite(row["simulation_time"])
+                    assert row["simulation_time"] == before["simulation_time"]
+                assert enter["crate_index"] == before["crate_index"]
+                assert after["snapshot_destroyed"] and after["in_simulation"] is False
+                assert isinstance(after["awake"], bool)
+                vector(after["velocity"])
+                vector(after["angular_velocity"])
+                assert all(row["sample"] == call_id and row["stage"] == "after" for row in refresh_contacts)
+                assert after["contacts"] == len(refresh_contacts) <= 4096
+                after_braces = [row for row in refresh_contacts if row["name"] in brace_names]
+                assert after["brace_contacts"] == len(after_braces)
+                assert records.index(arm) < records.index(before) < records.index(enter)
+                assert records.index(enter) < records.index(returned) < records.index(after)
+                assert all(records.index(returned) < records.index(row) < records.index(after) for row in refresh_contacts)
+                assert records.index(after) < records.index(next_frame)
+                report["experimental_contact_refresh"] = {
+                    "direct_calls": 1,
+                    "method": "IPhysicsObject::RecheckContactPoints",
+                    "slot": 28,
+                    "target_elf": 0x38100,
+                    "simulation_time": enter["simulation_time"],
+                    "script_elapsed_interval": [enter["simulation_time"] - bound for bound in reversed(offset)],
+                    "seconds_after_first_native_disabled": enter["simulation_time"] - first_disabled["simulation_time"],
+                    "same_owner_object_collide": True,
+                    "asleep_settled_before_call": True,
+                    "before_brace_contacts": len(before_braces),
+                    "after_brace_contacts": len(after_braces),
+                    "awake_after_call": after["awake"],
+                    "next_frame_brace_contacts": sum(row["name"] in brace_names for row in contacts_by_sample.get(next_frame["sample"], [])),
+                    "next_frame_awake": next_frame["awake"],
+                    "all_snapshots_destroyed": True,
+                    "limits": "The method requests waking; this does not isolate waking from contact reconciliation, establish recovery, or prove a compiler defect.",
+                }
         report.update(
             {
                 "success": True,

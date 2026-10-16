@@ -72,6 +72,13 @@ pub fn preflight_vmf(vmf: &Vmf) -> io::Result<()> {
 }
 
 pub fn capture_staging_bsp(bytes: &[u8]) -> io::Result<Vec<u8>> {
+    capture_staging_bsp_for_channel(bytes, crate::CaptureChannel::Ldr)
+}
+
+pub fn capture_staging_bsp_for_channel(
+    bytes: &[u8],
+    channel: crate::CaptureChannel,
+) -> io::Result<Vec<u8>> {
     if bytes.len() > crate::util::MAX_BSP {
         return Err(invalid("Capture BSP exceeds 128 MiB"));
     }
@@ -92,13 +99,18 @@ pub fn capture_staging_bsp(bytes: &[u8]) -> io::Result<Vec<u8>> {
             "Compiled entities contain unsupported authored scripts or console commands; inspect the source entity diagnostics",
         ));
     }
-    for index in [
-        bsp::lump::LIGHTING_HDR,
-        bsp::lump::LEAF_AMBIENT_LIGHTING_HDR,
-    ] {
-        if !bsp.lump(index).data.is_empty() {
-            return Err(invalid("LDR capture requires empty HDR53/55 arrays"));
-        }
+    if channel == crate::CaptureChannel::Hdr
+        && [
+            bsp::lump::LIGHTING_HDR,
+            bsp::lump::WORLDLIGHTS_HDR,
+            bsp::lump::LEAF_AMBIENT_LIGHTING_HDR,
+        ]
+        .iter()
+        .any(|&index| bsp.lump(index).data.is_empty())
+    {
+        return Err(invalid(
+            "HDR reflection capture requires complete native HDR lighting, world-light and ambient arrays",
+        ));
     }
     let mut entities = entities.to_owned();
     entities.push_str(CONTROLLER);
@@ -159,6 +171,45 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("entity:42")
+        );
+    }
+
+    #[test]
+    fn hdr_staging_requires_complete_arrays_and_preserves_both_lighting_channels() {
+        let mut bsp = Bsp::new();
+        bsp.set_entities("{\n\"classname\" \"worldspawn\"\n}\n");
+        bsp.lumps[bsp::lump::LIGHTING].data = vec![1, 2, 3, 4];
+        for index in [
+            bsp::lump::LIGHTING_HDR,
+            bsp::lump::WORLDLIGHTS_HDR,
+            bsp::lump::LEAF_AMBIENT_LIGHTING_HDR,
+        ] {
+            assert!(
+                capture_staging_bsp_for_channel(&bsp.to_bytes(), crate::CaptureChannel::Hdr)
+                    .is_err()
+            );
+            bsp.lumps[index].data = vec![5, 6, 7, 8];
+        }
+        let hdr = Bsp::parse(
+            &capture_staging_bsp_for_channel(&bsp.to_bytes(), crate::CaptureChannel::Hdr).unwrap(),
+        )
+        .unwrap();
+        let ldr = Bsp::parse(&capture_staging_bsp(&bsp.to_bytes()).unwrap()).unwrap();
+        for index in [
+            bsp::lump::LIGHTING,
+            bsp::lump::LIGHTING_HDR,
+            bsp::lump::WORLDLIGHTS_HDR,
+            bsp::lump::LEAF_AMBIENT_LIGHTING_HDR,
+        ] {
+            assert_eq!(hdr.lump(index).data, bsp.lump(index).data);
+            assert_eq!(ldr.lump(index).data, bsp.lump(index).data);
+        }
+        assert_eq!(
+            hdr.entities()
+                .unwrap()
+                .matches("__hammerr_capture_controller")
+                .count(),
+            1
         );
     }
 }

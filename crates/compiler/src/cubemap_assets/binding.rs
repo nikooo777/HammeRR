@@ -102,6 +102,7 @@ pub fn inspect_cubemap_bindings(
         &mut map,
         &context,
         false,
+        false,
         control,
     )?;
     if !requested.is_subset(&plan.eligible_faces) {
@@ -147,6 +148,7 @@ pub(crate) fn prepare(
     map: &mut Map<'_>,
     context: &CompileContext,
     capture_scene: bool,
+    hdr: bool,
     control: &Control,
 ) -> Result<Plan, String> {
     let helpers: Vec<_> = vmf
@@ -160,15 +162,17 @@ pub(crate) fn prepare(
         })
         .collect();
     if helpers.is_empty() || helpers.len() > MAX_SAMPLES || helpers.len() != map.cubemaps.len() {
-        return Err(
-            "Generate LDR reflections requires 1–32 valid visible env_cubemap helpers".into(),
-        );
+        return Err("Generate reflections requires 1–32 valid visible env_cubemap helpers".into());
     }
     if capture_scene {
         ensure_default_unmounted(fs, context.namespace())?;
+        if hdr {
+            super::material::ensure_hdr_default_unmounted(fs, context.namespace())?;
+        }
     }
     let mut positions = BTreeSet::new();
     let mut samples = Vec::with_capacity(helpers.len());
+    let mut hdr_samples = Vec::new();
     for (entity, cube) in helpers.iter().zip(&map.cubemaps) {
         control.checkpoint()?;
         let edge = if cube.size == 0 {
@@ -212,6 +216,28 @@ pub(crate) fn prepare(
             bootstrap_sha256: sha256.clone(),
             sha256,
         });
+        if hdr {
+            let mut sample = samples.last().unwrap().clone();
+            sample.texture = super::material::hdr_sample_texture(context.namespace(), cube.origin);
+            if fs
+                .read_limited(&sample.texture, 1)
+                .map_err(|error| {
+                    format!(
+                        "Generated HDR reflection sample path collision: {}: {error}",
+                        sample.texture
+                    )
+                })?
+                .is_some()
+            {
+                return Err(format!(
+                    "Generated HDR reflection sample collides with mounted content: {}",
+                    sample.texture
+                ));
+            }
+            sample.bootstrap_sha256 = hash(&super::hdr::bootstrap_cube(edge)?);
+            sample.sha256 = sample.bootstrap_sha256.clone();
+            hdr_samples.push(sample);
+        }
     }
     let mut sides = BTreeMap::new();
     for brush in &map.brushes {
@@ -396,20 +422,28 @@ pub(crate) fn prepare(
             data: super::manifest::bootstrap_cube(sample.edge)?,
         });
     }
+    for sample in &hdr_samples {
+        entries.push(PakEntry {
+            name: sample.texture.clone(),
+            data: super::hdr::bootstrap_cube(sample.edge)?,
+        });
+    }
     Ok(Plan {
         eligible_faces: sides.keys().copied().collect(),
         manifest: CubemapAssetManifest {
-            version: 1,
+            version: if hdr { 2 } else { 1 },
             phase: CubemapAssetPhase::Pending,
             logical_namespace: context.namespace().into(),
             namespace: context.namespace().into(),
-            channel: "ldr".into(),
+            channel: if hdr { "ldr_hdr" } else { "ldr" }.into(),
             samples,
+            hdr_samples,
             assignments,
             aliases,
             sources,
             missing_sources,
             default_texture: None,
+            hdr_default_texture: None,
             texinfo_bindings: Vec::new(),
             face_bindings: Vec::new(),
         },

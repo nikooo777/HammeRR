@@ -37,10 +37,13 @@ fn reflection_settings_validate_the_whole_update_and_freeze_active_jobs() {
             )
             .unwrap();
         let enabled = session.compile_settings();
-        for lighting in ["fullbright", "direct_ldr_hdr"] {
-            assert!(session.set_compile_settings(actor, lighting).is_err());
-            assert_eq!(session.compile_settings(), enabled);
-        }
+        assert!(session.set_compile_settings(actor, "fullbright").is_err());
+        assert_eq!(session.compile_settings(), enabled);
+        session
+            .set_compile_settings(actor, "direct_ldr_hdr")
+            .unwrap();
+        assert_eq!(session.compile_settings()["generate_reflections"], true);
+        assert_eq!(session.compile_settings()["lighting"], "direct_ldr_hdr");
         session
             .update_build_settings(
                 actor,

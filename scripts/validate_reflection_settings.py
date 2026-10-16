@@ -40,7 +40,7 @@ def validate(args):
         before = client.call("get_map_info")
         initial = client.call("get_compile_settings")
         check(initial["generate_reflections"] is False, "Generation defaults off")
-        for lighting in ["fullbright", "direct_ldr_hdr"]:
+        for lighting in ["fullbright"]:
             client.call(
                 "set_compile_settings",
                 {
@@ -63,12 +63,15 @@ def validate(args):
             and enabled["lighting"] == "direct_ldr",
             "Direct LDR and generation enable atomically",
         )
-        for lighting in ["fullbright", "direct_ldr_hdr"]:
+        for lighting in ["fullbright"]:
             client.call("set_compile_settings", {"lighting": lighting}, error=True)
             check(
                 client.call("get_compile_settings") == enabled,
                 f"Enabled generation rejects switching to {lighting}",
             )
+        dual = client.call("set_compile_settings", {"lighting": "direct_ldr_hdr"})
+        check(dual["generate_reflections"] is True and dual["lighting"] == "direct_ldr_hdr", "HDR lighting retains generation for both channels")
+        enabled = client.call("set_compile_settings", {"lighting": "direct_ldr"})
         saved = client.call(
             "save_build_recipe", {"name": "Reflection settings validation"}
         )

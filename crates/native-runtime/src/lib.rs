@@ -27,7 +27,32 @@ pub struct CaptureSample {
     pub bootstrap_sha256: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureChannel {
+    #[default]
+    Ldr,
+    Hdr,
+}
+
+impl CaptureChannel {
+    pub const fn hdr_level(self) -> u8 {
+        match self {
+            Self::Ldr => 0,
+            Self::Hdr => 2,
+        }
+    }
+
+    pub const fn texture_suffix(self) -> &'static str {
+        match self {
+            Self::Ldr => ".vtf",
+            Self::Hdr => ".hdr.vtf",
+        }
+    }
+}
+
 pub struct CaptureRequest {
+    pub channel: CaptureChannel,
     pub environment: CaptureEnvironment,
     pub bsp: Vec<u8>,
     pub map_name: String,
@@ -35,6 +60,7 @@ pub struct CaptureRequest {
 }
 
 pub struct CaptureReceipt {
+    pub channel: CaptureChannel,
     pub bsp: Vec<u8>,
     pub staged_bsp: Vec<u8>,
     pub artifacts: PathBuf,
@@ -56,7 +82,7 @@ mod util;
 mod vdf;
 mod worker;
 
-pub use adapter::{capture_staging_bsp, preflight_vmf};
+pub use adapter::{capture_staging_bsp, capture_staging_bsp_for_channel, preflight_vmf};
 pub use guard::{resolve_environment, validate_environment};
 pub use process::capture;
 

@@ -243,10 +243,12 @@ fn backing_asset_replacement_after_preparation_rejects_publication() {
         namespace: "room".into(),
         channel: "ldr".into(),
         samples: vec![],
+        hdr_samples: vec![],
         assignments: vec![],
         aliases: vec![],
         missing_sources: vec![],
         default_texture: None,
+        hdr_default_texture: None,
         texinfo_bindings: vec![],
         face_bindings: vec![],
         sources: vec![compiler::cubemap_assets::CubemapSourceAsset {

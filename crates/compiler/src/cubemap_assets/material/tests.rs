@@ -63,6 +63,7 @@ fn manifest(graph: &Graph<'_>) -> CubemapAssetManifest {
         namespace: "lookup".into(),
         channel: "ldr".into(),
         samples: Vec::new(),
+        hdr_samples: Vec::new(),
         assignments: Vec::new(),
         aliases: Vec::new(),
         sources: graph
@@ -75,6 +76,7 @@ fn manifest(graph: &Graph<'_>) -> CubemapAssetManifest {
             .collect(),
         missing_sources: graph.missing_sources.iter().cloned().collect(),
         default_texture: None,
+        hdr_default_texture: None,
         texinfo_bindings: Vec::new(),
         face_bindings: Vec::new(),
     }

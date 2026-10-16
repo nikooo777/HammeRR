@@ -112,8 +112,8 @@ pub(super) fn bind(window: &CompileWindow, shared: &SharedSession) -> Form {
             let window = window.unwrap();
             window.set_generate_reflections(session.compile_options().generate_reflections);
             window.set_message(match result {
-                Ok(_) if enabled => "LDR reflection generation enabled. The next Compile or Run Map captures and verifies reflections before publishing.".into(),
-                Ok(_) => "LDR reflection generation disabled.".into(),
+                Ok(_) if enabled => "Reflection generation enabled. The next Compile or Run Map captures and verifies the selected lighting channels before publishing.".into(),
+                Ok(_) => "Reflection generation disabled.".into(),
                 Err(error) => error.into(),
             });
         }
@@ -239,8 +239,19 @@ mod tests {
         assert!(controller.window.get_generate_reflections());
         controller.window.invoke_change_lighting(2);
         controller.refresh(&lock(&shared));
-        assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
+        assert_eq!(
+            controller.window.get_selected_lighting(),
+            "Direct LDR + HDR"
+        );
         assert!(controller.window.get_generate_reflections());
+        controller.window.invoke_change_lighting(0);
+        controller.refresh(&lock(&shared));
+        assert_eq!(
+            controller.window.get_selected_lighting(),
+            "Direct LDR + HDR"
+        );
+        assert!(controller.window.get_generate_reflections());
+        assert!(lock(&shared).compile_options().generate_reflections);
         if let Some(engine_root) = std::env::var_os("HAMMERR_UI_CAPTURE_ENGINE_ROOT") {
             let state = lock(&shared)
                 .configure_native_capture_runtime(Actor::User, Some(Path::new(&engine_root)), None)
@@ -249,6 +260,12 @@ mod tests {
             controller.refresh(&lock(&shared));
         }
         controller.window.show().unwrap();
+        crate::ui::tests::save_ui_snapshot(
+            controller.window.window(),
+            "build-hdr-reflection-controls",
+        );
+        controller.window.invoke_change_lighting(1);
+        controller.refresh(&lock(&shared));
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-reflection-controls");
         let runtime = lock(&shared).native_capture_runtime();
         controller.window.invoke_begin_capture_edit();

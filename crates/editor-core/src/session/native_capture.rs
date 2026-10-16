@@ -80,7 +80,8 @@ impl Session {
             "ready":environment.is_ok(),
             "reason":environment.as_ref().err(),
             "editable":!self.compiling&&!self.closing,
-            "channel":"ldr", "default_sample_size":128, "maximum_sample_size":128,
+            "channel":if self.compilation.options.lighting == compiler::LightingMode::DirectLdrHdr {"ldr_hdr"}else{"ldr"},
+            "supported_channels":["ldr","hdr"], "default_sample_size":128, "maximum_sample_size":128,
         })
     }
 
@@ -172,5 +173,23 @@ mod tests {
                 .configure_native_capture_runtime(Actor::Agent, None, None)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn runtime_support_and_selected_channels_follow_shared_lighting_without_editing_the_map() {
+        let (_directory, game) = crate::test_assets::game();
+        let mut session = Session::new(Ok(game));
+        let source = session.document().vmf().clone();
+        let initial = session.native_capture_runtime();
+        assert_eq!(initial["supported_channels"], json!(["ldr", "hdr"]));
+        assert_eq!(initial["channel"], "ldr");
+        session
+            .set_compile_settings(Actor::Agent, "direct_ldr_hdr")
+            .unwrap();
+        let dual = session.native_capture_runtime();
+        assert_eq!(dual["channel"], "ldr_hdr");
+        assert_eq!(dual["ready"], initial["ready"]);
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), 0);
     }
 }

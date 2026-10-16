@@ -19,6 +19,8 @@ use crate::{CaptureEnvironment, CaptureObserver, CaptureReceipt, CaptureRequest,
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkerRequest {
     pub version: u32,
+    #[serde(default)]
+    pub channel: crate::CaptureChannel,
     pub nonce: String,
     pub supervisor: u32,
     pub supervisor_start: String,
@@ -596,8 +598,12 @@ pub fn capture(
             ));
         }
         let expected = format!(
-            "materials/maps/{}/c{}_{}_{}.vtf",
-            request.map_name, sample.origin[0], sample.origin[1], sample.origin[2]
+            "materials/maps/{}/c{}_{}_{}{}",
+            request.map_name,
+            sample.origin[0],
+            sample.origin[1],
+            sample.origin[2],
+            request.channel.texture_suffix()
         );
         if sample.texture != expected || sample.bootstrap_sha256.len() != 64 {
             return Err(invalid("Invalid native sample identity"));
@@ -612,7 +618,7 @@ pub fn capture(
         .keep()
         .canonicalize()?;
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
-    let staged = crate::adapter::capture_staging_bsp(&request.bsp)?;
+    let staged = crate::adapter::capture_staging_bsp_for_channel(&request.bsp, request.channel)?;
     if staged
         .len()
         .checked_mul(2)
@@ -628,6 +634,7 @@ pub fn capture(
     let input_hash = util::hash(&staged);
     let worker = WorkerRequest {
         version: 1,
+        channel: request.channel,
         nonce: directory
             .file_name()
             .and_then(|name| name.to_str())
@@ -745,6 +752,7 @@ pub fn capture(
     }
     let bsp = util::read(&directory.join("captured.bsp"), util::MAX_BSP)?;
     Ok(CaptureReceipt {
+        channel: request.channel,
         bsp,
         staged_bsp: staged,
         artifacts: directory,

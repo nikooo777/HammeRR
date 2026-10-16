@@ -744,12 +744,12 @@ CPU tests check six-face loading, VMT patches, dimensions, LDR selection, suppor
 ```sh
 cargo test -p compiler --lib sky_assets::tests
 cargo test -p editor-core sky_assets::tests
-cargo test -p editor-core sky_inspection_tool_has_strict_empty_arguments_and_matches_read_only_session_report
+cargo test -p editor-core --features mcp sky_inspection_tool_has_strict_empty_arguments_and_matches_read_only_session_report
 cargo test -p editor sky_assets_ui::tests
 python3 -B scripts/validate_sky_assets.py --binary target/debug/hammerr-headless --output /tmp/hammerr-sky-assets-check
 ```
 
-Core tests cover exact family identity, separate LDR/HDR structure, bounded directory/VPK and Patch reads, malformed/missing assets and unsupported declarations without substituting families. The MCP test checks strict empty arguments and exact Session report parity while preserving an unapplied property draft. The private stdio fixture mounts synthetic LDR/HDR VTFs and material/Patch sources, checks directory/VPK provenance, malformed winning assets, compressed HDR diagnostics, missing faces and invalid names, and compares document/history/camera/selection/clipboard/drafts and mounted bytes around every inspection. It starts no renderer, compiler or game process.
+Compiler tests cover exact family identity, separate LDR/HDR structure, bounded directory/VPK and Patch reads, malformed/missing assets and unsupported declarations without substituting families. Session tests preserve applied state and distinguish asset readiness from renderer support. The MCP test checks strict empty arguments and exact Session report parity while preserving an unapplied property draft. The private stdio fixture mounts synthetic LDR/HDR VTFs and material/Patch sources, checks directory/VPK provenance, malformed winning assets, compressed HDR diagnostics, missing faces and invalid names, and compares document/history/camera/selection/clipboard/drafts and mounted bytes around every inspection. It starts no renderer, compiler or game process.
 
 The software UI test `world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pending_edits` invokes the actual **Inspect applied sky…**, six face, **Refresh sky assets** and **Close** buttons. It verifies selected-face details, separate Patch provenance without repeating the root mount, preserved face choice during refresh, the applied name while a different skyname is staged, and an untouched transform draft and parent edit through repair and close. Create the directory named by `HAMMERR_UI_SNAPSHOTS` before enabling it; the test writes `sky-assets.png` through the offscreen backend.
 

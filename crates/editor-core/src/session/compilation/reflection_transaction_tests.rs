@@ -3,6 +3,10 @@ use source_formats::bsp::Bsp;
 use source_formats::gamefs::{Mount, MountedPath};
 
 fn prepared(leak: bool) -> (tempfile::TempDir, Session, CompileResult) {
+    prepared_source(leak, true)
+}
+
+fn prepared_source(leak: bool, named: bool) -> (tempfile::TempDir, Session, CompileResult) {
     let (directory, mut game, _) = crate::test_assets::game_process(false);
     game.mounts.push(MountedPath {
         ids: vec!["game".into()],
@@ -10,13 +14,15 @@ fn prepared(leak: bool) -> (tempfile::TempDir, Session, CompileResult) {
     });
     let source_path = directory.path().join("room.vmf");
     let destination = directory.path().join("room.bsp");
-    std::fs::write(&source_path, b"source VMF identity").unwrap();
+    if named {
+        std::fs::write(&source_path, b"source VMF identity").unwrap();
+    }
     std::fs::write(&destination, b"previous BSP").unwrap();
     std::fs::write(destination.with_extension("lin"), b"previous pointfile").unwrap();
     let mut session = Session::new(Ok(game));
     session.replace_document(
         Document::new(crate::test_assets::room()),
-        Some(source_path.clone()),
+        named.then(|| source_path.clone()),
     );
     let request = session
         .begin_compile(Actor::User, Some(&destination))
@@ -30,7 +36,10 @@ fn prepared(leak: bool) -> (tempfile::TempDir, Session, CompileResult) {
     let pointfile_lease = leak.then(|| {
         compiler::OutputLease::acquire(&destination.with_extension("lin"), &control).unwrap()
     });
-    let source = compiler::FileIdentity::capture(&source_path, &control).unwrap();
+    let source = named
+        .then(|| compiler::FileIdentity::capture(&source_path, &control))
+        .transpose()
+        .unwrap();
     let output = compiler::Output {
         bsp: (!leak).then(Bsp::new),
         report: Default::default(),
@@ -61,7 +70,7 @@ fn prepared(leak: bool) -> (tempfile::TempDir, Session, CompileResult) {
         revision: session.document.revision(),
         options: session.compilation.options,
         content_epoch: session.content_epoch,
-        source: Some(source),
+        source,
         destination_stamp: Some(destination_stamp),
         control,
         publication: Mutex::new(Publication {
@@ -75,6 +84,51 @@ fn prepared(leak: bool) -> (tempfile::TempDir, Session, CompileResult) {
         }),
     };
     (directory, session, result)
+}
+
+#[test]
+fn save_as_during_reflection_capture_preserves_previous_outputs() {
+    for actor in [Actor::User, Actor::Agent] {
+        for named in [false, true] {
+            for leak in [false, true] {
+                let (directory, mut session, result) = prepared_source(leak, named);
+                let source = directory.path().join("renamed.vmf");
+                let generation = session.document_generation;
+                let revision = session.document.revision();
+                session.save(actor, Some(&source)).unwrap();
+                let saved = std::fs::read(&source).unwrap();
+                assert_eq!(session.path.as_ref(), Some(&source));
+                assert_eq!(session.document_generation, generation);
+                assert_eq!(session.document.revision(), revision);
+                if let Some(identity) = &result.source {
+                    identity.verify_metadata().unwrap();
+                }
+                let outcome = Ok(result);
+                session.finish_compile(actor, &outcome);
+                let result = outcome.as_ref().unwrap();
+                assert!(!result.published());
+                assert!(
+                    result
+                        .publication_error()
+                        .unwrap()
+                        .contains("source path changed")
+                );
+                assert_eq!(std::fs::read(&result.path).unwrap(), b"previous BSP");
+                assert_eq!(
+                    std::fs::read(result.path.with_extension("lin")).unwrap(),
+                    b"previous pointfile"
+                );
+                assert_eq!(std::fs::read(&source).unwrap(), saved);
+                assert_eq!(session.compiled.as_ref().unwrap().path, result.path);
+                assert!(!session.compiling());
+                let status = session.compile_status();
+                assert_eq!(status["job"]["status"], "failed");
+                assert_eq!(status["job"]["result"]["published"], false);
+                assert_eq!(status["job"]["result"]["success"], false);
+                assert_eq!(status["job"]["result"]["bsp"], Value::Null);
+            }
+        }
+    }
 }
 
 #[test]

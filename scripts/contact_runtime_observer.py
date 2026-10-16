@@ -45,9 +45,10 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepare(library, release_mode, root, game, output, command, environment):
+def prepare(library, release_mode, root, game, output, command, environment, *, initial_profile=False):
     assert release_mode in {"kill", "disable", "disable-wake", "disable-refresh"}
     intervention = release_mode == "disable-refresh"
+    assert not (initial_profile and intervention), "Initial profiles are observation-only"
     assert not environment.get("LD_PRELOAD"), (
         "Contact observation cannot inherit LD_PRELOAD"
     )
@@ -91,6 +92,8 @@ def prepare(library, release_mode, root, game, output, command, environment):
         "instrumented_profile_sha256": digest(profile),
         "load_before_private_map": True,
     }
+    if initial_profile:
+        receipt["initial_object_profile"] = {"schema": 1, "objects": 7, "observation_only": True}
     (output / "contact-observer-launch.json").write_text(
         json.dumps(receipt, indent=2) + "\n"
     )
@@ -103,6 +106,7 @@ def prepare(library, release_mode, root, game, output, command, environment):
         "HAMMERR_CONTACT_PRIVATE_GAME": str(game),
         "HAMMERR_CONTACT_REPORT": str(output / "contact-observer.jsonl"),
         "HAMMERR_CONTACT_INTERVENTION": "single-recheck" if intervention else "none",
+        "HAMMERR_CONTACT_INITIAL_PROFILE": "1" if initial_profile else "0",
     }
 
 
@@ -117,7 +121,7 @@ def vector(value):
     assert all(isinstance(item, (int, float)) and math.isfinite(item) for item in value)
 
 
-def verify(output, release_mode):
+def verify(output, release_mode, *, initial_profile=False):
     intervention = release_mode == "disable-refresh"
     report = {
         "schema": 1,
@@ -127,6 +131,11 @@ def verify(output, release_mode):
     }
     try:
         receipt = json.loads((output / "contact-observer-launch.json").read_text())
+        assert not (initial_profile and intervention)
+        if initial_profile:
+            assert receipt["initial_object_profile"] == {"schema": 1, "objects": 7, "observation_only": True}
+        else:
+            assert "initial_object_profile" not in receipt
         assert receipt["release_mode"] == release_mode
         assert receipt["observation_only"] is (not intervention)
         assert receipt["load_before_private_map"]
@@ -187,11 +196,14 @@ def verify(output, release_mode):
         assert {row["name"]: row["build_id"] for row in grouped["module"]} == {
             name: values[2] for name, values in MODULES.items()
         }
-        assert len(grouped["interface"]) == len(INTERFACES)
+        expected_interfaces = dict(INTERFACES)
+        if initial_profile:
+            expected_interfaces["VPhysicsSurfaceProps001"] = ("vphysics.so", 0x194720)
+        assert len(grouped["interface"]) == len(expected_interfaces)
         assert {
             row["version"]: (row["module"], row["vtable_elf"])
             for row in grouped["interface"]
-        } == INTERFACES
+        } == expected_interfaces
         assert all(
             row["factory_elf"] == FACTORIES[row["module"]]
             for row in grouped["interface"]
@@ -324,6 +336,45 @@ def verify(output, release_mode):
                 sample["object"],
                 sample["collide"],
             )
+        profiles = grouped.get("initial_object_profile", [])
+        completions = grouped.get("initial_profiles_complete", [])
+        if initial_profile:
+            assert len(profiles) == 7 and len(completions) == 1
+            assert {row["name"] for row in profiles} == STABLE | BRACES
+            complete = completions[0]
+            assert complete["profile_schema"] == 1 and complete["objects"] == 7
+            assert complete["sample"] == 0 and complete["frame"] == samples[0]["frame"]
+            assert complete["observation_only"] is True
+            assert records.index(grouped["activate"][0]) < records.index(profiles[0])
+            assert records.index(profiles[-1]) < records.index(complete) < records.index(samples[0])
+            assert len({row["surface_count"] for row in profiles}) == 1
+            for row in profiles:
+                identity = by_sample[0][row["name"]]
+                assert row["profile_schema"] == 1 and row["sample"] == 0
+                assert row["frame"] == samples[0]["frame"]
+                assert row["simulation_time"] == samples[0]["simulation_time"]
+                assert row["in_simulation"] is False and row["observation_only"] is True
+                assert (row["owner"], row["edict"], row["index"], row["object"], row["collide"]) == (
+                    identity["entity"], identity["edict"], identity["index"], identity["object"], identity["collide"]
+                )
+                pointer(row["environment"])
+                for field in ["mass", "linear_damping", "angular_damping"]:
+                    assert isinstance(row[field], (int, float)) and math.isfinite(row[field]) and row[field] >= 0
+                assert 0 <= row["material_index"] < min(row["surface_count"], 128)
+                assert 0 < row["surface_count"] <= 4096
+                assert row["material_roundtrip_index"] == row["material_index"]
+                assert isinstance(row["material_name"], str) and 0 < len(row["material_name"].encode()) < 128
+                assert all(32 <= ord(value) <= 126 and value not in '"\\' for value in row["material_name"])
+                assert isinstance(row["contents"], int) and 0 <= row["contents"] <= 0xFFFFFFFF
+            report["initial_object_profiles"] = {
+                "schema": 1,
+                "observation_only": True,
+                "observed_objects": 7,
+                "objects": profiles,
+                "limits": "First safe post-activation observation, not creation-call arguments or reference-compiler parity. No mutation or contact refresh is enabled by this option.",
+            }
+        else:
+            assert not profiles and not completions
         for name in STABLE | BRACES:
             present = [
                 row for row in entities if row["name"] == name and row["present"]
@@ -590,6 +641,8 @@ def verify(output, release_mode):
                     "all_snapshots_destroyed": True,
                     "limits": "The method requests waking; this does not isolate waking from contact reconciliation, establish recovery, or prove a compiler defect.",
                 }
+        if initial_profile:
+            report["initial_object_profiles"]["success"] = True
         report.update(
             {
                 "success": True,

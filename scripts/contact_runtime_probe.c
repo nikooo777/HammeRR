@@ -25,7 +25,9 @@ enum {
     STABLE_COUNT = 3,
     SOLID_NONE = 0,
     SOLID_LAST = 7,
-    FSOLID_NOT_SOLID = 4
+    FSOLID_NOT_SOLID = 4,
+    MAX_SURFACE_PROPERTIES = 4096,
+    MAX_DIRECT_SURFACE_INDEX = 127
 };
 
 typedef void *(*Factory)(const char *, int *);
@@ -67,6 +69,8 @@ static Tracked tracked[TRACKED_COUNT] = {
     {.name = "clear_door_back_brace"},
 };
 static void *tools, *entities, *engine_server, *physics_system;
+static void *surface_properties;
+static bool initial_profile_enabled, initial_profile_done;
 static int report_fd = -1;
 static bool invalidated, activated, entered, loaded, level_init_seen, initial_shutdown_seen;
 static unsigned long frame_count, sample_count;
@@ -298,6 +302,12 @@ static bool process_guard(void) {
     if (mode && strcmp(mode, "none") && strcmp(mode, "single-recheck"))
         return false;
     refresh_enabled = mode && !strcmp(mode, "single-recheck");
+    const char *profile = getenv("HAMMERR_CONTACT_INITIAL_PROFILE");
+    if (profile && strcmp(profile, "0") && strcmp(profile, "1"))
+        return false;
+    initial_profile_enabled = profile && !strcmp(profile, "1");
+    if (initial_profile_enabled && refresh_enabled)
+        return false;
     char executable[PATH_MAX], actual_game[PATH_MAX], actual_root[PATH_MAX],
         expected_report[PATH_MAX], path[PATH_MAX];
     ssize_t count = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
@@ -673,6 +683,100 @@ static bool verify_physics_name(const Tracked *crate, bool record) {
     return !invalidated;
 }
 
+static bool initial_profiles(float time) {
+    if (!initial_profile_enabled || initial_profile_done)
+        return true;
+    if (sample_count || !activated || !entered || !isfinite(time)) {
+        fail("initial_profile_phase");
+        return false;
+    }
+    typedef int (*Count)(const void *);
+    typedef int (*Index)(const void *, const char *);
+    typedef const char *(*Name)(const void *, int);
+    typedef float (*Mass)(const void *);
+    typedef void (*Damping)(const void *, float *, float *);
+    typedef int (*Material)(const void *);
+    typedef unsigned int (*Contents)(const void *);
+    typedef bool (*InSimulation)(const void *);
+    Count count_at = (Count)method(surface_properties, 0x194720, 3, &physics, 0x339b0);
+    Index index_at = (Index)method(surface_properties, 0x194720, 4, &physics, 0x33af0);
+    Name name_at = (Name)method(surface_properties, 0x194720, 8, &physics, 0x33fb0);
+    if (!count_at || !index_at || !name_at)
+        return false;
+    int count = count_at(surface_properties);
+    if (count <= 0 || count > MAX_SURFACE_PROPERTIES) {
+        fail("initial_profile_surface_count");
+        return false;
+    }
+    for (size_t index = 0; index < TRACKED_COUNT; index++) {
+        Tracked *item = &tracked[index];
+        if (!item->present || item->object_count != 1 || !item->collide ||
+            (index >= STABLE_COUNT && (item->solid_type == SOLID_NONE ||
+                                      (item->solid_flags & FSOLID_NOT_SOLID)))) {
+            fail("initial_profile_identity_or_brace_state");
+            return false;
+        }
+        Mass mass_at = (Mass)method(item->object, 0x1948a8, 30, &physics, 0x36e80);
+        Damping damping_at = (Damping)method(item->object, 0x1948a8, 36, &physics, 0x36f40);
+        Material material_at = (Material)method(item->object, 0x1948a8, 39, &physics, 0x2e1c0);
+        Contents contents_at = (Contents)method(item->object, 0x1948a8, 41, &physics, 0x3c6a0);
+        InSimulation simulating =
+            (InSimulation)method(item->environment, 0x198288, 36, &physics, 0x2bb80);
+        if (!mass_at || !damping_at || !material_at || !contents_at || !simulating ||
+            simulating(item->environment)) {
+            fail("initial_profile_unsafe_query");
+            return false;
+        }
+        float mass = mass_at(item->object), linear = NAN, angular = NAN;
+        damping_at(item->object, &linear, &angular);
+        int material = material_at(item->object);
+        unsigned int contents = contents_at(item->object);
+        if (!isfinite(mass) || mass < 0 || !isfinite(linear) || linear < 0 ||
+            !isfinite(angular) || angular < 0 || material < 0 || material >= count ||
+            material > MAX_DIRECT_SURFACE_INDEX) {
+            emit("{\"event\":\"initial_profile_failure\",\"name\":\"%s\",\"sample\":%lu,"
+                 "\"material_index\":%d,\"surface_count\":%d,\"finite_mass\":%s,"
+                 "\"finite_linear_damping\":%s,\"finite_angular_damping\":%s}\n",
+                 item->name, sample_count, material, count, isfinite(mass) ? "true" : "false",
+                 isfinite(linear) ? "true" : "false", isfinite(angular) ? "true" : "false");
+            fail("initial_profile_values_or_surface_alias");
+            return false;
+        }
+        char name[128];
+        size_t copied;
+        const char *address = name_at(surface_properties, material);
+        if (!copy_mapped_string(address, name, sizeof(name), &copied) || !name[0]) {
+            fail("initial_profile_unreadable_surface_name");
+            return false;
+        }
+        for (const unsigned char *at = (const unsigned char *)name; *at; at++) {
+            if (*at < 32 || *at > 126 || *at == '"' || *at == '\\') {
+                fail("initial_profile_unrepresentable_surface_name");
+                return false;
+            }
+        }
+        int roundtrip = index_at(surface_properties, name);
+        if (roundtrip != material || count_at(surface_properties) != count ||
+            object_owner(item->object) != item->entity || simulating(item->environment)) {
+            fail("initial_profile_surface_or_owner_changed");
+            return false;
+        }
+        if (!emit("{\"event\":\"initial_object_profile\",\"profile_schema\":1,\"sample\":%lu,"
+                  "\"frame\":%lu,\"simulation_time\":%.9g,\"name\":\"%s\",\"owner\":\"%p\","
+                  "\"edict\":\"%p\",\"index\":%d,\"object\":\"%p\",\"environment\":\"%p\","
+                  "\"collide\":\"%p\",\"mass\":%.9g,\"linear_damping\":%.9g,\"angular_damping\":%.9g,"
+                  "\"material_index\":%d,\"material_name\":\"%s\",\"material_roundtrip_index\":%d,"
+                  "\"surface_count\":%d,\"contents\":%u,\"in_simulation\":false,\"observation_only\":true}\n",
+                  sample_count, frame_count, time, item->name, item->entity, item->edict,
+                  item->index, item->object, item->environment, item->collide, mass, linear,
+                  angular, material, name, roundtrip, count, contents))
+            return false;
+    }
+    initial_profile_done = true;
+    return emit("{\"event\":\"initial_profiles_complete\",\"profile_schema\":1,\"sample\":0,"
+                "\"frame\":%lu,\"objects\":7,\"observation_only\":true}\n", frame_count);
+}
+
 static bool contacts(void *object, size_t *count) {
     typedef void *(*Create)(void *);
     typedef void (*Destroy)(void *, void *);
@@ -974,6 +1078,8 @@ static void observe(void) {
         return;
     }
     bool sleeping = asleep(crate->object);
+    if (!initial_profiles(time))
+        return;
     size_t contact_count;
     if (!contacts(crate->object, &contact_count))
         return;
@@ -1007,6 +1113,11 @@ static bool plugin_load(void *self, Factory engine_factory, Factory server_facto
         return false;
     Factory physics_factory = (Factory)dlsym(physics.handle, "CreateInterface");
     physics_system = interface(physics_factory, "VPhysics031", &physics, 0x193c98);
+    if (initial_profile_enabled) {
+        surface_properties = interface(physics_factory, "VPhysicsSurfaceProps001", &physics, 0x194720);
+        if (!surface_properties || invalidated)
+            return false;
+    }
     loaded = tools && entities && engine_server && physics_system && !invalidated;
     emit("{\"event\":\"loaded\",\"success\":%s}\n", loaded ? "true" : "false");
     return loaded;

@@ -6,6 +6,8 @@ mod common;
 pub(super) use common::*;
 mod components;
 pub(super) use components::*;
+mod cubemap_bindings;
+pub(super) use cubemap_bindings::*;
 mod entities;
 pub(super) use entities::*;
 mod geometry;

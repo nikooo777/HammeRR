@@ -548,6 +548,7 @@ impl EditorServer {
             + Self::clipboard_tools()
             + Self::components_tools()
             + Self::context_tools()
+            + Self::cubemap_bindings_tools()
             + Self::entities_tools()
             + Self::files_tools()
             + Self::geometry_tools()

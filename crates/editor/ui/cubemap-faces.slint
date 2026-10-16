@@ -1,0 +1,124 @@
+import { Button, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+
+export struct CubemapFaceRow {
+    index: int,
+    label: string,
+    choice: string,
+    material: string,
+    alias: string,
+    selected: bool,
+}
+
+export component CubemapFacesWindow inherits Window {
+    title: "Cubemap faces - HammeRR";
+    preferred-width: 860px;
+    preferred-height: 800px;
+    in property <string> helper-label;
+    in property <string> selection-label;
+    in property <string> inspection-label;
+    in property <string> helper-status;
+    in property <string> draft-label;
+    in property <string> message;
+    in property <string> page-label;
+    in property <bool> can-bind;
+    in property <bool> can-remove;
+    in property <bool> can-clear;
+    in property <bool> can-select-bound;
+    in property <bool> can-review;
+    in property <bool> ready;
+    in property <bool> previous-page;
+    in property <bool> next-page;
+    in property <[CubemapFaceRow]> assignments;
+    in property <[CubemapFaceRow]> preview-assignments;
+    in-out property <string> search;
+    callback refresh();
+    callback page-change(int);
+    callback select-face(int);
+    callback select-bound();
+    callback bind();
+    callback remove();
+    callback clear-bindings();
+    callback review();
+    callback apply();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            Text { text: "Cubemap faces"; font-size: 24px; font-weight: 600; }
+            Text { text: root.helper-label; color: #bac2ce; wrap: word-wrap; }
+            Text { text: "Keep this window open while selecting faces in the map. Manual bindings override automatic sample selection."; color: #bac2ce; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: root.selection-label; vertical-alignment: center; horizontal-stretch: 1; }
+                Button { text: "Select bound faces"; enabled: root.can-select-bound; clicked => { root.select-bound(); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Bind selected faces"; enabled: root.can-bind; clicked => { root.bind(); } }
+                Button { text: "Remove selected bindings"; enabled: root.can-remove; clicked => { root.remove(); } }
+                Button { text: "Clear all manual bindings"; enabled: root.can-clear; clicked => { root.clear-bindings(); } }
+            }
+            Text { text: "Removing bindings lets the compiler choose any active sample. Each action previews its exact choices before Apply."; font-size: 12px; color: #bac2ce; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit { text <=> root.search; placeholder-text: "Filter material or face ID"; accessible-label: "Cubemap face search"; horizontal-stretch: 1; accepted => { root.refresh(); } }
+                Button { text: "Refresh"; clicked => { root.refresh(); } }
+            }
+            Text { text: root.inspection-label; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 8px;
+                    for row in root.assignments: Rectangle {
+                        background: row.selected ? #253d50 : #1a2430;
+                        border-color: row.selected ? #75cfee : #40536a;
+                        border-width: 1px;
+                        border-radius: 4px;
+                        VerticalLayout {
+                            padding: 9px;
+                            spacing: 3px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: row.label; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                                Button { text: row.selected ? "Deselect face" : "Select face"; clicked => { root.select-face(row.index); } }
+                            }
+                            Text { text: row.choice; color: #bac2ce; wrap: word-wrap; }
+                            Text { text: row.material; wrap: word-wrap; font-size: 12px; }
+                            Text { text: row.alias; color: #bac2ce; wrap: word-wrap; font-size: 12px; }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Previous"; enabled: root.previous-page; clicked => { root.page-change(-1); } }
+                Text { text: root.page-label; horizontal-stretch: 1; horizontal-alignment: center; vertical-alignment: center; }
+                Button { text: "Next"; enabled: root.next-page; clicked => { root.page-change(1); } }
+            }
+            Text { text: root.helper-status; color: #bac2ce; wrap: word-wrap; font-size: 12px; }
+            Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
+            ListView {
+                height: root.preview-assignments.length > 0 ? 125px : 0px;
+                for row in root.preview-assignments: VerticalLayout {
+                    spacing: 2px;
+                    padding-bottom: 6px;
+                    Text { text: row.label + " · " + row.choice; wrap: word-wrap; }
+                    Text { text: row.alias; color: #bac2ce; wrap: word-wrap; font-size: 12px; }
+                }
+            }
+            Text { text: root.message; color: #b9d8ef; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+            }
+        }
+    }
+}

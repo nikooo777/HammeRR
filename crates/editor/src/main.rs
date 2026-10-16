@@ -6,6 +6,7 @@ mod compile_ui;
 mod components_ui;
 mod connection_ui;
 mod context_ui;
+mod cubemap_ui;
 mod fog_ui;
 mod groups_ui;
 mod hollow_ui;

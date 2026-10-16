@@ -2,6 +2,7 @@ export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
 export { OverlayWindow, OverlayTargetRow } from "overlay.slint";
+export { CubemapFacesWindow, CubemapFaceRow } from "cubemap-faces.slint";
 export { PasteWindow } from "clipboard.slint";
 export { MergeWindow, MergeRow } from "merge.slint";
 export { CarveWindow, CarveRow } from "carve.slint";
@@ -1872,6 +1873,7 @@ export component AppWindow inherits Window {
     in property <string> selection-detail;
     in property <bool> entity-selected;
     in property <bool> can-inspect-model;
+    in property <bool> can-cubemap-faces;
     callback inspect-model();
     in property <bool> brush-entity-selected;
     in property <bool> can-tie;
@@ -1919,6 +1921,7 @@ export component AppWindow inherits Window {
     callback selection-mode-changed(int);
     callback edit-face-textures();
     callback create-overlay();
+    callback cubemap-faces();
     callback edit-face-lighting();
     callback create-terrain(int, int);
     in property <[string]> terrain-corner-choices: ["Corner 1", "Corner 2", "Corner 3", "Corner 4"];
@@ -2717,6 +2720,7 @@ export component AppWindow inherits Window {
                     }
 
                     if root.can-inspect-model: Button {text:"Model details…";clicked=>{root.inspect-model();}}
+                    if root.can-cubemap-faces: Button { text: "Cubemap faces…"; clicked => { root.cubemap-faces(); } }
 
                     if root.entity-selected: CheckBox {
                         text: "Advanced properties";

@@ -296,3 +296,547 @@ fn extreme_framing_returns_an_error_without_changing_the_camera() {
         .unwrap();
     assert!(session.camera().position.is_finite());
 }
+
+fn surface_fixture() -> Session {
+    let mut session = Session::new(Err("no assets needed".into()));
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(-128.0, -128.0, -16.0),
+            DVec3::new(128.0, 128.0, 0.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    session
+}
+
+fn arm(session: &mut Session, actor: Actor, token: u64, endpoint: Endpoint) -> u64 {
+    let state = session
+        .begin_measurement_pick(
+            actor,
+            token,
+            endpoint,
+            session.camera(),
+            (511, 511),
+            &session.measurement_pick_stamp(),
+        )
+        .unwrap();
+    state["draft"]["token"].as_u64().unwrap()
+}
+
+fn precise_ray() -> Ray {
+    Ray {
+        origin: DVec3::new(3.123456789012, -5.987654321012, 96.0),
+        direction: DVec3::NEG_Z * 7.0,
+    }
+}
+
+#[test]
+fn endpoint_surface_picks_preserve_numeric_precision_and_commit_only_on_apply() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = surface_fixture();
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let selection = session.selected_ids();
+        let token = preview(&mut session, actor, request(None));
+        let token = arm(&mut session, actor, token, Endpoint::Start);
+        let state = session
+            .pick_measurement_ray(actor, token, precise_ray())
+            .unwrap();
+        let picked = [precise_ray().origin.x, precise_ray().origin.y, 0.0];
+        assert_eq!(state["draft"]["measurement"]["start"], json!(picked));
+        assert_eq!(
+            state["draft"]["measurement"]["end"],
+            json!(request(None).end.to_array())
+        );
+        assert_eq!(
+            state["draft"]["last_pick"]["normal"],
+            json!([0.0, 0.0, 1.0])
+        );
+        assert_eq!(state["draft"]["last_pick"]["endpoint"], "start");
+        assert!(state["draft"]["picking"].is_null());
+        let current = state["draft"]["token"].as_u64().unwrap();
+        assert_ne!(token, current);
+        assert!(session.cancel_measurement(actor, token).is_err());
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        assert_eq!(session.selected_ids(), selection);
+        session.apply_measurement(actor, current).unwrap();
+        assert_eq!(session.document().undo_labels().count(), history + 1);
+        assert_eq!(
+            session.measurements().unwrap().measurements[0]
+                .start
+                .to_array(),
+            picked
+        );
+        session.undo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &source);
+        session.redo(actor).unwrap();
+        assert_eq!(
+            session.measurements().unwrap().measurements[0]
+                .start
+                .to_array(),
+            picked
+        );
+    }
+}
+
+#[test]
+fn endpoint_misses_invalid_rays_coincidence_and_foreign_actors_preserve_the_entire_draft() {
+    let mut session = surface_fixture();
+    let mut ruler = request(None);
+    ruler.end = DVec3::new(precise_ray().origin.x, precise_ray().origin.y, 0.0);
+    let token = preview(&mut session, Actor::Agent, ruler);
+    let token = arm(&mut session, Actor::Agent, token, Endpoint::Start);
+    let original = session.measurement_state();
+    for ray in [
+        precise_ray(),
+        Ray {
+            origin: DVec3::splat(1000.0),
+            direction: DVec3::Z,
+        },
+        Ray {
+            origin: DVec3::ZERO,
+            direction: DVec3::ZERO,
+        },
+        Ray {
+            origin: DVec3::splat(f64::NAN),
+            direction: DVec3::NEG_Z,
+        },
+        Ray {
+            origin: DVec3::Z * 96.0,
+            direction: DVec3::splat(f64::INFINITY),
+        },
+    ] {
+        assert!(
+            session
+                .pick_measurement_ray(Actor::Agent, token, ray)
+                .is_err()
+        );
+        assert_eq!(session.measurement_state(), original);
+    }
+    assert!(
+        session
+            .pick_measurement_ray(Actor::User, token, precise_ray())
+            .is_err()
+    );
+    assert!(session.cancel_measurement_pick(Actor::User, token).is_err());
+    assert!(session.apply_measurement(Actor::Agent, token).is_err());
+    assert_eq!(session.measurement_state(), original);
+    let reviewed = session.review_measurement(Actor::User, token).unwrap();
+    let current = reviewed["draft"]["token"].as_u64().unwrap();
+    assert!(
+        session
+            .cancel_measurement_pick(Actor::Agent, token)
+            .is_err()
+    );
+    let cancelled = session
+        .cancel_measurement_pick(Actor::User, current)
+        .unwrap();
+    assert!(cancelled["draft"]["picking"].is_null());
+    assert_eq!(
+        cancelled["draft"]["measurement"],
+        original["draft"]["measurement"]
+    );
+    session
+        .apply_measurement(Actor::User, cancelled["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+}
+
+#[test]
+fn endpoint_picks_guard_scene_camera_map_and_viewport_but_allow_owned_stale_cleanup() {
+    for change in ["camera", "published_camera", "view", "assets", "map"] {
+        let mut session = surface_fixture();
+        let token = preview(&mut session, Actor::User, request(None));
+        let token = arm(&mut session, Actor::User, token, Endpoint::End);
+        let before = session.measurement_state()["draft"]["measurement"].clone();
+        match change {
+            "camera" => {
+                let mut camera = session.camera();
+                camera.position.x += 1.0;
+                session.set_camera(camera);
+            }
+            "published_camera" => {
+                let mut camera = session.camera();
+                camera.position.y += 1.0;
+                session.publish_camera(camera);
+            }
+            "view" => session.set_view(render::ViewOptions {
+                tool_textures: !session.view().tool_textures,
+                ..session.view()
+            }),
+            "assets" => {
+                session.refresh_model_assets(Actor::Agent);
+            }
+            "map" => {
+                session
+                    .create_block(
+                        Actor::Agent,
+                        DVec3::splat(200.0),
+                        DVec3::splat(216.0),
+                        "brick/test",
+                        false,
+                    )
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let state = session.measurement_state();
+        assert_eq!(state["draft"]["picking"]["valid"], false, "{change}");
+        assert!(
+            session
+                .pick_measurement_ray(Actor::User, token, precise_ray())
+                .is_err(),
+            "{change}"
+        );
+        assert_eq!(session.measurement_state(), state);
+        let cancelled = session.cancel_measurement_pick(Actor::User, token).unwrap();
+        assert_eq!(cancelled["draft"]["measurement"], before);
+        session
+            .cancel_measurement(Actor::User, cancelled["draft"]["token"].as_u64().unwrap())
+            .unwrap();
+    }
+    let mut session = surface_fixture();
+    let token = preview(&mut session, Actor::User, request(None));
+    let stale = session.measurement_pick_stamp();
+    session.set_camera(render::Camera::planar(
+        Projection::Top,
+        glam::Vec3::ZERO,
+        128.0,
+    ));
+    assert!(
+        session
+            .begin_measurement_pick(
+                Actor::User,
+                token,
+                Endpoint::End,
+                session.camera(),
+                (511, 511),
+                &stale
+            )
+            .is_err()
+    );
+    let token = arm(&mut session, Actor::User, token, Endpoint::End);
+    let state = session.measurement_state();
+    for pointer in [
+        Pointer {
+            position: glam::DVec2::splat(255.5),
+            size: (512, 511),
+        },
+        Pointer {
+            position: glam::DVec2::splat(-0.5),
+            size: (511, 511),
+        },
+        Pointer {
+            position: glam::DVec2::splat(511.0),
+            size: (511, 511),
+        },
+        Pointer {
+            position: glam::DVec2::splat(f64::NAN),
+            size: (511, 511),
+        },
+    ] {
+        assert!(
+            session
+                .pick_measurement_pixel(Actor::User, token, pointer)
+                .is_err()
+        );
+        assert_eq!(session.measurement_state(), state);
+    }
+}
+
+#[test]
+fn viewport_pixels_use_the_captured_temporary_camera_in_every_projection() {
+    for projection in [
+        Projection::Perspective,
+        Projection::Top,
+        Projection::Front,
+        Projection::Side,
+    ] {
+        let mut session = surface_fixture();
+        if matches!(projection, Projection::Front | Projection::Side) {
+            session
+                .create_block(
+                    Actor::User,
+                    DVec3::new(32.0, 32.0, 0.0),
+                    DVec3::new(48.0, 48.0, 64.0),
+                    "brick/test",
+                    false,
+                )
+                .unwrap();
+        }
+        let token = preview(&mut session, Actor::Agent, request(None));
+        let camera = if projection == Projection::Perspective {
+            render::Camera::looking_at(
+                glam::Vec3::new(3.125, -5.25, 96.0),
+                glam::Vec3::new(3.125, -5.25, 0.0),
+            )
+        } else {
+            render::Camera::planar(projection, glam::Vec3::new(40.0, 40.0, 32.0), 128.0)
+        };
+        let user_camera = session.camera();
+        let state = session
+            .begin_measurement_pick(
+                Actor::Agent,
+                token,
+                Endpoint::End,
+                camera,
+                (511, 511),
+                &session.measurement_pick_stamp(),
+            )
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        let (origin, direction) = camera.ray(0.0, 0.0, 1.0);
+        let expected = map_core::query::pick_surface(
+            session.document(),
+            &Ray {
+                origin: origin.as_dvec3(),
+                direction: direction.as_dvec3(),
+            },
+            |_| true,
+        )
+        .unwrap();
+        let picked = session
+            .pick_measurement_pixel(
+                Actor::Agent,
+                token,
+                Pointer {
+                    position: glam::DVec2::splat(255.5),
+                    size: (511, 511),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            picked["draft"]["measurement"]["end"],
+            json!(expected.hit.point.to_array()),
+            "{projection:?}"
+        );
+        assert_eq!(session.camera(), user_camera);
+        assert_eq!(
+            session.document().undo_labels().count(),
+            if matches!(projection, Projection::Front | Projection::Side) {
+                2
+            } else {
+                1
+            }
+        );
+    }
+}
+
+#[test]
+fn endpoint_picks_use_raised_terrain_and_never_use_hidden_surfaces_or_entity_helpers() {
+    let mut session = surface_fixture();
+    let map_core::ObjectId::Solid(solid) = session
+        .create_block(
+            Actor::User,
+            DVec3::new(-64.0, -64.0, 16.0),
+            DVec3::new(64.0, 64.0, 32.0),
+            "brick/test",
+            false,
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let shape =
+        map_core::BrushGeometry::from_solid(session.document().solid(solid).unwrap()).unwrap();
+    let face = shape
+        .faces
+        .iter()
+        .find(|face| face.plane.normal.z > 0.99)
+        .unwrap();
+    let side = session.document().solid(solid).unwrap().sides[face.side].id;
+    session
+        .edit(Actor::User, "raised terrain", |tx| {
+            map_core::displacement::edit::create(
+                tx,
+                &[map_core::surface::FaceId { solid, side }],
+                2,
+                0,
+            )?;
+            tx.solid_mut(solid)?
+                .sides
+                .iter_mut()
+                .find(|face| face.id == side)
+                .unwrap()
+                .displacement
+                .as_mut()
+                .unwrap()
+                .elevation = 16.0;
+            Ok(())
+        })
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let token = preview(&mut session, Actor::User, request(None));
+    let token = arm(&mut session, Actor::User, token, Endpoint::Start);
+    let state = session
+        .pick_measurement_ray(Actor::User, token, precise_ray())
+        .unwrap();
+    assert_eq!(state["draft"]["last_pick"]["solid"], solid);
+    assert_eq!(state["draft"]["measurement"]["start"][2], 48.0);
+    assert_eq!(session.document().vmf(), &source);
+    session
+        .cancel_measurement(Actor::User, state["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    session
+        .set_visibility(Actor::User, "hide", &[map_core::ObjectId::Solid(solid)])
+        .unwrap();
+    let token = preview(&mut session, Actor::User, request(None));
+    let token = arm(&mut session, Actor::User, token, Endpoint::Start);
+    let state = session
+        .pick_measurement_ray(Actor::User, token, precise_ray())
+        .unwrap();
+    assert_eq!(state["draft"]["measurement"]["start"][2], 0.0);
+    session
+        .cancel_measurement(Actor::User, state["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    let floor = session
+        .document()
+        .objects()
+        .find(|id| matches!(id,map_core::ObjectId::Solid(id) if *id!=solid))
+        .unwrap();
+    session
+        .set_visibility(Actor::User, "hide", &[floor])
+        .unwrap();
+    session
+        .create_entity(
+            Actor::User,
+            "prop_dynamic",
+            Some(precise_ray().origin - DVec3::Z * 32.0),
+            std::collections::BTreeMap::from([("model".into(), "models/missing.mdl".into())]),
+        )
+        .unwrap();
+    let token = preview(&mut session, Actor::User, request(None));
+    let token = arm(&mut session, Actor::User, token, Endpoint::Start);
+    let state = session.measurement_state();
+    assert!(
+        session
+            .pick_measurement_ray(Actor::User, token, precise_ray())
+            .is_err()
+    );
+    assert_eq!(session.measurement_state(), state);
+}
+
+#[test]
+fn endpoint_arming_preserves_competing_entity_and_geometry_drafts() {
+    let mut session = surface_fixture();
+    let token = preview(&mut session, Actor::Agent, request(None));
+    let entity = session
+        .begin_entity_placement(
+            Actor::User,
+            super::super::entity_placement::Request {
+                classname: "info_target".into(),
+                properties: Default::default(),
+                offset: 0.0,
+                align: false,
+                snap: false,
+            },
+            &session.entity_placement_stamp(),
+        )
+        .unwrap();
+    let state = session.measurement_state();
+    assert!(
+        session
+            .begin_measurement_pick(
+                Actor::Agent,
+                token,
+                Endpoint::End,
+                session.camera(),
+                (511, 511),
+                &session.measurement_pick_stamp()
+            )
+            .is_err()
+    );
+    assert_eq!(session.get_entity_placement(), entity);
+    assert_eq!(session.measurement_state(), state);
+    session
+        .cancel_entity_placement(Actor::User, entity["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    session
+        .preview_block(DVec3::ZERO, DVec3::splat(32.0))
+        .unwrap();
+    let block = session.block_preview;
+    assert!(
+        session
+            .begin_measurement_pick(
+                Actor::Agent,
+                token,
+                Endpoint::End,
+                session.camera(),
+                (511, 511),
+                &session.measurement_pick_stamp()
+            )
+            .is_err()
+    );
+    assert_eq!(session.block_preview, block);
+    assert_eq!(session.measurement_state()["draft"]["token"], token);
+}
+
+#[test]
+fn endpoint_picks_hit_actual_model_triangles_and_skip_hidden_models() {
+    let Ok(game) = crate::startup::mount_game(None) else {
+        return;
+    };
+    let mut session = Session::new(Ok(game));
+    let id = session
+        .create_entity(
+            Actor::Agent,
+            "prop_static",
+            Some(DVec3::new(64.0, 32.0, 16.0)),
+            std::collections::BTreeMap::from([
+                (
+                    "model".into(),
+                    "models/props_junk/wood_crate001a.mdl".into(),
+                ),
+                ("angles".into(), "0 27 0".into()),
+            ]),
+        )
+        .unwrap();
+    let instances = session.model_instances(session.document());
+    let instance = &instances.instances[0];
+    let points = instance.asset.model.parts[0].indices[..3]
+        .iter()
+        .map(|&index| instance.point(instance.asset.model.vertices[index as usize].position))
+        .collect::<Vec<_>>();
+    let center = (points[0] + points[1] + points[2]) / 3.0;
+    let normal = (points[1] - points[0])
+        .cross(points[2] - points[0])
+        .normalize();
+    let ray = Ray {
+        origin: center - normal * 16.0,
+        direction: normal,
+    };
+    let expected = instance.pick_surface(&ray).unwrap();
+    drop(instances);
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let token = preview(&mut session, Actor::Agent, request(None));
+    let token = arm(&mut session, Actor::Agent, token, Endpoint::End);
+    let state = session
+        .pick_measurement_ray(Actor::Agent, token, ray)
+        .unwrap();
+    assert_eq!(
+        state["draft"]["last_pick"]["target"],
+        crate::identity::id_string(id)
+    );
+    assert_eq!(
+        state["draft"]["measurement"]["end"],
+        json!(expected.hit.point.to_array())
+    );
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.document().undo_labels().count(), history);
+    session
+        .cancel_measurement(Actor::Agent, state["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    session.set_visibility(Actor::Agent, "hide", &[id]).unwrap();
+    let token = preview(&mut session, Actor::Agent, request(None));
+    let token = arm(&mut session, Actor::Agent, token, Endpoint::End);
+    let state = session.measurement_state();
+    assert!(
+        session
+            .pick_measurement_ray(Actor::Agent, token, ray)
+            .is_err()
+    );
+    assert_eq!(session.measurement_state(), state);
+}

@@ -11,7 +11,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage Measurements through the same owned Session draft as the UI. action=preview requires name, exact start/end [x,y,z] and latest get_measurements.snapshot; optional id edits a saved measurement. Up to 128 measurements, case-insensitively unique names of 1–80 characters, distinct finite endpoints within ±65536. Preview changes no map/history; invalid requests preserve the draft. Review with token explicitly transfers ownership and returns a new token; Apply revalidates and stores editor-only VMF metadata in one Undo step. Cancel accepts only its matching owned token, including stale cleanup. Foreign/replaced tokens reject. Delete requires id and snapshot with no open measurement draft. Frame requires exactly one id or preview token, snapshot and optional aspect from 0.01 to 100 (default 16/9), and changes only the camera. View toggles show_guides using snapshot. Numeric endpoints are unsnapped, unattached to objects, and remain independent of hidden objects. Geometry previews must be applied or cancelled before changing measurements. UI: Measurements… → Preview / Review preview / Apply / Cancel / Delete / Frame / Show guides."
+        description = "Manage Measurements through the same owned Session draft as the UI. action=preview requires name, exact start/end [x,y,z] and latest get_measurements.snapshot; optional id edits a saved measurement. Up to 128 measurements, case-insensitively unique names of 1–80 characters, distinct finite endpoints within ±65536. Preview changes no map/history; invalid requests preserve the draft. Review with token explicitly transfers ownership and returns a new token; Apply revalidates and stores editor-only VMF metadata in one Undo step. Cancel accepts only its matching owned token, including stale cleanup. Foreign/replaced tokens reject. Delete requires id and snapshot with no open measurement draft. Frame requires exactly one id or preview token, snapshot and optional aspect from 0.01 to 100 (default 16/9), and changes only the camera. View toggles show_guides using snapshot. action=begin_pick requires owned token, endpoint start|end, exact width/height (1–8192), latest get_measurements.pick_snapshot, and optional temporary camera matching render_view. It returns a new token and captures the scene, camera and viewport. action=pick_ray requires token and finite ray_origin/ray_direction; pick_pixel requires token, integer x/y and the captured width/height and uses the pixel center. Both pick the first visible brush, terrain triangle or supported model mesh, retain double precision world coordinates, and return a new token with last_pick provenance. Misses, hidden/helper-only targets, stale scene/camera/viewport and coincident endpoints reject without changing the draft; no plane fallback or snapping. Apply rejects while picking. cancel_pick stops only endpoint picking, preserves endpoints and accepts owned stale cleanup. Numeric coordinates remain exact, unsnapped and unattached; later object changes do not move them. Geometry previews must be applied or cancelled before changing measurements. UI: Measurements… → Preview / Review preview / Apply / Cancel / Delete / Frame / Pick start / Pick end / Cancel picking / Show guides."
     )]
     pub(in crate::mcp) fn set_measurement(
         &self,
@@ -20,6 +20,55 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             match args {
+                MeasurementArgs::BeginPick {
+                    token,
+                    endpoint,
+                    width,
+                    height,
+                    camera,
+                    snapshot,
+                } => {
+                    let camera = camera
+                        .unwrap_or_default()
+                        .resolve(&session, width as f32 / height as f32)?;
+                    session.begin_measurement_pick(
+                        Actor::Agent,
+                        token,
+                        endpoint,
+                        camera,
+                        (width, height),
+                        &snapshot,
+                    )
+                }
+                MeasurementArgs::PickRay {
+                    token,
+                    ray_origin,
+                    ray_direction,
+                } => session.pick_measurement_ray(
+                    Actor::Agent,
+                    token,
+                    Ray {
+                        origin: vec3(ray_origin),
+                        direction: vec3(ray_direction),
+                    },
+                ),
+                MeasurementArgs::PickPixel {
+                    token,
+                    x,
+                    y,
+                    width,
+                    height,
+                } => session.pick_measurement_pixel(
+                    Actor::Agent,
+                    token,
+                    crate::session::Pointer {
+                        position: glam::DVec2::new(f64::from(x) + 0.5, f64::from(y) + 0.5),
+                        size: (width, height),
+                    },
+                ),
+                MeasurementArgs::CancelPick { token } => {
+                    session.cancel_measurement_pick(Actor::Agent, token)
+                }
                 MeasurementArgs::Preview {
                     id,
                     name,

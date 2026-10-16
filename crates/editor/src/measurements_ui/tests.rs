@@ -188,3 +188,139 @@ fn measurement_window_reviews_foreign_previews_and_guards_stale_map_callbacks() 
     );
     assert!(lock(&shared).measurement_state()["draft"].is_null());
 }
+
+#[test]
+fn measurement_surface_controls_pick_exact_endpoints_cancel_and_guard_replaced_or_stale_views() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut session = Session::new(Err("no assets needed".into()));
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(-128.0, -128.0, -16.0),
+            DVec3::new(128.0, 128.0, 0.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    session.set_camera(render::Camera::planar(
+        render::Projection::Top,
+        glam::Vec3::new(3.125, -5.25, 0.0),
+        256.0,
+    ));
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(session));
+    let controller = Controller::new(&shared).unwrap();
+    controller.set_viewport((511, 511));
+    let window = &controller.window;
+    controller.show(&lock(&shared)).unwrap();
+    edit(window, "Measurement name", "Surface clearance");
+    edit(window, "End X", "64.123456789012");
+    edit(window, "End Z", "8.125");
+    window.invoke_pick_start();
+    assert!(lock(&shared).measurement_state()["draft"].is_null());
+    window.invoke_preview();
+    assert!(window.get_can_pick());
+    for label in ["Pick start", "Pick end"] {
+        crate::ui::tests::assert_dialog_button_visible(window, label);
+    }
+    window.invoke_pick_start();
+    assert!(!window.window().is_visible());
+    assert!(!window.get_ready());
+    assert_eq!(
+        lock(&shared).measurement_state()["draft"]["picking"]["endpoint"],
+        "start"
+    );
+    controller
+        .pick_at_pixel(&mut lock(&shared), glam::DVec2::splat(255.2), (511, 511))
+        .unwrap();
+    assert!(window.window().is_visible());
+    assert!(window.get_ready(), "{}", window.get_preview_status());
+    assert_eq!(window.get_start_x(), "3.125");
+    assert_eq!(window.get_start_y(), "-5.25");
+    assert_eq!(window.get_start_z(), "0");
+    assert_eq!(window.get_end_x(), "64.123456789012");
+    assert_eq!(window.get_end_z(), "8.125");
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+    crate::ui::tests::save_ui_snapshot(window.window(), "measurements-surface-picked");
+    window.invoke_pick_end();
+    let state = lock(&shared).measurement_state();
+    assert!(
+        controller
+            .pick_at_pixel(&mut lock(&shared), glam::DVec2::splat(255.2), (512, 511))
+            .is_err()
+    );
+    assert_eq!(lock(&shared).measurement_state(), state);
+    controller.cancel_pick(&mut lock(&shared)).unwrap();
+    assert!(window.get_ready());
+    assert_eq!(window.get_end_x(), "64.123456789012");
+    window.invoke_pick_end();
+    {
+        let mut session = lock(&shared);
+        let mut camera = session.camera();
+        camera.position.x += 16.0;
+        session.publish_camera(camera);
+    }
+    let state = lock(&shared).measurement_state();
+    assert!(
+        controller
+            .pick_at_pixel(&mut lock(&shared), glam::DVec2::splat(255.2), (511, 511))
+            .is_err()
+    );
+    assert_eq!(lock(&shared).measurement_state(), state);
+    controller.cancel_pick(&mut lock(&shared)).unwrap();
+    edit(window, "Start X", "1.00000000012345");
+    assert!(!window.get_can_pick());
+    window.invoke_preview();
+    window.invoke_apply();
+    assert_eq!(
+        lock(&shared).measurements().unwrap().measurements[0]
+            .start
+            .x,
+        1.00000000012345
+    );
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    let foreign = {
+        let mut session = lock(&shared);
+        let snapshot = session.measurement_stamp();
+        session
+            .preview_measurement(
+                Actor::Agent,
+                Request {
+                    id: Some(1),
+                    name: "Agent revision".into(),
+                    start: DVec3::ZERO,
+                    end: DVec3::splat(64.0),
+                },
+                &snapshot,
+            )
+            .unwrap()
+    };
+    controller.refresh(&lock(&shared));
+    window.invoke_pick_end();
+    assert_eq!(lock(&shared).measurement_state(), foreign);
+    window.invoke_review();
+    window.invoke_pick_end();
+    let replacement = {
+        let mut session = lock(&shared);
+        let token = session.measurement_state()["draft"]["token"]
+            .as_u64()
+            .unwrap();
+        session.review_measurement(Actor::Agent, token).unwrap()
+    };
+    assert!(
+        controller
+            .pick_at_pixel(&mut lock(&shared), glam::DVec2::splat(255.2), (511, 511))
+            .is_err()
+    );
+    window.invoke_cancel();
+    assert_eq!(lock(&shared).measurement_state(), replacement);
+}

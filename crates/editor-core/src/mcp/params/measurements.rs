@@ -11,6 +11,29 @@ pub enum MeasurementArgs {
         end: [f64; 3],
         snapshot: String,
     },
+    BeginPick {
+        token: u64,
+        endpoint: crate::session::measurements::Endpoint,
+        width: u32,
+        height: u32,
+        camera: Option<CameraSpec>,
+        snapshot: String,
+    },
+    PickRay {
+        token: u64,
+        ray_origin: [f64; 3],
+        ray_direction: [f64; 3],
+    },
+    PickPixel {
+        token: u64,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    },
+    CancelPick {
+        token: u64,
+    },
     Review {
         token: u64,
     },

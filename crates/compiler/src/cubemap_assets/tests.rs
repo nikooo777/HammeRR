@@ -709,3 +709,42 @@ fn final_source_guard_detects_shadow_additions_after_output_preparation() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"previous output");
 }
+
+#[test]
+fn final_source_guard_rejects_texture_replacement_after_output_preparation() {
+    let (directory, game) = game();
+    let texture = directory.path().join("materials/dev/source.vtf");
+    std::fs::write(&texture, manifest::bootstrap_cube(1).unwrap()).unwrap();
+    std::fs::write(
+        directory
+            .path()
+            .join("materials/dev/dev_measuregeneric01.vmt"),
+        "LightmappedGeneric { $envmap env_cubemap $basetexture dev/source }",
+    )
+    .unwrap();
+    let (vmf, _) = source();
+    let output = merge(pending(&vmf, &game), &game);
+    let destination = tempfile::tempdir().unwrap();
+    let path = destination.path().join("reflections.bsp");
+    std::fs::write(&path, b"previous output").unwrap();
+    let control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &control).unwrap();
+    let prepared = output
+        .prepare_write_controlled(&path, &control)
+        .unwrap()
+        .unwrap();
+    let guard =
+        capture_reflection_source_guard(output.cubemap_assets.as_ref().unwrap(), &game, &control)
+            .unwrap();
+    let replacement = directory.path().join("materials/dev/changed.vtf");
+    let mut bytes = std::fs::read(&texture).unwrap();
+    *bytes.last_mut().unwrap() ^= 255;
+    std::fs::write(&replacement, bytes).unwrap();
+    std::fs::rename(&replacement, &texture).unwrap();
+    assert!(
+        prepared
+            .commit_checked_with(&lease, &control, || guard.verify_metadata())
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"previous output");
+}

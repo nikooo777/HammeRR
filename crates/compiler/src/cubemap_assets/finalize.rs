@@ -46,7 +46,7 @@ pub fn finalize_reflections(
         .as_ref()
         .ok_or_else(|| invalid("Reflection build has no BSP to finalize"))?;
     verify_generated_cubemaps(original, &manifest, control)?;
-    verify_sources(&manifest, game, control)?;
+    let source_guard = capture_reflection_source_guard(&manifest, game, control)?;
     if manifest.phase == CubemapAssetPhase::Verified {
         return Ok(output);
     }
@@ -84,6 +84,7 @@ pub fn finalize_reflections(
             .collect(),
     };
     let receipt = native_runtime::capture(request, &mut Observer(control))?;
+    source_guard.verify_metadata()?;
     merge_capture(
         output,
         &manifest,

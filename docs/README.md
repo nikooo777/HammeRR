@@ -36,7 +36,10 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Entities and logic](entities.md) | Placing entities, lights, brush entities, inputs/outputs, safe renaming, editing many entities |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, lighting, physics, leaks, launching Counter-Strike: Source |
+| [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |
 | [Compile regions](compile-regions.md) | Previewing and saving bounds for sealed partial-map builds |
+| [Physics and mass](physics.md) | Engine collision bodies and material-derived brush-model masses |
+| [Static props](static-props.md) | Model placement, collision choices and rotated visibility bounds |
 | [Static-prop shadows](prop-shadows.md) | Opaque and requested alpha-test model blockers, shadow flags and material limits |
 | [Occluders](occluders.md) | Compiling static visibility blockers and their native activation records |
 | [Build recipes](build-recipes.md) | Recalling Fast preview, Final lighting and named custom compiler settings |

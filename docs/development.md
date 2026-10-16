@@ -127,7 +127,7 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Map checks | `spawn_clearance`, `audit_fixes` |
 | Particle definitions | `particles` (active manifest discovery, bounded binary DMX parsing, metadata, owned choices and retryable errors) |
 | Local preferences | `recent_maps`, `build_recipes` |
-| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `water_bottom`, `direct_lighting`, `hdr_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals`, `terrain_subdivision` |
+| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `water_bottom`, `water_bottom_native`, `water_overlays`, `static_prop_leaves`, `direct_lighting`, `hdr_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals`, `terrain_subdivision` |
 | In game | `prop_shadows_native` and `hdr_lighting` (optional `--runtime`), `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
 `transform_display` also checks `preview_snap_to_grid`: fractional negative world bounds-minimum anchors, mixed selections, shared texture-lock policy, source/history preservation, Apply/Cancel, aligned no-ops, model-reload cancellation and exact typed transforms with snapping enabled.
@@ -153,6 +153,9 @@ python3 -B scripts/validate_object_picking.py --binary target/debug/hammerr-head
 - **`--render`** adds offscreen GPU pixel checks without opening a window. Supported by `adjusted_partition_ridges`, `boundary_partitions`, `brush_reflection`, `brush_shear`, `carve_many`, `carving`, `component_creases`, `component_partitions`, `component_topology`, `component_transforms`, `merge`, `partition_extrusion`, `partition_materials`, `partition_picking`, `partition_textures`, `polygon_partitions`, `roof_texture_attachment`, `saved_partitions`, `split_texture_attachment`, `texture_lock_modes` and `weld_texture_attachment`.
 - **`precision_cycles --operation scale|rotate|reflection|shear`** checks repeated edit/save/reopen cycles for an operation other than translation. Drift must stay below `1e-5` units and `1e-4` texels, and undo/redo must be exact.
 - **`partition_extrusion --adjusted`** extrudes pieces from a moved dividing line.
+  The same script checks inward pockets and through cuts, retained source faces,
+  fragment ownership, saved-plan consumption, picking and exact Apply/Undo.
+  Use `--render` to compare preview and committed geometry offscreen.
 - **`water_metadata --physics engine`** also checks fluid bodies.
 - **`shadow_index --reference <dir>`** compares the BSP and lighting work against an earlier run's output directory.
 - **`direct_sky --reference <dir>`** compares zero-ambient BSPs against an earlier compatible run. **`--quality-tests`** checks every sampling quality, settings frozen during a build, and a narrow sky opening. **`--soft-sun-tests`** checks clear, enclosed, brush-shadow and terrain-shadow cases at every quality through both build paths. **`--local-ambient-tests`** checks probe counts, spatial separation and model ambient on a point-light gradient at all three qualities while direct world lightmaps stay unchanged.
@@ -161,7 +164,6 @@ python3 -B scripts/validate_object_picking.py --binary target/debug/hammerr-head
 
 Typed face-channel checks cover separate LDR/HDR styles and sample offsets,
 known native layouts, bounded allocations and unchanged legacy LDR bytes.
-The compiler still bakes LDR only.
 
 ```sh
 cargo test -p source-formats --test lighting --test bsp --test overlays
@@ -263,26 +265,105 @@ output directory per run. `--runtime-bsp /path/to/hdr.bsp` with
 `--fixture-game /path/to/source-game/cstrike --runtime` repeats native checks
 against an existing fixture without recompiling it.
 
+### Rotated static-prop leaves and model mass
+
+```sh
+cargo build -p compiler
+cargo test -p compiler --lib static_props::leaf_box
+cargo test -p compiler --test static_props --test physics --test physics_mass
+python3 -B scripts/validate_static_prop_leaves.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prop-leaves-check
+```
+
+The prop check compares clipped native leaf membership against an independent
+transformed box, sampled containment and its former broad-phase bounds, while
+requiring identical foreground/background builds and unchanged source/history.
+Mass checks use mounted definitions and native collision volumes to cover solid,
+shell and mixed-material masses, omitted collision brushes, invalid inputs and
+retained output. Build the matching `hammerr-physics` worker before running them.
+
+### Imported water overlays
+
+```sh
+cargo test -p source-formats --test water_overlays --test overlays
+cargo test -p compiler --test water_overlays --test overlays --test region_overlays
+python3 -B scripts/validate_water_overlays.py --binary target/debug/hammerr-headless --output /tmp/hammerr-water-overlays-check
+python3 -B scripts/validate_water_overlays.py --binary target/debug/hammerr-headless --runtime --output /tmp/hammerr-water-overlays-client
+```
+
+Checks the native water-record layout, final source-face bindings, regular fade
+indexing, imported blocks, hidden helpers, region inclusion, source/history and
+atomic failures. Native mode compares the transition with its absent control
+on separate private displays, requiring a visible projection and no runtime
+accessor. The fixture uses a graffiti material on a floor to isolate transition
+record loading; water-edge appearance remains material-dependent.
+
 ### Water underside materials
 
 ```sh
 cargo test -p compiler --test water_bottom --test water
 python3 -B scripts/validate_water_bottom.py --binary target/debug/hammerr-headless --output /tmp/hammerr-water-bottom-check
+python3 -B scripts/validate_water_bottom.py --binary target/debug/hammerr-headless --vertical-sides --output /tmp/hammerr-water-side-check
 python3 -B scripts/validate_water_metadata.py --binary target/debug/hammerr-headless --physics engine --output /tmp/hammerr-water-metadata-check
 ```
 
 Checks patched `$bottommaterial` resolution, separate top/underside bindings,
 copied texture vectors and flags, winding, wet-leaf fog references, clipped
-surface area, unchanged depth/collision data and top-only overlay bindings.
+surface area, unchanged depth/collision data and overlay exclusion from generated
+inward faces.
 Missing or malformed explicit bottom assets must preserve the old output;
 repair must restore deterministic synchronous/background builds without source
-or history edits. `water_bottom` uses private mounted assets and has no runtime
-switch. `water_metadata --physics engine` additionally checks native fluid-body
-output; neither command establishes native water-rendering parity.
+or history edits. `--vertical-sides` also checks side-specific bottom assets,
+separate top-material regions, wet/dry leaf bindings and omitted internal water
+boundaries. `water_bottom` uses private mounted assets and has no runtime switch.
+`water_metadata --physics engine` additionally checks native fluid-body output;
+these commands inspect compiled data without rendering it in CS:S.
+
+```sh
+python3 -B scripts/validate_water_bottom_native.py --binary target/debug/hammerr-headless --output /tmp/hammerr-water-bottom-native-compile
+python3 -B scripts/validate_water_bottom_native.py --binary target/debug/hammerr-headless --runtime --reuse-fixture /tmp/hammerr-water-bottom-native-compile/compile.json --output /tmp/hammerr-water-bottom-native-client
+python3 -B scripts/validate_water_bottom_native.py --binary target/debug/hammerr-headless --vertical-sides --output /tmp/hammerr-water-side-native-compile
+python3 -B scripts/validate_water_bottom_native.py --binary target/debug/hammerr-headless --vertical-sides --runtime --reuse-fixture /tmp/hammerr-water-side-native-compile/compile.json --output /tmp/hammerr-water-side-native-client
+```
+
+The native pair mounts identical runtime material trees and changes only the
+compiled underside binding. It requires submerged eye poses, red/blue underside
+pixels, stable above/away controls, exact collision bytes and unchanged sources.
+`--vertical-sides` keeps the horizontal underside neutral and changes only the
+compiled vertical inward material. Both modes use constant refraction textures
+through the Water shader to identify the bound surface material; they do not
+measure natural reflection or refraction quality.
+Output directories must be fresh. The saved compile fixture avoids rebuilding
+for a repeated native observation; use the same `--vertical-sides` mode when
+reusing it.
+
+### Private launch guards and cubemap capture probe
+
+```sh
+python3 -B scripts/test_private_runtime_config.py
+python3 -B scripts/validate_cubemap_capture_probe.py --binary target/debug/hammerr-headless --output /tmp/hammerr-cubemap-capture-probe --timeout 150
+```
+
+The headless regressions cover rejecting installed or symlinked output paths
+before writes, imported config command checks, identity-preflight upload/log
+guards, and timeout cleanup that retains both the original failure and
+preservation errors. The capture probe checks
+native capture and packing into a private staged map; it does not implement
+compiler reflection bindings. It requires complete sample VTFs with directional
+pixels, valid packed assets, unchanged non-PAK lumps and source files.
+
+Native validators share one private compositor and launch profile. They require
+running Steam, a synchronized existing CS:S Cloud config and fingerprinted
+Linux64 engine/Steam interfaces. A read-only child queries the live account;
+`-default` suppresses automatic configuration saves. Controls use `toggle` and
+`help` after imported settings and before the first map. Each exit, including
+failed or timed-out workers, checks shared config/spray bytes, Cloud preferences,
+cache semantics and upload logs. Cloud reads into private files remain allowed;
+no Cloud preference commands are issued. Reports retain these checks separately
+from feature assertions.
 
 ## In-game checks
 
-These scripts compile fixtures through MCP and run Counter-Strike: Source with `-insecure` on a private headless display. They need [Cage](https://github.com/cage-kiosk/cage) and [grim](https://sr.ht/~emersion/grim/). Maps, config, scripts and logs stay in private folders, and no mouse or keyboard input reaches your desktop.
+These scripts compile fixtures through MCP and run Counter-Strike: Source with `-insecure` on a private headless display. They need [Cage](https://github.com/cage-kiosk/cage) and [grim](https://sr.ht/~emersion/grim/). Generated maps, config, scripts and logs use private folders; the shared launch guard audits installed settings and Cloud state after exit. No mouse or keyboard input reaches your desktop.
 
 ```sh
 systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \

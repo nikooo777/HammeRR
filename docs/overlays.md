@@ -99,6 +99,6 @@ omitting any referenced surface stops publication of the new BSP.
   creates and edits regular overlays; it does not author transition blocks.
   Transition render-order, fade and accessor fields are unsupported and reject
   instead of being silently discarded. Regular overlay fade entries remain
-  separate. Native transition rendering and water-material appearance require
-  separate runtime inspection.
+  separate. Water shading remains subject to the material and volume limits
+  in [Water](water.md).
 - Brush-model overlays and `infodecal` compilation remain unfinished.

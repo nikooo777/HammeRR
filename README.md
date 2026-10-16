@@ -102,7 +102,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Flat partitions | Any convex face |
 | --- | --- |
 | ![Two pieces of a face extruded to different heights](docs/images/partition-extrusion-preview.png) | ![Two styled prisms above an octagonal face](docs/images/polygon-partition-preview.png) |
-| Divide a face, then raise, extrude or restyle each piece. | Faces with three to eight corners, with per-piece materials and texture placement. Keep the plan in the map for later. |
+| Divide a face, then raise, extrude outward, cut inward or restyle each piece. | Faces with three to eight corners, with per-piece materials and texture placement. Keep the plan in the map for later. |
 
 [Vertices, edges and faces →](docs/components.md) · [Flat partitions →](docs/partitions.md)
 
@@ -113,10 +113,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Material thumbnails, categories and favorites](docs/images/material-browser.png) | ![A sampled wood floor painted across stair treads](docs/images/texture-strokes.png) |
 | Thumbnails, search, categories, materials used in the map, recent materials and favorites. | Sample a face, then brush its material or its whole projection across other faces. |
 
-| Material reload |
-| --- |
-| ![Material reload controls and asset diagnostics](docs/images/material-reload.png) |
-| Refresh changed textures and material choices without reopening the map. |
+| Material reload | UV vectors and skew |
+| --- | --- |
+| ![Material reload controls and asset diagnostics](docs/images/material-reload.png) | ![U and V texture vector controls](docs/images/uv-vectors.png) |
+| Refresh changed textures and material choices without reopening the map. | Set texture directions and skew directly, with mixed-value inputs and reviewed previews. |
 
 | Texture wrapping | One texture across many faces |
 | --- | --- |
@@ -285,8 +285,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Terrain subdivision |
 | --- |
-| ![Rounded connected terrain](docs/images/subdivided-terrain.png) |
-| Round connected base faces into editable terrain while keeping blend values and materials. |
+| ![Rounded connected terrain with whole-to-half borders](docs/images/subdivided-terrain-half-edge.png) |
+| Round compatible full and half-edge cages into editable terrain with shared seam samples. |
 
 | Terrain brush strokes |
 | --- |
@@ -338,6 +338,11 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Four diffuse bounces beneath a shelf in Counter-Strike: Source](docs/images/four-bounce-on.png) |
 | Add up to four diffuse light bounces from world surfaces and terrain. |
 
+| LDR and HDR lighting |
+| --- |
+| ![Independent LDR and HDR build controls](docs/images/build-hdr-controls.png) |
+| Bake separate light colors, styles, bounces and ambient probes for LDR and HDR. |
+
 | Static-prop cutout shadows |
 | --- |
 | ![Baked light passing through a fence model's cutout texture](docs/images/prop-shadow-cutouts.png) |
@@ -364,9 +369,9 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 The editor covers most everyday brush work. Notable gaps:
 
-- **Terrain**: creation, resolution edits, live sculpt/blend strokes, vertex handles and full-edge subdivision work; other fractional edge tools remain planned.
+- **Terrain**: creation, resolution edits, live sculpt/blend strokes, vertex handles and full/half-edge subdivision work; other fractional edge tools remain planned.
 - **Models**: static meshes, reference poses, skins, bodygroups and visual browsing work; animation and scaling remain planned.
-- **Compiler**: Fast and Detailed visibility are available; lighting covers direct light, sky ambient and up to four optional diffuse bounces; HDR remains unfinished.
+- **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting and up to four diffuse bounces work; exposure, cubemap generation and prop lighting remain planned.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

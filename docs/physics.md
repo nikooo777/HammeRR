@@ -24,7 +24,7 @@ area determines the base mass. Equal areas keep the first emitted property.
 This choice does not replace the per-face contact materials. Solid materials
 use collision volume and density; shell materials use emitted surface area,
 thickness and density. Base masses are capped at 50,000 kg. Positive
-`func_physbox` **Mass Scale** and its override script apply later in the game;
+`func_physbox` **Mass Scale** and **Override Parameters** apply later in the game;
 `phys_convert` **Mass Override** can replace the mass after conversion.
 
 Limits: Linux64 with the verified installed CS:S physics library. Surface

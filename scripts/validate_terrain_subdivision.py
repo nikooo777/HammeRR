@@ -203,6 +203,8 @@ def validate(args):
         client.call(
             "set_compile_settings", {"lighting": "direct_ldr", "physics": "engine"}
         )
+        source = args.output / "subdivided.vmf"
+        client.call("save_map", {"path": str(source)})
         bsp, stats = build(client, args.output, "subdivided")
         assert stats["displacements"] == 3 and stats["displacement_neighbor_pairs"] == 3
         assert stats["displacement_half_edge_pairs"] == (2 if args.split_edge else 0)
@@ -215,21 +217,19 @@ def validate(args):
             for index, record in enumerate(
                 native[info[3] : info[3] + grid["size"] ** 2]
             ):
-                source = grid["vertices"][index]
-                assert math.isclose(source["alpha"], record[4], abs_tol=1e-5)
+                vertex = grid["vertices"][index]
+                assert math.isclose(vertex["alpha"], record[4], abs_tol=1e-5)
                 point = [
                     a + b * record[3]
-                    for a, b in zip(source["base_position"], record[:3], strict=True)
+                    for a, b in zip(vertex["base_position"], record[:3], strict=True)
                 ]
                 assert all(
                     math.isfinite(value) and abs(value) <= 65536 for value in point
                 )
                 if info[15 + index // 32] & (1 << (index % 32)):
-                    assert math.dist(point, source["position"]) < 2e-5
+                    assert math.dist(point, vertex["position"]) < 2e-5
                     checked += 1
         assert checked > 50
-        source = args.output / "subdivided.vmf"
-        client.call("save_map", {"path": str(source)})
         assert source.read_text().count('"subdiv" "1"') == 3
         client.call("open_map", {"path": str(source)})
         assert client.call("get_terrain_grids", {"faces": faces}) == rounded

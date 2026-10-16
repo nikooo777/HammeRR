@@ -56,7 +56,7 @@ When both pieces have four corners, enter the **Shared ridge height** and click 
 **Extrude highlighted pieces** adds outward volumes or cuts inward from one or both pieces.
 
 1. Highlight the pieces to extrude.
-2. Choose **Outward · add brushes** or **Inward · cut source** under **Extrusion direction**.
+2. Choose **Outward · add brushes** or **Inward · cut source**.
 3. Enter a positive **Extrusion depth** between 0.125 and 4096 world units. Optionally enable **Choose wall material** and **Keep top texture at corners** (outward) or **Keep floor texture at corners** (inward).
 4. Click **Preview extrusion**, review the result, then **Apply extrusion**. The resulting faces are selected; one Undo restores the previous map.
 
@@ -65,6 +65,8 @@ When both pieces have four corners, enter the **Shared ridge height** and click 
 - Outward tops and inward floors use each piece's planned material and texture placement, or source inheritance. The chosen wall material overrides new walls; otherwise they inherit their boundary or divider source face. Surviving exterior faces keep their original materials, UVs and surface settings.
 - Inward consumes every saved division attached to a changed source brush, including divisions on other faces. Undo restores those plans with the geometry. Saved divisions on other brushes remain.
 - Changing the highlighted pieces or direction requires a matching preview before Apply. Invalid requests retain the last good draft. **Return to flat** and **Cancel** restore the sources without recording history.
+
+![Inward cutting controls with source replacement and Undo explained](images/partition-inward-controls.png)
 
 | Extrusion controls | Two pieces extruded to different heights |
 | --- | --- |

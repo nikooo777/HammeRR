@@ -1226,6 +1226,23 @@ retaining saved source/history/camera/selection. It needs a graphics adapter but
 launches no game or desktop input. Software UI callbacks capture
 `fgd-size-helpers.png` through `HAMMERR_UI_SNAPSHOTS`.
 
+### FGD property sphere guides
+
+```sh
+python3 -B scripts/validate_fgd_spheres.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-spheres-check
+```
+
+The private stdio fixture checks authored values versus inherited FGD defaults,
+independent float/integer/string radii, explicit zero/negative behavior, missing
+and malformed diagnostics, and atomic rejection of an invalid property batch.
+Actual MCP PNGs compare guide pixels outside the selected box and around a
+distinct inner radius in Top, Front, Side and perspective views with selection
+outlines disabled. Guide-only rays and volumes remain unpickable; object bounds,
+selection framing and working-region inclusion retain the class box. Selected,
+unselected, hidden and filtered controls retain source fields, saved bytes,
+history and camera. The script produces `fgd-spheres.png` plus paired controls,
+needs a graphics adapter, and launches no game or desktop input.
+
 ### Terrain detail scattering and displayed model bounds
 
 ```sh

@@ -400,9 +400,42 @@ within ±65536 are required. Loaded model meshes and specialized lights retain
 precedence. Invalid/ambiguous size declarations expose an amber marker and
 `invalid_fgd_size`; working-region bounds remain unresolved with an explicit
 error. Picking, framing, area/volume selection and placement use the same valid
-bounds. Other helper declarations remain listed and unevaluated. Catalog source
+bounds. Helper forms outside the box/color and property-sphere scopes remain
+listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
-FGD reload changes no source values or Undo history. See [Entity definitions](entities.md).
+FGD reload changes no source values or Undo history.
+
+`get_entity_inspector.helpers.spheres` resolves `sphere(property)` declarations
+for point entities through the same Session operations as the property panel and
+`render_view`. Each entry reports `property`, `raw`, `value_source` (`authored`,
+`fgd_default` or `missing`), `property_type`, `radius`, `center`, potential
+`guide_bounds`, intrinsic `state`, `error`, `displayed` and `suppression_reason`.
+`raw_truncated` and `property_truncated` identify bounded diagnostic previews;
+`sphere_limits` states the scope and caps. Use ordinary `set_entity_properties`
+with `set` or `remove` to author or clear a radius override. No new tool or
+viewport setting is required.
+
+Positive finite `float`, `integer` and numeric `string` values draw three
+world-axis rings for selected visible generic point entities. Missing authored
+values use the FGD default; authored zero/negative values suppress the guide
+without falling back. Invalid/missing/duplicate/unsupported values retain source
+text and report errors without fabricated radii. Loaded models, brush entities,
+specialized lights, hidden objects and working-region exclusions suppress
+display with explicit reasons. Intrinsic state remains independent of display
+eligibility. At most sixteen distinct helpers per entity, 128 guides per frame
+and 32 segments per ring are supported. Scalar values must be finite and within
+±65536; native conversion must retain finite, noncollapsed geometry. Diagnostic
+previews cap raw values at 256 bytes and property names at 128 bytes; oversized
+input is rejected before clipped text can be parsed. Rings remain visible when
+`selection_outlines:false` hides ordinary selection edges.
+
+`helpers.world_bounds`, picking, area/volume matching, working-region inclusion,
+placement and framing retain the ordinary object bounds; `guide_bounds` never
+becomes the selection target. Rings describe editor distances and do not certify
+engine effect ranges or nonpositive runtime behavior. Inspection and rendering
+do not edit source, camera or history. Sphere centers follow displayed geometry
+previews; ordinary helper bounds retain their committed-object reporting policy.
+See [Entity definitions](entities.md).
 
 ### Generated reflections
 

@@ -89,7 +89,47 @@ FGD `size()` declarations draw point-entity boxes with the declared dimensions a
 
 Malformed or ambiguous definitions show **Invalid FGD size; generic editor marker** and the error in the inspector; the unselected marker is amber. Working-region inspection reports `invalid_fgd_size`, an explicit bounds error and unresolved bounds, retaining the marker for correction. Agents read the same structured report through `get_entity_inspector.helpers`.
 
-Limits: These are world-aligned editor boxes in Source units, independent of `angles` and `modelscale`; they do not describe engine collision hulls. Arguments must be native integers; boxes need positive volume and local coordinates within ±65536. Class colors take precedence over the generic box's stored editor color; selection keeps its usual red highlight and **Selection outlines** behavior. `sphere`, `line`, `iconsprite`, `sprite`, `studio`, frustum and other FGD helper declarations are not evaluated by this feature and are listed in the inspector. Existing authored-model, light and rope previews remain independent. The report lists the loaded catalog sources; individual inherited helpers do not retain file/line provenance.
+Limits: These are world-aligned editor boxes in Source units, independent of `angles` and `modelscale`; they do not describe engine collision hulls. Arguments must be native integers; boxes need positive volume and local coordinates within ±65536. Class colors take precedence over the generic box's stored editor color; selection keeps its usual red highlight and **Selection outlines** behavior. Existing authored-model, light and rope previews remain independent. The report lists the loaded catalog sources; individual inherited helpers do not retain file/line provenance.
+
+### Inspect a property radius
+
+FGD `sphere(property)` declarations add three world-axis guide rings around a
+selected generic point entity. Each ring uses the named property's authored
+numeric value, or its FGD default when no value is stored. Multiple property
+radii remain separate guides. During a transform preview, the rings follow the
+displayed origin.
+
+1. Click **Entity…**, choose `env_firesensor`, then **Place entity**. Its shipped
+   FGD declares `sphere(fireradius)` and labels the property **Radius**.
+2. Select the entity and enter a positive **Radius**, such as `128`. Read the
+   inspector's helper summary and inspect the rings in any projection.
+3. Change **Radius** to inspect a different distance. Zero and negative values
+   draw no guide. The viewport and agent's `render_view` use the same rings.
+4. Select another object, hide the entity, or exclude its ordinary box with
+   **Working region…** to suppress the rings. Restore selection and visibility
+   to display them again.
+
+![Selected point entity with distinct property-radius guides](images/fgd-spheres.png)
+
+These are editor distance guides. They do not establish an engine influence
+range, collision volume or runtime fallback for nonpositive values. They do not
+enlarge the entity's box, picking target, area/volume selection, working-region
+bounds, placement support or framing. **Selection outlines** can hide object
+edges while these guides remain visible.
+
+Only selected, visible generic point entities display these rings; loaded model
+meshes, brush entities and specialized light helpers keep their existing
+previews. Numeric `float`, `integer` and `string` properties are supported.
+Malformed, missing, duplicate or unsupported values retain their source text and
+show diagnostics without substitute rings. The shared inspector report separates
+intrinsic radius validity from selection/visibility suppression and reports
+potential guide bounds separately from object bounds. At most sixteen distinct
+sphere declarations per entity and 128 guides per frame are accepted, with 32
+segments per ring. Scalar values must be finite and within ±65536; native
+floating-point conversion must retain a finite, noncollapsed guide. Diagnostic
+previews retain at most 256 bytes of raw value and 128 bytes of property name,
+with explicit truncation flags. Zero-argument `sphere()`, `line`, `iconsprite`, `sprite`, `studio`,
+frustum and other helper declarations remain outside this preview scope.
 
 How lights, spotlights and the sun are baked, including falloff distances and sky ambient, is covered in [Compile and play](compile-and-play.md#lighting).
 

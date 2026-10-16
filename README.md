@@ -178,10 +178,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 ### Entities and logic
 
-| Place entities on surfaces | FGD helper boxes |
+| Place entities on surfaces | FGD entity helpers |
 | --- | --- |
-| ![Reviewing a new point entity on a picked surface](docs/images/entity-placement-controls.png) | ![Inherited point-entity size and class color](docs/images/class-color-size-box.png) |
-| Pick a surface and review snapped contact, bounds and orientation before creating an entity. | Loaded class dimensions and colors drive shared boxes, picking and framing. |
+| ![Reviewing a new point entity on a picked surface](docs/images/entity-placement-controls.png) | ![Selected point entity with property-radius guides](docs/images/fgd-spheres.png) |
+| Pick a surface and review snapped contact, bounds and orientation before creating an entity. | Class boxes share picking and framing; selected property radii add distance guides. |
 
 | Particle effects |
 | --- |

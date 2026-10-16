@@ -37,7 +37,7 @@ def validate(client, output):
     helper = inspector["helpers"]
     bounds = {"mins": [-24, -12, 0], "maxs": [40, 20, 72]}
     check(helper["bounds_source"] == "fgd_size" and helper["world_bounds"] == list(bounds.values()), "Shared inspector resolves inherited asymmetric size in Source units")
-    check(helper["unsupported"] == ["sphere"] and helper["class_color"] == [12, 134, 216], "Unsupported radius semantics and class color are explicit")
+    check(helper["unsupported"] == [] and helper["spheres"][0]["state"] == "ready" and helper["spheres"][0]["radius"] == 64 and helper["class_color"] == [12, 134, 216], "Independent radius guides and the class color resolve beside the size box")
     check(str(fgd) in helper["definition_sources"] and "file/line" in helper["limits"], "Inspection identifies loaded sources and precise provenance limits")
     check(detail(client, [entity])[0]["bounds"] == bounds, "Object inspection uses displayed helper bounds")
     source = output / "source.vmf"

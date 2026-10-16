@@ -4,6 +4,7 @@ mod areas;
 pub mod control;
 mod cordons;
 pub mod cubemap_assets;
+mod detail_props;
 mod emit;
 pub mod faces;
 mod hints;
@@ -388,6 +389,8 @@ pub struct Stats {
     pub static_props: usize,
     pub static_prop_models: usize,
     pub static_prop_leaf_refs: usize,
+    pub detail_props: usize,
+    pub detail_prop_models: usize,
     pub prop_shadow_props: usize,
     pub prop_shadow_models: usize,
     pub prop_shadow_triangles: usize,
@@ -893,6 +896,12 @@ fn build(
     output.stats.static_props = prop_stats.props;
     output.stats.static_prop_models = prop_stats.models;
     output.stats.static_prop_leaf_refs = prop_stats.leaf_refs;
+    let detail_stats = detail_props::bake(vmf, fs, &mut bsp, &mut output.report, control)?;
+    if output.report.has_errors() {
+        return Ok(());
+    }
+    output.stats.detail_props = detail_stats.props;
+    output.stats.detail_prop_models = detail_stats.models;
     if options.lighting.performs_lighting() {
         control.advance(Stage::Lighting)?;
         let stats = lighting::bake(

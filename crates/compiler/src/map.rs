@@ -258,6 +258,9 @@ impl<'a> Map<'a> {
             }
             if classname.eq_ignore_ascii_case("prop_static")
                 || classname.eq_ignore_ascii_case("info_lighting")
+                || classname.eq_ignore_ascii_case("prop_detail")
+                || classname.eq_ignore_ascii_case("detail_prop")
+                || classname.eq_ignore_ascii_case("prop_detail_sprite")
             {
                 continue;
             }

@@ -16,7 +16,13 @@ const MAX_SIDES: usize = 65_536;
 const MAX_SIDES_PER_BRUSH: usize = 128;
 const SHELL_MATERIAL: &str = "tools/toolsblack";
 const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
-const UNSUPPORTED: &[&str] = &["func_instance", "func_viscluster"];
+const UNSUPPORTED: &[&str] = &[
+    "func_instance",
+    "func_viscluster",
+    "prop_detail",
+    "detail_prop",
+    "prop_detail_sprite",
+];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RegionSummary {

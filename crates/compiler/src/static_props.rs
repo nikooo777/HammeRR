@@ -41,7 +41,7 @@ fn integer(entity: &Entity, key: &str, default: i32) -> Result<i32, String> {
     })
 }
 
-fn angles(entity: &Entity) -> Result<DVec3, String> {
+pub(crate) fn angles(entity: &Entity) -> Result<DVec3, String> {
     let value = if let Some(raw) = entity.properties.get("angles") {
         parse_vec3(raw).ok_or("angles must contain Pitch Yaw Roll")?
     } else if entity.properties.get("angle").is_some() {
@@ -59,7 +59,11 @@ fn angles(entity: &Entity) -> Result<DVec3, String> {
     Ok(value.map(|angle| angle % 360.0))
 }
 
-fn bounds(header: ModelHeader, origin: DVec3, rotation: DQuat) -> Result<(DVec3, DVec3), String> {
+pub(crate) fn bounds(
+    header: ModelHeader,
+    origin: DVec3,
+    rotation: DQuat,
+) -> Result<(DVec3, DVec3), String> {
     let mins = DVec3::from_array(header.render_mins.map(f64::from))
         .min(DVec3::from_array(header.hull_mins.map(f64::from)));
     let maxs = DVec3::from_array(header.render_maxs.map(f64::from))

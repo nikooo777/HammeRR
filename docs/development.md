@@ -1013,8 +1013,10 @@ continuity do not prove unchanged collision geometry bytes.
 `--contact-initial-profile` adds one read-only profile for each tracked crate,
 door and brace on the first safe frame after activation. It records live mass,
 linear/angular damping, material index/name and contents through pinned public
-getters. Surface names must resolve back to the same valid index; invalid or
-aliased indices fail. The option requires the native library and cannot be
+getters. Ordinary surface names must resolve back to the same valid index.
+The verified shadow sentinel is reported explicitly with a null surface name;
+unknown or invalid indices fail without a default alias. The option requires
+the native library and cannot be
 combined with `disable-refresh`. Initial profiles have separate telemetry
 acceptance; a pure Disable recovery failure remains a failed gameplay result.
 These are initialized-object observations, not creation-hook arguments or a

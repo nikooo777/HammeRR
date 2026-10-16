@@ -93,7 +93,7 @@ def prepare(library, release_mode, root, game, output, command, environment, *, 
         "load_before_private_map": True,
     }
     if initial_profile:
-        receipt["initial_object_profile"] = {"schema": 1, "objects": 7, "observation_only": True}
+        receipt["initial_object_profile"] = {"schema": 2, "objects": 7, "observation_only": True}
     (output / "contact-observer-launch.json").write_text(
         json.dumps(receipt, indent=2) + "\n"
     )
@@ -133,7 +133,7 @@ def verify(output, release_mode, *, initial_profile=False):
         receipt = json.loads((output / "contact-observer-launch.json").read_text())
         assert not (initial_profile and intervention)
         if initial_profile:
-            assert receipt["initial_object_profile"] == {"schema": 1, "objects": 7, "observation_only": True}
+            assert receipt["initial_object_profile"] == {"schema": 2, "objects": 7, "observation_only": True}
         else:
             assert "initial_object_profile" not in receipt
         assert receipt["release_mode"] == release_mode
@@ -342,15 +342,17 @@ def verify(output, release_mode, *, initial_profile=False):
             assert len(profiles) == 7 and len(completions) == 1
             assert {row["name"] for row in profiles} == STABLE | BRACES
             complete = completions[0]
-            assert complete["profile_schema"] == 1 and complete["objects"] == 7
+            assert complete["profile_schema"] == 2 and complete["objects"] == 7
             assert complete["sample"] == 0 and complete["frame"] == samples[0]["frame"]
             assert complete["observation_only"] is True
+            assert complete["shadow_sentinel_token"] == "$MATERIAL_INDEX_SHADOW"
+            assert complete["shadow_sentinel_index"] == 0xF000
             assert records.index(grouped["activate"][0]) < records.index(profiles[0])
             assert records.index(profiles[-1]) < records.index(complete) < records.index(samples[0])
             assert len({row["surface_count"] for row in profiles}) == 1
             for row in profiles:
                 identity = by_sample[0][row["name"]]
-                assert row["profile_schema"] == 1 and row["sample"] == 0
+                assert row["profile_schema"] == 2 and row["sample"] == 0
                 assert row["frame"] == samples[0]["frame"]
                 assert row["simulation_time"] == samples[0]["simulation_time"]
                 assert row["in_simulation"] is False and row["observation_only"] is True
@@ -360,16 +362,22 @@ def verify(output, release_mode, *, initial_profile=False):
                 pointer(row["environment"])
                 for field in ["mass", "linear_damping", "angular_damping"]:
                     assert isinstance(row[field], (int, float)) and math.isfinite(row[field]) and row[field] >= 0
-                assert 0 <= row["material_index"] < min(row["surface_count"], 128)
                 assert 0 < row["surface_count"] <= 4096
-                assert row["material_roundtrip_index"] == row["material_index"]
-                assert isinstance(row["material_name"], str) and 0 < len(row["material_name"].encode()) < 128
-                assert all(32 <= ord(value) <= 126 and value not in '"\\' for value in row["material_name"])
+                if row["material_kind"] == "shadow_sentinel":
+                    assert row["material_index"] == 0xF000
+                    assert row["material_name"] is None and row["material_roundtrip_index"] is None
+                else:
+                    assert row["material_kind"] == "surface"
+                    assert 0 <= row["material_index"] < min(row["surface_count"], 128)
+                    assert row["material_roundtrip_index"] == row["material_index"]
+                    assert isinstance(row["material_name"], str) and 0 < len(row["material_name"].encode()) < 128
+                    assert all(32 <= ord(value) <= 126 and value not in '"\\' for value in row["material_name"])
                 assert isinstance(row["contents"], int) and 0 <= row["contents"] <= 0xFFFFFFFF
             report["initial_object_profiles"] = {
-                "schema": 1,
+                "schema": 2,
                 "observation_only": True,
                 "observed_objects": 7,
+                "shadow_sentinel": {"token": complete["shadow_sentinel_token"], "index": complete["shadow_sentinel_index"]},
                 "objects": profiles,
                 "limits": "First safe post-activation observation, not creation-call arguments or reference-compiler parity. No mutation or contact refresh is enabled by this option.",
             }

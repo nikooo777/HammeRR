@@ -216,6 +216,84 @@ fn contained_world_geometry_ignores_outside_markers_and_keeps_native_flags_and_i
 }
 
 #[test]
+fn contained_touching_and_overlapping_helpers_emit_the_union_through_both_build_paths() {
+    let (_directory, game, document) = fixture();
+    let baseline = compiler::compile(document.vmf(), &game);
+    assert!(baseline.bsp.is_some(), "{:?}", baseline.report);
+    for (left_max, right_min, active) in [(0.0, 0.0, false), (16.0, -16.0, true)] {
+        let mut document = document.clone();
+        let id = add_occluder(
+            &mut document,
+            &[
+                ([-64.0, -64.0, 16.0], [left_max, 64.0, 192.0]),
+                ([right_min, -64.0, 16.0], [64.0, 64.0, 192.0]),
+            ],
+            DVec3::new(400.0, 400.0, 192.0),
+            active,
+        );
+        let source = document.into_vmf();
+        let before = source.clone();
+        let output = compiler::compile(&source, &game);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.occluders, 1);
+        assert_eq!(output.stats.occluder_polygons, 10);
+        assert_eq!(output.stats.occluder_vertex_refs, 40);
+        assert_eq!(output.stats.brushes, baseline.stats.brushes);
+        assert_eq!(output.stats.faces, baseline.stats.faces);
+        assert_eq!(output.stats.models, baseline.stats.models);
+        assert_eq!(output.stats.clusters, baseline.stats.clusters);
+        assert!(
+            output
+                .stats
+                .compile_region
+                .as_ref()
+                .unwrap()
+                .included
+                .contains(&format!("entity:{id}"))
+        );
+        let bytes = output.bsp.unwrap().to_bytes();
+        let controlled = compiler::compile_controlled(&source, &game, &Control::default());
+        assert!(!controlled.report.has_errors(), "{:?}", controlled.report);
+        assert_eq!(controlled.bsp.unwrap().to_bytes(), bytes);
+        assert_eq!(source, before);
+        let bsp = Bsp::parse(&bytes).unwrap();
+        let native = bsp.occlusion().unwrap().unwrap();
+        assert_eq!(
+            native.occluders[0].flags,
+            if active { 0 } else { OCCLUDER_INACTIVE }
+        );
+        assert_eq!(native.occluders[0].mins, [-64.0, -64.0, 16.0]);
+        assert_eq!(native.occluders[0].maxs, [64.0, 64.0, 192.0]);
+        assert_eq!(native.occluders[0].area, 1);
+        let planes = bsp.records::<Plane>().unwrap();
+        let vertices = bsp.vertices().unwrap();
+        let mut area = 0.0;
+        for polygon in &native.polygons {
+            let plane = planes[polygon.plane as usize];
+            if plane.normal[0].abs() > 0.99 {
+                assert_eq!(plane.dist, 64.0);
+            }
+            let points = native.vertex_indices[polygon.first_vertex_index as usize..]
+                [..polygon.vertex_count as usize]
+                .iter()
+                .map(|&index| DVec3::from_array(vertices[index as usize].map(f64::from)))
+                .collect::<Vec<_>>();
+            for triangle in points[1..].windows(2) {
+                area += (triangle[0] - points[0])
+                    .cross(triangle[1] - points[0])
+                    .length()
+                    * 0.5;
+            }
+        }
+        assert_eq!(area, 122_880.0);
+        let entities = bsp.entities().unwrap();
+        assert_eq!(entities.matches("\"occludernumber\"").count(), 1);
+        assert!(entities.contains("\"occludernumber\" \"0\""));
+        assert!(entities.contains("\"origin\" \"400 400 192\""));
+    }
+}
+
+#[test]
 fn disjoint_helpers_and_fully_hidden_helpers_are_omitted_without_a_runtime_index() {
     let (_directory, game, mut document) = fixture();
     let baseline = compiler::compile(document.vmf(), &game)
@@ -438,8 +516,8 @@ fn empty_and_invalid_retained_helpers_keep_ordinary_occluder_rejection() {
                 "without terrain or origin materials"
             }
             6 => {
-                edit::translate_solid(&mut entity.solids[1], DVec3::X * -120.0, true);
-                "Occluder brush bounds touch or overlap"
+                edit::translate_solid(&mut entity.solids[1], DVec3::X * -111.995, true);
+                "within 0.01 units of a contact"
             }
             7 => {
                 entity.solids[1].sides[0].material = "tools/toolsskip".into();

@@ -455,17 +455,20 @@ See [Entity definitions](entities.md).
 
 `get_entity_inspector.helpers.lines` reports the shared selected FGD line guides.
 `line(R G B, targetname, property)` connects the source origin to the point named
-by that property; adding a second `targetname, property` pair connects the two
-referenced points. RGB must be literal integers 0–255 and stays independent of
+by that property; adding a second lookup/property pair connects the two
+referenced points. A lookup can also be `nodeid` under the authored-ID rules
+below; the two-reference form can mix lookup kinds. RGB must be literal integers 0–255 and stays independent of
 `rendercolor`. References use authored values before labeled FGD defaults;
-endpoint targetnames and origins must be authored once. Only unique exact-case
-literal names resolve. Case-insensitive collisions remain ambiguous even when
+endpoint origins must be authored once. Targetname lookup also requires one
+authored targetname; only unique exact-case literal names resolve.
+Case-insensitive collisions remain ambiguous even when
 a duplicate is hidden or outside the working region; a case-only match reports
 `unsupported_case_match`.
 
 Each line entry contains `color`, two `endpoints`, intrinsic `state`, `error`,
 `displayed` and `suppression_reason`. Each endpoint reports `property` (null for
-self), `raw`, `raw_truncated`, `value_source` (`self_origin`, `authored`,
+self), `lookup_property` (`targetname`, `nodeid` or null for self/unsupported),
+`raw`, `raw_truncated`, `value_source` (`self_origin`, `authored`,
 `fgd_default` or `missing`), numeric `entity`, world `position`, candidate
 `matches`, `state` and `error`. Missing/duplicate properties, duplicate
 targetnames, invalid origins, unsupported references, ambiguity, coincident
@@ -478,10 +481,11 @@ same Session report and displayed transform-preview origins, including model
 or light point endpoints. Sources must be selected visible generic points;
 brush, model/light/rope sources and model/studio helper classes remain
 specialized. Hidden or working-region-excluded endpoints suppress display
-without changing intrinsic resolution. Wildcards, `!tokens`, `nodeid` and brush
+without changing intrinsic resolution. Wildcards, `!tokens` and brush
 endpoints are unsupported. Finite origins must fit ±65536 units and remain
 distinct at native float precision. At most sixteen declarations per entity,
-128 displayed lines and 65,536 lookup entities/targetname values are supported;
+128 displayed lines and 65,536 lookup entities or raw targetname plus eligible
+nodeid values are supported;
 property names cap at 128 bytes and raw references at 256 bytes, with explicit
 truncation rather than resolving clipped text. Exceeding the lookup cap reports
 `entity_limit` without a partial search. Guide lines stay visible when
@@ -489,6 +493,31 @@ truncation rather than resolving clipped text. Exceeding the lookup cap reports
 bounds, picking, framing, placement, selection, working regions, source,
 history or camera. No new tool or setting is added; these are editor links,
 without runtime beam, parenting, attachment or I/O simulation.
+
+For `line(R G B, nodeid, property)`, the source reference property must be
+declared `node_dest`. Destinations must have a loaded FGD point class with a
+declared readonly integer `nodeid` and exactly one authored ID. Only canonical
+decimal `0`–`2147483647` resolves; zero is valid and the exact reference `-1`
+reports `no_association` without geometry. Endpoint IDs never come from FGD
+defaults. References retain independent `authored`/`fgd_default` provenance.
+Imported IDs remain read-only through ordinary property operations; this
+feature adds no allocator, assignment or renumbering operation.
+
+The endpoint's numeric `entity` is the resolved VMF entity ID; it is distinct
+from the reference's authored node ID. VMF IDs, entity order and runtime node
+indices are never inferred as node associations. Missing IDs report `missing`;
+multiple matching entities report `ambiguous`, including hidden or
+working-region-excluded numeric aliases. Bounded raw aliases such as `042`,
+`+42` and padded `42` participate in ambiguity checks but never render.
+A sole alias reports `invalid_nodeid`, duplicate endpoint keys report
+`duplicate_nodeid`, and noncanonical references report `unsupported_reference`.
+Oversized or unparsable candidate IDs do not resolve. The shared 65,536-value
+budget counts raw targetnames and eligible nodeid values before parsing or
+filtering, with `entity_limit` and no partial search on overflow. Existing
+128-byte property, 256-byte raw-value, origin, precision and visibility guards
+remain unchanged. Model/light points may be endpoints; their source helpers
+retain precedence. These guides show stored authored associations without
+native AI graph connectivity, runtime node-index mapping or ground-node dropping.
 
 `get_entity_inspector.helpers.source_projector` reports the independent Source
 projector guide for `env_projectedtexture` with a loaded FGD class; other classes

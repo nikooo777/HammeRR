@@ -1418,6 +1418,35 @@ preservation. `--gameinfo` selects optional mounted content. Use a fresh output
 directory; the script requires a graphics adapter, writes `results.json` and
 paired PNG controls, and launches no game or desktop input.
 
+### Authored node-ID line guides
+
+```sh
+cargo test -p map-core --lib entity_helpers::lines::tests::nodeid
+cargo test -p map-core --lib entity_helpers::lines::tests::authored_nodeid
+cargo test -p editor-core --features mcp --lib authored_nodeid
+python3 -B scripts/validate_fgd_node_lines.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-node-lines-check
+```
+
+Pure and Session fixtures cover canonical stored IDs, zero and `-1`, typed
+`node_dest` references, readonly integer point ownership, defaults provenance,
+mixed lookup pairs, hidden numeric aliases, duplicate keys and the shared raw
+lookup budget. No node IDs or runtime indices are generated.
+
+The private stdio script opens VMFs containing authored readonly `nodeid`
+values. Their VMF entity IDs deliberately differ, including an ID-collision
+distractor with no eligible node declaration. Actual Top, Front, Side and
+perspective PNGs require both guide colors beyond identical no-declaration
+controls; hidden and invalid cases compare exact same-state controls. It checks
+source/endpoint previews, readonly edit rejection, canonical-reference errors,
+hidden aliases, duplicate keys, ignored endpoint defaults and ordinary picks,
+volume selection and framing. Read/render/reload checks preserve full current
+history, camera and source; authored hide/Undo controls check restored fields
+and Undo count separately from the changed redo branch. Optional `--gameinfo`
+selects mounted content. Use a fresh output directory and a graphics adapter;
+`results.json` includes endpoint reports, pixel counts, image hashes, cameras
+and source hashes. The script launches no game or desktop input and makes no
+native AI graph claim.
+
 ### Source projector guides
 
 ```sh

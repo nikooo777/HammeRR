@@ -263,10 +263,9 @@ fn controlled<T>(
     let callback = RefCell::new(check);
     let failure = RefCell::new(None);
     let checkpoint = || {
-        if failure.borrow().is_none() {
-            if let Err(error) = (*callback.borrow_mut())() {
-                *failure.borrow_mut() = Some(error);
-            }
+        let active = failure.borrow().is_none();
+        if active && let Err(error) = (*callback.borrow_mut())() {
+            *failure.borrow_mut() = Some(error);
         }
         if failure.borrow().is_some() {
             // read_exact/write_all retry Interrupted; restore the original error outside ZIP I/O.

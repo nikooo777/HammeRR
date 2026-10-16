@@ -43,6 +43,14 @@ pub struct OverlayRebindArgs {
     pub source: FaceRef,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayCornersArgs {
+    pub snapshot: String,
+    pub id: Option<String>,
+    pub corners: [[f64; 2]; 4],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +87,26 @@ mod tests {
             derived[field] = json!("1 0 0");
             assert!(serde_json::from_value::<OverlayPreviewArgs>(derived).is_err());
         }
+    }
+    #[test]
+    fn corner_requests_require_four_local_pairs_and_reject_binding_or_setting_changes() {
+        let valid = json!({"snapshot":"current","id":"entity:12","corners":[[-24,-16],[-20,24],[28,16],[32,-20]]});
+        let args: OverlayCornersArgs = serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(args.corners[0], [-24.0, -16.0]);
+        for field in ["source", "sides", "material", "BasisU", "origin", "u"] {
+            let mut invalid = valid.clone();
+            invalid[field] = json!("replacement");
+            assert!(serde_json::from_value::<OverlayCornersArgs>(invalid).is_err());
+        }
+        for corners in [
+            json!([[0, 0], [0, 1], [1, 1]]),
+            json!([[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]]),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["corners"] = corners;
+            assert!(serde_json::from_value::<OverlayCornersArgs>(invalid).is_err());
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(OverlayCornersArgs)).unwrap();
+        assert_eq!(schema["additionalProperties"], false);
     }
 }

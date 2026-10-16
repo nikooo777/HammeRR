@@ -586,3 +586,165 @@ fn rebind_rejects_an_unsupported_existing_binding_or_hidden_destination_atomical
         assert_eq!(invalid.revision(), 0);
     }
 }
+
+#[test]
+fn corner_edits_keep_the_imported_frame_binding_settings_and_metadata() {
+    use source_formats::{keyvalues::Node, vmf::Connection};
+    for detail in [false, true] {
+        let (mut document, face) = fixture(detail);
+        let ObjectId::Entity(id) = document
+            .edit("overlay", |tx| create(tx, face, options()))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        document
+            .edit("raw import", |tx| {
+                let entity = tx.entity_mut(id)?;
+                entity
+                    .properties
+                    .set("material", "Materials/Decals/marking.VMT");
+                entity.properties.set("StartU", "01.0000");
+                entity.properties.set("sides", format!("  {}  ", face.side));
+                entity.properties.set("origin", "999.000 888.000 777.000");
+                entity.properties.set("custom", "keep me");
+                for index in 0..4 {
+                    let mut point =
+                        parse_vec3(entity.properties.get(&format!("uv{index}")).unwrap()).unwrap();
+                    point.z = 17.0 + index as f64;
+                    entity
+                        .properties
+                        .set(format!("uv{index}"), format_vec3(point));
+                }
+                entity.connections = Some(vec![Connection {
+                    output: "OnUser1".into(),
+                    value: "relay,Trigger,,0,-1".into(),
+                }]);
+                entity
+                    .extra
+                    .push(Node::block("custom", vec![Node::string("key", "value")]));
+                Ok(())
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let (bound, existing) = editable_corners(&before, id).unwrap();
+        assert_eq!(bound, face);
+        let corners = [
+            [-24.5, -16.25],
+            [-20.0, 24.75],
+            [28.5, 16.5],
+            [32.25, -20.125],
+        ];
+        let (bound, expected) = with_corners(&before, id, corners).unwrap();
+        assert_eq!(bound, face);
+        assert_ne!(expected.corners(), existing.corners());
+        assert_eq!(expected.basis_origin, existing.basis_origin);
+        assert_eq!(expected.basis_u, existing.basis_u);
+        assert_eq!(expected.basis_v, existing.basis_v);
+        assert_eq!(
+            document
+                .edit("Edit overlay corners", |tx| edit_corners(tx, id, corners))
+                .unwrap(),
+            ObjectId::Entity(id)
+        );
+        let after = document.vmf().clone();
+        assert_eq!(parse(document.entity(id).unwrap()).unwrap(), expected);
+        let original = before
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        let mut retained = document.entity(id).unwrap().clone();
+        for index in 0..4 {
+            let key = format!("uv{index}");
+            let point = parse_vec3(retained.properties.get(&key).unwrap()).unwrap();
+            assert_eq!(point.z, 17.0 + index as f64);
+            retained
+                .properties
+                .set(&key, original.properties.get(&key).unwrap());
+        }
+        assert_eq!(&retained, original);
+        for original in before.solids() {
+            assert_eq!(
+                after
+                    .solids()
+                    .find(|solid| solid.id == original.id)
+                    .unwrap(),
+                original
+            );
+        }
+        let reopened = Vmf::parse(&after.write(&Default::default())).unwrap();
+        assert_eq!(editable_corners(&reopened, id).unwrap().1, expected);
+        assert_eq!(document.undo().unwrap().label, "Edit overlay corners");
+        assert_eq!(document.vmf(), &before);
+        document.redo().unwrap();
+        assert_eq!(document.vmf(), &after);
+    }
+}
+
+#[test]
+fn corner_edits_reject_nonconvex_nonfinite_bounds_and_native_world_collapse_atomically() {
+    let (mut document, face) = fixture(false);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create(tx, face, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let before = document.vmf().clone();
+    for corners in [
+        [[f64::NAN, 0.0], [0.0, 64.0], [64.0, 64.0], [64.0, 0.0]],
+        [[f64::INFINITY, 0.0], [0.0, 64.0], [64.0, 64.0], [64.0, 0.0]],
+        [[0.0, 0.0], [64.0, 64.0], [0.0, 64.0], [64.0, 0.0]],
+        [[0.0, 0.0], [0.0, 64.0], [0.0, 64.0], [64.0, 0.0]],
+        [[0.0, 0.0], [0.0, 64.0], [16.0, 16.0], [64.0, 0.0]],
+        [[0.0, 0.0], [0.0, 64.0], [1e9, 64.0], [1e9, 0.0]],
+        [[0.0, 0.0], [0.0, 64.0], [1e-8, 64.0], [1e-8, 0.0]],
+    ] {
+        let revision = document.revision();
+        assert!(with_corners(&before, id, corners).is_err(), "{corners:?}");
+        assert!(
+            document
+                .edit("invalid corners", |tx| edit_corners(tx, id, corners))
+                .is_err()
+        );
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(document.revision(), revision);
+    }
+    assert!(
+        with_corners(
+            &before,
+            id,
+            [[0.0, 0.0], [0.0, 64.0], [1e-8, 64.0], [1e-8, 0.0]]
+        )
+        .unwrap_err()
+        .contains("native world-coordinate")
+    );
+}
+
+#[test]
+fn moved_sources_require_explicit_refit_before_corner_editing() {
+    let (mut document, face) = fixture(false);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create(tx, face, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let owner = document.owner_of_solid(face.solid).unwrap();
+    document
+        .edit("move source", |tx| {
+            edit::translate(tx, &[owner], DVec3::new(0.0, 0.0, 16.0), true)
+        })
+        .unwrap();
+    let before = document.vmf().clone();
+    let corners = [[-24.0, -16.0], [-20.0, 24.0], [28.0, 16.0], [32.0, -20.0]];
+    assert!(
+        with_corners(&before, id, corners)
+            .unwrap_err()
+            .contains("Refit selected overlay")
+    );
+    assert_eq!(document.vmf(), &before);
+    document.edit("refit", |tx| refit(tx, id)).unwrap();
+    assert!(with_corners(document.vmf(), id, corners).is_ok());
+}

@@ -265,10 +265,10 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Build settings, statistics and diagnostics](docs/images/build-status.png) | ![Soft sun shadows in Counter-Strike: Source](docs/images/soft-sun.png) |
 | Compile playable maps with baked lighting, CS:S engine physics, water, props and terrain. | **Run Map** compiles and launches the game. Builds run in the background and never overwrite good output with a failed one. |
 
-| Named build recipes |
-| --- |
-| ![Named build recipes and their compiler settings](docs/images/build-recipes.png) |
-| Recall Fast preview, Final lighting or named custom combinations of native compiler settings. |
+| Named build recipes | Portable sky assets |
+| --- | --- |
+| ![Named build recipes and their compiler settings](docs/images/build-recipes.png) | ![Sky asset packing enabled in Build settings](docs/images/build-pack-sky-assets.png) |
+| Recall Fast preview, Final lighting or named custom combinations of native compiler settings. | Include supported LDR/HDR sky materials and textures in the BSP with their original names and bytes. |
 
 | Compile regions |
 | --- |

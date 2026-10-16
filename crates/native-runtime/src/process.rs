@@ -752,16 +752,132 @@ mod tests {
         directory
     }
 
-    #[test]
-    fn lease_namespace_is_independent_of_job_temporary_paths() {
+    fn namespace_lease_assertions() {
         assert_eq!(lease_directory().parent(), Some(Path::new("/tmp")));
         let directory = private_directory();
         let lease = lease_at(directory.path()).unwrap();
+        assert_ne!(
+            unsafe { libc::fcntl(lease.0.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0
+        );
         assert_eq!(
             lease_at(directory.path()).err().unwrap().kind(),
             io::ErrorKind::WouldBlock
         );
         drop(lease);
+        lease_at(directory.path()).unwrap();
+    }
+
+    fn run_lease_fixture(mode: &str) {
+        let directory = private_directory();
+        let log = File::create(directory.path().join("fixture.log")).unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "process::tests::lease_behavior_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("HAMMERR_LEASE_BEHAVIOR", mode)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log);
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+        let child = command.spawn().unwrap();
+        let session = child.id();
+        util::json_write(
+            &directory.path().join("owned-session.json"),
+            &OwnedSession {
+                pid: session,
+                start: start_time(session).unwrap(),
+            },
+        )
+        .unwrap();
+        let mut owned = CallerChild {
+            child,
+            directory: directory.path().to_owned(),
+            audited: false,
+        };
+        let started = Instant::now();
+        let status = loop {
+            if let Some(status) = owned.child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if started.elapsed() >= Duration::from_secs(40) {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        owned.finish().unwrap();
+        let log = util::text(&directory.path().join("fixture.log"), 64 * 1024).unwrap();
+        assert!(
+            status.is_some_and(|status| status.success()),
+            "Lease fixture {mode}: {log}"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn lease_behavior_fixture() {
+        match std::env::var("HAMMERR_LEASE_BEHAVIOR").as_deref() {
+            Ok("namespace") => namespace_lease_assertions(),
+            Ok("inherited") => inherited_lease_assertions(),
+            Ok("fork") => fork_retention_assertions(),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn lease_namespace_is_independent_of_job_temporary_paths() {
+        run_lease_fixture("namespace");
+    }
+
+    #[test]
+    fn cloexec_lease_is_retained_by_fork_until_the_child_closes_it() {
+        run_lease_fixture("fork");
+    }
+
+    fn fork_retention_assertions() {
+        let directory = private_directory();
+        let lease = lease_at(directory.path()).unwrap();
+        let fd = lease.0.as_raw_fd();
+        let mut pipe = [0; 2];
+        assert_eq!(
+            unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) },
+            0
+        );
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0);
+        if child == 0 {
+            unsafe {
+                libc::close(pipe[1]);
+                let mut byte = 0u8;
+                libc::read(pipe[0], (&mut byte as *mut u8).cast(), 1);
+                libc::close(fd);
+                libc::_exit(0);
+            }
+        }
+        unsafe {
+            libc::close(pipe[0]);
+        }
+        drop(lease);
+        let retained = lease_at(directory.path()).err().map(|error| error.kind());
+        unsafe {
+            libc::write(pipe[1], b"x".as_ptr().cast(), 1);
+            libc::close(pipe[1]);
+            let mut status = 0;
+            assert_eq!(libc::waitpid(child, &mut status, 0), child);
+        }
+        assert_eq!(retained, Some(io::ErrorKind::WouldBlock));
         lease_at(directory.path()).unwrap();
     }
 
@@ -801,6 +917,10 @@ mod tests {
 
     #[test]
     fn inherited_lease_survives_either_owner_until_cleanup_finishes() {
+        run_lease_fixture("inherited");
+    }
+
+    fn inherited_lease_assertions() {
         for kill_supervisor in [false, true] {
             let directory = private_directory();
             let lease = lease_at(directory.path()).unwrap();

@@ -16,6 +16,8 @@ mod scatter;
 mod shapes;
 mod sprites;
 
+pub(crate) use sprites::check_native_transform as check_native_sprite_transform;
+
 const MAX_PROPS: usize = 16_384;
 const MAX_LEAF_WORK: usize = 4_000_000;
 
@@ -80,7 +82,7 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
         ("fademaxdist", 0.0),
         ("fadescale", 1.0),
     ] {
-        if sprite && key == "detailOrientation" {
+        if sprite && matches!(key, "detailOrientation" | "scale" | "sway") {
             continue;
         }
         if let Some(raw) = entity.properties.get(key) {
@@ -357,9 +359,7 @@ pub(crate) fn bake(
                 {
                     return Err("Explicit detail sprites do not support named lightingorigin; this override is model-only".into());
                 }
-                let (sprite, orientation) = sprites::explicit(entity)?;
-                prop.kind = sprites::KIND;
-                prop.orientation = orientation;
+                let sprite = sprites::explicit(entity, &mut prop)?;
                 return builder.add_sprite(sprite, prop, point, control);
             }
             let lighting_origin = lighting.resolve(

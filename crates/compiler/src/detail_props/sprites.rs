@@ -2,6 +2,7 @@ use glam::{DQuat, DVec3, EulerRot};
 use source_formats::{
     bsp::{DetailProp, DetailSprite},
     keyvalues::Node,
+    vmf::Entity,
 };
 
 use super::scatter::{number, value};
@@ -11,6 +12,7 @@ use crate::map::MAX_COMPILE_COORD;
 pub(super) const KIND: u8 = 1;
 const VERTICAL: u8 = 2;
 pub(super) const MIN_NATIVE_SCALE: f32 = f32::from_bits(103 << 23);
+const MAX_NATIVE_SCALE: f32 = 65504.0;
 pub(super) const MAX_SPRITES: usize = 4096;
 
 pub(super) struct Definition {
@@ -102,21 +104,37 @@ impl Definition {
     }
 }
 
-pub(super) fn explicit(entity: &source_formats::vmf::Entity) -> Result<(DetailSprite, u8), String> {
-    for key in ["spriterandomscale", "sway", "shape_angle", "shape_size"] {
-        if let Some(raw) = entity.properties.get(key)
-            && raw.parse::<f64>().ok().filter(|value| value.is_finite()) != Some(0.0)
-        {
-            return Err(format!("Explicit detail sprites require {key}=0"));
-        }
+fn explicit_number(entity: &Entity, key: &str, default: f64, max: f64) -> Result<f64, String> {
+    let Some(raw) = entity.properties.get(key) else {
+        return Ok(default);
+    };
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && (0.0..=max).contains(value))
+        .ok_or_else(|| format!("Explicit detail sprite {key} must be finite and within 0–{max}"))
+}
+
+pub(super) fn explicit(entity: &Entity, prop: &mut DetailProp) -> Result<DetailSprite, String> {
+    if let Some(raw) = entity.properties.get("spriterandomscale")
+        && raw.parse::<f64>().ok().filter(|value| value.is_finite()) != Some(0.0)
+    {
+        return Err("Explicit detail sprites require spriterandomscale=0".into());
     }
-    if entity
+    let shape = if let Some(name) = entity
         .properties
         .get("sprite_shape")
-        .is_some_and(|value| !value.trim().is_empty())
+        .filter(|name| !name.trim().is_empty())
     {
-        return Err("Explicit detail sprites do not support sprite_shape".into());
-    }
+        let angle = explicit_number(entity, "shape_angle", 0.0, 255.0)?;
+        let size = explicit_number(entity, "shape_size", 0.0, 1.0)?;
+        Some(Shape::parameters(name, angle, size)?)
+    } else {
+        for key in ["shape_angle", "shape_size"] {
+            explicit_number(entity, key, 0.0, 0.0)?;
+        }
+        None
+    };
     let required = |key| {
         entity
             .properties
@@ -147,14 +165,34 @@ pub(super) fn explicit(entity: &source_formats::vmf::Entity) -> Result<(DetailSp
         .filter(|value| value.is_finite() && (0.0..=2.0).contains(value) && value.fract() == 0.0)
         .ok_or("Explicit detail sprite detailOrientation must be an integer within 0–2")?
         as u8;
+    if shape.is_some() && orientation != 0 {
+        return Err("Detail sprite shapes require detailOrientation=0".into());
+    }
+    let scale = entity
+        .properties
+        .get("scale")
+        .unwrap_or("1")
+        .parse::<f32>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or("Explicit detail sprite scale must remain finite and positive in native floats")?;
+    let sway = explicit_number(entity, "sway", 0.0, 1.0)?;
+    prop.kind = shape.map_or(KIND, |shape| shape.kind);
+    prop.orientation = orientation;
+    prop.scale = scale;
+    prop.sway = (255.0 * f64::from(sway as f32)) as u8;
+    if let Some(shape) = shape {
+        prop.shape_angle = shape.angle;
+        prop.shape_size = shape.size;
+    }
     let sprite = DetailSprite {
         upper_left,
         lower_right,
         texture_upper_left: [(x + 0.5) / total, (y + 0.5) / total],
         texture_lower_right: [(width + (x - 0.5)) / total, (height + (y - 0.5)) / total],
     };
-    check_geometry(sprite, 1.0)?;
-    Ok((sprite, orientation))
+    check_geometry(sprite, scale)?;
+    Ok(sprite)
 }
 
 pub(super) fn key(sprite: DetailSprite) -> [u32; 8] {
@@ -182,8 +220,7 @@ pub(super) fn check_bounds(
         return Err("Detail sprite orientation and angles are invalid".into());
     }
     if orientation != VERTICAL {
-        check_native_scale(scale)?;
-        check_origin(origin)?;
+        check_native_transform(scale, origin)?;
     }
     check_orientation_bounds(sprite, origin, angles, orientation, scale)
 }
@@ -194,8 +231,7 @@ pub(super) fn check_prop_bounds(sprite: DetailSprite, prop: &DetailProp) -> Resu
     match prop.kind {
         KIND => {
             if prop.sway != 0 {
-                check_native_scale(prop.scale)?;
-                check_origin(origin)?;
+                check_native_transform(prop.scale, origin)?;
             }
             check_bounds(sprite, origin, angles, prop.orientation, prop.scale)
         }
@@ -209,14 +245,24 @@ pub(super) fn check_prop_bounds(sprite: DetailSprite, prop: &DetailProp) -> Resu
     }
 }
 
-pub(super) fn check_native_scale(scale: f32) -> Result<(), String> {
+pub(crate) fn check_native_transform(scale: f32, origin: DVec3) -> Result<(), String> {
+    check_native_scale(scale)?;
+    check_origin(origin)
+}
+
+fn check_native_scale(scale: f32) -> Result<(), String> {
     if !scale.is_finite() || scale < MIN_NATIVE_SCALE {
         return Err("Detail sprite scale collapses in native half precision below 2^-24".into());
+    }
+    if scale > MAX_NATIVE_SCALE {
+        return Err(format!(
+            "Detail sprite scale exceeds native half precision maximum {MAX_NATIVE_SCALE}"
+        ));
     }
     Ok(())
 }
 
-pub(super) fn check_origin(origin: DVec3) -> Result<(), String> {
+fn check_origin(origin: DVec3) -> Result<(), String> {
     if !origin.is_finite() || origin.abs().max_element() > MAX_COMPILE_COORD {
         return Err(format!(
             "Detail sprite origin must fit ±{MAX_COMPILE_COORD} units"
@@ -376,8 +422,9 @@ mod tests {
         ] {
             entity.properties.set(key, value);
         }
-        let (sprite, orientation) = explicit(&entity).unwrap();
-        assert_eq!(orientation, 0);
+        let mut prop = DetailProp::default();
+        let sprite = explicit(&entity, &mut prop).unwrap();
+        assert_eq!(prop.orientation, 0);
         assert_eq!(sprite.upper_left, [-4.0, 16.0]);
         assert_eq!(sprite.lower_right, [12.0, -16.0]);
         assert_eq!(sprite.texture_lower_right[0].to_bits(), 0x3b73_3333);

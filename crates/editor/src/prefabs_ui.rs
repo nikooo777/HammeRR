@@ -553,7 +553,9 @@ mod tests {
             first
                 .image
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .len()
                 > 3

@@ -323,7 +323,9 @@ fn prefab_thumbnail_gpu_cache_refresh_and_source_changes_preserve_editor_state()
     let colors = first
         .image
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .collect::<std::collections::BTreeSet<_>>();
     assert!(
         colors.len() > 3,

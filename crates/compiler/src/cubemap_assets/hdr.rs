@@ -83,9 +83,9 @@ pub(super) fn canonicalize(bytes: &[u8], edge: u16) -> io::Result<Vec<u8>> {
                 result.resize(result.len() + data.len(), 0);
                 continue;
             }
-            for pixel in data.chunks_exact(8) {
-                for value in pixel[..6].chunks_exact(2) {
-                    let bits = u16::from_le_bytes(value.try_into().unwrap());
+            for pixel in data.as_chunks::<8>().0 {
+                for value in pixel[..6].as_chunks::<2>().0 {
+                    let bits = u16::from_le_bytes(*value);
                     if bits & 0x7c00 == 0x7c00 || (bits & 0x8000 != 0 && bits & 0x7fff != 0) {
                         return Err(invalid(format!(
                             "HDR reflection RGB contains a negative or nonfinite value at mip {mip}, face {face}"

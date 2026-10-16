@@ -5,7 +5,6 @@ from pathlib import Path
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_working_region import configure
 
-
 FGD = '''
 @BaseClass size(-24 -12 0, 40 20 72) color(12 134 216) = shared []
 @PointClass base(shared) sphere(radius) = helper_sample [

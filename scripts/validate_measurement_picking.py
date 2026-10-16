@@ -5,7 +5,6 @@ from pathlib import Path
 
 from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref
 
-
 SIZE = 511
 
 

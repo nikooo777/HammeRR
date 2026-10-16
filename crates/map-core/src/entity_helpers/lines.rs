@@ -201,7 +201,7 @@ pub(super) fn supported(class: &Class, helper: &Helper) -> bool {
     helper.arguments[..3]
         .iter()
         .all(|value| value.parse::<u8>().is_ok())
-        && helper.arguments[3..].chunks_exact(2).all(|pair| {
+        && helper.arguments[3..].as_chunks::<2>().0.iter().all(|pair| {
             pair[0].eq_ignore_ascii_case("targetname")
                 && !pair[1].is_empty()
                 && pair[1].len() <= MAX_KEY_BYTES

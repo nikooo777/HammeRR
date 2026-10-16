@@ -11,6 +11,26 @@ from private_runtime_config import reject_configuration_writes
 
 
 class PrivateRuntimeGuards(unittest.TestCase):
+    def test_readonly_launch_keeps_host_paths_readonly_and_tmp_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory).resolve()
+            native = ["/installed/cstrike_linux64", "-default", "-insecure"]
+            environment = {"TMPDIR": "/host/tmp", "DISPLAY": ":private"}
+            command, isolated = private_runtime.private_readonly_launch(
+                native, output, environment
+            )
+            self.assertEqual(command, [
+                "/usr/bin/bwrap", "--die-with-parent", "--ro-bind", "/", "/",
+                "--dev-bind", "/dev", "/dev", "--proc", "/proc",
+                "--bind", str(output), str(output), "--", *native,
+            ])
+            self.assertEqual(isolated["DISPLAY"], ":private")
+            self.assertEqual(isolated["TMPDIR"], str(output / "tmp"))
+            self.assertEqual((output / "tmp").stat().st_mode & 0o777, 0o700)
+            self.assertEqual(environment["TMPDIR"], "/host/tmp")
+            with self.assertRaises(FileExistsError):
+                private_runtime.private_readonly_launch(native, output, environment)
+
     def test_identity_preflight_rejects_uploads_and_log_rotation(self):
         with tempfile.TemporaryDirectory() as directory:
             steam = Path(directory) / "steam"

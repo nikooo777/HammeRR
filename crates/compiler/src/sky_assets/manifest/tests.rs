@@ -731,3 +731,47 @@ fn world_identity_rejects_trailing_space_alias_duplicates_in_either_order() {
         );
     }
 }
+
+#[test]
+fn world_identity_entity_key_admission_counts_bytes_at_the_fixed_boundary() {
+    for key in ["x".repeat(2047), format!("{}x", "é".repeat(1023))] {
+        assert_eq!(key.len(), 2047);
+        let mut bsp = Bsp::new();
+        bsp.set_entities(&format!(
+            "{{ classname worldspawn skyname test \"{key}\" retained }}"
+        ));
+        assert_eq!(world_family(&bsp, &Control::default()).unwrap(), "test");
+    }
+    for key in ["x".repeat(2048), "é".repeat(1024)] {
+        assert_eq!(key.len(), 2048);
+        let mut bsp = Bsp::new();
+        bsp.set_entities(&format!(
+            "{{ classname worldspawn skyname test \"{key}\" retained }}"
+        ));
+        assert!(
+            world_family(&bsp, &Control::default())
+                .unwrap_err()
+                .to_string()
+                .contains("2047-byte admission limit")
+        );
+    }
+}
+
+#[test]
+fn world_identity_rejects_overlong_identity_aliases_with_late_nonspace_suffixes() {
+    for prefix in ["skyname", "classname"] {
+        let key = format!("{prefix}{}x", " ".repeat(2047 - prefix.len()));
+        assert_eq!(key.len(), 2048);
+        assert_eq!(key.trim_end_matches(' '), key);
+        let mut bsp = Bsp::new();
+        bsp.set_entities(&format!(
+            "{{ classname worldspawn skyname test \"{key}\" other }}"
+        ));
+        assert!(
+            world_family(&bsp, &Control::default())
+                .unwrap_err()
+                .to_string()
+                .contains("2047-byte admission limit")
+        );
+    }
+}

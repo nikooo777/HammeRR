@@ -351,13 +351,53 @@ static bool process_guard(void) {
     return true;
 }
 
-static bool key(void *entity, const char *field, char *value, int capacity) {
+static bool query_key(void *entity, const char *field, char *value, int capacity, bool *returned) {
     typedef bool (*Query)(void *, void *, const char *, char *, int);
+    memset(value, 0, (size_t)capacity);
+    if (returned)
+        *returned = false;
     Query query = (Query)method(tools, 0xb5bcc8, 11, &server, 0x7b4e20);
     if (!query)
         return false;
-    memset(value, 0, (size_t)capacity);
-    return query(tools, entity, field, value, capacity) && memchr(value, 0, (size_t)capacity);
+    bool result = query(tools, entity, field, value, capacity);
+    if (returned)
+        *returned = result;
+    return result && memchr(value, 0, (size_t)capacity);
+}
+
+static bool key(void *entity, const char *field, char *value, int capacity) {
+    return query_key(entity, field, value, capacity, NULL);
+}
+
+static void query_diagnostic(const Tracked *item, void *entity, int index, const char *field,
+                             const char *value, size_t capacity, bool returned,
+                             const char *expected) {
+    if (capacity > 256) {
+        fail("diagnostic_capacity");
+        return;
+    }
+    size_t length = strnlen(value, capacity), preview_length = length < 64 ? length : 64;
+    char hex[513], preview[385];
+    for (size_t offset = 0; offset < length; offset++)
+        snprintf(hex + offset * 2, 3, "%02x", (unsigned char)value[offset]);
+    hex[length * 2] = 0;
+    size_t used = 0;
+    for (size_t offset = 0; offset < preview_length; offset++) {
+        unsigned char character = (unsigned char)value[offset];
+        if (character >= 32 && character <= 126 && character != '"' && character != '\\')
+            preview[used++] = (char)character;
+        else {
+            snprintf(preview + used, 7, "\\u%04x", character);
+            used += 6;
+        }
+    }
+    preview[used] = 0;
+    emit(
+        "{\"event\":\"entity_query\",\"sample\":%lu,\"tracked\":\"%s\",\"entity\":\"%p\",\"index\":%d,\"field\":\"%s\",\"query_returned\":%s,\"nul_terminated\":%s,\"capacity\":%zu,\"value_bytes\":%zu,\"value_hex\":\"%s\",\"preview\":\"%s\",\"preview_complete\":%s,\"expected_checked\":%s,\"expected\":\"%s\"}\n",
+        sample_count, item->name, entity, index, field, returned ? "true" : "false",
+        length < capacity ? "true" : "false", capacity, length, hex, preview,
+        preview_length == length ? "true" : "false", expected ? "true" : "false",
+        expected ? expected : "");
 }
 
 static void *find(const char *name, void *after) {
@@ -409,19 +449,37 @@ static bool resolve_tracked(void) {
         }
         void *edict = NULL;
         int number = -1;
-        char name[128], classname[128], model[256];
-        if (find(item->name, entity) || !entity_roundtrip(entity, &edict, &number) || number <= 0 ||
-            !key(entity, "targetname", name, sizeof(name)) || strcmp(name, item->name) ||
-            !key(entity, "classname", classname, sizeof(classname))) {
+        if (find(item->name, entity) || !entity_roundtrip(entity, &edict, &number) || number <= 0) {
             fail("ambiguous_entity_or_roundtrip");
             return false;
         }
         const char *expected = index == 0             ? "prop_physics"
                                : index < STABLE_COUNT ? "func_door_rotating"
                                                       : "func_brush";
-        if (strcmp(classname, expected) ||
-            (index == 0 && (!key(entity, "model", model, sizeof(model)) ||
-                            strcmp(model, "models/props_junk/wood_crate001a.mdl")))) {
+        const char *expected_model = index == 0 ? "models/props_junk/wood_crate001a.mdl" : NULL;
+        char name[128] = {0}, classname[128] = {0}, model[256] = {0};
+        bool name_returned = false, class_returned = false, model_returned = false;
+        bool name_ok = query_key(entity, "targetname", name, sizeof(name), &name_returned);
+        bool class_ok = !invalidated && query_key(entity, "classname", classname, sizeof(classname),
+                                                  &class_returned);
+        bool model_ok =
+            !invalidated && query_key(entity, "model", model, sizeof(model), &model_returned);
+        bool identity_ok = name_ok && !strcmp(name, item->name) && class_ok;
+        bool class_model_ok = class_ok && !strcmp(classname, expected) &&
+                              (index != 0 || (model_ok && !strcmp(model, expected_model)));
+        if (!item->seen || !identity_ok || !class_model_ok) {
+            query_diagnostic(item, entity, number, "targetname", name, sizeof(name), name_returned,
+                             item->name);
+            query_diagnostic(item, entity, number, "classname", classname, sizeof(classname),
+                             class_returned, expected);
+            query_diagnostic(item, entity, number, "model", model, sizeof(model), model_returned,
+                             expected_model);
+        }
+        if (!identity_ok) {
+            fail("ambiguous_entity_or_roundtrip");
+            return false;
+        }
+        if (!class_model_ok) {
             fail("unexpected_entity_class_or_model");
             return false;
         }

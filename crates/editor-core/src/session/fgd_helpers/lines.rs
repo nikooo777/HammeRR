@@ -13,10 +13,11 @@ use source_formats::fgd::ClassKind;
 use super::super::{Session, working_region::Evaluation};
 
 pub(super) const MAX_DISPLAYED_LINES: usize = 128;
-pub(super) const LIMITS: &str = "Selected visible generic point sources only. line(R G B, targetname, property) draws self to the named point; the seven-argument form draws between two named points. Literal integer RGB 0–255 is independent of rendercolor. Authored reference values precede labeled FGD defaults; endpoint targetname and finite origins must be authored exactly once. Only unique exact-case literal names are displayed; case-insensitive collisions are ambiguous and case-only matches explicit unsupported_case_match. Wildcards, !tokens, nodeid and brush endpoints are unsupported. Model/light point endpoints retain their displayed origins; model/light/rope sources remain specialized. Hidden or working-region-excluded sources/endpoints suppress the line. At most 16 declarations per entity, 128 displayed lines and 65536 lookup entities/targetname values; property/value previews cap at 128/256 bytes. Endpoints follow transform previews; bounds, picking, framing, selection, placement and working regions remain unchanged. These are FGD editor links, not runtime beam or I/O previews.";
+pub(super) const LIMITS: &str = "Selected visible generic point sources only. line(R G B, targetname, property) draws self to the named point; the seven-argument form draws between two referenced points. nodeid pairs require declared node_dest reference properties and point endpoints with a declared readonly integer nodeid. Node IDs must be authored exactly once, canonical decimal 0–2147483647; -1 references declare no association. Numeric aliases are not rendered and cannot hide duplicate matches. No IDs are generated or inferred from VMF object IDs, order or runtime node indexes. Literal integer RGB 0–255 is independent of rendercolor. Authored reference values precede labeled FGD defaults; named endpoints need one authored targetname and all endpoints one finite authored origin. Only unique exact-case literal names are displayed; case-insensitive collisions are ambiguous and case-only matches explicit unsupported_case_match. Wildcards, !tokens and brush endpoints are unsupported. Model/light point endpoints retain their displayed origins; model/light/rope sources remain specialized. Hidden or working-region-excluded sources/endpoints suppress the line. At most 16 declarations per entity, 128 displayed lines and 65536 lookup entities/raw targetname plus eligible nodeid values; property/value previews cap at 128/256 bytes. Endpoints follow transform previews; bounds, picking, framing, selection, placement and working regions remain unchanged. These are stored FGD editor links, not runtime beams, I/O or AI nodegraph connectivity. Runtime ground-node dropping is not evaluated.";
 
 #[derive(Debug, Serialize)]
 pub struct Endpoint {
+    pub lookup_property: Option<&'static str>,
     pub property: Option<String>,
     pub raw: Option<String>,
     pub raw_truncated: bool,
@@ -31,6 +32,7 @@ pub struct Endpoint {
 impl From<lines::Endpoint> for Endpoint {
     fn from(value: lines::Endpoint) -> Self {
         Self {
+            lookup_property: value.lookup_property,
             property: value.property,
             raw: value.raw,
             raw_truncated: value.raw_truncated,
@@ -99,7 +101,7 @@ impl Session {
         }) {
             return BTreeMap::new();
         }
-        let targets = lines::Targets::new(&document.vmf().entities);
+        let targets = lines::Targets::new(&document.vmf().entities, self.definitions());
         let mut displayed = 0;
         let mut result = BTreeMap::new();
         for (id, entity) in entities {

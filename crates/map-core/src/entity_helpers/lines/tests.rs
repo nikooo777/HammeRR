@@ -15,7 +15,7 @@ fn rows(source: &Entity, targets: &[Entity]) -> Vec<Line> {
     resolve(
         catalog.class("sample").unwrap(),
         source,
-        &Targets::new(targets),
+        &Targets::new(targets, &catalog),
     )
 }
 
@@ -108,7 +108,7 @@ fn unsupported_syntax_limits_and_invalid_native_origins_remain_diagnostic() {
         let row = resolve(
             catalog.class("sample").unwrap(),
             &source,
-            &Targets::new(&[]),
+            &Targets::new(&[], &catalog),
         )
         .remove(0);
         assert_eq!(row.state, "unsupported", "{declaration}");
@@ -139,7 +139,7 @@ fn unsupported_syntax_limits_and_invalid_native_origins_remain_diagnostic() {
     let rows = resolve(
         catalog.class("sample").unwrap(),
         &source,
-        &Targets::new(&[]),
+        &Targets::new(&[], &catalog),
     );
     assert_eq!(rows.len(), MAX_LINES_PER_ENTITY + 1);
     assert!(
@@ -149,5 +149,132 @@ fn unsupported_syntax_limits_and_invalid_native_origins_remain_diagnostic() {
             .as_ref()
             .unwrap()
             .contains("omitted")
+    );
+}
+
+const NODE_FGD: &str = "@PointClass line(12 34 56,nodeid,aim) line(65 43 21,nodeid,start,nodeid,finish) = link [ aim(node_dest) : \"Target\" : 42 start(node_dest) : \"Start\" : 0 finish(node_dest) : \"End\" : 42 ] @PointClass = node [ nodeid(integer) readonly : \"Node ID\" ]";
+
+fn node_rows(source: &Entity, targets: &[Entity]) -> Vec<Line> {
+    let catalog = Catalog::parse(NODE_FGD).unwrap();
+    resolve(
+        catalog.class("link").unwrap(),
+        source,
+        &Targets::new(targets, &catalog),
+    )
+}
+
+fn node(id: u32, node_id: &str, origin: &str) -> Entity {
+    let mut result = Entity::new(id, "node");
+    result.properties.set("nodeid", node_id);
+    result.properties.set("origin", origin);
+    result
+}
+
+#[test]
+fn authored_nodeid_zero_and_defaults_resolve_without_object_or_runtime_ids() {
+    let mut source = entity(10, "owner", "0 0 0");
+    let targets = [node(500, "0", "-10 0 0"), node(600, "42", "10 0 0")];
+    let rows = node_rows(&source, &targets);
+    assert!(rows.iter().all(|row| row.state == "ready"));
+    assert_eq!(rows[0].endpoints[0].lookup_property, None);
+    assert_eq!(rows[0].endpoints[1].lookup_property, Some("nodeid"));
+    assert_eq!(rows[0].endpoints[1].value_source, "fgd_default");
+    assert_eq!(
+        rows[1].endpoints.each_ref().map(|endpoint| endpoint.entity),
+        [Some(500), Some(600)]
+    );
+    source.properties.set("aim", "0");
+    let row = node_rows(&source, &targets).remove(0);
+    assert_eq!(row.endpoints[1].entity, Some(500));
+    assert_eq!(row.endpoints[1].value_source, "authored");
+    for (raw, expected) in [
+        ("-1", "no_association"),
+        ("500", "missing"),
+        ("01", "unsupported_reference"),
+        ("+0", "unsupported_reference"),
+        ("-2", "unsupported_reference"),
+        ("2147483648", "unsupported_reference"),
+    ] {
+        source.properties.set("aim", raw);
+        let row = node_rows(&source, &targets).remove(0);
+        assert_eq!(row.state, expected, "{raw}");
+        assert!(row.endpoints[1].position.is_none());
+    }
+    source.properties.set("aim", "2147483647");
+    assert_eq!(
+        node_rows(&source, &[node(2, "2147483647", "1 2 3")])[0].state,
+        "ready"
+    );
+}
+
+#[test]
+fn nodeid_aliases_duplicates_invalid_ownership_and_raw_lookup_budget_are_explicit() {
+    let mut source = entity(10, "owner", "0 0 0");
+    source.properties.set("aim", "42");
+    let mut targets = vec![node(500, "42", "10 0 0")];
+    let mut alias = node(600, "+42", "20 0 0");
+    alias.hidden = true;
+    targets.push(alias);
+    let row = node_rows(&source, &targets).remove(0);
+    assert_eq!(row.state, "ambiguous");
+    assert_eq!(row.endpoints[1].matches, 2);
+    targets.remove(0);
+    assert_eq!(node_rows(&source, &targets)[0].state, "invalid_nodeid");
+    targets[0].properties.set("nodeid", "42");
+    targets[0].properties.0.push(("NODEID".into(), "42".into()));
+    assert_eq!(node_rows(&source, &targets)[0].state, "duplicate_nodeid");
+    targets[0].properties.0.pop();
+    targets[0].properties.set("classname", "undeclared_node");
+    assert_eq!(node_rows(&source, &targets)[0].state, "missing");
+    targets[0].properties.set("classname", "node");
+    targets[0].properties.set("origin", "NaN 0 0");
+    assert_eq!(node_rows(&source, &targets)[0].state, "invalid_origin");
+    targets[0]
+        .properties
+        .0
+        .extend((0..MAX_TARGET_ENTITIES).map(|_| ("nodeid".into(), "invalid".into())));
+    assert_eq!(node_rows(&source, &targets)[0].state, "entity_limit");
+    source.properties.0.push(("AIM".into(), "42".into()));
+    assert_eq!(node_rows(&source, &[])[0].state, "duplicate_property");
+}
+
+#[test]
+fn nodeid_binding_requires_declared_ownership_and_can_mix_with_named_endpoints() {
+    let source = entity(10, "owner", "0 0 0");
+    let target = node(600, "42", "10 0 0");
+    for definition in [
+        NODE_FGD.replace("nodeid(integer) readonly", "nodeid(integer)"),
+        NODE_FGD.replace("nodeid(integer) readonly", "nodeid(string) readonly"),
+        NODE_FGD.replace("@PointClass = node", "@SolidClass = node"),
+    ] {
+        let catalog = Catalog::parse(&definition).unwrap();
+        assert_eq!(
+            resolve(
+                catalog.class("link").unwrap(),
+                &source,
+                &Targets::new(&[target.clone()], &catalog)
+            )[0]
+            .state,
+            "missing"
+        );
+    }
+    let catalog = Catalog::parse("@PointClass line(1 2 3,targetname,start,nodeid,finish) = link [ start(string) : \"Start\" : \"Named\" finish(node_dest) : \"Finish\" : 42 ] @PointClass = node [ nodeid(integer) readonly : \"Node ID\" ]").unwrap();
+    let targets = [entity(500, "Named", "-10 0 0"), target];
+    let rows = resolve(
+        catalog.class("link").unwrap(),
+        &source,
+        &Targets::new(&targets, &catalog),
+    );
+    assert_eq!(rows[0].state, "ready");
+    assert_eq!(
+        rows[0]
+            .endpoints
+            .each_ref()
+            .map(|endpoint| endpoint.lookup_property),
+        [Some("targetname"), Some("nodeid")]
+    );
+    assert_eq!(
+        rows[0].endpoints.each_ref().map(|endpoint| endpoint.entity),
+        [Some(500), Some(600)]
     );
 }

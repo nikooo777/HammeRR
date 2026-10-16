@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use glam::DVec3;
 use source_formats::{
-    fgd::{Class, Helper},
+    fgd::{Catalog, Class, ClassKind, Helper},
     vmf::Entity,
 };
 
@@ -15,6 +15,7 @@ pub const MAX_TARGET_ENTITIES: usize = 65_536;
 
 #[derive(Debug, Clone)]
 pub struct Endpoint {
+    pub lookup_property: Option<&'static str>,
     pub property: Option<String>,
     pub raw: Option<String>,
     pub raw_truncated: bool,
@@ -29,6 +30,7 @@ pub struct Endpoint {
 impl Endpoint {
     fn unavailable(state: &'static str, error: &str) -> Self {
         Self {
+            lookup_property: None,
             property: None,
             raw: None,
             raw_truncated: false,
@@ -75,13 +77,15 @@ pub struct Line {
 
 pub struct Targets<'a> {
     names: BTreeMap<String, Vec<&'a Entity>>,
+    node_ids: BTreeMap<String, Vec<&'a Entity>>,
     limited: bool,
 }
 
 impl<'a> Targets<'a> {
-    pub fn new(entities: &'a [Entity]) -> Self {
+    pub fn new(entities: &'a [Entity], catalog: &Catalog) -> Self {
         let mut result = Self {
             names: BTreeMap::new(),
+            node_ids: BTreeMap::new(),
             limited: entities.len() > MAX_TARGET_ENTITIES,
         };
         if result.limited {
@@ -89,18 +93,47 @@ impl<'a> Targets<'a> {
         }
         let mut indexed = 0;
         for entity in entities {
-            for name in entity
-                .properties
-                .get_all("targetname")
-                .filter(|name| !name.is_empty() && name.len() <= MAX_VALUE_BYTES)
-            {
+            for name in entity.properties.get_all("targetname") {
                 if indexed == MAX_TARGET_ENTITIES {
                     result.names.clear();
+                    result.node_ids.clear();
                     result.limited = true;
                     return result;
                 }
                 indexed += 1;
+                if name.is_empty() || name.len() > MAX_VALUE_BYTES {
+                    continue;
+                }
                 let matches = result.names.entry(name.to_ascii_lowercase()).or_default();
+                if matches.last().is_none_or(|last| last.id != entity.id) {
+                    matches.push(entity);
+                }
+            }
+            let node_class = entity.classname().and_then(|name| catalog.class(name));
+            if !node_class.is_some_and(|class| {
+                class.kind == ClassKind::Point
+                    && class
+                        .property("nodeid")
+                        .is_some_and(|property| property.kind == "integer" && property.read_only)
+            }) {
+                continue;
+            }
+            for raw in entity.properties.get_all("nodeid") {
+                if indexed == MAX_TARGET_ENTITIES {
+                    result.names.clear();
+                    result.node_ids.clear();
+                    result.limited = true;
+                    return result;
+                }
+                indexed += 1;
+                let Some(id) = (raw.len() <= MAX_VALUE_BYTES)
+                    .then(|| raw.trim().parse::<i32>().ok())
+                    .flatten()
+                    .filter(|id| *id >= 0)
+                else {
+                    continue;
+                };
+                let matches = result.node_ids.entry(id.to_string()).or_default();
                 if matches.last().is_none_or(|last| last.id != entity.id) {
                     matches.push(entity);
                 }
@@ -109,12 +142,17 @@ impl<'a> Targets<'a> {
         result
     }
 
-    fn endpoint(&self, class: &Class, entity: &Entity, key: &str) -> Endpoint {
+    fn endpoint(&self, class: &Class, entity: &Entity, lookup: &str, key: &str) -> Endpoint {
         let property = class.property(key).unwrap();
         let mut result = Endpoint::unavailable(
             "missing",
             "Line reference has no authored value or FGD default",
         );
+        result.lookup_property = Some(if lookup.eq_ignore_ascii_case("nodeid") {
+            "nodeid"
+        } else {
+            "targetname"
+        });
         result.property = Some(property.name.clone());
         let mut authored = entity.properties.get_all(&property.name);
         let first = authored.next();
@@ -136,6 +174,9 @@ impl<'a> Targets<'a> {
         let Some(raw) = raw.filter(|raw| !raw.is_empty()) else {
             return result;
         };
+        if result.lookup_property == Some("nodeid") {
+            return self.node_endpoint(result, raw);
+        }
         if result.raw_truncated
             || raw.trim() != raw
             || raw.chars().any(char::is_control)
@@ -148,7 +189,7 @@ impl<'a> Targets<'a> {
         }
         if self.limited {
             result.state = "entity_limit";
-            result.error = Some("Line lookup exceeds 65536 entities or targetname values; no partial lookup was used".into());
+            result.error = Some("Line lookup exceeds 65536 entities or targetname/nodeid values; no partial lookup was used".into());
             return result;
         }
         let candidates = self
@@ -184,6 +225,64 @@ impl<'a> Targets<'a> {
         result.set_position(candidate);
         result
     }
+
+    fn node_endpoint(&self, mut result: Endpoint, raw: &str) -> Endpoint {
+        if raw == "-1" {
+            result.state = "no_association";
+            result.error = Some("Node reference -1 declares no associated node".into());
+            return result;
+        }
+        if !canonical_node_id(raw) {
+            result.state = "unsupported_reference";
+            result.error = Some("Node references require canonical decimal IDs from 0 to 2147483647, or -1 for no association".into());
+            return result;
+        }
+        if self.limited {
+            result.state = "entity_limit";
+            result.error = Some("Line lookup exceeds 65536 entities or targetname/nodeid values; no partial lookup was used".into());
+            return result;
+        }
+        let candidates = self
+            .node_ids
+            .get(raw)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        result.matches = candidates.len();
+        let [candidate] = candidates else {
+            if candidates.is_empty() {
+                result.error = Some("Node reference matches no authored nodeid on a point class with a declared readonly integer nodeid".into());
+            } else {
+                result.state = "ambiguous";
+                result.error = Some(
+                    "Node reference matches multiple authored IDs; no first endpoint was chosen"
+                        .into(),
+                );
+            }
+            return result;
+        };
+        let mut ids = candidate.properties.get_all("nodeid");
+        let id = ids.next().unwrap();
+        if ids.next().is_some() {
+            result.state = "duplicate_nodeid";
+            result.error = Some("Line endpoint has duplicate nodeid keys".into());
+        } else if !canonical_node_id(id) {
+            result.state = "invalid_nodeid";
+            result.error = Some(
+                "Line endpoint nodeid is not a canonical nonnegative 32-bit decimal ID".into(),
+            );
+        } else {
+            result.set_position(candidate);
+        }
+        result
+    }
+}
+
+fn canonical_node_id(raw: &str) -> bool {
+    !raw.is_empty()
+        && raw.len() <= 10
+        && (raw == "0" || !raw.starts_with('0'))
+        && raw.bytes().all(|byte| byte.is_ascii_digit())
+        && raw.parse::<i32>().is_ok()
 }
 
 fn bounded(value: &str, maximum: usize) -> String {
@@ -202,10 +301,12 @@ pub(super) fn supported(class: &Class, helper: &Helper) -> bool {
         .iter()
         .all(|value| value.parse::<u8>().is_ok())
         && helper.arguments[3..].as_chunks::<2>().0.iter().all(|pair| {
-            pair[0].eq_ignore_ascii_case("targetname")
-                && !pair[1].is_empty()
+            !pair[1].is_empty()
                 && pair[1].len() <= MAX_KEY_BYTES
-                && class.property(&pair[1]).is_some()
+                && class.property(&pair[1]).is_some_and(|property| {
+                    pair[0].eq_ignore_ascii_case("targetname")
+                        || (pair[0].eq_ignore_ascii_case("nodeid") && property.kind == "node_dest")
+                })
         })
 }
 
@@ -214,7 +315,7 @@ pub fn resolve(class: &Class, entity: &Entity, targets: &Targets<'_>) -> Vec<Lin
     for helper in class.helpers.iter().filter(|helper| helper.name == "line") {
         let unsupported = Endpoint::unavailable(
             "unsupported",
-            "line() supports literal RGB and one or two targetname/property pairs with declared properties",
+            "line() supports literal RGB and declared targetname/property or nodeid/node_dest pairs",
         );
         let mut line = Line {
             color: None,
@@ -234,9 +335,9 @@ pub fn resolve(class: &Class, entity: &Entity, targets: &Targets<'_>) -> Vec<Lin
         }
         let args = &helper.arguments;
         line.color = Some(std::array::from_fn(|i| args[i].parse().unwrap()));
-        let first = targets.endpoint(class, entity, &args[4]);
+        let first = targets.endpoint(class, entity, &args[3], &args[4]);
         line.endpoints = if args.len() == 7 {
-            [first, targets.endpoint(class, entity, &args[6])]
+            [first, targets.endpoint(class, entity, &args[5], &args[6])]
         } else {
             let mut own =
                 Endpoint::unavailable("invalid_origin", "Line source has no authored origin");

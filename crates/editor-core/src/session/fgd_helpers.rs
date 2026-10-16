@@ -248,6 +248,13 @@ impl Session {
                 ". Line guides: {displayed} displayed, {} suppressed, {unavailable} unavailable",
                 lines.len() - displayed - unavailable
             );
+            if lines.iter().any(|line| {
+                line.endpoints
+                    .iter()
+                    .any(|endpoint| endpoint.lookup_property == Some("nodeid"))
+            }) {
+                status += "; authored nodeid bindings; no generated IDs";
+            }
             for line in lines.iter().filter(|line| !line.displayed).take(3) {
                 let properties = line
                     .endpoints

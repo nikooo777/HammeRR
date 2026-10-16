@@ -560,13 +560,54 @@ pub(crate) fn finish_preflight(directory: &Path) -> io::Result<()> {
     let cursor = before["cursor"]
         .as_u64()
         .ok_or_else(|| invalid("Preflight Cloud cursor missing"))?;
-    if upload_lines(Path::new(root), cursor)?.is_empty() {
-        Ok(())
-    } else {
-        Err(invalid(
-            "App240 Cloud uploaded during native identity preflight",
-        ))
+    let started = Instant::now();
+    let mut stable = Instant::now();
+    let mut previous_length = None;
+    let mut uploads = BTreeSet::new();
+    let mut errors = BTreeSet::new();
+    loop {
+        match upload_lines(Path::new(root), cursor) {
+            Ok(lines) => uploads.extend(lines),
+            Err(error) => {
+                errors.insert(error.to_string());
+            }
+        }
+        let length =
+            fs::metadata(Path::new(root).join("logs/cloud_log.txt")).map(|metadata| metadata.len());
+        match length {
+            Ok(length) => {
+                if previous_length != Some(length) {
+                    stable = Instant::now();
+                    previous_length = Some(length);
+                }
+            }
+            Err(error) => {
+                errors.insert(error.to_string());
+                stable = Instant::now();
+            }
+        }
+        if started.elapsed() >= Duration::from_secs(6) && stable.elapsed() >= Duration::from_secs(3)
+        {
+            break;
+        }
+        if started.elapsed() >= Duration::from_secs(12) {
+            errors.insert("Cloud log did not settle after failed identity preflight".into());
+            break;
+        }
+        thread::sleep(Duration::from_millis(500));
     }
+    util::json_write(
+        &directory.join("private-preservation-preflight.json"),
+        &json!({
+            "success":false,"configuration_baseline_available":false,
+            "cloud_log_observation_passed":uploads.is_empty()&&errors.is_empty(),
+            "app240_cloud_uploads":uploads,"errors":errors,
+            "observation_seconds":started.elapsed().as_secs_f64(),"settled_seconds":stable.elapsed().as_secs_f64(),
+        }),
+    )?;
+    Err(invalid(
+        "Preference preservation is unavailable because identity preflight did not establish a configuration baseline; inspect private-preservation-preflight.json",
+    ))
 }
 
 pub(crate) fn begin(
@@ -733,8 +774,60 @@ mod tests {
     use super::*;
     #[test]
     fn valid_cached_clone_cannot_substitute_for_live_root() {
-        assert!(require_live_root(Path::new("/cached/Steam"), Path::new("/actual/Steam")).is_err());
-        assert!(require_live_root(Path::new("/actual/Steam"), Path::new("/actual/Steam")).is_ok());
+        let directory = tempfile::tempdir().unwrap();
+        let library = directory.path().join("library");
+        let engine = library.join("steamapps/common/Counter-Strike Source");
+        fs::create_dir_all(&engine).unwrap();
+        let actual = directory.path().join("actual");
+        let clone = directory.path().join("clone");
+        for root in [&actual, &clone] {
+            for subdirectory in ["config", "logs", "userdata", "steamapps"] {
+                fs::create_dir_all(root.join(subdirectory)).unwrap();
+            }
+            fs::write(root.join("config/loginusers.vdf"), "\"users\" {}").unwrap();
+            fs::write(root.join("logs/cloud_log.txt"), "").unwrap();
+            fs::write(
+                root.join("steamapps/libraryfolders.vdf"),
+                format!(
+                    "\"libraryfolders\" {{ \"0\" {{ \"path\" \"{}\" }} }}",
+                    library.display()
+                ),
+            )
+            .unwrap();
+            validate_steam_root(root, &engine.canonicalize().unwrap()).unwrap();
+        }
+        assert!(require_live_root(&clone, &actual).is_err());
+        assert!(require_live_root(&actual, &actual).is_ok());
+    }
+
+    #[test]
+    fn failed_identity_preflight_observes_delayed_uploads_without_claiming_a_config_baseline() {
+        let directory = tempfile::tempdir().unwrap();
+        let steam = directory.path().join("Steam");
+        fs::create_dir_all(steam.join("logs")).unwrap();
+        fs::write(steam.join("logs/cloud_log.txt"), "").unwrap();
+        util::json_write(
+            &directory.path().join("preflight-cloud-before.json"),
+            &json!({"steam_root":steam,"cursor":0}),
+        )
+        .unwrap();
+        let log = steam.join("logs/cloud_log.txt");
+        let delayed = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(700));
+            fs::write(log, "[AppID 240] Upload OK delayed configuration\n").unwrap();
+        });
+        let started = Instant::now();
+        assert!(finish_preflight(directory.path()).is_err());
+        delayed.join().unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(6));
+        let report: Value = util::json_read(
+            &directory.path().join("private-preservation-preflight.json"),
+            MAX_CONFIG,
+        )
+        .unwrap();
+        assert_eq!(report["configuration_baseline_available"], false);
+        assert_eq!(report["cloud_log_observation_passed"], false);
+        assert_eq!(report["app240_cloud_uploads"].as_array().unwrap().len(), 1);
     }
 
     #[test]

@@ -54,7 +54,11 @@ def fixture(args):
         if args.multi_brush:
             for y in [-64, 64]:
                 client.call("create_entity", {"classname": "prop_static", "origin": [96, y, 8], "properties": {"model": "models/props_junk/wood_crate001a.mdl", "solid": "0"}})
-            brushes = [client.call("create_block", {"mins": low, "maxs": high, "material": "tools/toolsoccluder"})["id"] for low, high in [([-2, -96, 0], [2, -24, 192]), ([-2, 24, 0], [2, 96, 192])]]
+            bounds = [([-2, -96, 0], [2, -24, 192]), ([-2, 24, 0], [2, 96, 192])]
+            if args.union:
+                lower_top, upper_bottom = (96, 96) if args.union == "touching" else (112, 80)
+                bounds = [(low, [high[0], high[1], lower_top]) for low, high in bounds] + [([low[0], low[1], upper_bottom], high) for low, high in bounds]
+            brushes = [client.call("create_block", {"mins": low, "maxs": high, "material": "tools/toolsoccluder"})["id"] for low, high in bounds]
             client.call("tie_to_entity", {"ids": brushes, "classname": "func_occluder", "properties": {"targetname": "visibility_screen", "StartActive": active}})
         else:
             occluder(client, [-2, -96, 0], [2, 96, 192], active)
@@ -64,7 +68,7 @@ def fixture(args):
         records = native_occlusion(path.read_bytes())[0]
         assert len(records) == stats["occluders"] == 1 and records[0][0] == int(args.start_inactive)
         assert stats["static_props"] == (3 if args.multi_brush else 1) and stats["brushes"] == 6
-        assert records[0][2] == (12 if args.multi_brush else 6)
+        assert records[0][2] == (20 if args.union else 12 if args.multi_brush else 6)
         (args.output / "compile.json").write_text(json.dumps(stats, indent=2) + "\n")
         return path
     finally:
@@ -138,7 +142,7 @@ def worker(args):
     gap_changes = difference(args.output / "phase-1.ppm", args.output / "phase-2.ppm", (600, 530, 680, 625)) if args.multi_brush else None
     if args.multi_brush:
         assert gap_changes == 0, gap_changes
-    result = {"multi_brush": args.multi_brush, "gap_changed_pixels": gap_changes, "initial_active": not args.start_inactive, "deactivate_activate_toggle": True, "runtime_index": 0, "occlusion_enabled": True, "deactivated_changed_pixels": deactivated, "toggled_changed_pixels": toggled, "active_repeat_changed_pixels": active_repeat, "insecure": True, "sv_lan": True}
+    result = {"multi_brush": args.multi_brush, "union": args.union, "gap_changed_pixels": gap_changes, "initial_active": not args.start_inactive, "deactivate_activate_toggle": True, "runtime_index": 0, "occlusion_enabled": True, "deactivated_changed_pixels": deactivated, "toggled_changed_pixels": toggled, "active_repeat_changed_pixels": active_repeat, "insecure": True, "sv_lan": True}
     (args.output / "occlusion-runtime.json").write_text(json.dumps(result, indent=2) + "\n")
 
 
@@ -148,11 +152,13 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--multi-brush", action="store_true", help="Check two separated strips with a visible center gap prop")
+    parser.add_argument("--union", choices=["touching", "overlapping"], help="Build each strip from two touching or overlapping brushes and retain the center gap")
     parser.add_argument("--start-inactive", action="store_true", help="Check initial native inactive state and the inverse input sequence")
     parser.add_argument("--runtime",action="store_true",help="Also check client culling in a private sv_lan 1 server")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    args.multi_brush = args.multi_brush or args.union is not None
     args.binary = args.binary.resolve()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -168,6 +174,8 @@ def main():
         flags.append("--start-inactive")
     if args.multi_brush:
         flags.append("--multi-brush")
+    if args.union:
+        flags.extend(["--union", args.union])
     output = runtime.private_display(Path(__file__), args, bsp, flags)
     print((output / "occlusion-runtime.json").read_text())
 

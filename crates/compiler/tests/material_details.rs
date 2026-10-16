@@ -218,6 +218,13 @@ fn native_dictionary_selection_uses_alpha_one_normalized_amounts_and_sparse_weig
 #[test]
 fn native_empty_alpha_groups_emit_only_the_selected_group_without_fallback() {
     let fixture = fixture();
+    let plain_material = fixture.directory.path().join("materials/test/scatter.vmt");
+    std::fs::write(&plain_material, "UnlitGeneric { }").unwrap();
+    let no_details = compiled(&fixture.source, &fixture.game)
+        .bsp
+        .unwrap()
+        .to_bytes();
+    std::fs::write(&plain_material, "UnlitGeneric { %detailtype tufts }").unwrap();
     let path = fixture.directory.path().join("detail.vbsp");
     std::fs::write(&path,
         "detail { tufts { density 64 Group1 { alpha 1 grass { model models/props/test.mdl upright 1 } } Group0 { alpha 0 } } }")
@@ -249,7 +256,9 @@ fn native_empty_alpha_groups_emit_only_the_selected_group_without_fallback() {
                 .count(),
             1
         );
-        let details = output.bsp.unwrap().detail_props().unwrap().unwrap();
+        let bsp = output.bsp.unwrap();
+        assert_eq!(bsp.to_bytes(), no_details);
+        let details = bsp.detail_props().unwrap().unwrap();
         assert!(details.props.is_empty() && details.models.is_empty());
     }
 }

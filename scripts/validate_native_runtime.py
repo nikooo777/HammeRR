@@ -4,19 +4,23 @@ import json
 import os
 import re
 import resource
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+from private_runtime_config import (
+    finish_private_launch,
+    private_launch_options,
+    private_observer,
+    private_readonly_launch,
+    validate_private_game_paths,
+    verify_private_launch,
+)
 from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_visibility import ROOM
-from private_runtime_config import (
-    finish_private_launch, private_launch_options, private_observer,
-    private_readonly_launch, validate_private_game_paths, verify_private_launch,
-)
 
 OBSERVER = """
 stage <- 0;

@@ -85,6 +85,8 @@ FGD `size()` declarations draw point-entity boxes with the declared dimensions a
 3. Pick the box in any viewport, frame the selection, or use area/volume selection and **Working region…**. These operations use the same displayed bounds, including asymmetric origin offsets.
 4. Reload the FGD after changing `size()` or `color()`. Existing values and Undo history stay unchanged.
 
+![Inherited FGD size and class color on a generic point entity](images/class-color-size-box.png)
+
 Malformed or ambiguous definitions show **Invalid FGD size; generic editor marker** and the error in the inspector; the unselected marker is amber. Working-region inspection reports `invalid_fgd_size`, an explicit bounds error and unresolved bounds, retaining the marker for correction. Agents read the same structured report through `get_entity_inspector.helpers`.
 
 Limits: These are world-aligned editor boxes in Source units, independent of `angles` and `modelscale`; they do not describe engine collision hulls. Arguments must be native integers; boxes need positive volume and local coordinates within ±65536. Class colors take precedence over the generic box's stored editor color; selection keeps its usual red highlight and **Selection outlines** behavior. `sphere`, `line`, `iconsprite`, `sprite`, `studio`, frustum and other FGD helper declarations are not evaluated by this feature and are listed in the inspector. Existing authored-model, light and rope previews remain independent. The report lists the loaded catalog sources; individual inherited helpers do not retain file/line provenance.

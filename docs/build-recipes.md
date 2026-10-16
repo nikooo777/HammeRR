@@ -11,10 +11,10 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 3. Click **Apply recipe**. **Current recipe** identifies the applied recipe; the individual controls below show its settings.
 4. Click **Close**, then **Compile** or **Run Map**. Applying a recipe does not start a build.
 
-| Recipe | Lighting | Physics | Visibility | Sampling | Indirect light | Brush smoothing |
-| --- | --- | --- | --- | --- | --- | --- |
-| **Fast preview** | Fullbright | No physics bodies | Fast (conservative) | Fast (32 directions) | Direct only | 0° |
-| **Final lighting** | Direct LDR | CS:S engine physics | Detailed (portal clipping) | Detailed (512 directions) | Four diffuse bounces | 45° |
+| Recipe | Lighting | LDR reflections | Physics | Visibility | Sampling | Indirect light | Brush smoothing |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Fast preview** | Fullbright | Off | No physics bodies | Fast (conservative) | Fast (32 directions) | Direct only | 0° |
+| **Final lighting** | Direct LDR | Off | CS:S engine physics | Detailed (portal clipping) | Detailed (512 directions) | Four diffuse bounces | 45° |
 
 **Final lighting** uses the supported detailed settings of the experimental compiler. It requires the installed CS:S collision library and the `hammerr-physics` helper. Adjust **Physics bodies** to **No physics bodies** and save a custom recipe when collision bodies are unnecessary. See [Compile and play](compile-and-play.md) for the compiler's current capabilities.
 
@@ -46,5 +46,5 @@ Builds freeze their settings and recipe identity at start. Recipe changes are bl
 - Recipe files are versioned JSON bounded to **65,536 bytes**. `HAMMERR_BUILD_RECIPES` selects an alternative file; otherwise recipes use `build-recipes.json` in the recovery storage directory. `HAMMERR_RECOVERY_DIR` therefore also isolates default recipe storage.
 - Custom recipes store supported native compiler settings. Geometry and output publication remain required. Lighting can be disabled with **Fullbright**, physics with **No physics bodies**. Arbitrary executables, shell commands, extra compiler stages, stage reordering, and output-path recipes are unavailable.
 - Loading recipes does not apply one automatically. New sessions begin with **Fast preview** settings. A recipe name is current only while its applied values remain unchanged.
-- Final lighting retains the experimental compiler's lighting, visibility, collision, and budget limits. It does not add HDR, baked prop lightmaps, or additional engine support.
+- **Final lighting** retains Direct LDR and the compiler's existing lighting, visibility, collision and budget limits. Custom recipes may retain **Direct LDR + HDR**; baked prop lightmaps and broader engine support remain unavailable.
 - Cross-process changes detected before a write are rejected; simultaneous writes are not coordinated with a shared lock. Recipe storage is local to this computer and is not embedded in the map.

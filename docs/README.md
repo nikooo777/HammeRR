@@ -12,10 +12,10 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Editor basics](basics.md) | The window, previews and undo, navigation, viewport modes, saved camera views |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
 | [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
-| [Measurement guides](measurements.md) | Named persistent rulers, exact distances and axis components |
+| [Measurement guides](measurements.md) | Named persistent rulers, surface endpoint picks, exact distances and axis components |
 | [Selecting](selection.md) | Click, area, volume and paint selection |
 | [Cut, copy and paste](clipboard.md) | Detached object transfer, placement previews, native VMF text and safe references |
-| [Prefab library](prefabs.md) | Save, search and place reusable brush/entity assemblies |
+| [Prefab library](prefabs.md) | Save, search, inspect flat thumbnails and place reusable brush/entity assemblies |
 | [Layers](layers.md) | Nested colored layers, membership, scoped selection and map visibility |
 | [Object groups](groups.md) | Nested groups, membership editing, group selection and temporary bypass |
 | [Brushes and transforms](brushes.md) | Drawing brushes, handles, exact transforms, mirror, shear, brush shapes |
@@ -33,7 +33,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [2D sky preview](sky.md) | Previewing the selected mounted sky through authored sky surfaces |
 | [Rope preview](ropes.md) | Static linked rope curves, diagnostics and source-entity picking |
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
-| [Overlays](overlays.md) | Compiling imported surface projections, material, render order and distance fading |
+| [Overlays](overlays.md) | Fit, rebind and edit projection corners; compile imported overlays and fades |
 | [Cubemap faces](cubemap-faces.md) | Inspecting sample choices and previewing manual reflection bindings |
 | [Generated reflections](reflections.md) | Capturing LDR reflection samples during a build and packing them for play |
 | [Models](models.md) | Static mesh previews, skin materials, bounds, picking and model inspection |
@@ -48,7 +48,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Physics and mass](physics.md) | Engine collision bodies and material-derived brush-model masses |
 | [Static props](static-props.md) | Model placement, collision choices and rotated visibility bounds |
 | [Model detail props](model-detail-props.md) | Explicit decorative models compiled without collision |
-| [Explicit detail sprites](detail-sprites.md) | Place individual atlas cards with fixed or camera-facing orientation |
+| [Explicit detail sprites](detail-sprites.md) | Place scaled atlas cards or fixed cross/tri shapes with optional sway |
 | [Material detail scattering](material-detail-scattering.md) | Generate decorative models and sprites from ground materials when building |
 | [Static-prop shadows](prop-shadows.md) | Opaque and requested alpha-test model blockers, shadow flags and material limits |
 | [Occluders](occluders.md) | Compiling static visibility blockers and their native activation records |

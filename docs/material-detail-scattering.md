@@ -2,8 +2,8 @@
 
 # Material detail scattering
 
-Materials can generate non-colliding client-only detail models and plain
-sprites on exposed world and `func_detail` brush faces and terrain.
+Materials can generate non-colliding client-only detail models, plain sprites
+and fixed cross/tri shapes on exposed world and `func_detail` brush faces and terrain.
 The compiler writes native model and sprite
 records into the BSP's version-4 `dprp` game lump. The source map keeps its
 original brushes and properties.
@@ -59,8 +59,11 @@ alpha one and select the group with the highest supported alpha.
 
 Terrain takes its sample count from the whole base quad, so increasing grid
 resolution does not remove samples. Samples spread uniformly over the base
-grid, then follow its final compiled triangles, including LOD snapping.
-Position and blend alpha interpolate from the native triangle vertices;
+grid for parallelogram bases. Convex planar skewed bases use the projected
+areas of the final native base triangles, so samples spread uniformly over the
+surface footprint rather than uniformly over a distorted grid chart. These
+bases follow the authored start corner, including sloped quads and compatible
+full/half-edge LOD snapping. Position and blend alpha interpolate from the native triangle vertices;
 orientation follows its geometric normal. Neighboring dictionary alpha groups
 are chosen probabilistically: an alpha halfway between two groups gives each
 group half the samples on average. An empty selected group emits no model.
@@ -112,7 +115,7 @@ deterministic stream and rejects a collapsed native scale.
 
 All three orientations accept the same Gaussian random scaling. Fixed and full
 billboards use an older native path that truncates positive scale to half
-precision; raw scales below 2⁻²⁴ reject before publication. The compiler retains
+precision; raw scales outside 2⁻²⁴–65504 reject before publication. The compiler retains
 the emitted float scale for SDK lighting and checks its full extent: rotated
 corners for fixed cards and a conservative sphere for full billboards. Native
 half truncation can make the rendered card slightly smaller.
@@ -140,7 +143,7 @@ centers its horizontal branches regardless of the horizontal anchor; vertical
 anchors still apply.
 
 Shapes require fixed `detailOrientation 0`. They
-accept the same `spriterandomscale` distribution, with raw scales below 2⁻²⁴
+accept the same `spriterandomscale` distribution, with raw scales outside 2⁻²⁴–65504
 rejected for the native half-precision path. Their checked bounds cover every
 static quad using the raw scale, stored angles and decoded shape parameters.
 These bounds cover the shape at rest. Runtime sway and client-wide player
@@ -159,8 +162,9 @@ To enable sway for generated plain sprites or cross/tri shapes:
    compiler setting.
 
 Generated plain sprites support sway at orientations 0, 1 and 2; cross/tri
-shapes require orientation 0. Dictionary models and explicit detail entities
-require zero sway. A vertical billboard with an encoded nonzero sway byte uses
+shapes require orientation 0. Dictionary and explicit model details require
+zero sway. [Explicit sprites](detail-sprites.md) accept authored sway directly.
+A vertical billboard with an encoded nonzero sway byte uses
 the native half-precision path even without styles, so raw scales below 2⁻²⁴
 reject. Values that quantize to byte zero retain the existing fast path unless
 styles require the half path. Lighting and checked rest geometry retain their
@@ -195,8 +199,11 @@ assignment stay unchanged across these lighting modes.
 ![Foliage generated on displaced terrain using its blend alpha](images/terrain-detail-scattering.png)
 
 Limits: model and sprite detail types on world and `func_detail` surfaces. Terrain
-requires a parallelogram base quad, including rectangles and sheared or sloped
-parallelograms; skewed base quads reject. Sway on unsupported detail types,
+requires a valid convex planar base quad, including rectangles, sheared or
+sloped parallelograms and skewed quads. Skewed charts require finite positive
+corner Jacobians and a complete, consistently wound nonoverlapping native
+base-triangle cover. Collapsed, folded, nonplanar, incomplete or inconsistent
+charts reject without a substitute sampling plane. Sway on unsupported detail types,
 runtime brush models, non-integer or unsupported sprite orientations
 and fluid surfaces reject. Selected groups must contain supported
 entries and finite values; an unsupported selected group rejects the
@@ -226,7 +233,7 @@ use one shared per-object style list, with zero entries where only the other
 channel contributes. Their combined limit is 65,536 records; exceeding it
 rejects the complete build before replacing the previous BSP. Styled vertical
 billboards and vertical billboards with an encoded nonzero sway byte reject raw
-scales below 2⁻²⁴ for their native half-float path. Unstyled vertical billboards
+scales outside 2⁻²⁴–65504 for their native half-float path. Unstyled vertical billboards
 with encoded sway zero retain the existing positive-float scale rules.
 Colors must remain finite when all authored style patterns reach their
 maximum `z` brightness. Fullbright and maps without extra contributions emit no
@@ -237,9 +244,10 @@ shapes keep their existing sample points. Authored render tint remains
 unfinished. Detail objects do not cast new baked shadows.
 
 [Explicit detail sprites](detail-sprites.md) place individual cards from the same
-atlas without a scatter dictionary. They use scale one and the same inclusive
-authored-origin region selection as explicit models; generated models, sprites
-and shapes retain this dictionary workflow.
+atlas without a scatter dictionary. They support exact authored positive
+`scale`, fixed cross/tri shapes and `sway`, while random scale remains a dictionary
+feature. They use the same inclusive authored-origin region selection as explicit
+models; generated models, sprites and shapes retain this dictionary workflow.
 
 Explicit model detail props are selected for a compile region by their authored
 origin, including the box boundary; an absent origin means world zero. Outside

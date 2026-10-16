@@ -131,6 +131,7 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Flat partitions | `component_partitions`, `partition_picking`, `saved_partitions`, `partition_material_metadata`, `partition_materials`, `partition_textures`, `adjusted_partition_ridges`, `boundary_partitions`, `polygon_partitions`, `partition_extrusion`, `partition_visibility` |
 | Materials and textures | `face_lighting`, `material_replacement`, `material_favorites`, `material_reload`, `surface_group`, `texture_strokes`, `texture_chain`, `uv_vectors` |
 | Map checks | `spawn_clearance`, `audit_fixes` |
+| Shared authoring | `fgd_size_helpers`, `measurement_picking`, `prefab_thumbnails`, `linked_paths`, `overlay_corners` |
 | Particle definitions | `particles` (active manifest discovery, bounded binary DMX parsing, metadata, owned choices and retryable errors) |
 | Local preferences | `recent_maps`, `build_recipes` |
 | Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `reflection_settings`, `cubemap_reflections`, `water_metadata`, `water_bottom`, `water_bottom_native`, `water_overlays`, `static_prop_leaves`, `direct_lighting`, `hdr_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals`, `terrain_subdivision` |
@@ -405,9 +406,12 @@ bounded points and safe names, reviewed/stale tokens, source/history
 preservation, one Undo/Redo and exact saved/reopened links and IDs. The MCP
 validator launches no compiler or game; User/Agent ownership is exercised by
 the core and software UI checks. Set `HAMMERR_UI_SNAPSHOTS` to save the dialog.
-Existing-path tests additionally reorder and reposition named nodes while keeping
-IDs, flags, custom values, I/O and external train references; ambiguous graphs
-reject atomically and unchanged paths add no history. The software callbacks
+Existing-path tests additionally insert/remove/reorder/reposition nodes while
+keeping surviving IDs, flags, custom values, I/O and external train references.
+They check head removal with an explicit seed, safe inserted names and fresh IDs,
+FGD defaults only on new nodes, outside-reference/I/O removal guards, atomic
+failure and exact Undo/Redo/save-reopen identities. Ambiguous graphs reject and
+unchanged paths add no history. The software callbacks
 capture `linked-path-existing.png` alongside the creation dialog.
 
 ### Generated reflections
@@ -831,6 +835,10 @@ cargo test -p editor-core prefabs
 mkdir -p /tmp/hammerr-prefab-ui
 HAMMERR_UI_SNAPSHOTS=/tmp/hammerr-prefab-ui cargo test -p editor --bin editor prefabs
 python3 -B scripts/validate_prefabs.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prefab-check
+cargo test -p editor-core --features mcp --lib thumbnail
+cargo test -p editor-core --features mcp --lib prefab_thumbnail_ -- --ignored --test-threads=1
+cargo test -p editor --bin editor prefab_thumbnail_controls_ -- --ignored --test-threads=1
+python3 -B scripts/validate_prefab_thumbnails.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prefab-thumbnails-check
 ```
 
 Storage checks cover atomic unique creation and no-replace renaming, filename scope, stale metadata,
@@ -846,6 +854,16 @@ source pivots, renaming and deletion after loading a detached draft. Map-core
 `prefab-rename.png`. Late source-file failures must preserve the previous
 clipboard, owned preview and history. Use a fresh output directory. These checks use no desktop input, native
 clipboard or game launch.
+
+Thumbnail checks use detached real brush/terrain/model geometry, flat materials
+and a separate lazy renderer. They cover exact-byte/identity cache invalidation,
+content/FGD epochs, resource caps, hidden sources, explicit model/instance errors,
+GPU retry, actual PNG pixels and preservation of active map/clipboard/drafts/
+camera/history. The two ignored graphics commands require an adapter; the UI
+callback uses a software dialog and captures `prefab-thumbnail.png` through
+`HAMMERR_UI_SNAPSHOTS`. The stdio fixture supports `--cpu-only` for inspection and
+source-failure checks without graphics. It creates its own library and never
+launches the game.
 
 ### Compile regions
 
@@ -909,6 +927,8 @@ cargo test -p editor-core --features mcp --lib overlay
 cargo test -p compiler --test overlay_fit --test overlays --test region_overlays
 cargo test -p editor --bin editor overlay_ui::tests
 python3 -B scripts/validate_overlay_authoring.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-authoring-check --render --runtime
+python3 -B scripts/validate_overlay_corners.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-corners-check --render
+python3 -B scripts/validate_overlay_corners.py --binary target/debug/hammerr-headless --output /tmp/hammerr-overlay-corners-native --runtime
 ```
 
 These checks cover real tilted world/detail corners, shared imported projection
@@ -917,6 +937,13 @@ ownership/review, stale source/selection guards, material browsing and read
 errors, Apply/Cancel/Undo and exact shared native output. `--render` captures the
 shared outline; `--runtime` compares a fully MCP-created floor projection with absent
 and faded cases on private displays, including runtime accessor lookup.
+
+`validate_overlay_corners` edits existing world/detail and tilted projection
+frames, checks exact raw-field preservation, local/world outlines, convexity and
+native-precision failures, ownership/stale tokens, Undo and save/reopen. `--render`
+uses offscreen shared guides; `--runtime` compares edited native projections with
+baseline/visible controls and accessor identity on a private display. Software
+callbacks capture `overlay-corners.png` through `HAMMERR_UI_SNAPSHOTS`.
 
 ### Compile-region shell experiment
 
@@ -1065,6 +1092,8 @@ cargo test -p map-core --lib measurements
 cargo test -p editor-core --features mcp --lib measurement
 cargo test -p compiler --test measurement_metadata
 cargo test -p editor --bin editor measurement_window
+cargo test -p editor --bin editor measurement_surface_controls_
+python3 -B scripts/validate_measurement_picking.py --binary target/debug/hammerr-headless --output /tmp/hammerr-measurement-picking-check --render
 mkdir -p /tmp/hammerr-measurement-renders
 HAMMERR_MEASUREMENT_SNAPSHOTS=/tmp/hammerr-measurement-renders cargo test -p editor-core --features mcp --lib measurement_offscreen_mcp_renders_preview_saved_hidden_and_undo_in_all_projections -- --ignored --test-threads=1
 ```
@@ -1074,7 +1103,14 @@ edit/delete/Undo, framing and visibility. Compiler checks require identical BSP
 bytes with and without rulers. The explicit graphics check compares real MCP
 pixels before preview, after Apply, hidden and after Undo in all four projections.
 Software callbacks capture `measurements.png`, `measurements-preview.png` and
-`measurements-reviewed.png` through `HAMMERR_UI_SNAPSHOTS`.
+`measurements-reviewed.png` through `HAMMERR_UI_SNAPSHOTS`. Endpoint checks add
+precise double-coordinate rays, pixel-center cameras in all projections, actual
+terrain/model hits, hidden/helper-only misses, coincident-endpoint rejection,
+stale map/scene/camera/viewport guards, token replacement and owned stale cleanup.
+The stdio fixture launches a private Session; `--render` captures the shared guide
+and `--skip-models` omits the installed-model case when assets are unavailable.
+The software callback captures `measurements-surface-picked.png` and checks that
+numeric edits retain their precision after surface picking.
 
 ### Static rope previews
 
@@ -1118,17 +1154,41 @@ Set `HAMMERR_UI_SNAPSHOTS` to an existing directory for `grid-defaults.png`,
 `entity-catalog-mapsize.png`. Scripts require fresh output directories and never
 launch a game or send desktop input.
 
+### FGD size and color helpers
+
+```sh
+cargo test -p map-core --lib entity_helpers
+cargo test -p editor-core --features mcp --lib fgd_helpers
+cargo test -p editor --bin editor entity_panel_shows_shared_fgd_box_status_and_invalid_definition_diagnostics
+python3 -B scripts/validate_fgd_size_helpers.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-size-helpers-check
+```
+
+Checks include inherited asymmetric dimensions and class colors, shared rendered
+bounds/picks/framing/area-volume/working-region operations, reload and invalid-size
+diagnostics, and model/light precedence. The private stdio script compares real
+offscreen pixels (`class-color-size-box.png`, selected/hidden/invalid controls),
+retaining saved source/history/camera/selection. It needs a graphics adapter but
+launches no game or desktop input. Software UI callbacks capture
+`fgd-size-helpers.png` through `HAMMERR_UI_SNAPSHOTS`.
+
 ### Terrain detail scattering and displayed model bounds
 
 ```sh
 cargo test -p compiler --test detail_props --test material_details
 cargo test -p compiler --lib detail_props
 python3 -B scripts/validate_material_details.py --binary target/debug/hammerr-headless --output /tmp/hammerr-terrain-details-check --terrain --runtime
+python3 -B scripts/validate_material_details.py --binary target/debug/hammerr-headless --output /tmp/hammerr-skewed-terrain-details-check --skewed-terrain
+python3 -B scripts/validate_material_details.py --binary target/debug/hammerr-headless --output /tmp/hammerr-skewed-terrain-details-native --skewed-terrain --runtime
 ```
 
 Checks final LOD triangles, displaced heights/normals, barycentric alpha groups,
-empty and selected unsupported groups, parallelogram bases, whole-region terrain,
-shared sample/work caps and unchanged source grids. Displayed model geometry must
+empty and selected unsupported groups, parallelogram and convex planar skewed
+bases, projected native base-triangle area distribution, start-corner rotation,
+whole-region terrain, shared sample/work caps and unchanged source grids. Skewed
+regressions include full/half-edge mixed-power LOD, sloped bases, invalid charts,
+model bounds and cancellation. `--skewed-terrain` selects the private tapered-base
+fixture and implies terrain mode; the legacy flat/parallelogram sampling stream
+remains unchanged. Displayed model geometry must
 fit the compile bounds even when its MDL header understates the mesh. The private
 native terrain mode compares detail ON/OFF foliage in the exact MCP-built BSP;
 existing flat artifacts can be compared byte-for-byte after compiler changes.
@@ -1142,6 +1202,8 @@ cargo test -p compiler --test detail_sprites explicit_sprite
 python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-check
 python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-regions --regions
 python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-native --runtime
+python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-sprite-controls-check --controls
+python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-sprite-controls-native --controls --runtime
 ```
 
 `validate_explicit_detail_sprites` authors 24 `prop_detail_sprite` entities through
@@ -1152,6 +1214,14 @@ exact foreground/background output. Rejected fields must preserve previous
 output, source and history. `--runtime` adds a private installed-engine detail
 ON/OFF observation of the same BSP. Compiler regressions cover all three
 orientations, mixed model/sprite dictionaries and invalid geometry/overrides.
+`--controls` adds authored positive scale, fixed cross/tri geometry, tri fan/size
+bytes and sway at all plain orientations. It checks native fields, unchanged
+atlas dictionaries, scale/sway-only differences, save/reopen, deterministic builds
+and source/history/previous-output preservation. Rejections include native
+half-scale underflow/overflow, fast-path intermediate overflow, invalid shape
+parameters/orientations and nondefault `modelscale`. With `--runtime`, private
+captures compare scaled silhouettes and frame-to-frame sway on the same MCP-built
+outputs; combine `--regions` to run the separate region-selection checks too.
 `--regions` retains fifteen of the 24 authored cards, omits an invalid outside
 sprite before card validation, and checks atomic inside-field and exact-boundary
 open-leaf failures through both build paths. It also checks that undoing the

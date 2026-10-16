@@ -8,6 +8,9 @@ use source_formats::vmf::Vmf;
 use source_formats::vmt::{self, Material};
 use source_formats::vtf::{ImageFormat, Vtf};
 
+mod collection;
+pub use collection::{SkyAssetPlan, SkyAssetSourceSnapshot, collect_sky_asset_plan};
+
 const MAX_ASSETS: usize = 128;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 const MAX_MATERIAL_BYTES: usize = 1024 * 1024;

@@ -432,10 +432,15 @@ pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
     let baseline = match guard::begin(&request.environment, &helper, &directory) {
         Ok(baseline) => baseline,
         Err(error) => {
+            let drain = drain_record(&directory);
             let audit = guard::finish_preflight(&directory);
-            return Err(match audit {
+            let cleanup = combine([
+                ("preflight session drain".into(), drain),
+                ("preflight preservation".into(), audit),
+            ]);
+            return Err(match cleanup {
                 Ok(()) => error,
-                Err(audit) => invalid(format!("{error}; preflight preservation: {audit}")),
+                Err(cleanup) => invalid(format!("{error}; {cleanup}")),
             });
         }
     };

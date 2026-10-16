@@ -1891,6 +1891,7 @@ export component AppWindow inherits Window {
     in property <string> selection-title: "Nothing selected";
     in property <string> selection-detail;
     in property <bool> entity-selected;
+    in property <string> entity-helper-status;
     in property <bool> can-inspect-model;
     in property <bool> can-cubemap-faces;
     callback inspect-model();
@@ -2766,6 +2767,13 @@ export component AppWindow inherits Window {
 
                     if root.can-inspect-model: Button {text:"Model details…";clicked=>{root.inspect-model();}}
                     if root.can-cubemap-faces: Button { text: "Cubemap faces…"; clicked => { root.cubemap-faces(); } }
+
+                    if root.entity-selected && root.entity-helper-status != "": Text {
+                        text: root.entity-helper-status;
+                        wrap: word-wrap;
+                        color: #bac2ce;
+                        font-size: 12px;
+                    }
 
                     if root.entity-selected: CheckBox {
                         text: "Advanced properties";

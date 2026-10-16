@@ -357,7 +357,8 @@ impl Session {
                             }
                         }
                     } else {
-                        let (low, high) = query::entity_bounds(entity)
+                        let (low, high) = self
+                            .object_bounds_in(document, &[ObjectId::Entity(id)])
                             .ok_or("Selected entity has no finite placement bounds")?;
                         let center = (low + high) * 0.5;
                         for x in [low.x, high.x] {

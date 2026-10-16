@@ -316,7 +316,7 @@ fn transformed_model_bounds_and_fallback_are_reported_and_asset_reload_recompute
         })
         .unwrap();
     session.select(&[], SelectMode::Replace).unwrap();
-    let model_bounds = session.model_bounds_in(&session.document)[&model];
+    let model_bounds = session.display_bounds_in(&session.document)[&model];
     let bounds = [model_bounds.0 - DVec3::ONE, model_bounds.0 + DVec3::ONE];
     let report = set(&mut session, Actor::Agent, bounds);
     let rows = report["objects"].as_array().unwrap();

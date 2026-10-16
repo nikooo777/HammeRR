@@ -333,11 +333,18 @@ impl Session {
         }
         let hidden = self.hidden_brushes_for(false);
         let evaluation = self.working_evaluation(&self.document);
-        let picker = Picker::with_entity_filter(
+        let bounds = self.display_bounds_in(&self.document);
+        let picker = Picker::with_entity_bounds(
             &self.document,
             |solid| !hidden.contains(&solid.id),
             !spec.faces,
             |entity| evaluation.objects.contains(&ObjectId::Entity(entity.id)),
+            |entity| {
+                bounds
+                    .get(&ObjectId::Entity(entity.id))
+                    .copied()
+                    .or_else(|| query::entity_bounds(entity))
+            },
         );
         let token = self.geometry.paint.serial + 1;
         let texture = if operation.texture_mode().is_some() {

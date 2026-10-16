@@ -1,9 +1,8 @@
 //! Converts a VMF into GPU-ready triangle batches, one per material.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use glam::{DVec3, Vec3};
-use map_core::query::POINT_ENTITY_HALF_SIZE;
 use map_core::surface::FaceId;
 use map_core::{BrushGeometry, DisplacementMesh, ObjectId, texel_uv};
 use source_formats::gamefs::GameFs;
@@ -20,6 +19,7 @@ const HELPER_SEGMENTS: usize = 16;
 
 /// Hammer's color for entities whose editor block has none.
 const DEFAULT_ENTITY_COLOR: [u8; 3] = [220, 30, 220];
+const INVALID_HELPER_COLOR: [u8; 3] = [255, 176, 48];
 const SELECTED_TINT: [u8; 3] = [255, 130, 130];
 const SELECTED_EDGE: [u8; 4] = [255, 64, 64, 255];
 const SELECTED_MODEL_TINT: [u8; 3] = [255, 210, 150];
@@ -136,6 +136,7 @@ pub struct FaceOverlay {
 
 struct Builder<'a> {
     models: &'a [crate::models::Instance],
+    helpers: &'a BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
     overlays: &'a [FaceOverlay],
     selected_faces: &'a HashSet<FaceId>,
     fs: &'a GameFs,
@@ -410,19 +411,30 @@ impl Builder<'_> {
         if self.add_light(entity, selected) {
             return;
         }
+        let helper = self.helpers.get(&ObjectId::Entity(entity.id));
         let [r, g, b] = if selected {
             SELECTED_EDGE[..3].try_into().expect("three channels")
+        } else if helper.is_some_and(|helper| !helper.errors.is_empty()) {
+            INVALID_HELPER_COLOR
         } else {
-            entity
-                .editor
-                .as_ref()
-                .and_then(|e| e.get("color"))
-                .and_then(Color::parse)
-                .map_or(DEFAULT_ENTITY_COLOR, |c| c.0)
+            helper
+                .and_then(|helper| helper.color)
+                .or_else(|| {
+                    entity
+                        .editor
+                        .as_ref()
+                        .and_then(|editor| editor.get("color"))
+                        .and_then(Color::parse)
+                        .map(|color| color.0)
+                })
+                .unwrap_or(DEFAULT_ENTITY_COLOR)
         };
         let material = self.material_editor();
-        let center = origin.as_vec3();
-        let h = POINT_ENTITY_HALF_SIZE as f32;
+        let (mins, maxs) = helper
+            .and_then(|helper| helper.world_bounds(entity))
+            .unwrap_or_else(|| map_core::query::point_entity_bounds(origin));
+        let center = ((mins + maxs) * 0.5).as_vec3();
+        let half = ((maxs - mins) * 0.5).as_vec3();
         for normal in [
             Vec3::X,
             Vec3::NEG_X,
@@ -442,7 +454,7 @@ impl Builder<'_> {
             let first = self.vertices.len() as u32;
             for corner in corners {
                 self.push_vertex(Vertex {
-                    position: (center + (normal + corner) * h).to_array(),
+                    position: (center + (normal + corner) * half).to_array(),
                     normal: normal.to_array(),
                     uv: [0.0, 0.0],
                     color: [r, g, b, 0],
@@ -459,7 +471,7 @@ impl Builder<'_> {
                 first + 3,
             ]);
             if selected {
-                self.selection_loop(corners.map(|c| center + (normal + c) * h * 1.05));
+                self.selection_loop(corners.map(|c| center + (normal + c) * half * 1.05));
             }
         }
     }
@@ -857,10 +869,35 @@ impl SceneMesh {
         models: &[crate::models::Instance],
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_helpers_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            (models, &BTreeMap::new()),
+            include,
+        )
+    }
+
+    pub fn build_with_helpers_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
+        let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
             models,
+            helpers,
             overlays,
             selected_faces,
             fs,

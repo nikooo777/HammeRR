@@ -220,6 +220,12 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_selection_title(title.into());
     app.set_selection_detail(detail.into());
     app.set_entity_selected(properties.is_some());
+    app.set_entity_helper_status(
+        single_selected_entity(session)
+            .and_then(|id| session.entity_helper_report(id).ok())
+            .map_or_else(String::new, |report| report.status)
+            .into(),
+    );
     app.set_can_cubemap_faces(session.selected_cubemap_helper().is_some());
     app.set_can_inspect_model(
         single_selected_entity(session)

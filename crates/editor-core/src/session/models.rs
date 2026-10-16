@@ -208,7 +208,7 @@ impl Session {
         document: &Document,
         ids: &[ObjectId],
     ) -> Option<(DVec3, DVec3)> {
-        let bounds = self.model_bounds_in(document);
+        let bounds = self.display_bounds_in(document);
         map_core::query::union(ids.iter().filter_map(|&id| {
             bounds
                 .get(&id)
@@ -217,12 +217,26 @@ impl Session {
         }))
     }
 
-    pub fn model_bounds_in(&self, document: &Document) -> BTreeMap<ObjectId, (DVec3, DVec3)> {
-        self.model_instances(document)
+    pub fn display_bounds_in(&self, document: &Document) -> BTreeMap<ObjectId, (DVec3, DVec3)> {
+        let models = self.model_instances(document);
+        let helpers = self.fgd_helper_appearances(document, &models);
+        let mut bounds = models
             .instances
-            .into_iter()
+            .iter()
             .map(|instance| (instance.id, instance.bounds()))
-            .collect()
+            .collect::<BTreeMap<_, _>>();
+        for (id, helper) in helpers {
+            let ObjectId::Entity(entity) = id else {
+                continue;
+            };
+            if let Some(bounds_value) = document
+                .entity(entity)
+                .and_then(|entity| helper.world_bounds(entity))
+            {
+                bounds.insert(id, bounds_value);
+            }
+        }
+        bounds
     }
 
     pub fn object_bounds_in_basis(
@@ -232,11 +246,34 @@ impl Session {
         basis: DMat3,
     ) -> Option<(DVec3, DVec3)> {
         let models = self.model_instances(document);
-        let bounds = models
+        let mut bounds = models
             .instances
             .iter()
             .map(|instance| (instance.id, instance.bounds_in_basis(basis)))
             .collect::<BTreeMap<_, _>>();
+        let inverse = basis.transpose();
+        for (id, helper) in self.fgd_helper_appearances(document, &models) {
+            let ObjectId::Entity(entity) = id else {
+                continue;
+            };
+            if let Some((mins, maxs)) = document
+                .entity(entity)
+                .and_then(|entity| helper.world_bounds(entity))
+            {
+                let corners = (0..8).map(|index| {
+                    let point = DVec3::new(
+                        if index & 1 == 0 { mins.x } else { maxs.x },
+                        if index & 2 == 0 { mins.y } else { maxs.y },
+                        if index & 4 == 0 { mins.z } else { maxs.z },
+                    );
+                    let point = inverse * point;
+                    (point, point)
+                });
+                if let Some(value) = map_core::query::union(corners) {
+                    bounds.insert(id, value);
+                }
+            }
+        }
         let ordinary = ids
             .iter()
             .copied()
@@ -260,12 +297,7 @@ impl Session {
         let bounds = if faces {
             BTreeMap::new()
         } else {
-            evaluation
-                .models
-                .instances
-                .iter()
-                .map(|instance| (instance.id, instance.bounds()))
-                .collect()
+            self.display_bounds_in(&self.document)
         };
         let mut matches = region.select_with_entity_bounds(
             &self.document,

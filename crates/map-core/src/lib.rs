@@ -10,6 +10,7 @@ pub mod context;
 pub mod displacement;
 pub mod document;
 pub mod edit;
+pub mod entity_helpers;
 pub mod groups;
 pub mod hollow;
 pub mod layers;

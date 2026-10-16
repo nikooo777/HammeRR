@@ -16,6 +16,7 @@ pub struct MaterialInfo {
     pub contents: i32,
     pub surface: i32,
     pub surface_prop: String,
+    pub(crate) surface_prop2: Option<String>,
     /// Whether sides with this material become visible faces.
     pub draws: bool,
     pub hint: bool,
@@ -41,6 +42,7 @@ impl MaterialInfo {
             contents: contents::SOLID,
             surface: 0,
             surface_prop: "default".into(),
+            surface_prop2: None,
             draws: true,
             hint: false,
             skip: false,
@@ -64,6 +66,9 @@ impl MaterialInfo {
         if let Some(value) = m.get("$surfaceprop") {
             info.surface_prop = value.trim().to_ascii_lowercase();
         }
+        info.surface_prop2 = m
+            .get("$surfaceprop2")
+            .map(|value| value.trim().to_ascii_lowercase());
         info.bottom_material = m
             .get("$bottommaterial")
             .map(str::trim)
@@ -150,5 +155,30 @@ impl<'a> Materials<'a> {
         info.height = vtf.height as i32;
         info.reflectivity = vtf.reflectivity;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secondary_surface_properties_preserve_missing_and_explicit_empty_values() {
+        for (text, expected) in [
+            ("WorldVertexTransition { $surfaceprop ice }", None),
+            (
+                "WorldVertexTransition { $surfaceprop ice $surfaceprop2 \" RUBBER \" }",
+                Some("rubber"),
+            ),
+            (
+                "WorldVertexTransition { $surfaceprop ice $surfaceprop2 \" \" }",
+                Some(""),
+            ),
+        ] {
+            let material = Material::parse(text).unwrap();
+            let info = MaterialInfo::from_material("blend", Some(&material));
+            assert_eq!(info.surface_prop, "ice");
+            assert_eq!(info.surface_prop2.as_deref(), expected);
+        }
     }
 }

@@ -18,6 +18,7 @@ use crate::{Control, Diagnostic, Report};
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod native;
 mod surface_data;
+mod terrain;
 
 const MAX_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CONVEXES: usize = 8192;
@@ -126,6 +127,10 @@ fn material_name<'a>(map: &'a Map<'_>, material: usize) -> Result<&'a str, Strin
 
 fn material_index(map: &Map, material: usize, names: &mut Vec<String>) -> Result<u8, String> {
     let name = material_name(map, material)?;
+    surface_index(name, names)
+}
+
+fn surface_index(name: &str, names: &mut Vec<String>) -> Result<u8, String> {
     if let Some(index) = names.iter().position(|value| value == name) {
         return Ok((index + 1) as u8);
     }
@@ -205,6 +210,7 @@ fn plan(
         materials: default_materials(),
         surface_data: Vec::new(),
     };
+    let mut terrain_properties = None;
     let emitted_models = bsp
         .records::<source_formats::bsp::Model>()
         .map_err(|error| error.to_string())?;
@@ -329,9 +335,35 @@ fn plan(
                     );
                     let material =
                         map.texdata[map.texinfos.infos[terrain.texinfo].texdata as usize];
-                    let material = material_index(map, material, &mut request.materials)?;
-                    mesh.materials
-                        .extend(std::iter::repeat_n(material, terrain.indices.len()));
+                    let secondary = map.materials.get(material).surface_prop2.as_deref();
+                    if let Some(name) = secondary {
+                        if !valid_surface_property(name) {
+                            return Err(format!(
+                                "Terrain secondary physics surface property {name:?} must use 1–127 ASCII letters, digits, underscores, dots or dashes"
+                            ));
+                        }
+                        if terrain_properties.is_none() {
+                            request.surface_data = surface_data::load(fs, control).map_err(|error| {
+                                format!("Terrain secondary physics surface properties require mounted surface definitions: {error}")
+                            })?;
+                            terrain_properties =
+                                Some(surface_data::resolve(&request.surface_data)?);
+                        }
+                        if !terrain_properties.as_ref().unwrap().contains_key(name) {
+                            return Err(format!(
+                                "Terrain secondary physics surface property {name:?} is not defined by the mounted surface manifest"
+                            ));
+                        }
+                    }
+                    let primary = material_index(map, material, &mut request.materials)?;
+                    mesh.materials.extend(terrain::materials(
+                        &terrain.vertices,
+                        &terrain.indices,
+                        primary,
+                        secondary,
+                        &mut request.materials,
+                        control,
+                    )?);
                 }
             }
             if !mesh.triangles.is_empty() {
@@ -385,7 +417,7 @@ fn plan(
             });
         }
     }
-    if request.models.iter().any(|model| model.index > 0) {
+    if request.surface_data.is_empty() && request.models.iter().any(|model| model.index > 0) {
         request.surface_data = surface_data::load(fs, control)?;
     }
     validate(&request)?;
@@ -890,7 +922,7 @@ pub(crate) fn bake(
     if models.len() > 1 {
         report.diagnostics.push(Diagnostic::info("Engine physics derives brush-model base masses from native material density and thickness using the dominant emitted surface area; runtime massScale and override scripts remain effective. Per-face contact surfaces remain independent", None, None));
     } else {
-        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with authored world/terrain surface properties; blended secondary surfaces and broader collision validation remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::info("Engine physics compiles checked brush/fluid hulls and world terrain meshes with authored primary and alpha-selected secondary surface properties; broader collision validation remains unfinished", None, None));
     }
     Ok(stats)
 }

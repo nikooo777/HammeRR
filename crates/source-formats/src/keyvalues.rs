@@ -69,6 +69,7 @@ pub enum ParseErrorKind {
     PairLimit,
     ExpectedOpenBrace,
     NestedBlock,
+    UnsupportedBareToken,
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -87,6 +88,9 @@ impl fmt::Display for ParseErrorKind {
             Self::PairLimit => "pair count exceeds the input limit",
             Self::ExpectedOpenBrace => "expected an anonymous block beginning with '{'",
             Self::NestedBlock => "nested blocks are not accepted in flat entity text",
+            Self::UnsupportedBareToken => {
+                "unquoted tokens cannot contain parentheses, apostrophes, non-ASCII bytes or control separators, or abut a double quote"
+            }
         })
     }
 }

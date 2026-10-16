@@ -1296,6 +1296,30 @@ unselected, hidden and filtered controls retain source fields, saved bytes,
 history and camera. The script produces `fgd-spheres.png` plus paired controls,
 needs a graphics adapter, and launches no game or desktop input.
 
+### FGD literal targetname line guides
+
+```sh
+cargo test -p map-core --lib entity_helpers::lines::tests
+cargo test -p editor-core --features mcp --lib fgd_helpers::lines::tests
+python3 -B scripts/validate_fgd_lines.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-lines-check
+```
+
+Pure and Session checks cover inherited one-reference and two-reference forms,
+literal RGB, authored/default values, exact-case resolution, case-folded
+ambiguity, duplicate/missing/invalid/coincident endpoints, unsupported forms,
+bounded lookup and visibility/specialized-helper exclusions. Displayed transform
+previews update endpoint positions while bounds, picking, framing, placement
+and working-region inclusion keep their ordinary object policy.
+
+The private stdio fixture compares actual colored guide pixels in Top, Front,
+Side and perspective views with selection outlines disabled, including FGD
+reload and endpoint-preview cancellation. It exercises existing property,
+inspection and rendering calls, hidden/excluded duplicate names, endpoint
+suppression, invalid atomic property batches and exact source/history/camera
+preservation. `--gameinfo` selects optional mounted content. Use a fresh output
+directory; the script requires a graphics adapter, writes `results.json` and
+paired PNG controls, and launches no game or desktop input.
+
 ### Terrain detail scattering and displayed model bounds
 
 ```sh
@@ -1319,6 +1343,35 @@ native terrain mode compares detail ON/OFF foliage in the exact MCP-built BSP;
 existing flat artifacts can be compared byte-for-byte after compiler changes.
 Runtime isolation, preservation and cleanup use the same policy as other private
 CS:S validators, including `-insecure`, `-default` and pre/post-map `sv_lan 1`.
+
+### Generated detail lighting tint
+
+```sh
+cargo test -p compiler --test detail_lighting generated_detail_tint
+cargo test -p compiler --test material_details generated_detail_tint
+cargo test -p editor-core --features mcp --lib generated_detail_tint
+python3 -B scripts/validate_generated_detail_tint.py --binary target/debug/hammerr-headless --output /tmp/hammerr-generated-detail-tint-check
+python3 -B scripts/validate_generated_detail_tint.py --binary target/debug/hammerr-headless --runtime --probe-library target/debug/hammerr_hdr_probe.so --output /tmp/hammerr-generated-detail-tint-native
+```
+
+Checks cover world `_generated_detail_lighting_tint` on generated models,
+plain cards and shapes, white/absent whole-BSP parity, unchanged deterministic
+scatter and explicit tint, linear channel attenuation in Fullbright/LDR/HDR,
+style membership under black, native half-precision paths, and skewed sculpted
+terrain positions/alpha groups. Invalid and duplicate world values reject even
+without emitted details. Session checks validate the same world property draft
+and text inspector used by humans and MCP; compilation consumes the key from
+runtime worldspawn.
+
+The private stdio fixture exercises world edits, invalid drafts, Undo/Redo,
+save/reopen, imported malformed/repeated values, foreground/background byte
+parity and previous-output/source/history preservation. `--runtime` uses the
+[native HDR observer](#independent-ldr-and-hdr-lighting) and shared private launch
+guards for generated model/card fast/slow/style/HDR controls and the existing
+pixel comparisons. Use a fresh output directory; `--game-dir`, `--fgd`,
+`--probe-library` and `--port` override installed paths or private runtime
+inputs. Per-entry dictionary tint, runtime render tint/opacity and a compiled
+detail-color viewport preview remain outside this property.
 
 ### Explicit detail sprites
 

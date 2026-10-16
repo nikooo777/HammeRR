@@ -400,7 +400,7 @@ within ±65536 are required. Loaded model meshes and specialized lights retain
 precedence. Invalid/ambiguous size declarations expose an amber marker and
 `invalid_fgd_size`; working-region bounds remain unresolved with an explicit
 error. Picking, framing, area/volume selection and placement use the same valid
-bounds. Helper forms outside the box/color and property-sphere scopes remain
+bounds. Helper forms outside the box/color, property-sphere and literal-line scopes remain
 listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history.
@@ -438,6 +438,43 @@ engine effect ranges or nonpositive runtime behavior. Inspection and rendering
 do not edit source, camera or history. Sphere centers follow displayed geometry
 previews; ordinary helper bounds retain their committed-object reporting policy.
 See [Entity definitions](entities.md).
+
+`get_entity_inspector.helpers.lines` reports the shared selected FGD line guides.
+`line(R G B, targetname, property)` connects the source origin to the point named
+by that property; adding a second `targetname, property` pair connects the two
+referenced points. RGB must be literal integers 0–255 and stays independent of
+`rendercolor`. References use authored values before labeled FGD defaults;
+endpoint targetnames and origins must be authored once. Only unique exact-case
+literal names resolve. Case-insensitive collisions remain ambiguous even when
+a duplicate is hidden or outside the working region; a case-only match reports
+`unsupported_case_match`.
+
+Each line entry contains `color`, two `endpoints`, intrinsic `state`, `error`,
+`displayed` and `suppression_reason`. Each endpoint reports `property` (null for
+self), `raw`, `raw_truncated`, `value_source` (`self_origin`, `authored`,
+`fgd_default` or `missing`), numeric `entity`, world `position`, candidate
+`matches`, `state` and `error`. Missing/duplicate properties, duplicate
+targetnames, invalid origins, unsupported references, ambiguity, coincident
+positions and lookup limits remain explicit states. `helpers.line_limits`
+describes the supported forms and caps.
+
+Use existing `set_entity_properties` with `set`/`remove` to edit references and
+`load_entity_definitions` to reload helper declarations. `render_view` uses the
+same Session report and displayed transform-preview origins, including model
+or light point endpoints. Sources must be selected visible generic points;
+brush, model/light/rope sources and model/studio helper classes remain
+specialized. Hidden or working-region-excluded endpoints suppress display
+without changing intrinsic resolution. Wildcards, `!tokens`, `nodeid` and brush
+endpoints are unsupported. Finite origins must fit ±65536 units and remain
+distinct at native float precision. At most sixteen declarations per entity,
+128 displayed lines and 65,536 lookup entities/targetname values are supported;
+property names cap at 128 bytes and raw references at 256 bytes, with explicit
+truncation rather than resolving clipped text. Exceeding the lookup cap reports
+`entity_limit` without a partial search. Guide lines stay visible when
+`selection_outlines:false` hides selection edges. They do not change object
+bounds, picking, framing, placement, selection, working regions, source,
+history or camera. No new tool or setting is added; these are editor links,
+without runtime beam, parenting, attachment or I/O simulation.
 
 ### Portable sky assets
 
@@ -525,9 +562,26 @@ and the sprite half-precision path. Dual builds store the tinted final HDR share
 base with separate tinted LDR/HDR extras. `fullbright` stores the authored tint
 from white without styles. The client still applies its normal gamma conversion;
 dynamic light added afterward and the game's `mat_fullbright` override remain
-outside this baked modifier. There is no runtime tint/opacity control or generated
-dictionary equivalent. Existing bounds, asset, leaf, lighting-origin, region,
+outside this baked modifier. There is no runtime tint/opacity control or per-entry
+dictionary tint. Existing bounds, asset, leaf, lighting-origin, region,
 atomic-publication and source/history rules remain in force.
+
+For generated details, author world `_generated_detail_lighting_tint` through
+`begin_property_edit {"world":true}`, then `update_property_edit` with its token
+and `changes:[{"action":"set","key":"_generated_detail_lighting_tint","value":"255 128 64"}]`,
+then `commit_property_edit {"token":...}`. Use `action:"remove"` to delete the
+override. The human path is **World settings… → Custom property key / Value →
+Stage value → Apply properties**; the stored field is labeled **Generated detail
+lighting tint · linear RGB** and stays a text input for the exact three integer
+0–255 factors. Each channel multiplies linear baked lighting by `channel/255`;
+absent or white preserves BSP bytes. The map-wide value applies once to every
+generated dictionary model, plain card and cross/tri shape on flat surfaces or
+terrain, independently of explicit entity tint. It retains the same base/style,
+black-membership, half-precision, HDR and dynamic-light/`mat_fullbright` rules
+above. Invalid or repeated world values reject even when no details are emitted.
+The compiler consumes this key from runtime worldspawn. It does not recolor the
+viewport, rewrite dictionaries or add per-entry tint. See [Material detail
+lighting](material-detail-scattering.md).
 
 ### Material detail scattering
 
@@ -539,11 +593,11 @@ Fixed shapes use `sprite_shape "cross"` or `sprite_shape "tri"` in the same spri
 
 Generated plain sprites at orientations 0/1/2 and cross/tri shapes at orientation 0 may use finite dictionary `sway` from 0–1, default 0. SDK encoding converts to float, multiplies by 255 and truncates to a byte: 0/0.5/1 become 0/127/255. Dictionary and explicit model details reject nonzero sway; explicit sprites accept it through their properties. The CS:S client global `cl_detail_max_sway` defaults to 0, so authored sway needs an explicit runtime opt-in such as `cl_detail_max_sway 8` in the game console; set it back to 0 to disable motion. Runtime sway and player avoidance can move vertices outside the checked rest bounds. No new map property, compiler setting, MCP tool, animated bounds or collision is added.
 
-Existing `set_compile_settings` lighting controls apply to explicit/generated models, plain sprites and fixed shapes. `lighting: "fullbright"` retains white unbaked base colors, or the authored explicit baked tint, without style extras. `direct_ldr` bakes static direct light plus spherical ambient from filtered world/terrain lightmaps and sky, including configured diffuse bounces through those maps. `direct_ldr_hdr` leaves the HDR pass's final color in the native format's single shared detail base field; detail records do not hold separate LDR/HDR base colors. Placement and source/history stay unchanged by the lighting mode, and failed builds preserve the previous output.
+Existing `set_compile_settings` lighting controls apply to explicit/generated models, plain sprites and fixed shapes. `lighting: "fullbright"` retains white unbaked base colors, or the respective explicit/world-generated baked tint, without style extras. `direct_ldr` bakes static direct light plus spherical ambient from filtered world/terrain lightmaps and sky, including configured diffuse bounces through those maps. `direct_ldr_hdr` leaves the HDR pass's final color in the native format's single shared detail base field; detail records do not hold separate LDR/HDR base colors. Placement and source/history stay unchanged by the lighting mode, and failed builds preserve the previous output.
 
 Styles 1–63 contribute through separate native extras alongside style 0's base. Author named groups, appearances and initial state through the existing light properties (`targetname`, `style`, `pattern`, `spawnflags`) and control them through connections. Following the SDK, each extra encodes half its direct-plus-filtered-ambient color; the client applies the current style value without restoring a factor of two. Its final intensity can differ from an equivalent static-base light. Each receiver permits 63 extras. LDR stores its array in `dplt`; dual-channel builds add `dplh` with matching per-receiver sorted style unions and zero color for a style absent from one channel. Both arrays together permit 65,536 records, so dual builds allow at most 32,768 union entries per channel. Static builds without extras emit no new style lumps. Contribution counts appear in build diagnostics.
 
-Invalid dictionaries, unsupported shapes or sway forms, folded/collapsed/nonplanar terrain bases, crossing terrain regions, runtime models, missing or vertex-lit assets, invalid style layouts and exceeded budgets reject before publication. Fixed/full billboards, cross/tri shapes and vertical billboards with styles or encoded nonzero sway require raw scale from 2⁻²⁴ to 65504 for the native half-precision path; positive half conversion truncates downward. Emitted float scales remain unchanged for SDK lighting, while raw scaled bounds conservatively cover the smaller static native geometry at rest. Unstyled vertical billboards with encoded sway zero retain their existing fast path and positive-float scale rules, including authored values that quantize to byte zero. Detail objects do not cast new baked shadows. Generated models, sprites and shapes keep their existing lighting points; authored tint remains unavailable. Use the existing `compile_map`, `start_compile` and `run_map` calls; no additional tool or setting is required.
+Invalid dictionaries, unsupported shapes or sway forms, folded/collapsed/nonplanar terrain bases, crossing terrain regions, runtime models, missing or vertex-lit assets, invalid style layouts and exceeded budgets reject before publication. Fixed/full billboards, cross/tri shapes and vertical billboards with styles or encoded nonzero sway require raw scale from 2⁻²⁴ to 65504 for the native half-precision path; positive half conversion truncates downward. Emitted float scales remain unchanged for SDK lighting, while raw scaled bounds conservatively cover the smaller static native geometry at rest. Unstyled vertical billboards with encoded sway zero retain their existing fast path and positive-float scale rules, including authored values that quantize to byte zero. Detail objects do not cast new baked shadows. Generated models, sprites and shapes keep their existing lighting points; the world tint applies map-wide, while per-entry dictionary tint remains unavailable. Use the existing `compile_map`, `start_compile` and `run_map` calls; no additional tool or setting is required.
 
 ### HDR build channels
 

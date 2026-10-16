@@ -1,0 +1,218 @@
+use std::collections::BTreeMap;
+
+use glam::{DQuat, DVec3, EulerRot};
+use source_formats::bsp::{Bsp, DetailProp, DetailProps, Leaf, Model, Node, Plane, contents};
+use source_formats::gamefs::{GameFs, asset_relative};
+use source_formats::mdl::ModelHeader;
+use source_formats::vmf::{Entity, Vmf};
+
+use crate::{Control, Diagnostic, Report, map::MAX_COMPILE_COORD, static_props};
+
+const MAX_PROPS: usize = 16_384;
+const MAX_LEAF_WORK: usize = 4_000_000;
+
+#[derive(Default)]
+pub(crate) struct Stats {
+    pub props: usize,
+    pub models: usize,
+}
+
+fn class(entity: &Entity) -> bool {
+    entity.classname().is_some_and(|name| {
+        ["prop_detail", "detail_prop", "prop_detail_sprite"]
+            .iter()
+            .any(|class| name.eq_ignore_ascii_case(class))
+    })
+}
+
+fn record(entity: &Entity, header: ModelHeader) -> Result<DetailProp, String> {
+    if entity.solids.iter().any(|solid| !solid.hidden) {
+        return Err("Detail model props are point entities; remove their brush geometry".into());
+    }
+    if entity.connections.iter().flatten().next().is_some() {
+        return Err(
+            "Detail model props are client-only and cannot carry entity I/O connections".into(),
+        );
+    }
+    for (key, default) in [
+        ("skin", 0.0),
+        ("body", 0.0),
+        ("modelscale", 1.0),
+        ("scale", 1.0),
+        ("detailOrientation", 0.0),
+        ("renderamt", 255.0),
+        ("rendermode", 0.0),
+        ("renderfx", 0.0),
+        ("spawnflags", 0.0),
+        ("solid", 0.0),
+        ("disableshadows", 0.0),
+        ("fademindist", -1.0),
+        ("fademaxdist", 0.0),
+        ("fadescale", 1.0),
+    ] {
+        if let Some(raw) = entity.properties.get(key) {
+            let value = raw.parse::<f64>().ok().filter(|value| value.is_finite());
+            if value != Some(default) {
+                return Err(format!(
+                    "Detail model props require {key}={default}; this native model record does not support that override"
+                ));
+            }
+        }
+    }
+    if source_formats::render_color::rgb(entity.properties.get("rendercolor"))
+        .map_err(|error| error.to_string())?
+        != [255; 3]
+    {
+        return Err(
+            "Tinted detail model props are unsupported; rendercolor must be 255 255 255".into(),
+        );
+    }
+    if entity
+        .properties
+        .get("lightingorigin")
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err("Detail model props do not support named lighting origins yet".into());
+    }
+    let origin = if entity.properties.get("origin").is_some() {
+        entity
+            .origin()
+            .ok_or("Detail model prop origin must contain three finite coordinates")?
+    } else {
+        DVec3::ZERO
+    };
+    if !origin.is_finite() || origin.abs().max_element() > MAX_COMPILE_COORD {
+        return Err("Detail model prop origin must fit finite Source coordinates".into());
+    }
+    let angles = static_props::angles(entity)?;
+    let origin = origin.as_vec3();
+    let angles = angles.as_vec3();
+    let radians = angles.as_dvec3().map(f64::to_radians);
+    let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
+    static_props::bounds(header, origin.as_dvec3(), rotation)?;
+    Ok(DetailProp {
+        origin: origin.to_array(),
+        angles: angles.to_array(),
+        ..Default::default()
+    })
+}
+
+pub(crate) fn bake(
+    vmf: &Vmf,
+    fs: &GameFs,
+    bsp: &mut Bsp,
+    report: &mut Report,
+    control: &Control,
+) -> Result<Stats, String> {
+    let entities = vmf
+        .entities
+        .iter()
+        .filter(|entity| !entity.hidden && class(entity))
+        .take(MAX_PROPS + 1)
+        .collect::<Vec<_>>();
+    if entities.is_empty() {
+        return Ok(Stats::default());
+    }
+    if entities.len() > MAX_PROPS {
+        return Err("Detail model props exceed the 16,384-object build budget".into());
+    }
+    let nodes = bsp.records::<Node>().map_err(|error| error.to_string())?;
+    let planes = bsp.records::<Plane>().map_err(|error| error.to_string())?;
+    let leaves = bsp.records::<Leaf>().map_err(|error| error.to_string())?;
+    let head = bsp
+        .records::<Model>()
+        .map_err(|error| error.to_string())?
+        .first()
+        .ok_or("Detail model props require a world model")?
+        .head_node;
+    let mut props = DetailProps::default();
+    let mut models = BTreeMap::<String, (u16, ModelHeader)>::new();
+    let mut work = 0;
+    for entity in entities {
+        control.checkpoint()?;
+        let result: Result<(), String> = (|| {
+            if entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("prop_detail_sprite"))
+            {
+                return Err("Explicit prop_detail_sprite compilation is unsupported; use a model-only prop_detail".into());
+            }
+            let path = asset_relative(entity.properties.get("model").unwrap_or(""))
+                .map_err(|error| error.to_string())?;
+            if !path.starts_with("models/") || !path.ends_with(".mdl") {
+                return Err("Detail model must name a models/*.mdl asset".into());
+            }
+            if !models.contains_key(&path) {
+                if models.len() >= source_formats::bsp::MAX_DETAIL_PROP_MODELS {
+                    return Err(
+                        "Detail model dictionary exceeds the 1024-model build budget".into(),
+                    );
+                }
+                let name = DetailProps::model_record(&path).map_err(|error| error.to_string())?;
+                let data = fs
+                    .read_limited(&path, source_formats::mdl::MAX_MODEL_BYTES)
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("Detail model {path} was not found"))?;
+                let header =
+                    ModelHeader::parse(&data).map_err(|error| format!("{path}: {error}"))?;
+                if !header.is_static_prop() {
+                    return Err(format!(
+                        "Detail model {path} was not built with $staticprop"
+                    ));
+                }
+                models.insert(path.clone(), (props.models.len() as u16, header));
+                props.models.push(name);
+            }
+            let (model, header) = models[&path];
+            let mut prop = record(entity, header)?;
+            prop.model = model;
+            let point = DVec3::from_array(prop.origin.map(f64::from));
+            let mut cursor = head;
+            while cursor >= 0 {
+                control.checkpoint()?;
+                work += 1;
+                if work > MAX_LEAF_WORK {
+                    return Err("Detail-prop leaf traversal exceeds four million steps".into());
+                }
+                let node = nodes
+                    .get(cursor as usize)
+                    .ok_or("Invalid detail-prop BSP node")?;
+                let plane = planes
+                    .get(node.plane as usize)
+                    .ok_or("Invalid detail-prop BSP plane")?;
+                let distance = DVec3::from_array(plane.normal.map(f64::from)).dot(point)
+                    - f64::from(plane.dist);
+                cursor = node.children[usize::from(distance < 0.0)];
+            }
+            let leaf =
+                usize::try_from(-i64::from(cursor) - 1).map_err(|_| "Invalid detail-prop leaf")?;
+            let info = leaves.get(leaf).ok_or("Invalid detail-prop BSP leaf")?;
+            if info.contents & contents::SOLID != 0 || info.cluster < 0 {
+                return Err("Detail model origin must lie in an open visible world leaf".into());
+            }
+            prop.leaf = u16::try_from(leaf)
+                .map_err(|_| "Detail model leaf exceeds the native unsigned short")?;
+            props.props.push(prop);
+            Ok(())
+        })();
+        if let Err(message) = result {
+            control.checkpoint()?;
+            report.diagnostics.push(Diagnostic::error(
+                message,
+                Some(format!("entity:{}", entity.id)),
+                entity.origin(),
+            ));
+        }
+    }
+    if report.has_errors() {
+        return Ok(Stats::default());
+    }
+    props.props.sort_by_key(|prop| prop.leaf);
+    bsp.set_detail_props(&props)
+        .map_err(|error| error.to_string())?;
+    report.diagnostics.push(Diagnostic::warning("Explicit detail model props are non-colliding client-only models with unbaked white lighting; material-driven scattering, sprites, detail light styles and baked detail lighting remain unfinished", None, None));
+    Ok(Stats {
+        props: props.props.len(),
+        models: props.models.len(),
+    })
+}

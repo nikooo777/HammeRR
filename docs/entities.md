@@ -195,7 +195,8 @@ inspector states this distinction and agents read the declared argument in
 
 1. Load the game's FGD through **Entity…** → **Load FGD…**, then place and select
    `env_projectedtexture`.
-2. Set **FOV**, **NearZ** and **FarZ**. **FOV** applies equally to horizontal and
+2. Enable **Advanced properties**, then set **FOV**, **NearZ** and **FarZ**.
+   **FOV** applies equally to horizontal and
    vertical projection; **NearZ** and **FarZ** measure along the forward axis.
 3. Edit **Pitch Yaw Roll (Y Z X)** to orient the guide. Change **Light Color** to
    recolor its edges. The fourth component remains intensity; it does not change
@@ -204,7 +205,9 @@ inspector states this distinction and agents read the declared argument in
    or suppressed visibility. Select another object, hide the source or exclude
    its ordinary box with **Working region…** to suppress the guide.
 
-Authored values precede individually labeled FGD defaults. The shipped FGD uses
+Authored values precede individually labeled FGD defaults. The helper summary
+lists fields using FGD defaults and notes that engine defaults may differ.
+The shipped FGD uses
 FOV 90, NearZ 4 and FarZ 750; these are authoring defaults, and may differ from
 an engine constructor's defaults. Definition reloads update absent values
 without writing entity properties or Undo history. Color edits use the shared
@@ -214,7 +217,8 @@ Limits: The guide requires loaded, compatible FGD property definitions and a
 visible point source. Nonempty **target** or **Parent**, nonzero **Camera Space**
 and legacy `angle` are unsupported branches and draw no replacement guide.
 FOV must be strictly between 0 and 180; 0 < NearZ < FarZ ≤ 65536. Corners must
-remain finite and distinct at native precision, with each coordinate offset
+remain finite and pairwise distinct at native precision, with nonzero near/far
+plane areas and each coordinate offset
 within ±65536 units of the origin. Values are never clamped; malformed,
 duplicate, missing and oversized values have explicit diagnostics. Value
 previews cap at 256 bytes; at most 16

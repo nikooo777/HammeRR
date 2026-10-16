@@ -63,6 +63,7 @@ def validate(client, output):
     client.call("set_entity_properties", {"id": entity, "remove": ["angles", "lightfov", "nearz", "farz", "lightcolor", "cameraspace"]})
     fallback = guide()
     check(all(row["value_source"] == "fgd_default" for row in fallback["inputs"] if row["property"] in {"angles", "lightfov", "nearz", "farz", "lightcolor", "cameraspace"}), "Absent authored values retain labeled individual FGD-default provenance")
+    check("FGD defaults:" in helpers()["status"] and "lightfov=90" in helpers()["status"] and "engine defaults may differ" in helpers()["status"], "The human summary exposes FGD-default FOV and its engine-default limitation")
     check(client.call("get_map_info")["rendering"]["initialized"] is False, "Projector inspection stays headless until actual pixels are requested")
     author(angles="0 0 0", lightfov="90", nearz="16", farz="96", lightcolor="24 210 100 200", cameraspace="0")
     check(guide()["color"] == [24, 210, 100] and guide()["intensity"] == 200, "RGB and authored fourth-component intensity remain separate")

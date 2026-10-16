@@ -1388,9 +1388,11 @@ vertical and slow fixed sprites, actual named-light TurnOn/TurnOff on the same
 white/tinted BSPs, plus dual-channel style colors with measured HDR hardware.
 LDR detail-disabled backgrounds and unattenuated red pixels must match exactly.
 HDR additionally needs one independently verified repeat of the identical white
-BSP, with unchanged launch, hardware and style controls. Pass its completed
-output through `--hdr-control`, or use `native-hdr-white-control` inside the tint
-output directory. Every decoded red base and LDR/HDR style contribution must be
+BSP, with unchanged launch, hardware and style controls. Fresh or resumed native
+runs create the missing `native-hdr-white-control` capture inside the tint output
+directory. `--analyze-only` requires that capture to exist. An explicit
+`--hdr-control` must point to an existing completed capture and is never launched
+or replaced. Every decoded red base and LDR/HDR style contribution must be
 exactly equal across white/tinted BSPs before accepting pixel noise.
 HDR target deviations may not exceed the repeat's measured maximum amplitude:
 hard ceilings are one 8-bit code value for background and two for visible red,

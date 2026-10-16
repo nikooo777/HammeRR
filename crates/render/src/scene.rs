@@ -988,6 +988,35 @@ impl SceneMesh {
         ),
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        let skybox = vmf
+            .world
+            .properties
+            .get("skyname")
+            .filter(|name| !name.trim().is_empty())
+            .map(|name| library.skybox(fs, name));
+        Self::build_with_visual_helpers_and_sky_filtered(
+            vmf, fs, library, selection, overlays, entities, guides, skybox, include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_visual_helpers_and_sky_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
         let (icons, model_guides) = guides;
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
@@ -1080,12 +1109,7 @@ impl SceneMesh {
         let mut mesh = Self {
             icons: builder.displayed_icons,
             issues: terrain.issues,
-            skybox: vmf
-                .world
-                .properties
-                .get("skyname")
-                .filter(|name| !name.trim().is_empty())
-                .map(|name| builder.library.skybox(fs, name)),
+            skybox,
             vertices: builder.vertices,
             indices,
             batches,

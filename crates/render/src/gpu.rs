@@ -128,6 +128,7 @@ struct Globals {
     forward: [f32; 4],
     right: [f32; 4],
     up: [f32; 4],
+    sky_params: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -211,6 +212,8 @@ pub struct ViewOptions {
     pub smoothing_group: u32,
     pub tool_textures: bool,
     pub sky_preview: bool,
+    pub sky_channel: crate::sky::Channel,
+    pub sky_exposure_ev: f32,
     pub rope_preview: bool,
     pub selection_outlines: bool,
     pub fog: Option<crate::fog::Fog>,
@@ -233,6 +236,8 @@ impl Default for ViewOptions {
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
+            sky_channel: crate::sky::Channel::Ldr,
+            sky_exposure_ev: 0.0,
             rope_preview: false,
             selection_outlines: true,
             fog: None,
@@ -278,6 +283,7 @@ pub struct GpuScene {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     skybox: Option<wgpu::BindGroup>,
+    sky_channel: crate::sky::Channel,
     opaque: Vec<DrawBatch>,
     translucent: Vec<DrawBatch>,
     lines: Option<(wgpu::Buffer, u32)>,
@@ -302,7 +308,8 @@ pub struct Renderer {
     sky_pipeline: wgpu::RenderPipeline,
     sky_layout: wgpu::BindGroupLayout,
     sky_sampler: wgpu::Sampler,
-    skyboxes: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
+    skyboxes:
+        std::collections::HashMap<(String, crate::sky::Channel, u64), Option<wgpu::BindGroup>>,
     /// Bind groups by [`MaterialId`], uploaded on first use.
     materials: Vec<Option<wgpu::BindGroup>>,
     material_generation: Option<u64>,
@@ -693,11 +700,16 @@ impl Renderer {
             .as_ref()
             .filter(|skybox| skybox.ready())
             .and_then(|skybox| {
-                if !self.skyboxes.contains_key(&skybox.name) {
+                let key = (skybox.name.clone(), skybox.channel, skybox.payload_id);
+                if !self.skyboxes.contains_key(&key) {
+                    if skybox.channel == crate::sky::Channel::Hdr {
+                        self.skyboxes
+                            .retain(|(_, channel, _), _| *channel != crate::sky::Channel::Hdr);
+                    }
                     let binding = self.sky_bind_group(ctx, skybox);
-                    self.skyboxes.insert(skybox.name.clone(), binding);
+                    self.skyboxes.insert(key.clone(), binding);
                 }
-                self.skyboxes.get(&skybox.name).cloned().flatten()
+                self.skyboxes.get(&key).cloned().flatten()
             });
         let mut icon_vertices = Vec::new();
         let mut icon_draws = Vec::new();
@@ -748,6 +760,10 @@ impl Renderer {
             icons,
             icon_draws,
             skybox,
+            sky_channel: mesh
+                .skybox
+                .as_ref()
+                .map_or(crate::sky::Channel::Ldr, |sky| sky.channel),
             vertices,
             indices,
             opaque,
@@ -766,10 +782,22 @@ impl Renderer {
         ctx: &GpuContext,
         skybox: &crate::sky::Skybox,
     ) -> Option<wgpu::BindGroup> {
+        let mut hdr_textures = std::collections::HashMap::new();
         let textures = skybox
             .faces
             .iter()
-            .map(|face| upload_vtf(ctx, face.texture.as_ref()?))
+            .map(|face| {
+                if skybox.channel == crate::sky::Channel::Ldr {
+                    return upload_vtf(ctx, face.texture.as_ref()?);
+                }
+                let path = face.texture_path.as_ref()?;
+                if let Some(texture) = hdr_textures.get(path) {
+                    return Some(wgpu::Texture::clone(texture));
+                }
+                let texture = upload_hdr_vtf(ctx, face.image()?)?;
+                hdr_textures.insert(path.clone(), texture.clone());
+                Some(texture)
+            })
             .collect::<Option<Vec<_>>>()?;
         let views = textures
             .iter()
@@ -966,6 +994,16 @@ impl Renderer {
             forward: camera.forward().extend(0.0).to_array(),
             right: camera.right().extend(0.0).to_array(),
             up: camera.up().extend(0.0).to_array(),
+            sky_params: [
+                if options.sky_channel == crate::sky::Channel::Hdr {
+                    1.0
+                } else {
+                    0.0
+                },
+                2f32.powf(options.sky_exposure_ev),
+                0.0,
+                0.0,
+            ],
             surface_view: [
                 match options.surface {
                     SurfaceView::Textured => 0,
@@ -1041,6 +1079,7 @@ impl Renderer {
                     };
                     if draw.sky
                         && options.sky_preview
+                        && scene.sky_channel == options.sky_channel
                         && options.surface == SurfaceView::Textured
                         && camera.projection == crate::Projection::Perspective
                         && let Some(skybox) = &scene.skybox
@@ -1250,6 +1289,30 @@ fn write_mip(
     );
 }
 
+fn upload_hdr_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
+    let texture = texture_2d(
+        ctx,
+        "linear HDR sky",
+        (vtf.width, vtf.height),
+        u32::from(vtf.mip_count),
+        wgpu::TextureFormat::Rgba16Float,
+    );
+    for mip in 0..vtf.mip_count {
+        let bytes = crate::sky::hdr_mip_bytes(vtf, mip).ok()?;
+        let (width, height) = vtf.mip_size(mip);
+        write_mip(
+            ctx,
+            &texture,
+            mip.into(),
+            &bytes,
+            width * 8,
+            height,
+            (width, height),
+        );
+    }
+    Some(texture)
+}
+
 /// Uploads every mip of a VTF's first frame. DXT data goes up as-is when
 /// the device supports BC; other formats are decoded to RGBA8.
 fn upload_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
@@ -1368,7 +1431,11 @@ mod tests {
     fn surface_and_sky_shaders_parse_and_validate_without_a_gpu() {
         use wgpu::naga::{front::wgsl, valid};
 
-        for source in [include_str!("shader.wgsl"), include_str!("sky.wgsl")] {
+        for source in [
+            include_str!("shader.wgsl"),
+            include_str!("sky.wgsl"),
+            include_str!("icons.wgsl"),
+        ] {
             let module = wgsl::parse_str(source)
                 .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
             valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::empty())

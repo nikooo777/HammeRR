@@ -8,6 +8,7 @@ struct Globals {
     forward: vec4<f32>,
     right: vec4<f32>,
     up: vec4<f32>,
+    sky_params: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var icon: texture_2d<f32>;

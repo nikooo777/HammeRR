@@ -67,6 +67,7 @@ mod recovery;
 pub mod repeat;
 pub mod ropes;
 pub mod saved_views;
+mod sky_preview;
 pub mod sounds;
 pub mod statistics;
 mod surfaces;
@@ -1481,6 +1482,9 @@ impl Session {
             self.cancel_area_selection();
             self.clear_volume_selection();
         }
+        if self.view.sky_channel != view.sky_channel {
+            self.scene_serial += 1;
+        }
         self.view = view;
         self.refresh_component_origin();
         self.view_serial += 1;
@@ -1947,6 +1951,11 @@ impl Session {
     }
 
     pub fn build_scene(&mut self) -> SceneMesh {
+        self.build_scene_for_view(self.view())
+    }
+
+    pub fn build_scene_for_view(&mut self, view: ViewOptions) -> SceneMesh {
+        let skybox = self.skybox_preview_for(view);
         let selected: HashSet<ObjectId> = self.geometry.clip_preview.as_ref().map_or_else(
             || self.selection.iter().copied().collect(),
             |preview| preview.result.objects.iter().copied().collect(),
@@ -2080,7 +2089,7 @@ impl Session {
         let evaluation = self.working_evaluation(document);
         let icons = self.fgd_icon_instances(document, &evaluation);
         let model_guides = self.fgd_model_guides(document, &evaluation);
-        let mut mesh = SceneMesh::build_with_visual_helpers_filtered(
+        let mut mesh = SceneMesh::build_with_visual_helpers_and_sky_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
@@ -2088,6 +2097,7 @@ impl Session {
             &overlays,
             (&evaluation.models.instances, &evaluation.helpers),
             (&icons, &model_guides),
+            skybox,
             |id| evaluation.objects.contains(&id),
         );
         if let Some(points) = self.pointfile_points() {

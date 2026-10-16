@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 bytemuck.workspace = true
 glam.workspace = true
+half = "2.7.1"
 map-core.workspace = true
 pollster = "1.0.1"
 png = "0.18.1"

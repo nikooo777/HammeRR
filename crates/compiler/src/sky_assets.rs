@@ -9,6 +9,8 @@ use source_formats::vmt::{self, Material};
 use source_formats::vtf::{ImageFormat, Vtf};
 
 mod closure;
+mod hdr_preview;
+pub use hdr_preview::{HdrSkyFace, MAX_HDR_PREVIEW_TEXTURE_BYTES, load_hdr_sky_preview};
 mod collection;
 mod manifest;
 pub use collection::{

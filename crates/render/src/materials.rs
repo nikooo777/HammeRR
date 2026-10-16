@@ -131,6 +131,7 @@ pub type MaterialId = usize;
 #[derive(Debug)]
 pub struct MaterialLibrary {
     pub icons: crate::icons::Library,
+    hdr_skybox: Option<Arc<crate::sky::Skybox>>,
     generation: u64,
     materials: Vec<MaterialInfo>,
     by_name: HashMap<String, MaterialId>,
@@ -143,6 +144,7 @@ impl Default for MaterialLibrary {
         Self {
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             icons: crate::icons::Library::default(),
+            hdr_skybox: None,
             materials: vec![MaterialInfo::untextured(Self::EDITOR_NAME)],
             by_name: HashMap::from([(Self::EDITOR_NAME.to_owned(), Self::EDITOR)]),
             unavailable_model: None,
@@ -188,6 +190,7 @@ impl MaterialLibrary {
     pub fn reload(&mut self, fs: &GameFs) -> ReloadReport {
         let mut report = ReloadReport::default();
         self.icons.clear();
+        self.hdr_skybox = None;
         for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
             if material.helper.is_some() || Some(id) == self.unavailable_model {
                 continue;
@@ -244,6 +247,22 @@ impl MaterialLibrary {
         self.materials.push(material);
         self.unavailable_model = Some(id);
         id
+    }
+
+    pub fn clear_hdr_skybox(&mut self) {
+        self.hdr_skybox = None;
+    }
+
+    pub fn cached_hdr_skybox(&self, name: &str) -> Option<Arc<crate::sky::Skybox>> {
+        self.hdr_skybox
+            .as_ref()
+            .filter(|sky| sky.name == name)
+            .cloned()
+    }
+    pub fn cache_hdr_skybox(&mut self, sky: crate::sky::Skybox) -> Arc<crate::sky::Skybox> {
+        let sky = Arc::new(sky);
+        self.hdr_skybox = Some(sky.clone());
+        sky
     }
 
     pub fn skybox(&mut self, fs: &GameFs, name: &str) -> Arc<crate::sky::Skybox> {

@@ -138,8 +138,17 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 }
 
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
+    app.set_show_tools(session.view().tool_textures);
+    app.set_show_leak(session.view().leak_path);
+    app.set_sky_preview(session.view().sky_preview);
     app.set_selection_outlines(session.view().selection_outlines);
     app.set_rope_preview(session.view().rope_preview);
+    app.set_sky_channel(if session.view().sky_channel == render::sky::Channel::Hdr {
+        1
+    } else {
+        0
+    });
+    app.set_sky_exposure_ev(session.view().sky_exposure_ev.to_string().into());
     app.set_rope_preview_status(
         session.rope_preview_state()["summary"]
             .as_str()
@@ -175,8 +184,37 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
             view.rope_preview = app.get_rope_preview();
             view.selection_outlines = app.get_selection_outlines();
             view.leak_path = app.get_show_leak();
+            let exposure = app
+                .get_sky_exposure_ev()
+                .parse::<f64>()
+                .map_err(|_| "HDR sky exposure must be finite and between -8 and 8 EV".to_owned());
+            let channel = if app.get_sky_channel() == 1 {
+                "hdr"
+            } else {
+                "ldr"
+            };
+            let view = match exposure.and_then(|exposure| {
+                session.sky_preview_options(view, Some(channel), Some(exposure))
+            }) {
+                Ok(view) => view,
+                Err(error) => {
+                    app.set_sky_preview_error(error.into());
+                    refresh_view_controls(&app, &session);
+                    return;
+                }
+            };
+            app.set_sky_preview_error("".into());
             session.set_view(view);
             refresh_view_controls(&app, &session);
+            app.set_sky_preview_status(
+                session
+                    .skybox_preview_for(view)
+                    .map_or_else(
+                        || "Set world skyname to select a 2D sky".to_owned(),
+                        |sky| sky.summary(),
+                    )
+                    .into(),
+            );
         }
     });
 }
@@ -184,6 +222,15 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
     refresh_view_controls(app, session);
+    app.set_sky_preview_status(
+        session
+            .skybox_preview_for(session.view())
+            .map_or_else(
+                || "Set world skyname to select a 2D sky".to_owned(),
+                |sky| sky.summary(),
+            )
+            .into(),
+    );
     app.set_fog_preview_status(
         session.fog_preview_state()["summary"]
             .as_str()
@@ -2655,7 +2702,7 @@ pub(super) fn run(
                     app.set_sky_preview(session.view().sky_preview);
                     app.set_sky_preview_status(
                         session
-                            .skybox_preview()
+                            .skybox_preview_for(session.view())
                             .map_or_else(
                                 || "Set world skyname to select a 2D sky".to_owned(),
                                 |skybox| skybox.summary(),
@@ -2756,7 +2803,7 @@ pub(super) fn run(
                     app.set_sky_preview(session.view().sky_preview);
                     app.set_sky_preview_status(
                         session
-                            .skybox_preview()
+                            .skybox_preview_for(session.view())
                             .map_or_else(
                                 || "Set world skyname to select a 2D sky".to_owned(),
                                 |skybox| skybox.summary(),
@@ -3083,6 +3130,9 @@ mod icon_tests;
 
 #[cfg(test)]
 mod model_guide_tests;
+
+#[cfg(test)]
+mod hdr_sky_tests;
 
 pub(crate) use entities::property_row;
 pub(crate) use materials::{

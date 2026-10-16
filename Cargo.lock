@@ -4071,6 +4071,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "half",
  "map-core",
  "png",
  "pollster 1.0.1",

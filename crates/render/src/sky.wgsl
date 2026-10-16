@@ -8,6 +8,7 @@ struct Globals {
     forward: vec4<f32>,
     right: vec4<f32>,
     up: vec4<f32>,
+    sky_params: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -63,6 +64,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         texel = textureSampleLevel(sky_up, sky_sampler, sky_uv(vec2<f32>(-d.y, d.x) / a.z * 0.5 + 0.5, 4u), 0.0);
     } else {
         texel = textureSampleLevel(sky_dn, sky_sampler, sky_uv(vec2<f32>(-d.y, -d.x) / a.z * 0.5 + 0.5, 5u), 0.0);
+    }
+    if globals.sky_params.x > 0.5 {
+        let exposed = texel.rgb * globals.sky_params.y;
+        return vec4<f32>(exposed / (vec3<f32>(1.0) + exposed), 1.0);
     }
     return vec4<f32>(texel.rgb, 1.0);
 }

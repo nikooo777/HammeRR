@@ -3053,6 +3053,9 @@ pub(super) fn run(
 #[cfg(test)]
 pub(crate) mod tests;
 
+#[cfg(test)]
+mod projector_tests;
+
 pub(crate) use entities::property_row;
 pub(crate) use materials::{
     bind_material_reload, common_face_number, preview_image, refresh_material_catalog,

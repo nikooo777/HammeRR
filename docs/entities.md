@@ -159,6 +159,8 @@ literal FGD colors; `rendercolor` does not recolor these editor links.
    to see the line between those named origins. Transform previews move the
    displayed endpoints without committing an edit.
 
+![Selected point entity with separate origin-to-target and two-target line guides](images/fgd-lines.png)
+
 These links are editor guides; they do not simulate beams, parenting, attachments
 or entity I/O. Only unique, exact-case literal target names are displayed.
 Case-insensitive name collisions are ambiguous, and case-only matches report an
@@ -180,6 +182,47 @@ for property/value previews. Oversized inputs are rejected before clipped text
 can be resolved.
 
 How lights, spotlights and the sun are baked, including falloff distances and sky ambient, is covered in [Compile and play](compile-and-play.md#lighting).
+
+### Inspect a Source projector guide
+
+Selected `env_projectedtexture` entities show an authored square projector guide
+with eight corners and twelve edges. The viewport and agent renders use the
+same displayed origin and **Pitch Yaw Roll (Y Z X)**, including transform previews.
+Zero angles face +X; positive pitch points downward. This independent guide
+does not evaluate FGD `frustum()` or its fifth `pitch_scale` argument. The
+inspector states this distinction and agents read the declared argument in
+`get_entity_inspector.helpers.source_projector`.
+
+1. Load the game's FGD through **Entity…** → **Load FGD…**, then place and select
+   `env_projectedtexture`.
+2. Set **FOV**, **NearZ** and **FarZ**. **FOV** applies equally to horizontal and
+   vertical projection; **NearZ** and **FarZ** measure along the forward axis.
+3. Edit **Pitch Yaw Roll (Y Z X)** to orient the guide. Change **Light Color** to
+   recolor its edges. The fourth component remains intensity; it does not change
+   guide opacity or exposure.
+4. Read **Source projector guide** in the helper summary for unavailable values
+   or suppressed visibility. Select another object, hide the source or exclude
+   its ordinary box with **Working region…** to suppress the guide.
+
+Authored values precede individually labeled FGD defaults. The shipped FGD uses
+FOV 90, NearZ 4 and FarZ 750; these are authoring defaults, and may differ from
+an engine constructor's defaults. Definition reloads update absent values
+without writing entity properties or Undo history. Color edits use the shared
+color picker operation and preserve the fourth component when omitted.
+
+Limits: The guide requires loaded, compatible FGD property definitions and a
+visible point source. Nonempty **target** or **Parent**, nonzero **Camera Space**
+and legacy `angle` are unsupported branches and draw no replacement guide.
+FOV must be strictly between 0 and 180; 0 < NearZ < FarZ ≤ 65536. Corners must
+remain finite and distinct at native precision, with each coordinate offset
+within ±65536 units of the origin. Values are never clamped; malformed,
+duplicate, missing and oversized values have explicit diagnostics. Value
+previews cap at 256 bytes; at most 16
+unevaluated helper declarations and 128 displayed projectors are reported.
+Model helpers, loaded meshes and brush sources keep their existing behavior.
+The guide does not change bounds, picking, selection, placement, framing or
+working regions, and does not preview projected textures, illumination,
+shadows, targets, parent movement or runtime enabled state.
 
 The bulb is a [CC0 model by Josh Dean / Poly Haven](https://polyhaven.com/a/lightbulb_led); see its [provenance](../crates/render/assets/lightbulb/SOURCE.txt).
 

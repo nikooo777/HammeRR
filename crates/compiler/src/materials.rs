@@ -29,6 +29,7 @@ pub struct MaterialInfo {
     pub unsupported_flags: Vec<String>,
     pub warnings: Vec<String>,
     pub(crate) bottom_material: Option<String>,
+    pub(crate) detail_type: Option<String>,
 }
 
 impl MaterialInfo {
@@ -53,6 +54,7 @@ impl MaterialInfo {
             unsupported_flags: Vec::new(),
             warnings: Vec::new(),
             bottom_material: None,
+            detail_type: None,
         };
         let Some(m) = material else {
             return info;
@@ -74,6 +76,11 @@ impl MaterialInfo {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
+        info.detail_type = m
+            .get("%detailtype")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_ascii_lowercase);
         info.unsupported_flags = semantics.unsupported_flags;
         info
     }

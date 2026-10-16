@@ -446,7 +446,7 @@ fn world_family_admission_uses_complete_flat_blocks_and_preserves_duplicates() {
     }
     let mut bsp = original;
     bsp.set_entities(
-        "{ CLASSNAME WORLDSPAWN SKYNAME test message \"braces { and } backslash \\ path\" }",
+        "{ classname WORLDSPAWN SKYNAME test message \"braces { and } backslash \\ path\" }",
     );
     assert!(
         read_packed_sky(&bsp, &Control::default())
@@ -774,4 +774,27 @@ fn world_identity_rejects_overlong_identity_aliases_with_late_nonspace_suffixes(
                 .contains("2047-byte admission limit")
         );
     }
+}
+
+#[test]
+fn world_identity_requires_canonical_classname_keys_and_retains_sky_key_case() {
+    for text in [
+        "{ CLASSNAME worldspawn skyname test }",
+        "{ ClassName worldspawn skyname test }",
+        "{ classname worldspawn CLASSNAME info_player_start skyname test }",
+        "{ CLASSNAME info_player_start classname worldspawn skyname test }",
+        "{ classname worldspawn skyname test } { CLASSNAME worldspawn }",
+    ] {
+        let mut bsp = Bsp::new();
+        bsp.set_entities(text);
+        assert!(
+            world_family(&bsp, &Control::default())
+                .unwrap_err()
+                .to_string()
+                .contains("classname keys must use canonical lowercase spelling")
+        );
+    }
+    let mut bsp = Bsp::new();
+    bsp.set_entities("{ classname WORLDSPAWN SKYNAME TeSt }");
+    assert_eq!(world_family(&bsp, &Control::default()).unwrap(), "TeSt");
 }

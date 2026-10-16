@@ -114,7 +114,7 @@ def private_game(root, output, bsp=None, *, engine_physics=False):
     return game
 
 
-def worker(args):
+def worker(args, *, launch_adapter=None):
     root = args.game_dir.resolve()
     output = args.output.resolve()
     game = private_game(root, output, args.bsp)
@@ -146,6 +146,8 @@ def worker(args):
         "-port",
         "27583",
     ]
+    if launch_adapter is not None:
+        command, env = launch_adapter(root, game, output, command, env)
     command, env = private_readonly_launch(command, output, env)
     with (output / "launcher.log").open("w") as log:
         process = subprocess.Popen(

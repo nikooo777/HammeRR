@@ -1,0 +1,166 @@
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import validate_cubemap_capture_probe as probe
+import validate_native_runtime as runtime
+from validate_compile_jobs import stopped_on_exit, wait_job
+from validate_detail_props import compile_pair, detail_records
+from validate_detail_sprites import dictionary, silhouette
+from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref
+from validate_material_details import set_world, state
+from validate_visibility import ROOM
+
+MATERIAL = "hammerr_detail_shapes/ground"
+TEXTURE = "dev/dev_measuregeneric01"
+DICTIONARY = "scripts/hammerr_detail_shapes.vbsp"
+FIELDS = 'sprite "0 0 128 128 512" spritesize "0.5 0 40 45" detailOrientation 0 upright 1'
+VARIANTS = {
+    "cross": ("sprite_shape cross", 2, 0, 0),
+    "tri": ("sprite_shape tri", 3, 0, 0),
+    "tri-fanned": ("sprite_shape tri shape_angle 35 shape_size 0.5", 3, 35, 127),
+}
+
+
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def validate(args):
+    game = runtime.private_game(args.game_dir, args.output / "source-game")
+    material = game / f"materials/{MATERIAL}.vmt"
+    material.parent.mkdir(parents=True)
+    material.write_text(f'LightmappedGeneric {{ $basetexture "{TEXTURE}" %detailtype hammerr_tufts }}\n')
+    dictionary_path = game / DICTIONARY
+    dictionary_path.write_text(dictionary(FIELDS))
+    client = Client(None, args.binary, args.output, game / "gameinfo.txt")
+    try:
+        with stopped_on_exit(client):
+            client.call("load_entity_definitions", {"path": str(args.fgd)})
+            ids = [client.call("create_block", {"mins": low, "maxs": high, "material": TEXTURE})["id"] for low, high in ROOM]
+            floor = detail(client, [ids[0]])[0]
+            top = next(face for face in floor["faces"] if face["normal"] == [0, 0, 1])
+            client.call("edit_faces", {"faces": [face_ref(floor, top)], "material": MATERIAL})
+            for classname, origin, properties in [
+                ("info_player_terrorist", [-192, -176, 8], {}),
+                ("info_player_counterterrorist", [192, 176, 8], {}),
+                ("light", [0, 0, 180], {"_light": "255 255 255 180", "_constant_attn": "1", "_linear_attn": "0", "_quadratic_attn": "0"}),
+                ("logic_script", [0, -176, 64], {"targetname": "hammerr_detail_observer", "vscripts": "hammerr_detail_observer.nut", "thinkfunction": "HammeRRThink"}),
+            ]:
+                ids.append(client.call("create_entity", {"classname": classname, "origin": origin, "properties": properties})["id"])
+            set_world(client, "detailvbsp", DICTIONARY)
+            client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "none", "bounces": 0})
+            source = args.output / "detail-shapes.vmf"
+            client.call("save_map", {"path": str(source)})
+            authored = detail(client, ids)
+            saved = source.read_bytes()
+            client.call("open_map", {"path": str(source)})
+            require(detail(client, ids) == authored, "VMF reopen changed authored shape surfaces")
+            _, plain_data, plain_result = compile_pair(client, args.output, "plain-control", ids)
+            plain = detail_records(plain_data, allow_sprites=True, allow_baked=True, sprite_orientation=0)
+            require(len(plain["props"]) == plain_result["stats"]["detail_props"] > 0, "Plain control emitted no sprites")
+            variants = {}
+            reference = None
+            for name, (fields, kind, angle, size) in VARIANTS.items():
+                dictionary_path.write_text(dictionary(f"{FIELDS} {fields}"))
+                bsp, data, result = compile_pair(client, args.output, name, ids)
+                parsed = detail_records(data, allow_sprites=True, allow_baked=True, sprite_orientation=0, allow_shapes=True)
+                require(len(parsed["props"]) == result["stats"]["detail_props"] == len(plain["props"]), "Shape changed sample count")
+                require(parsed["models"] == [] and parsed["sprites"] == plain["sprites"] and len(parsed["sprites"]) == 1, "Shape changed sprite dictionary identity")
+                require(all(row["kind"] == kind and row["shape_angle"] == angle and row["shape_size"] == size and row["sway"] == 0 and row["scale"] == 1 for row in parsed["props"]), "Native shape fields differ")
+                identity = [(row["origin"], row["angles"], row["leaf"], row["sprite"]) for row in parsed["props"]]
+                require(identity == [(row["origin"], row["angles"], row["leaf"], row["sprite"]) for row in plain["props"]], "Shape changed placement identity")
+                colors = [row["lighting"] for row in parsed["props"]]
+                if reference is None:
+                    reference = colors
+                require(colors == reference, "Shape parameters changed SDK origin-based lighting")
+                for index, (before, after) in enumerate(zip(probe.bsp_lumps(plain_data), probe.bsp_lumps(data), strict=True)):
+                    if index != 35:
+                        require(before == after, f"Shape changed unrelated lump {index}")
+                _, repeated, _ = compile_pair(client, args.output, f"{name}-repeated", ids)
+                require(repeated == data, "Shape output is nondeterministic")
+                variants[name] = {"bsp": str(bsp), "bsp_sha256": probe.digest(data), "kind": kind, "shape_angle": angle, "shape_size": size, "count": len(parsed["props"]), "sprite_entries": len(parsed["sprites"])}
+            previous = args.output / "rejected.bsp"
+            previous.write_bytes(plain_data)
+            rejected = {}
+            for name, fields, expected in [
+                ("unknown-shape", "sprite_shape unknown", "cross or tri"),
+                ("cross-ignored-angle", "sprite_shape cross shape_angle 1", "ignores"),
+                ("cross-ignored-size", "sprite_shape cross shape_size 0.5", "ignores"),
+                ("fractional-angle", "sprite_shape tri shape_angle 0.5", "integer"),
+                ("oversized-angle", "sprite_shape tri shape_angle 256", "shape_angle"),
+                ("oversized-size", "sprite_shape tri shape_size 1.1", "shape_size"),
+                ("sway", "sprite_shape tri sway 0.1", "sway"),
+                ("scale", "sprite_shape tri spriterandomscale 0.1", "unit scale"),
+            ]:
+                dictionary_path.write_text(dictionary(f"{FIELDS} {fields}"))
+                before = state(client, ids, source)
+                response = client.call("compile_map", {"path": str(previous)}, error=True)
+                failure = json.loads(response["content"][0]["text"])
+                require(not failure["success"] and expected.lower() in json.dumps(failure["diagnostics"]).lower(), failure)
+                require(previous.read_bytes() == plain_data and state(client, ids, source) == before, "Shape failure changed source/history or previous output")
+                client.call("start_compile", {"path": str(previous)})
+                job = wait_job(client)
+                require(job["status"] == "failed" and previous.read_bytes() == plain_data and state(client, ids, source) == before, job)
+                rejected[name] = failure["diagnostics"]
+            dictionary_path.write_text(dictionary(FIELDS))
+            _, restored, _ = compile_pair(client, args.output, "plain-restored", ids)
+            require(restored == plain_data and source.read_bytes() == saved and detail(client, ids) == authored, "Shape controls changed plain output or saved source")
+            result = {"success": True, "variants": variants, "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "plain_bytes_preserved": True, "fixture_game": str(game), "native_exercised": False}
+            (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
+            return result
+    finally:
+        client.close()
+
+
+def native_capture(args, result, name, variant, default_avoidance=False):
+    output = args.output / f"native-{name}"
+    command = [sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),
+            "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--runtime",
+            "--runtime-bsp", variant["bsp"], "--fixture-game", result["fixture_game"], "--expected-count", str(variant["count"]),
+            "--expected-sprites", str(variant["count"]), "--sprite-orientation", "0", "--allow-shapes", "--baked-lighting",
+            "--view", "elevated", "--port", str(args.port)]
+    if default_avoidance:
+        command.append("--default-shape-avoidance")
+    subprocess.run(command, check=True, timeout=150)
+    report = json.loads((output / "results.json").read_text())
+    require(report["native_exercised"] and report["native"]["success"], report)
+    return report["native"]
+
+
+def native(args, result):
+    captures = {name: native_capture(args, result, name, variant) for name, variant in result["variants"].items()}
+    captures["cross-default-avoidance"] = native_capture(args, result, "cross-default-avoidance", result["variants"]["cross"], default_avoidance=True)
+    first = silhouette(args.output / "native-tri/runtime")
+    second = silhouette(args.output / "native-tri-fanned/runtime")
+    changed = sum(a != b for a, b in zip(first, second, strict=True))
+    require(changed > len(first) * 0.002, "Tri shape parameter silhouette control did not change")
+    return {"captures": captures, "tri_parameter_silhouette": {"different_pixels": changed, "flat_pixels": sum(first), "fanned_pixels": sum(second)}}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
+    parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
+    parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--port", type=int, default=27719)
+    args = parser.parse_args()
+    args.binary = args.binary.resolve(strict=True)
+    args.game_dir = args.game_dir.resolve(strict=True)
+    args.output = args.output.resolve()
+    require(not args.output.exists(), "Use a fresh absent output directory")
+    args.output.mkdir(parents=True, mode=0o700)
+    result = validate(args)
+    if args.runtime:
+        result.update({"native_exercised": True, "native": native(args, result)})
+        (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps({"success": True, "results": str(args.output / "results.json"), "native_exercised": result["native_exercised"]}))
+
+
+if __name__ == "__main__":
+    main()

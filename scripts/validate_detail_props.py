@@ -70,7 +70,7 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientation=2):
+def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientation=2, allow_styles=False, allow_shapes=False):
     offset, size = struct.unpack_from("<2i", data, 8 + 35 * 16)
     require(0 <= offset <= offset + size <= len(data) and size >= 4, "Invalid game-lump directory")
     count = struct.unpack_from("<i", data, offset)[0]
@@ -94,7 +94,7 @@ def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientat
     sprites = struct.unpack_from("<i", data, cursor)[0]
     cursor += 4
     require(0 <= sprites <= 4096 and cursor + sprites * 32 + 4 <= end, "Invalid detail sprite dictionary")
-    require(allow_sprites or sprites == 0, "Explicit model fixture unexpectedly emitted sprites")
+    require(allow_sprites or allow_shapes or sprites == 0, "Explicit model fixture unexpectedly emitted sprites")
     sprite_records = [list(struct.unpack_from("<8f", data, cursor + index * 32)) for index in range(sprites)]
     cursor += sprites * 32
     count = struct.unpack_from("<i", data, cursor)[0]
@@ -107,18 +107,54 @@ def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientat
         record = {"origin": list(row[:3]), "angles": list(row[3:6]), "leaf": row[7]}
         if allow_baked:
             record["lighting"] = [*row[8:11], row[11] if row[11] < 128 else row[11] - 256]
+        require(allow_styles or row[12:14] == (0, 0), "Unexpected detail light styles")
+        require(row[13] <= 63, "Detail receiver has too many native styles")
+        if allow_styles:
+            record.update({"light_styles": row[12], "light_style_count": row[13]})
         if row[21] == 0:
             require(row[6] < len(names), "Invalid detail model index")
-            require(row[12:25] == (0,) * 13 and row[25] == 1, "Unexpected model styles, orientation, padding or scale")
+            require(row[14:25] == (0,) * 11 and row[25] == 1, "Unexpected model orientation, padding or scale")
             record["model"] = names[row[6]]
         else:
-            require(allow_sprites and row[21] == 1 and row[6] < len(sprite_records), "Invalid detail sprite type or dictionary index")
-            require(row[12:17] == (0,) * 5 and row[17] == sprite_orientation and row[18:21] == (0,) * 3 and row[22:25] == (0,) * 3, "Unexpected sprite styles, sway, shape, orientation or padding")
+            require((allow_sprites or allow_shapes) and (row[21] == 1 or allow_shapes and row[21] in [2, 3]) and row[6] < len(sprite_records), "Invalid detail sprite type or dictionary index")
+            require(row[14] == 0 and (row[21] != 1 or row[15:17] == (0, 0)) and row[17] == sprite_orientation and row[18:21] == (0,) * 3 and row[22:25] == (0,) * 3, "Unexpected sprite sway, shape, orientation or padding")
             require(0 < row[25] <= 6, "Invalid detail sprite scale")
-            record.update({"kind": 1, "sprite": row[6], "scale": row[25], "orientation": row[17]})
+            record.update({"kind": row[21], "sprite": row[6], "scale": row[25], "orientation": row[17]})
+            if row[21] in [2, 3]:
+                record.update({"sway": row[14], "shape_angle": row[15], "shape_size": row[16]})
         props.append(record)
     require([row["leaf"] for row in props] == sorted(row["leaf"] for row in props), "Detail records are not sorted by leaf")
-    return {"models": names, "sprites": sprite_records, "props": props, "payload_sha256": hashlib.sha256(payload).hexdigest()}
+    result = {"models": names, "sprites": sprite_records, "props": props, "payload_sha256": hashlib.sha256(payload).hexdigest()}
+    if allow_styles:
+        arrays = []
+        for name in [b"dplt", b"dplh"]:
+            matches = [row for row in entries if row[0] == int.from_bytes(name, "big")]
+            require(len(matches) <= 1, "Duplicate detail style array")
+            if not matches:
+                arrays.append(None)
+                continue
+            row = matches[0]
+            start, size = row[3:]
+            require(row[1:3] == (0, 0) and 0 <= start <= start + size <= len(data) and size >= 4, "Invalid detail style array")
+            count = struct.unpack_from("<i", data, start)[0]
+            require(0 <= count <= 65536 and size == 4 + count * 5, "Invalid detail style count")
+            values = [list(struct.unpack_from("<3BbB", data, start + 4 + index * 5)) for index in range(count)]
+            require(all(1 <= value[4] <= 63 for value in values), "Invalid native detail style")
+            arrays.append(values)
+        require(sum(len(values or []) for values in arrays) <= 65536, "Detail styles exceed aggregate bounds")
+        if all(values is not None for values in arrays):
+            require([value[4] for value in arrays[0]] == [value[4] for value in arrays[1]], "Detail style channel layouts differ")
+        for prop in props:
+            start, count = prop["light_styles"], prop["light_style_count"]
+            if count:
+                require(arrays[0] is not None, "Styled details require LDR records")
+                for values in arrays:
+                    if values is not None:
+                        require(start + count <= len(values), "Detail style range exceeds native array")
+                        ids = [value[4] for value in values[start:start + count]]
+                        require(ids == sorted(set(ids)), "Detail receiver styles are not distinct/increasing")
+        result.update({"style_lighting_ldr": arrays[0], "style_lighting_hdr": arrays[1]})
+    return result
 
 
 def snapshot(client, ids):
@@ -137,6 +173,32 @@ def compile_pair(client, output, name, ids):
     require(job["status"] == "completed" and background.read_bytes() == data, job)
     require(snapshot(client, ids) == before, "Compiling changed source objects or Undo history")
     return path, data, result
+
+
+def validate_regions(client, output, ids, expected, source, saved):
+    draft = client.call("preview_compile_region", {"snapshot": client.call("get_compile_region")["snapshot"], "enabled": True, "mins": [-224, -224, 0], "maxs": [224, 96, 224]})
+    client.call("apply_compile_region", {"token": draft["draft"]["token"]})
+    outside = client.call("create_entity", {"classname": "detail_prop", "origin": [240, 0, 32], "properties": {"model": "models/hammerr_missing_detail.mdl", "modelscale": "2"}})["id"]
+    helper = client.call("create_entity", {"classname": "info_lighting", "origin": [240, 0, 64], "properties": {"targetname": "outside_detail_helper"}})["id"]
+    scoped_ids = [*ids, outside, helper]
+    path, data, result = compile_pair(client, output, "detail-region", scoped_ids)
+    parsed = detail_records(data, allow_baked=True)
+    actual = [{key: row[key] for key in ["origin", "angles", "model"]} for row in parsed["props"]]
+    require(sorted(actual, key=lambda row: row["origin"]) == sorted(expected[:2], key=lambda row: row["origin"]), parsed)
+    scope = result["stats"]["compile_region"]
+    require(outside in scope["omitted"] and helper in scope["included"], scope)
+    leaves = records(data, 10, "<ihh6h4HhH", expected_version=1)
+    require(all(leaves[row["leaf"]][0] & 1 == 0 for row in parsed["props"]), "Region detail origins need open leaves")
+    invalid = client.call("create_entity", {"classname": "prop_detail", "origin": [0, 0, 32], "properties": {"model": "models/hammerr_missing_detail.mdl"}})["id"]
+    before = snapshot(client, [*scoped_ids, invalid])
+    response = client.call("compile_map", {"path": str(path)}, error=True)
+    failure = json.loads(response["content"][0]["text"])
+    require(not failure["success"] and path.read_bytes() == data and snapshot(client, [*scoped_ids, invalid]) == before, "Invalid retained model changed region output or source/history")
+    client.call("start_compile", {"path": str(path)})
+    job = wait_job(client)
+    require(job["status"] == "failed" and path.read_bytes() == data and snapshot(client, [*scoped_ids, invalid]) == before, job)
+    require(source.read_bytes() == saved, "Region compilation modified saved source bytes")
+    return {"stats": result["stats"], "records": parsed, "bsp": str(path), "foreground_background_exact": True, "outside_invalid_omitted": True, "included_invalid_preserves_output": True, "source_history_preserved": True}
 
 
 def validate(args):
@@ -220,7 +282,8 @@ def validate(args):
                 client.call("undo")
                 require(detail(client, ids) == authored, "Undo failed to restore the fixture after a rejection")
             require(source.read_bytes() == saved and bsp.read_bytes() == data, "Rejection controls changed the published fixture")
-            report = {"success": True, "stats": result["stats"], "records": parsed, "empty_stats": empty_result["stats"], "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "hidden_invalid_omitted": True, "native_exercised": False, "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
+            region = validate_regions(client, args.output, ids, expected, source, saved) if args.regions else None
+            report = {"success": True, "stats": result["stats"], "records": parsed, "empty_stats": empty_result["stats"], "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "hidden_invalid_omitted": True, "native_exercised": False, "bsp": str(bsp), "bsp_sha256": probe.digest(data), "region": region}
             (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
             return bsp
     finally:
@@ -243,15 +306,26 @@ def worker(args):
     require(not os.environ.get("LD_PRELOAD"), "Native validation must not inherit LD_PRELOAD")
     require(os.environ.get("WAYLAND_DISPLAY") and os.environ.get("XDG_RUNTIME_DIR") == str(output / "wayland"), "Native view requires its private compositor")
     original = probe.read_bounded(args.bsp, probe.MAX_BSP_BYTES)
-    parsed = detail_records(original, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation)
+    parsed = detail_records(original, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation, allow_styles=args.allow_detail_styles, allow_shapes=args.allow_shapes)
     require(len(parsed["props"]) == args.expected_count, "Native input has an unexpected detail count")
-    require(sum(row.get("kind") == 1 for row in parsed["props"]) == args.expected_sprites, "Native input has an unexpected sprite count")
+    require(sum(row.get("kind", 0) in ([1, 2, 3] if args.allow_shapes else [1]) for row in parsed["props"]) == args.expected_sprites, "Native input has an unexpected sprite count")
     game = runtime.private_game(args.game_dir, output)
     if args.fixture_game is not None:
         shutil.copytree(args.fixture_game / "materials", game / "materials")
     staged = game / "maps/hammerr_detail_props.bsp"
     staged.write_bytes(original)
     observer = OBSERVER
+    if args.detail_style_state is not None:
+        observer = observer.replace('toggle r_drawdetailprops 1; help r_drawdetailprops', 'toggle r_drawdetailprops 1; help r_drawdetailprops; ent_fire hammerr_detail_keylight TurnOff')
+        action = "TurnOn" if args.detail_style_state == "on" else "TurnOff"
+        statement = f'''        local keylight = Entities.FindByName(null, "hammerr_detail_keylight");
+        if (keylight == null || keylight.GetClassname() != "light") {{ printl("HAMMERR_DETAIL_STYLE_MISSING"); return 0.25; }}
+        SendToConsole("ent_fire hammerr_detail_keylight {action}");
+        printl("HAMMERR_DETAIL_STYLE {args.detail_style_state}");
+'''
+        observer = observer.replace('        ready_at = Time() + 4.0;\n        stage = 2;', statement + '        ready_at = Time() + 4.0;\n        stage = 2;')
+    if args.allow_shapes and not args.default_shape_avoidance:
+        observer = observer.replace('toggle r_drawdetailprops 1; help r_drawdetailprops', 'toggle r_drawdetailprops 1; help r_drawdetailprops; cl_detail_avoid_force 0; cl_detail_avoid_radius 0; cl_detail_max_sway 0; help cl_detail_avoid_force; help cl_detail_avoid_radius; help cl_detail_max_sway')
     if args.view == "elevated":
         observer = observer.replace("0 -192 64", "0 -144 176").replace("10 90 0", "44 90 0").replace("Vector(0, -192, 64)", "Vector(0, -144, 176)")
     (game / "scripts/vscripts/hammerr_detail_observer.nut").write_text(private_observer(observer))
@@ -304,11 +378,17 @@ def worker(args):
             for name, expected in {"sv_lan": 1, "mat_hdr_level": 0, "mat_fullbright": 0, "r_drawdetailprops": 0}.items():
                 values = re.findall(r'"' + re.escape(name) + r'" = "([^"\n]+)"', text, re.IGNORECASE)
                 require(values and float(values[-1]) == expected, f"Native {name} control differs: {values}")
+            if args.detail_style_state is not None:
+                require(f"HAMMERR_DETAIL_STYLE {args.detail_style_state}" in text and "HAMMERR_DETAIL_STYLE_MISSING" not in text, "Native named-light style input was not exercised")
+            if args.allow_shapes and not args.default_shape_avoidance:
+                for name in ["cl_detail_avoid_force", "cl_detail_avoid_radius", "cl_detail_max_sway"]:
+                    values = re.findall(r'"' + name + r'" = "([^"\n]+)"', text)
+                    require(values and float(values[-1]) == 0, f"Shape analytic control differs: {name}: {values}")
             require(not re.search(r'(?:error|failed|not found|couldn.t)[^\n]*(?:\.mdl|detail prop)|Detail prop model[^\n]*using vertex-lit', text, re.IGNORECASE), "Engine reported a detail asset failure or substituted an error model")
             delta = frame_difference(ppm(output / "details-on.ppm"), ppm(output / "details-off.ppm"))
             require(delta["mean_component_difference"] > 0.5 and delta["changed_fraction"] > 0.002, f"No measurable detail model rendering: {delta}")
             require(staged.read_bytes() == original and args.bsp.read_bytes() == original, "Native validation changed the compiled BSP")
-            report.update({"success": True, "detail_pixels": delta, "unbaked_white_lighting": not args.baked_lighting, "elapsed_seconds": time.monotonic() - started})
+            report.update({"success": True, "detail_pixels": delta, "unbaked_white_lighting": not args.baked_lighting, "detail_style_state": args.detail_style_state, "shape_avoidance_zeroed": args.allow_shapes and not args.default_shape_avoidance, "elapsed_seconds": time.monotonic() - started})
     except BaseException as error:
         report["error"] = str(error)
         raise
@@ -336,6 +416,7 @@ def main():
     parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--regions", action="store_true", help="Validate explicit model details in sealed regions through private foreground/background MCP compiles")
     parser.add_argument("--runtime-bsp", type=Path, help="Render an existing checked detail BSP instead of creating the explicit fixture")
     parser.add_argument("--fixture-game", type=Path, help="Copy this private fixture's materials for an existing BSP")
     parser.add_argument("--expected-count", type=int, default=3)
@@ -343,6 +424,10 @@ def main():
     parser.add_argument("--baked-lighting", action="store_true", help="Permit actual compiler-baked detail base colors; the default requires white records")
     parser.add_argument("--sprite-orientation", type=int, choices=[0, 1, 2], default=2)
     parser.add_argument("--view", choices=["level", "elevated"], default="level")
+    parser.add_argument("--allow-detail-styles", action="store_true")
+    parser.add_argument("--detail-style-state", choices=["on", "off"])
+    parser.add_argument("--allow-shapes", action="store_true")
+    parser.add_argument("--default-shape-avoidance", action="store_true")
     parser.add_argument("--port", type=int, default=27689)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
@@ -353,6 +438,7 @@ def main():
     require(1024 <= args.port <= 65533, "Invalid native port")
     require(1 <= args.expected_count <= 16384, "Invalid expected detail count")
     require(0 <= args.expected_sprites <= args.expected_count, "Invalid expected sprite count")
+    require(args.detail_style_state is None or args.allow_detail_styles, "Style inputs require --allow-detail-styles")
     if args.worker:
         require(args.bsp is not None, "Private worker requires the compiled BSP")
         worker(args)
@@ -367,9 +453,9 @@ def main():
         require(args.runtime, "--runtime-bsp requires --runtime")
         bsp = args.runtime_bsp.resolve(strict=True)
         data = probe.read_bounded(bsp, probe.MAX_BSP_BYTES)
-        parsed = detail_records(data, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation)
+        parsed = detail_records(data, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation, allow_styles=args.allow_detail_styles, allow_shapes=args.allow_shapes)
         require(len(parsed["props"]) == args.expected_count, "Existing detail BSP count differs")
-        require(sum(row.get("kind") == 1 for row in parsed["props"]) == args.expected_sprites, "Existing detail BSP sprite count differs")
+        require(sum(row.get("kind", 0) in ([1, 2, 3] if args.allow_shapes else [1]) for row in parsed["props"]) == args.expected_sprites, "Existing detail BSP sprite count differs")
         report = {"success": True, "native_exercised": False, "records": parsed, "bsp": str(bsp), "bsp_sha256": probe.digest(data), "source_validation": "external BSP; authored source checks are not performed in this mode"}
         (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
     if args.runtime:
@@ -377,6 +463,14 @@ def main():
         command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--bsp", str(bsp), "--port", str(args.port), "--expected-count", str(args.expected_count), "--expected-sprites", str(args.expected_sprites), "--sprite-orientation", str(args.sprite_orientation), "--view", args.view]
         if args.baked_lighting:
             command.append("--baked-lighting")
+        if args.allow_detail_styles:
+            command.append("--allow-detail-styles")
+        if args.detail_style_state is not None:
+            command += ["--detail-style-state", args.detail_style_state]
+        if args.allow_shapes:
+            command.append("--allow-shapes")
+        if args.default_shape_avoidance:
+            command.append("--default-shape-avoidance")
         if args.fixture_game is not None:
             command += ["--fixture-game", str(args.fixture_game.resolve(strict=True))]
         runtime.private_compositor(command, output, timeout=110)

@@ -147,7 +147,7 @@ fn invalid_detail_models_preserve_previous_output_and_source() {
 }
 
 #[test]
-fn model_type_bounds_sprites_and_compile_regions_reject_without_silent_fallback() {
+fn model_type_bounds_and_sprites_reject_while_regions_retain_eligible_models() {
     let (directory, game) = game();
     let path = directory.path().join("models/props/test.mdl");
     let original = std::fs::read(&path).unwrap();
@@ -195,13 +195,8 @@ fn model_type_bounds_sprites_and_compile_regions_reject_without_silent_fallback(
     let mut source = document.vmf().clone();
     add(&mut source, "prop_detail", "0 0 16");
     let output = compiler::compile(&source, &game);
-    assert!(
-        output.report.diagnostics.iter().any(|diagnostic| diagnostic
-            .message
-            .contains("Compile regions do not support prop_detail")),
-        "{:?}",
-        output.report
-    );
+    assert!(output.bsp.is_some(), "{:?}", output.report);
+    assert_eq!(output.stats.detail_props, 1);
 }
 
 #[test]

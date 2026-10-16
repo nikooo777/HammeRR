@@ -7,6 +7,120 @@ use source_formats::{
 use crate::test_common as common;
 
 #[test]
+fn detail_model_origins_use_inclusive_regions_and_preserve_authored_records() {
+    let (_directory, game, mut source) = fixture();
+    let mut retained = Vec::new();
+    let mut omitted = Vec::new();
+    for (class, position, hidden, included) in [
+        ("prop_detail", Some("1.25 2.5 64"), false, true),
+        ("detail_prop", Some("-128 -128 0"), false, true),
+        ("PROP_DETAIL", Some("128 128 256"), false, true),
+        ("detail_prop", Some("128.001 0 64"), false, false),
+        ("prop_detail", None, false, true),
+        ("prop_detail", Some("NaN 0 0"), true, false),
+    ] {
+        let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
+        let mut entity = Entity::new(id, class);
+        if let Some(position) = position {
+            entity.properties.set("origin", position);
+        }
+        entity.properties.set("model", "models/retained-exact.mdl");
+        entity.extra.push(Node::block(
+            "custom",
+            vec![Node::string("keep", "original")],
+        ));
+        entity.hidden = hidden;
+        source.entities.push(entity.clone());
+        if included {
+            retained.push(entity);
+        } else {
+            omitted.push(id);
+        }
+    }
+    let before = source.clone();
+    let prepared = prepare(&source, &game, &mut Report::default(), &Control::default()).unwrap();
+    let summary = prepared.region.as_ref().unwrap();
+    for entity in retained {
+        assert_eq!(
+            prepared
+                .vmf
+                .entities
+                .iter()
+                .find(|copy| copy.id == entity.id),
+            Some(&entity)
+        );
+        assert!(summary.included.contains(&format!("entity:{}", entity.id)));
+    }
+    for id in omitted {
+        assert!(!prepared.vmf.entities.iter().any(|entity| entity.id == id));
+        assert!(summary.omitted.contains(&format!("entity:{id}")));
+    }
+    assert_eq!(source, before);
+    let mut document = Document::new(source);
+    document
+        .edit("exclude implicit zero", |tx| {
+            compile_region::apply(
+                tx,
+                Some(compile_region::Definition {
+                    enabled: true,
+                    bounds: compile_region::Bounds {
+                        mins: DVec3::splat(16.0),
+                        maxs: DVec3::splat(128.0),
+                    },
+                }),
+            )
+        })
+        .unwrap();
+    let prepared = prepare(
+        document.vmf(),
+        &game,
+        &mut Report::default(),
+        &Control::default(),
+    )
+    .unwrap();
+    assert!(
+        !prepared
+            .vmf
+            .entities
+            .iter()
+            .any(
+                |entity| entity.properties.get("model") == Some("models/retained-exact.mdl")
+                    && entity.properties.get("origin").is_none()
+            )
+    );
+}
+
+#[test]
+fn detail_region_selection_rejects_invalid_origins_and_explicit_sprites() {
+    let (_directory, game, source) = fixture();
+    for (class, origin) in [
+        ("prop_detail", "NaN 0 0"),
+        ("detail_prop", "invalid"),
+        ("prop_detail", "70000 0 0"),
+        ("prop_detail_sprite", "400 0 64"),
+    ] {
+        let mut source = source.clone();
+        let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
+        let mut entity = Entity::new(id, class);
+        entity.properties.set("origin", origin);
+        source.entities.push(entity);
+        let before = source.clone();
+        let error = prepare(&source, &game, &mut Report::default(), &Control::default())
+            .err()
+            .unwrap();
+        assert!(
+            error.contains(if class == "prop_detail_sprite" {
+                "do not support"
+            } else {
+                "valid finite origin"
+            }),
+            "{error}"
+        );
+        assert_eq!(source, before);
+    }
+}
+
+#[test]
 fn disjoint_fixed_helpers_preserve_invalid_origin_errors() {
     let (_directory, game, source) = fixture();
     for classname in ["func_occluder", "func_areaportal", "func_areaportalwindow"] {

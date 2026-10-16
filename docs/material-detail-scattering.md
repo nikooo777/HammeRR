@@ -117,6 +117,34 @@ for these orientations. Vertical billboards retain Gaussian random scaling.
 Fixed cards check their rotated four corners against compile coordinates;
 full billboards check a conservative sphere covering every camera direction.
 
+Static procedural shapes reuse the same atlas rectangle and size:
+
+```text
+sprite "0 0 128 128 512"
+spritesize "0.5 0 40 45"
+sprite_shape tri
+shape_angle 35
+shape_size 0.5
+detailOrientation 0
+upright 1
+```
+
+`sprite_shape cross` produces two intersecting cards, drawn as four radial
+half-cards. `sprite_shape tri` produces three cards, spaced 120 degrees apart.
+Tri `shape_angle` is an integer from 0 to 255 degrees that fans each card;
+`shape_size` ranges from zero to one and offsets each card by that fraction
+of its full width. The compiler stores size as a truncated byte: `0.5` becomes
+127, and the client decodes it as 127/255. Cross shapes require omitted or zero
+angle and size, since the client ignores those parameters. Cross geometry
+centers its horizontal branches regardless of the horizontal anchor; vertical
+anchors still apply.
+
+Shapes require fixed `detailOrientation 0`, unit scale and omitted or zero
+`sway`. Their checked bounds cover every static quad using the stored angles
+and decoded shape parameters. The compiler does not author sway or player
+avoidance controls. Client-wide avoidance settings can move native shape
+vertices at runtime; those movements are outside these static bounds.
+
 Sprites share one atlas: **World settings…** → **Detail material file**
 (`detailmaterial`), or installed `detail/detailsprites` when left empty. A custom
 atlas must be mounted game content with a complete static square VTF, at most
@@ -130,23 +158,24 @@ change `detailvbsp` and `detailmaterial` through the world property draft, then 
 `start_compile`. No separate scatter objects or authoring operation are needed.
 
 **Fullbright** keeps white unbaked detail colors. **Direct LDR** bakes each model
-and sprite's static direct light and spherical ambient from the final filtered
+and sprite's direct light and spherical ambient from the final filtered
 world/terrain lightmaps and sky. Configured diffuse bounces contribute through
 those maps. **Direct LDR + HDR** leaves the HDR pass's color in the single shared
 detail base-color field, following Valve VRAD's LDR-then-HDR order. The native
 format does not provide separate LDR and HDR base colors. Placement and leaf
 assignment stay unchanged across these lighting modes.
 
-
 ![Material-generated vertical billboard sprites in CS:S](images/detail-sprites.png)
+
+![Fanned tri detail shapes in CS:S](images/detail-shapes.png)
 
 ![Material-generated detail models in CS:S](images/material-detail-scattering.png)
 
 ![Foliage generated on displaced terrain using its blend alpha](images/terrain-detail-scattering.png)
 
-Limits: model and plain sprite detail types on world and `func_detail` surfaces. Terrain
+Limits: model and sprite detail types on world and `func_detail` surfaces. Terrain
 requires a parallelogram base quad, including rectangles and sheared or sloped
-parallelograms; skewed base quads reject. Shaped sprites, sway, explicit
+parallelograms; skewed base quads reject. Nonzero sway, explicit
 `prop_detail_sprite` entities, runtime brush models, non-integer or unsupported sprite orientations
 and fluid surfaces reject. Selected groups must contain supported
 entries and finite values; an unsupported selected group rejects the
@@ -162,20 +191,36 @@ construction and sampling share a four-million-step work limit. Samples use a
 small outward probe inset from face boundaries to choose an open visible BSP
 leaf while the stored origin stays on its surface.
 
+Lighting samples use each model's rotated hull midpoint, each plain sprite's
+scaled anchor midpoint, or a cross/tri shape's stored origin, with the stored
+local-up normal. Shape angle and size do not move that lighting receiver.
+The receiver must remain in open visible world space. Animated and named switchable light styles also reach
+detail objects. Use the light's existing **Appearance**, name and
+**Initially dark** controls, then rebuild. Style extras use Valve VRAD's native
+0.5 encoding factor; an equivalent static and named light can look different.
+The engine's current light-style pattern controls their runtime brightness.
 
-Lighting samples use each model's rotated hull midpoint or each sprite's scaled
-anchor midpoint, with its stored local-up normal. The midpoint must remain in
-open visible world space. A nonzero animated or switchable light contribution
-at a detail receiver rejects the build atomically; unrelated distant, blocked
-or zero-valued styles remain usable. Detail light-style records, named lighting
-origins and authored render tint remain unfinished. Detail objects do not cast
-new baked shadows.
+Each receiver supports styles 1–63 with up to 63 extras. The LDR and HDR arrays
+use one shared per-object style list, with zero entries where only the other
+channel contributes. Their combined limit is 65,536 records; exceeding it
+rejects the complete build before replacing the previous BSP. Tiny styled
+sprites whose scale would become zero in the native half-float renderer also
+reject. Colors must remain finite when all authored style patterns reach their
+maximum `z` brightness. Fullbright and maps without extra contributions emit no
+style arrays.
+Named lighting origins and authored render tint remain unfinished. Detail
+objects do not cast new baked shadows.
+
+Explicit model detail props are selected for a compile region by their authored
+origin, including the box boundary; an absent origin means world zero. Outside
+or hidden sources are omitted. Retained props still need valid assets, bounds,
+open leaves and lighting receivers, and their geometry can extend past the box.
+A boundary origin may fail the usual open-leaf check; it is never nudged inward.
 
 Compile regions scatter only on the retained, clipped exposed surfaces. Region
 clipping changes the count and seed; the source brush stays whole. Generated
 origins stay inside the region and their open leaves, but model and sprite geometry can
-extend past the boundary. Explicit `prop_detail` entities still require full-map
-builds. Terrain must stay wholly inside the region, including its complete
+extend past the boundary. Terrain must stay wholly inside the region, including its complete
 base and displaced grid; crossing terrain rejects rather than being clipped.
 
 Groups may be empty, including the alpha-zero groups in installed model detail

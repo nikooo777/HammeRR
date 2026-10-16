@@ -790,7 +790,7 @@ fn terrain_alpha_endpoints_and_empty_groups_never_fall_back_to_another_group() {
 fn unused_unsupported_alpha_groups_do_not_reject_flat_or_terrain_endpoint_selections() {
     let mut fixture = fixture();
     std::fs::write(fixture.directory.path().join("detail.vbsp"),
-        "detail { tufts { density 8192 low { alpha 0 sprite { sprite \"0 0 128 128 512\" sprite_shape cross } } high { alpha 1 } } }").unwrap();
+        "detail { tufts { density 8192 low { alpha 0 sprite { sprite \"0 0 128 128 512\" sprite_shape unknown } } high { alpha 1 } } }").unwrap();
     let flat = compiled(&fixture.source, &fixture.game);
     assert_eq!(flat.stats.detail_props, 0);
     assert_eq!(flat.stats.detail_prop_models, 0);

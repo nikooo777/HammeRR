@@ -1,7 +1,11 @@
 use glam::{DQuat, DVec3, EulerRot};
-use source_formats::{bsp::DetailSprite, keyvalues::Node};
+use source_formats::{
+    bsp::{DetailProp, DetailSprite},
+    keyvalues::Node,
+};
 
 use super::scatter::{number, value};
+use super::shapes::Shape;
 use crate::map::MAX_COMPILE_COORD;
 
 pub(super) const KIND: u8 = 1;
@@ -12,6 +16,7 @@ pub(super) struct Definition {
     pub record: DetailSprite,
     pub random_scale: f64,
     pub orientation: u8,
+    pub shape: Option<Shape>,
 }
 
 fn vector<const N: usize>(raw: &str, name: &str) -> Result<[f32; N], String> {
@@ -40,6 +45,13 @@ impl Definition {
         }
         let orientation = orientation as u8;
         let random_scale = number(nodes, "spriterandomscale", 0.0, 0.0, 1.0)?;
+        if number(nodes, "sway", 0.0, 0.0, 1.0)? != 0.0 {
+            return Err("Detail sprite sway is unsupported".into());
+        }
+        let shape = Shape::parse(nodes)?;
+        if shape.is_some() && (orientation != 0 || random_scale != 0.0) {
+            return Err("Detail sprite shapes require detailOrientation=0 and unit scale".into());
+        }
         if orientation != VERTICAL && random_scale != 0.0 {
             return Err("Fixed and full billboard sprites require spriterandomscale=0 (unit scale); the native older sprite path quantizes scale to half precision".into());
         }
@@ -78,11 +90,16 @@ impl Definition {
             texture_upper_left: [(x + 0.5) / total, (y + 0.5) / total],
             texture_lower_right: [(x + width - 0.5) / total, (y + height - 0.5) / total],
         };
-        check_bounds(record, DVec3::ZERO, DVec3::ZERO, orientation, 1.0)?;
+        if let Some(shape) = shape {
+            shape.check_bounds(record, DVec3::ZERO, DVec3::ZERO)?;
+        } else {
+            check_bounds(record, DVec3::ZERO, DVec3::ZERO, orientation, 1.0)?;
+        }
         Ok(Self {
             record,
             random_scale,
             orientation,
+            shape,
         })
     }
 }
@@ -107,6 +124,34 @@ pub(super) fn check_bounds(
     orientation: u8,
     scale: f32,
 ) -> Result<(), String> {
+    check_geometry(sprite, scale)?;
+    if !angles.is_finite() || orientation > VERTICAL {
+        return Err("Detail sprite orientation and angles are invalid".into());
+    }
+    if orientation != VERTICAL && scale != 1.0 {
+        return Err("Fixed and full billboard sprites require unit native scale".into());
+    }
+    check_orientation_bounds(sprite, origin, angles, orientation, scale)
+}
+
+pub(super) fn check_prop_bounds(sprite: DetailSprite, prop: &DetailProp) -> Result<(), String> {
+    let origin = DVec3::from_array(prop.origin.map(f64::from));
+    let angles = DVec3::from_array(prop.angles.map(f64::from));
+    match prop.kind {
+        KIND => check_bounds(sprite, origin, angles, prop.orientation, prop.scale),
+        2 | 3 if prop.orientation == 0 && prop.scale == 1.0 && prop.sway == 0 => Shape {
+            kind: prop.kind,
+            angle: prop.shape_angle,
+            size: prop.shape_size,
+        }
+        .check_bounds(sprite, origin, angles),
+        _ => {
+            Err("Detail sprite shape requires fixed orientation and unit scale without sway".into())
+        }
+    }
+}
+
+pub(super) fn check_geometry(sprite: DetailSprite, scale: f32) -> Result<(), String> {
     let values = [
         sprite.upper_left,
         sprite.lower_right,
@@ -116,8 +161,6 @@ pub(super) fn check_bounds(
     if values.into_iter().flatten().any(|value| !value.is_finite())
         || !scale.is_finite()
         || scale <= 0.0
-        || !angles.is_finite()
-        || orientation > VERTICAL
         || sprite.upper_left[0] >= sprite.lower_right[0]
         || sprite.upper_left[1] <= sprite.lower_right[1]
     {
@@ -126,9 +169,16 @@ pub(super) fn check_bounds(
                 .into(),
         );
     }
-    if orientation != VERTICAL && scale != 1.0 {
-        return Err("Fixed and full billboard sprites require unit native scale".into());
-    }
+    Ok(())
+}
+
+fn check_orientation_bounds(
+    sprite: DetailSprite,
+    origin: DVec3,
+    angles: DVec3,
+    orientation: u8,
+    scale: f32,
+) -> Result<(), String> {
     if orientation == 0 {
         let radians = angles.map(f64::to_radians);
         let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);

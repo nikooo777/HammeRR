@@ -16,13 +16,7 @@ const MAX_SIDES: usize = 65_536;
 const MAX_SIDES_PER_BRUSH: usize = 128;
 const SHELL_MATERIAL: &str = "tools/toolsblack";
 const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
-const UNSUPPORTED: &[&str] = &[
-    "func_instance",
-    "func_viscluster",
-    "prop_detail",
-    "detail_prop",
-    "prop_detail_sprite",
-];
+const UNSUPPORTED: &[&str] = &["func_instance", "func_viscluster", "prop_detail_sprite"];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RegionSummary {
@@ -239,6 +233,15 @@ pub(super) fn prepare<'a>(
             continue;
         }
         let point = origin(entity)?;
+        if ["prop_detail", "detail_prop"]
+            .iter()
+            .any(|name| classname.eq_ignore_ascii_case(name))
+        {
+            if bounds.contains(point.unwrap_or(DVec3::ZERO)) {
+                entities.insert(entity.id, None);
+            }
+            continue;
+        }
         if ["func_occluder", "func_areaportal", "func_areaportalwindow"]
             .iter()
             .any(|name| classname.eq_ignore_ascii_case(name))

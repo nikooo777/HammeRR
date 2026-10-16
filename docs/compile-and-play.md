@@ -164,15 +164,19 @@ With **Direct LDR** or **Direct LDR + HDR**:
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
 
 [Explicit detail models](model-detail-props.md) and [material-generated models and
-sprites](material-detail-scattering.md) receive static direct light plus filtered
+sprites](material-detail-scattering.md) receive direct light plus filtered
 world/terrain/sky ambient, including configured bounces through the lightmaps.
-**Fullbright** retains their white unbaked base colors. Detail objects do not add
-baked shadows or collision. A nonzero animated or switchable contribution at a
-detail receiver rejects the build; unrelated styles remain usable.
+Styles 1–63 are stored as extras alongside the static base and follow the same
+named-light switches and appearances. SDK encoding halves each extra's color;
+the client applies its current style value without a restoring factor of two,
+so switched detail lighting need not match static-base intensity. Each receiver
+allows 63 extras; LDR and HDR arrays together allow 65,536 records.
+**Fullbright** retains white unbaked base colors without extras. Detail objects
+do not add baked shadows or collision.
 
 #### HDR channels
 
-**Direct LDR + HDR** keeps face lightmaps, light styles, world lights, reflected light and model-ambient probes separate for the two channels. CS:S selects the baked channel according to its HDR setting and hardware support. The editor viewport continues to show its existing preview lighting. Detail model and sprite base colors use one shared native field; in a dual-channel build it retains the final HDR pass's color rather than separate LDR/HDR detail values.
+**Direct LDR + HDR** keeps face lightmaps, light styles, world lights, reflected light and model-ambient probes separate for the two channels. CS:S selects the baked channel according to its HDR setting and hardware support. The editor viewport continues to show its existing preview lighting. Detail model and sprite base colors use one shared native field; in a dual-channel build it retains the final HDR pass's color rather than separate LDR/HDR detail values. Their style extras remain separate LDR/HDR arrays with a shared sorted style layout; a style absent from one channel receives zero color there. The combined record limit allows at most 32,768 entries per channel.
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR + HDR**.
 2. Set **Indirect light**, **Brush smoothing angle** and **Sampling quality**. These settings apply to both channels. Existing **Fast preview** and **Final lighting** recipes keep their original settings; use **Save current as new** to retain a custom HDR recipe.
@@ -209,7 +213,7 @@ Limits: direct point/spot styles and sun/sky lighting at the authored pose, with
 | --- | --- |
 | ![The shadowed brush model while its light group is off](images/styled-bounce-off.png) | ![The same model receiving its switched reflected light](images/styled-bounce-on.png) |
 
-Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct and reflected world/detail/terrain and brush-model lightmaps. Reflections can introduce a style on a face beyond its direct reach, and still count toward the four-style limit. Switching model-ambient cubes, sun/sky styles and baked prop lightmaps remain unfinished. The common lighting allocation/work limits apply.
+Limits: at most 32 named light groups and four contributing styles per face, including the always-present Normal channel. Named style IDs are assigned only in compiled output; VMF properties and undo history stay fixed. Authored appearance values must be whole numbers from 0 to 31, and custom patterns use at most 64 letters. Unnamed lights can use built-in appearances; custom patterns and **Initially dark** need a name. Hidden lights are excluded. Styled lights receive direct and reflected world/detail/terrain and brush-model lightmaps, plus detail model/sprite extras within their separate receiver and record limits above. Reflections can introduce a style on a face beyond its direct reach, and still count toward the four-style limit. Switching model-ambient cubes, sun/sky styles and baked prop lightmaps remain unfinished. The common lighting allocation/work limits apply.
 
 #### Bounced light
 

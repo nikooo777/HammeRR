@@ -1,5 +1,83 @@
 use super::*;
 
+#[test]
+fn checked_detail_style_writer_is_atomic_and_preserves_native_five_byte_layout() {
+    let mut bsp = Bsp::new();
+    bsp.set_records(&[Leaf::default(); 4]);
+    let mut props = fixture();
+    props.props[0].light_style_count = 2;
+    let ldr = [
+        DetailPropLighting {
+            style: 1,
+            lighting: RgbExp32 {
+                rgb: [60, 0, 0],
+                exponent: 0,
+            },
+        },
+        DetailPropLighting {
+            style: 32,
+            ..Default::default()
+        },
+    ];
+    let hdr = [
+        DetailPropLighting {
+            style: 1,
+            ..Default::default()
+        },
+        DetailPropLighting {
+            style: 32,
+            lighting: RgbExp32 {
+                rgb: [0, 0, 40],
+                exponent: 0,
+            },
+        },
+    ];
+    bsp.set_detail_props_with_lighting(&props, &ldr, Some(&hdr))
+        .unwrap();
+    assert_eq!(bsp.game_lump(*b"dplt").unwrap().data.len(), 14);
+    assert_eq!(bsp.game_lump(*b"dplh").unwrap().version, 0);
+    let parsed = Bsp::parse(&bsp.to_bytes()).unwrap();
+    assert_eq!(parsed.detail_props().unwrap().unwrap(), props);
+    assert_eq!(parsed.detail_prop_lighting(false).unwrap().unwrap(), ldr);
+    assert_eq!(parsed.detail_prop_lighting(true).unwrap().unwrap(), hdr);
+    let before = bsp.to_bytes();
+    let wrong = [hdr[1], hdr[0]];
+    assert!(
+        bsp.set_detail_props_with_lighting(&props, &ldr, Some(&wrong))
+            .is_err()
+    );
+    assert!(
+        bsp.set_detail_props_with_lighting(&props, &wrong, Some(&wrong))
+            .is_err()
+    );
+    let mut bad = props.clone();
+    bad.props[0].light_style_count = 64;
+    assert!(
+        bsp.set_detail_props_with_lighting(&bad, &ldr, Some(&hdr))
+            .is_err()
+    );
+    bad = props.clone();
+    bad.props[0].light_styles = 2;
+    assert!(
+        bsp.set_detail_props_with_lighting(&bad, &ldr, Some(&hdr))
+            .is_err()
+    );
+    let too_many = vec![ldr[0]; MAX_DETAIL_PROP_LIGHTING / 2 + 1];
+    for style in [0, 64] {
+        let mut invalid = ldr;
+        invalid[0].style = style;
+        assert!(
+            bsp.set_detail_props_with_lighting(&props, &invalid, None)
+                .is_err()
+        );
+    }
+    assert!(
+        bsp.set_detail_props_with_lighting(&props, &too_many, Some(&too_many))
+            .is_err()
+    );
+    assert_eq!(bsp.to_bytes(), before);
+}
+
 fn fixture() -> DetailProps {
     DetailProps {
         models: vec![DetailProps::model_record("models/props/test.mdl").unwrap()],

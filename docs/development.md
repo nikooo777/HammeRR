@@ -212,7 +212,9 @@ python3 -B scripts/validate_terrain_creation.py --output /tmp/hammerr-terrain-cr
 ```sh
 cargo test -p source-formats --lib bsp::detail_props::tests
 cargo test -p compiler --test detail_props
+cargo test -p compiler --test region_detail_models
 python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-check
+python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-regions-check --regions
 python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-native-check --runtime
 python3 -B scripts/validate_material_details.py --output /tmp/hammerr-material-details-check --runtime
 ```
@@ -223,6 +225,14 @@ overrides, saved source and history, and identical foreground/background output.
 private installed-engine launch, with read-only source assets and configuration
 preservation. It needs the installed CS:S game, SDK FGD, running Steam and private
 compositor dependencies. Override `--game-dir`, `--fgd` or `--port` as needed.
+
+`--regions` checks explicit model detail inclusion, outside omission, retained
+outside lighting helpers and unchanged retained records. It compares
+foreground/background builds and rejected-input publication guards without a
+native launch. Compiler regressions cover inclusive bounds, the implicit zero
+origin, hidden omission and the normal asset, renderability, bounds, open-leaf
+and lighting-receiver checks. Selected origins on sealing boundaries are not
+nudged into open space.
 
 `--runtime-bsp <path> --runtime --expected-count <n>` reuses this native check for
 an already checked BSP containing the same observer entity; `--fixture-game`
@@ -1115,14 +1125,19 @@ existing flat artifacts can be compared byte-for-byte after compiler changes.
 Runtime isolation, preservation and cleanup use the same policy as other private
 CS:S validators, including `-insecure`, `-default` and pre/post-map `sv_lan 1`.
 
-### Detail sprites, orientations and baked colors
+### Detail sprites, shapes and light styles
 
 ```sh
 cargo test -p compiler --test detail_sprites --test detail_lighting
+cargo test -p source-formats detail_props
 python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-sprites-check
 python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-orientations-native --runtime --orientation-views
+python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-shapes-check
+python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-shapes-native --runtime
 python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-check
 python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-native --runtime
+python3 -B scripts/validate_detail_light_styles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-light-styles-check
+python3 -B scripts/validate_detail_light_styles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-light-styles-native --runtime
 ```
 
 `validate_detail_sprites` checks native atlas UVs and anchors, deterministic
@@ -1134,18 +1149,35 @@ orientation `2` retains vertical billboarding and absolute Gaussian scale.
 for orientations 0 and 1 from level and elevated cameras in four private
 Cage/VScript observations.
 
+`validate_detail_shapes` checks fixed cross, tri and fanned-tri records against
+the plain-sprite control, including encoded angle/size bytes, actual quad
+bounds, deterministic placement, unchanged sprite dictionary, source/history
+preservation and rejected shape/sway combinations. `--runtime` compares
+detail ON/OFF captures and the tri-parameter silhouettes.
+
 `validate_detail_lighting` compares bright, dim and colored static lights for
 explicit models and generated sprites, without changing placement. It checks
 Fullbright's white base colors, Direct LDR's baked colors, the final HDR shared
-base under Direct LDR + HDR, and atomic contributing-style rejection through
-both foreground and background builds. `--runtime` additionally checks separate
-model and sprite foreground color masks against detail-disabled backgrounds.
-Nonzero styled contributions reject; unrelated styles are not blanket-blocked.
-Detail shadows, shaped/swaying sprites and explicit sprite entities remain
-unsupported.
+base under Direct LDR + HDR, and exact foreground/background builds.
+`--runtime` additionally checks separate model and sprite foreground color masks
+against detail-disabled backgrounds.
 
-Both validators need fresh output directories and installed CS:S/FGD assets.
+`validate_detail_light_styles` checks named-light extras, unchanged placement,
+sorted matching LDR/HDR style layouts, authored channel colors, Fullbright
+without style arrays, strict reader opt-ins and source/history preservation.
+`--runtime` observes one unchanged BSP with its named light on, off and restored;
+separate model and sprite masks subtract detail-disabled backgrounds. These
+controls check native response, without assuming SDK half-color extras restore
+static-base intensity. Compiler and source-format tests cover record caps,
+missing-channel zero fill, malformed ranges/layouts and atomic rejection.
+Detail shadows, sway and explicit sprite entities remain unsupported.
+
+All four validators need fresh output directories and installed CS:S/FGD assets.
 Native modes retain the shared private-launch, source/configuration preservation
 and cleanup policy, including `-insecure` and pre/post-map `sv_lan 1`.
 The existing detail observer also accepts `--sprite-orientation 0|1|2` and
-`--view level|elevated` for prepared private sprite fixtures.
+`--view level|elevated` for prepared private sprite fixtures. `--allow-shapes`
+admits fixed cross/tri records; `--allow-detail-styles` and
+`--detail-style-state on|off` admit and control styled fixtures. Default readers
+remain strict about white, unstyled plain-sprite/model records unless the
+corresponding baked-color, shape and style options are selected.

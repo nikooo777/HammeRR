@@ -221,6 +221,81 @@ fn fixed_and_full_billboards_preserve_sampling_dictionary_and_native_records() {
 }
 
 #[test]
+fn static_shapes_reuse_sprite_dictionary_and_preserve_native_parameter_bytes() {
+    let fixture = fixture();
+    let plain = details(&fixture);
+    let fixed = SPRITE.replace("detailOrientation 2", "detailOrientation 0");
+    for (shape, angle, size, kind, encoded) in [
+        ("cross", 0, "0", 2, 0),
+        ("tri", 35, "0.5", 3, 127),
+        ("tri", 255, "1", 3, 255),
+    ] {
+        dictionary(
+            &fixture,
+            64,
+            &format!("{fixed} sprite_shape {shape} shape_angle {angle} shape_size {size} sway 0"),
+        );
+        let rows = details(&fixture);
+        assert_eq!(rows.sprites, plain.sprites);
+        assert_eq!(rows.props.len(), plain.props.len());
+        for (mut prop, expected) in rows.props.into_iter().zip(&plain.props) {
+            assert_eq!(
+                (
+                    prop.kind,
+                    prop.orientation,
+                    prop.shape_angle,
+                    prop.shape_size,
+                    prop.sway,
+                    prop.scale
+                ),
+                (kind, 0, angle, encoded, 0, 1.0)
+            );
+            prop.kind = 1;
+            prop.orientation = 2;
+            prop.shape_angle = 0;
+            prop.shape_size = 0;
+            assert_eq!(&prop, expected);
+        }
+        assert_eq!(compiled(&fixture).to_bytes(), compiled(&fixture).to_bytes());
+    }
+    for (extra, expected) in [
+        ("sprite_shape unknown", "cross or tri"),
+        ("sprite_shape cross shape_angle 1", "ignores"),
+        ("sprite_shape cross shape_size 0.1", "ignores"),
+        ("sprite_shape tri shape_angle 0.5", "integer"),
+        ("sprite_shape tri shape_angle 256", "shape_angle"),
+        ("sprite_shape tri shape_size -0.1", "shape_size"),
+        ("sprite_shape tri shape_size NaN", "shape_size"),
+        ("sprite_shape tri sway 0.1", "sway"),
+        ("sprite_shape tri spriterandomscale 0.1", "unit scale"),
+    ] {
+        dictionary(&fixture, 64, &format!("{fixed} {extra}"));
+        rejected(&fixture, expected);
+    }
+    dictionary(&fixture, 64, &format!("{SPRITE} sprite_shape tri"));
+    rejected(&fixture, "detailOrientation=0");
+    for shape in ["cross", "tri"] {
+        dictionary(
+            &fixture,
+            64,
+            &format!(
+                "{} sprite_shape {shape}",
+                fixed.replace("16 32", "65536 32")
+            ),
+        );
+        rejected(&fixture, "shape bounds");
+    }
+    std::fs::write(fixture.directory.path().join("detail.vbsp"), format!("detail {{ tufts {{ density 512 group {{ first {{ {fixed} sprite_shape cross }} second {{ {fixed} sprite_shape tri }} }} }} }}")).unwrap();
+    let mixed = details(&fixture);
+    assert_eq!(mixed.sprites.len(), 1);
+    assert!(mixed.props.iter().any(|prop| prop.kind == 2));
+    assert!(mixed.props.iter().any(|prop| prop.kind == 3));
+    assert!(mixed.props.iter().all(|prop| prop.model == 0));
+    dictionary(&fixture, 64, SPRITE);
+    assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
+}
+
+#[test]
 fn gaussian_scaling_preserves_sampling_and_sprite_dictionary_deduplication() {
     let fixture = fixture();
     dictionary(&fixture, 512, SPRITE);

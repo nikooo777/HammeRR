@@ -307,7 +307,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Material detail scattering |
 | --- |
 | ![Material-generated foliage on displaced terrain in Counter-Strike: Source](docs/images/terrain-detail-scattering.png) |
-| Generate decorative models and sprites from brush and terrain materials, with terrain blend alpha and baked lighting. |
+| Generate decorative models, billboards and fixed cross/tri foliage from brush and terrain materials, with blend alpha and baked lighting. |
 
 [Material detail scattering →](docs/material-detail-scattering.md)
 

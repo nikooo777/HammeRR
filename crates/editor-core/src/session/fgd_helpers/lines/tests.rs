@@ -76,7 +76,7 @@ fn line_geometry_color_preview_and_inspector_share_one_read_only_path() {
         session
             .preview_transform(
                 actor,
-                &[ObjectId::Entity(target)],
+                &[ObjectId::Entity(source), ObjectId::Entity(target)],
                 Transform {
                     translation: DVec3::new(16.0, 24.0, 32.0),
                     ..Default::default()
@@ -85,13 +85,30 @@ fn line_geometry_color_preview_and_inspector_share_one_read_only_path() {
             )
             .unwrap();
         let preview = session.entity_helper_report(source).unwrap();
+        assert!(preview.lines.iter().all(|line| line.displayed));
+        assert_eq!(
+            preview.lines[0].endpoints[0].position,
+            Some([16.0, 24.0, 32.0])
+        );
         assert_eq!(
             preview.lines[0].endpoints[1].position,
             Some([136.0, 64.0, 112.0])
         );
         assert_eq!(
-            vertices(&session.build_scene())[1].position,
-            [136.0, 64.0, 112.0]
+            preview.lines[1].endpoints[0].position,
+            Some([-120.0, 40.0, 80.0])
+        );
+        assert_eq!(
+            vertices(&session.build_scene())
+                .iter()
+                .map(|vertex| vertex.position)
+                .collect::<Vec<_>>(),
+            [
+                [16.0, 24.0, 32.0],
+                [136.0, 64.0, 112.0],
+                [-120.0, 40.0, 80.0],
+                [136.0, 64.0, 112.0]
+            ]
         );
         session.cancel_transform_preview();
         session.select(&[], SelectMode::Replace).unwrap();

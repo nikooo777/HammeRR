@@ -476,7 +476,7 @@ fn raw_parameter(
         .ok_or_else(|| invalid(format!("{path}: nested sky material nodes are unsupported")))?;
     if value.starts_with('[') && value.ends_with(']') {
         return Err(invalid(format!(
-            "{path}: bracket conditional values are unsupported in sky packing"
+            "{path}: bracket-wrapped scalar values are outside the supported sky packing subset"
         )));
     }
     if !supported_parameter(&key) || key.starts_with("$hdrcompressedtexture") {

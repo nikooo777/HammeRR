@@ -235,8 +235,11 @@ mod tests {
         let loaded = store.load().unwrap();
         assert!(!loaded[0].build_settings.generate_reflections);
         assert_eq!(loaded[0].build_settings.lighting, "direct_ldr");
-        let original = fs::read(&path).unwrap();
         saved.build_settings.lighting = "direct_ldr_hdr".into();
+        store.save(std::slice::from_ref(&saved)).unwrap();
+        assert_eq!(store.load().unwrap(), [saved.clone()]);
+        let original = fs::read(&path).unwrap();
+        saved.build_settings.lighting = "fullbright".into();
         assert!(store.save(&[saved]).is_err());
         assert_eq!(fs::read(path).unwrap(), original);
     }

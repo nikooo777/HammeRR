@@ -427,6 +427,8 @@ cargo test -p editor cubemap_window_keeps_cached_inspection_and_requires_current
 cargo build -p compiler -p native-runtime -p editor-core --features editor-core/mcp --bins
 python3 -B scripts/validate_reflection_settings.py --check-staleness --output /tmp/hammerr-reflection-settings-check
 python3 -B scripts/validate_cubemap_reflections.py --output /tmp/hammerr-cubemap-reflections-check
+python3 -B scripts/validate_hdr_reflections.py --binary target/debug/hammerr-headless \
+  --probe-library target/debug/hammerr_hdr_probe.so --output /tmp/hammerr-hdr-reflections-check
 ```
 
 The format and library checks cover bounded ZIP/PAK data, source provenance,
@@ -453,6 +455,12 @@ and compares its appearance with the published map. It checks rejection of a
 missing generated sample and preserves source assets and shared configuration.
 Use `--game-dir` and `--steam-root` for nondefault installations. The native
 client always uses the shared private launch and preservation guards below.
+`hdr_reflections` uses the hardware observer built in the lighting checks above.
+It verifies paired publication and Run rebasing, every mip's directional HDR RGB
+against the raw capture, canonical unused fields, actual hardware channel
+selection, reflected pixels and absence of HDR fallback. Use `--reuse-fixture`
+with a completed fixture's `results.json` to repeat native views without another
+capture.
 The explicit ignored isolation fixture requires working Bubblewrap/user
 namespaces. It checks denied source/cache writes, allowed private output and
 the real host child PID used for module verification. Reflection capture and

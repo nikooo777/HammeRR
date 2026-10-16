@@ -599,6 +599,8 @@ pub struct BuildRecipeIdArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileSettingsArgs {
+    /// Generate one native LDR reflection bounce; default false. Requires lighting direct_ldr; incompatible combinations reject atomically.
+    pub generate_reflections: Option<bool>,
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.
     pub smoothing_angle: Option<u8>,
     /// 0 (direct only, default) through 4 diffuse world/terrain-source bounces into world/model receivers; both lit modes.
@@ -611,6 +613,15 @@ pub struct CompileSettingsArgs {
     pub lighting: Option<String>,
     /// none (default) or engine; engine uses the verified installed CS:S Linux64 library in an isolated worker.
     pub physics: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCaptureRuntimeArgs {
+    /// Verified CS:S installation root. Omit or null to clear its override and use the mounted game's verified default.
+    pub engine_root: Option<String>,
+    /// Existing Steam client root. Omit or null to clear its override and use the checked default.
+    pub steam_root: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

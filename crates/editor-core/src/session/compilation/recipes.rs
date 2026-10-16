@@ -30,6 +30,8 @@ struct Settings {
     visibility: String,
     bounces: u8,
     smoothing_angle: u8,
+    #[serde(default)]
+    generate_reflections: bool,
 }
 
 impl From<compiler::Options> for Settings {
@@ -41,6 +43,7 @@ impl From<compiler::Options> for Settings {
             visibility: options.visibility.name().into(),
             bounces: options.bounces,
             smoothing_angle: options.smoothing_angle,
+            generate_reflections: options.generate_reflections,
         }
     }
 }
@@ -54,6 +57,7 @@ impl Settings {
             visibility: compiler::VisibilityMode::parse(&self.visibility)?,
             bounces: self.bounces,
             smoothing_angle: self.smoothing_angle,
+            generate_reflections: self.generate_reflections,
         }
         .validate()
     }
@@ -66,6 +70,7 @@ impl Settings {
             visibility: Some(&self.visibility),
             bounces: Some(self.bounces),
             smoothing_angle: Some(self.smoothing_angle),
+            generate_reflections: Some(self.generate_reflections),
         }
     }
 }
@@ -92,13 +97,18 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · LDR reflections {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
             options.sky_quality.label(),
             compiler::bounce_label(options.bounces),
-            options.smoothing_angle
+            options.smoothing_angle,
+            if options.generate_reflections {
+                "on"
+            } else {
+                "off"
+            }
         );
         json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings,"description":description})
     }
@@ -163,6 +173,7 @@ fn builtins() -> [Recipe; 2] {
                 visibility: compiler::VisibilityMode::Detailed,
                 bounces: compiler::MAX_LIGHT_BOUNCES,
                 smoothing_angle: 45,
+                generate_reflections: false,
             }
             .into(),
         },
@@ -789,6 +800,61 @@ mod tests {
                 .unwrap();
             assert_eq!(fs::read(&path).unwrap(), bytes);
         }
+    }
+
+    #[test]
+    fn reflection_recipes_roundtrip_and_legacy_files_default_off() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let mut current = session();
+        current.configure_build_recipes_at(Ok(path.clone()));
+        current
+            .update_build_settings(
+                Actor::User,
+                BuildSettingsUpdate {
+                    lighting: Some("direct_ldr"),
+                    generate_reflections: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        current
+            .save_build_recipe(Actor::User, "Reflections", None, None)
+            .unwrap();
+        let mut restarted = session();
+        restarted.configure_build_recipes_at(Ok(path.clone()));
+        restarted
+            .apply_build_recipe(Actor::Agent, "custom:1", None)
+            .unwrap();
+        assert!(restarted.compile_options().generate_reflections);
+        assert!(
+            restarted.build_recipes()["recipes"][2]["description"]
+                .as_str()
+                .unwrap()
+                .contains("LDR reflections on")
+        );
+        for builtin in ["fast", "final"] {
+            restarted
+                .apply_build_recipe(Actor::Agent, builtin, None)
+                .unwrap();
+            assert!(!restarted.compile_options().generate_reflections);
+        }
+        let mut legacy: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        legacy["recipes"][0]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("generate_reflections");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let mut restored = session();
+        restored.configure_build_recipes_at(Ok(path));
+        restored
+            .apply_build_recipe(Actor::Agent, "custom:1", None)
+            .unwrap();
+        assert!(!restored.compile_options().generate_reflections);
+        assert_eq!(
+            restored.compile_options().lighting,
+            compiler::LightingMode::DirectLdr
+        );
     }
 
     #[test]

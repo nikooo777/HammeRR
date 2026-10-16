@@ -20,6 +20,8 @@ pub struct BuildSettings {
     pub visibility: String,
     pub bounces: u8,
     pub smoothing_angle: u8,
+    #[serde(default)]
+    pub generate_reflections: bool,
 }
 
 impl BuildSettings {
@@ -31,6 +33,7 @@ impl BuildSettings {
             visibility: options.visibility.name().into(),
             bounces: options.bounces,
             smoothing_angle: options.smoothing_angle,
+            generate_reflections: options.generate_reflections,
         }
     }
 
@@ -42,6 +45,7 @@ impl BuildSettings {
             visibility: compiler::VisibilityMode::parse(&self.visibility)?,
             bounces: self.bounces,
             smoothing_angle: self.smoothing_angle,
+            generate_reflections: self.generate_reflections,
         }
         .validate()?;
         Ok(())
@@ -207,6 +211,34 @@ mod tests {
         ];
         store.save(&entries).unwrap();
         assert_eq!(store.load().unwrap(), entries);
+    }
+
+    #[test]
+    fn reflection_context_roundtrips_and_legacy_context_defaults_off() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
+        let mut saved = entry(directory.path().join("reflections.vmf"));
+        saved.build_settings.lighting = "direct_ldr".into();
+        saved.build_settings.generate_reflections = true;
+        store.save(std::slice::from_ref(&saved)).unwrap();
+        assert_eq!(store.load().unwrap(), [saved.clone()]);
+        let path = directory.path().join(FILE_NAME);
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        legacy["entries"][0]["build_settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("generate_reflections");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(!loaded[0].build_settings.generate_reflections);
+        assert_eq!(loaded[0].build_settings.lighting, "direct_ldr");
+        let original = fs::read(&path).unwrap();
+        saved.build_settings.lighting = "direct_ldr_hdr".into();
+        assert!(store.save(&[saved]).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
     }
 
     #[test]

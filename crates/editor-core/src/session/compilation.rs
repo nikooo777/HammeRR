@@ -3,6 +3,8 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
 mod recipes;
+#[cfg(test)]
+mod reflection_settings_tests;
 
 #[derive(Default)]
 pub struct State {
@@ -98,6 +100,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub visibility: Option<&'a str>,
     pub bounces: Option<u8>,
     pub smoothing_angle: Option<u8>,
+    pub generate_reflections: Option<bool>,
 }
 
 impl Session {
@@ -117,7 +120,7 @@ impl Session {
             .enumerate()
             .map(|(count, label)| json!({"bounces": count, "label": label}))
             .collect::<Vec<_>>();
-        json!({"smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+        json!({"generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Generate one native LDR reflection bounce during Compile or Run Map. Requires Direct LDR and a verified CS:S capture runtime. HDR and Fullbright generation are unsupported; turn generation off before selecting either mode.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "recipe":self.compilation.recipes.active,"editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
@@ -178,9 +181,12 @@ impl Session {
             visibility,
             bounces,
             smoothing_angle,
+            generate_reflections,
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
         let options = compiler::Options {
+            generate_reflections: generate_reflections
+                .unwrap_or(self.compilation.options.generate_reflections),
             bounces,
             smoothing_angle: smoothing_angle.unwrap_or(self.compilation.options.smoothing_angle),
             visibility: visibility
@@ -216,12 +222,13 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · LDR reflections {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
                     options.bounces,
-                    options.smoothing_angle
+                    options.smoothing_angle,
+                    if options.generate_reflections { "on" } else { "off" }
                 ),
             );
         }

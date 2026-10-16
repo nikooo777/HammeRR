@@ -34,6 +34,8 @@ COLORS = ((220, 24, 16), (16, 220, 32), (16, 32, 220), (220, 200, 16), (16, 200,
 FACTORS = (0.25, 0.45, 0.70, 1.0)
 PATCHES = ((400, 240), (880, 240), (400, 480), (880, 480))
 OBSERVER_NAME = "hammerr_packed_sky_observer"
+OBSERVER_CLASS = "info_target"
+PRESERVATION_SERVER_SHA256 = "7887c8cc24a3dec6b8739bfebcad48c00b95423ebcbfc647f49fef1ab904dbe2"
 RUNTIME_OBSERVER_READY = "HAMMERR_PACKED_SKY_RUNTIME_OBSERVER_CREATED"
 RUNTIME_OBSERVER_SCHEDULED = "HAMMERR_PACKED_SKY_RUNTIME_OBSERVER_SCHEDULED"
 RUNTIME_OBSERVER_REGISTERED = "HAMMERR_PACKED_SKY_PLAYER_SPAWN_LISTENER_REGISTERED"
@@ -84,7 +86,7 @@ def require_script_free(data):
 def observer_mapspawn():
     return f'''printl("HAMMERR_MAPSPAWN");
 if (Entities.FindByName(null, "{OBSERVER_NAME}") != null) throw "Private sky observer name collision";
-local observer = SpawnEntityFromTable("logic_script", {{
+local observer = SpawnEntityFromTable("{OBSERVER_CLASS}", {{
     targetname = "{OBSERVER_NAME}",
     vscripts = "{OBSERVER_NAME}.nut"
 }});
@@ -454,6 +456,7 @@ def worker(args):
     require(os.environ.get("WAYLAND_DISPLAY") and os.environ.get("XDG_RUNTIME_DIR") == str(output / "wayland"), "Sky validation requires its private compositor")
     require(re.fullmatch(r"[a-z0-9_-]{1,64}", args.map_name), "Invalid native map basename")
     require(probe.digest((args.game_dir / "bin/linux64/materialsystem.so").read_bytes()) == reflections.MATERIAL_SYSTEM_SHA256, "Material system changed; repeat native HDR interface evidence")
+    require(probe.digest(probe.read_bounded(args.game_dir / "cstrike/bin/linux64/server.so", probe.MAX_BSP_BYTES)) == PRESERVATION_SERVER_SHA256, "Server module changed; repeat native observer round-preservation evidence")
     game = runtime.private_game(args.game_dir, output, engine_physics=True)
     require(not (game / "materials").exists(), "Native sky proof must have no custom source material mount")
     source_audit = absent_runtime_sources(args, game)
@@ -493,7 +496,7 @@ def worker(args):
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **reflections.HDR_CONTROLS})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "runtime_observer": {"injection": "private mapspawn SpawnEntityFromTable", "scheduling": "one player_spawn callback AddThinkToEnt", "mapspawn_sha256": probe.digest(mapspawn.encode()), "script_sha256": probe.digest((game / "scripts/vscripts" / (OBSERVER_NAME + ".nut")).read_bytes()), "bsp_entity_lump_modified": False, "creation_marker": RUNTIME_OBSERVER_READY, "listener_marker": RUNTIME_OBSERVER_REGISTERED, "callback_marker": RUNTIME_OBSERVER_EVENT, "callback_userids": [], "scheduling_marker": RUNTIME_OBSERVER_SCHEDULED, "verified_created": False, "verified_listener": False, "verified_scheduled": False}, "script_free_bsp": True, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
+    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "runtime_observer": {"injection": "private mapspawn SpawnEntityFromTable", "class": OBSERVER_CLASS, "round_preservation": {"server_sha256": PRESERVATION_SERVER_SHA256, "table_file_offset": "0xce2ce0", "table_elf_vaddr": "0xce3ce0", "cleanup_elf_vaddr": "0x817170"}, "scheduling": "one player_spawn callback AddThinkToEnt", "mapspawn_sha256": probe.digest(mapspawn.encode()), "script_sha256": probe.digest((game / "scripts/vscripts" / (OBSERVER_NAME + ".nut")).read_bytes()), "bsp_entity_lump_modified": False, "creation_marker": RUNTIME_OBSERVER_READY, "listener_marker": RUNTIME_OBSERVER_REGISTERED, "callback_marker": RUNTIME_OBSERVER_EVENT, "callback_userids": [], "scheduling_marker": RUNTIME_OBSERVER_SCHEDULED, "verified_created": False, "verified_listener": False, "verified_scheduled": False}, "script_free_bsp": True, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
     console = game / "hammerr-packed-sky.log"
     try:
         with private_native_process(command, args.game_dir, game, output, environment, report) as process:

@@ -1,12 +1,11 @@
 import argparse
 import hashlib
 import json
-import os
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
+import validate_native_runtime as runtime
 from validate_face_lighting import ROOT
 
 
@@ -50,43 +49,29 @@ def main():
     )
     patched = args.output.resolve() / "native-remove.bsp"
     patched.write_bytes(data)
-    env = {
-        **os.environ,
-        "WLR_BACKENDS": "headless",
-        "WLR_HEADLESS_OUTPUTS": "1",
-        "WLR_RENDERER": "pixman",
-    }
     rows = []
     for name, bsp in [("baseline", args.bsp.resolve()), ("removed", patched)]:
         output = args.output.resolve() / name
-        output.mkdir(exist_ok=True)
-        with (output / "compositor.log").open("w") as log:
-            subprocess.run(
-                [
-                    "cage",
-                    "--",
-                    sys.executable,
-                    "-B",
-                    str(ROOT / "scripts/validate_terrain_lod.py"),
-                    "--worker",
-                    "--view",
-                    "near",
-                    "--case",
-                    "flat",
-                    "--bsp",
-                    str(bsp),
-                    "--output",
-                    str(output),
-                    "--game-dir",
-                    str(args.game_dir),
-                ],
-                cwd=ROOT,
-                env=env,
-                stdout=log,
-                stderr=log,
-                check=True,
-                timeout=55,
-            )
+        runtime.private_compositor(
+            [
+                sys.executable,
+                "-B",
+                str(ROOT / "scripts/validate_terrain_lod.py"),
+                "--worker",
+                "--view",
+                "near",
+                "--case",
+                "flat",
+                "--bsp",
+                str(bsp),
+                "--output",
+                str(output),
+                "--game-dir",
+                str(args.game_dir),
+            ],
+            output,
+            timeout=55,
+        )
         rows.append(
             {
                 "render_sha256": hashlib.sha256(

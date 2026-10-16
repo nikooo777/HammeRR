@@ -34,6 +34,7 @@ COLORS = ((220, 24, 16), (16, 220, 32), (16, 32, 220), (220, 200, 16), (16, 200,
 FACTORS = (0.25, 0.45, 0.70, 1.0)
 PATCHES = ((400, 240), (880, 240), (400, 480), (880, 480))
 OBSERVER_NAME = "hammerr_packed_sky_observer"
+RUNTIME_OBSERVER_READY = "HAMMERR_PACKED_SKY_RUNTIME_OBSERVER_CREATED"
 FINISHED = "HAMMERR_PACKED_SKY_FINISHED"
 NATIVE_CASES = ("published-ldr", "published-dual-ldr", "published-dual-hdr", "run-dual-hdr", "run-reflections-hdr")
 OBSERVER = """
@@ -70,6 +71,23 @@ function HammeRRThink() {
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
+
+
+def require_script_free(data):
+    require(not re.search(rb'"(?:vscripts|thinkfunction)"|"classname"\s*"logic_script"', data, re.IGNORECASE) and OBSERVER_NAME.encode() not in data, "Sky capture fixture contains an authored script or observer")
+
+
+def observer_mapspawn():
+    return f'''printl("HAMMERR_MAPSPAWN");
+if (Entities.FindByName(null, "{OBSERVER_NAME}") != null) throw "Private sky observer name collision";
+local observer = SpawnEntityFromTable("logic_script", {{
+    targetname = "{OBSERVER_NAME}",
+    vscripts = "{OBSERVER_NAME}.nut",
+    thinkfunction = "HammeRRThink"
+}});
+if (observer == null) throw "Private sky observer creation failed";
+printl("{RUNTIME_OBSERVER_READY}");
+'''
 
 
 def sky_texture(color, hdr=False):
@@ -242,7 +260,6 @@ def author(args):
             ("info_player_terrorist", [192, -192, -224], {}),
             ("info_player_counterterrorist", [216, -192, -224], {}),
             ("light", [0, 0, 128], {"_light": "255 255 255 200", "_constant_attn": "1", "_linear_attn": "0", "_quadratic_attn": "0"}),
-            ("logic_script", [0, 0, 0], {"targetname": OBSERVER_NAME, "vscripts": OBSERVER_NAME + ".nut", "thinkfunction": "HammeRRThink"}),
         ]
         if args.reflections:
             entities.append(("env_cubemap", [0, 0, 0], {"cubemapsize": str(probe.SIZE_ENUM)}))
@@ -332,6 +349,7 @@ def author(args):
         if args.reflections:
             ids.append(client.call("create_block", {"mins": [144, 136, -248], "maxs": [248, 240, -232], "material": token + "/receiver"})["id"])
             client.call("save_map", {"path": str(source)})
+            require_script_free(source.read_bytes())
             native = client.call("set_native_capture_runtime", {"engine_root": str(args.game_dir), **({"steam_root": str(args.steam_root)} if args.steam_root else {})})
             require(native["ready"], native)
             client.call("set_compile_settings", {"generate_reflections": True})
@@ -341,6 +359,7 @@ def author(args):
             job = wait_native_job(client, args.timeout)
             require(job["status"] == "completed" and job["result"]["published"], job)
             data = probe.read_bounded(path, probe.MAX_BSP_BYTES)
+            require_script_free(probe.bsp_lumps(data)[0][2])
             family = families[-1][0]
             verify_sky(data, family, "ldr_hdr", fixtures[family])
             entries = pak(data)
@@ -355,7 +374,8 @@ def author(args):
                 offline.rename(live)
             require(snapshot(client, source, ids) == before and asset_snapshot(game) == original_assets, "Combined build changed source or original assets")
             coexistence = {"bsp": str(path), "compile": job["result"], "run": run, "source_mount_removed_before_run": True, "content_epoch_reload_omitted_for_reflection_freshness": True}
-        return {"source": str(source), "source_sha256": probe.digest(source.read_bytes()), "fixture_game": str(game), "original_assets": original_assets, "cases": cases, "coexistence": coexistence, "default_explicit_off_exact": True, "foreground_background_exact": True, "source_history_preserved": True, "native_exercised": False}
+        require_script_free(source.read_bytes())
+        return {"source": str(source), "source_sha256": probe.digest(source.read_bytes()), "fixture_game": str(game), "original_assets": original_assets, "cases": cases, "coexistence": coexistence, "default_explicit_off_exact": True, "foreground_background_exact": True, "source_history_preserved": True, "script_free_source": True, "native_exercised": False}
     finally:
         try:
             job = client.call("get_compile_status")["job"]
@@ -424,10 +444,12 @@ def worker(args):
     require(manifest["family"] == args.family, "Native case family differs from the packed BSP")
     for asset in manifest["assets"]:
         require(asset["path"] in entries and probe.digest(entries[asset["path"]]) == asset["sha256"], "Native input packed asset hash mismatch")
-    require(OBSERVER_NAME.encode() in probe.bsp_lumps(data)[0][2], "Authored native observer is missing")
+    require_script_free(probe.bsp_lumps(data)[0][2])
     staged = game / "maps" / f"{args.map_name}.bsp"
     staged.write_bytes(data)
     (game / "scripts/vscripts" / (OBSERVER_NAME + ".nut")).write_text(private_observer(OBSERVER))
+    mapspawn = observer_mapspawn()
+    (game / "scripts/vscripts/mapspawn.nut").write_text(mapspawn)
     cfg = game / "cfg/hammerr_packed_sky_once.cfg"
     probe.write_cfg(cfg, "echo HAMMERR_PACKED_SKY_WAIT\n")
     controls = {"sv_lan": 1, "mat_hdr_level": args.hdr_level, "mat_fullbright": 0, **reflections.HDR_CONTROLS}
@@ -452,7 +474,7 @@ def worker(args):
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **reflections.HDR_CONTROLS})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
+    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "runtime_observer": {"injection": "private mapspawn SpawnEntityFromTable", "mapspawn_sha256": probe.digest(mapspawn.encode()), "script_sha256": probe.digest((game / "scripts/vscripts" / (OBSERVER_NAME + ".nut")).read_bytes()), "bsp_entity_lump_modified": False, "creation_marker": RUNTIME_OBSERVER_READY, "verified_created": False}, "script_free_bsp": True, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
     console = game / "hammerr-packed-sky.log"
     try:
         with private_native_process(command, args.game_dir, game, output, environment, report) as process:
@@ -472,6 +494,8 @@ def worker(args):
                     report["native_exercised"] = True
                 if len(captures) < 6 and marker in text and hardware:
                     report["private_launch"] = verify_private_launch(game, text)
+                    require(RUNTIME_OBSERVER_READY in text and text.index(RUNTIME_OBSERVER_READY) < text.index("HAMMERR_PACKED_SKY_FACE 0 2 100"), "Trusted runtime observer creation was not observed before the first view")
+                    report["runtime_observer"]["verified_created"] = True
                     index = len(captures)
                     for extension in ["png", "ppm"]:
                         subprocess.run(["grim", *(["-t", "ppm"] if extension == "ppm" else []), str(output / f"{FACES[index]}.{extension}")], check=True, timeout=5)

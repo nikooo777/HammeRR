@@ -826,6 +826,7 @@ dependencies = [
  "libc",
  "libloading",
  "map-core",
+ "native-runtime",
  "serde",
  "serde_json",
  "sha2",
@@ -1245,6 +1246,7 @@ dependencies = [
  "compiler",
  "glam",
  "map-core",
+ "native-runtime",
  "png",
  "render",
  "rmcp",
@@ -3053,6 +3055,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "native-runtime"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "libloading",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "source-formats",
+ "tempfile",
+]
+
+[[package]]
 name = "natord"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4430,6 +4447,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4720,10 +4748,12 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "crc32fast",
+ "flate2",
  "glam",
  "png",
  "tempfile",
  "thiserror 2.0.21",
+ "zip",
 ]
 
 [[package]]
@@ -5238,6 +5268,12 @@ dependencies = [
  "bincode",
  "serde",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
 name = "typenum"
@@ -6601,6 +6637,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2d98561b612a84ae525331a7a094429ef8a5772514ed507ff6db5f54badc971"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "nix",
+ "typed-path",
 ]
 
 [[package]]

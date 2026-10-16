@@ -272,7 +272,7 @@ fn engine_blended_terrain_reloads_both_materials_and_preserves_geometry_and_save
         assert!(keys.contains("\"ice\" \"2\""));
         assert!(keys.contains("\"rubber\" \"3\""));
         for index in 0..64 {
-            if [lump::DISPVERTS, lump::PHYSCOLLIDE].contains(&index) {
+            if [lump::DISP_VERTS, lump::PHYSCOLLIDE].contains(&index) {
                 continue;
             }
             assert_eq!(

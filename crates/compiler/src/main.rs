@@ -106,23 +106,24 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         .then(|| CompileContext::from_output(&path))
         .transpose()?;
     let mut output = compile_with_context_controlled(&vmf, &fs, options, context.as_ref(), control);
-    if let Some(context) = &context {
-        if output.bsp.is_some() && !output.report.has_errors() {
-            let environment =
-                native_runtime::resolve_environment(&native_runtime::CaptureEnvironment {
-                    engine_root: reflection_engine.unwrap_or_else(|| fs.base_dir.clone()),
-                    steam_root: reflection_steam,
-                    mounts: fs
-                        .mounts
-                        .iter()
-                        .map(|mount| native_runtime::ContentMount {
-                            ids: mount.ids.clone(),
-                            path: mount.mount.location().to_path_buf(),
-                        })
-                        .collect(),
-                })?;
-            output = finalize_reflections(output, context, &fs, &environment, control)?;
-        }
+    if let Some(context) = &context
+        && output.bsp.is_some()
+        && !output.report.has_errors()
+    {
+        let environment =
+            native_runtime::resolve_environment(&native_runtime::CaptureEnvironment {
+                engine_root: reflection_engine.unwrap_or_else(|| fs.base_dir.clone()),
+                steam_root: reflection_steam,
+                mounts: fs
+                    .mounts
+                    .iter()
+                    .map(|mount| native_runtime::ContentMount {
+                        ids: mount.ids.clone(),
+                        path: mount.mount.location().to_path_buf(),
+                    })
+                    .collect(),
+            })?;
+        output = finalize_reflections(output, context, &fs, &environment, control)?;
     }
     for diagnostic in &output.report.diagnostics {
         let level = match diagnostic.level {
@@ -362,8 +363,8 @@ fn run_with_signals(control: &Control) -> Result<(), Box<dyn std::error::Error>>
             INTERRUPTED.store(true, Ordering::Relaxed);
         }
         unsafe {
-            libc::signal(libc::SIGINT, interrupt as libc::sighandler_t);
-            libc::signal(libc::SIGTERM, interrupt as libc::sighandler_t);
+            libc::signal(libc::SIGINT, interrupt as *const () as libc::sighandler_t);
+            libc::signal(libc::SIGTERM, interrupt as *const () as libc::sighandler_t);
         }
         let finished = AtomicBool::new(false);
         struct Finish<'a>(&'a AtomicBool);
@@ -372,7 +373,7 @@ fn run_with_signals(control: &Control) -> Result<(), Box<dyn std::error::Error>>
                 self.0.store(true, Ordering::Relaxed);
             }
         }
-        return std::thread::scope(|scope| {
+        std::thread::scope(|scope| {
             scope.spawn(|| {
                 while !finished.load(Ordering::Relaxed) {
                     if INTERRUPTED.load(Ordering::Relaxed) {
@@ -383,7 +384,7 @@ fn run_with_signals(control: &Control) -> Result<(), Box<dyn std::error::Error>>
             });
             let _finish = Finish(&finished);
             run(control)
-        });
+        })
     }
     #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
     run(control)

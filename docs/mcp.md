@@ -400,8 +400,8 @@ within ±65536 are required. Loaded model meshes and specialized lights retain
 precedence. Invalid/ambiguous size declarations expose an amber marker and
 `invalid_fgd_size`; working-region bounds remain unresolved with an explicit
 error. Picking, framing, area/volume selection and placement use the same valid
-bounds. Helper forms outside the box/color, property-sphere and literal-line scopes remain
-listed and unevaluated. Catalog source
+bounds. Helper forms outside the box/color, property-sphere, literal-line and
+literal-icon scopes remain listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history.
 
@@ -533,6 +533,56 @@ precedence. Intrinsic state remains separate from suppression. Guide extents
 never change object bounds, picking, selection, placement, framing or working
 regions, and read/render operations preserve source, history and camera. The
 guide does not preview projected textures, lighting, shadows or runtime state.
+
+`get_entity_inspector.helpers.icon_sprite` reports a loaded class's literal FGD
+`iconsprite(material)` through the same Session inspection and scene operations
+as the property panel, viewport and `render_view`. A class without this helper
+returns null. Exactly one declaration with one literal material argument is
+supported; `helpers.icon_limits` describes admission and display limits. No new
+tool or setting is added. `load_entity_definitions` loads or reloads declarations.
+
+The report contains `status`, `material`, optional material `source`,
+`texture`, `texture_source`, pixel `width`/`height`, `world_size`, `error`,
+`displayed` and `suppression_reason`. Status is `ready`, `unavailable`,
+`unsupported`, `invalid` or `suppressed`. Directory sources contain
+`{kind:"directory",mount,file}`; VPK sources contain `{kind:"vpk",index,files}`.
+`material` is canonical after admission starts; deferred or invalid references
+retain a bounded preview. Errors are bounded. `orientation_policy` is
+`live_camera_right_up`, `rendering_policy` is `unlit_rgba_editor_image` and
+`size_policy` is `32_source_unit_long_axis`: the image's long axis is 32 Source
+units, preserving texture aspect ratio. It faces the camera passed to each
+render in Top, Front, Side and perspective views, independently of entity
+angles, selection outlines, illumination and fog. The editor class image
+retains texture RGBA alpha.
+
+Admission requires a direct UTF-8 `Sprite` material with `$basetexture`, explicit
+`$spriteorientation vp_parallel` and centered `$spriteorigin "[0.5 0.5]"`
+(an optional third zero is accepted). Optional `$no_fullbright` must be `1`;
+the editor image remains unlit. Other parameters, duplicates, nested blocks,
+Patch materials and legacy `.spr` aliases are unsupported. The VTF must decode
+all mips as a static single-frame, single-face, depth-one LDR image, with axes
+1–512. References cap at 256 bytes, VMTs at 64 KiB and VTFs at 4 MiB. A material
+generation caches at most 64 successful or failed entries and 32 MiB of encoded
+assets; `reload_material_assets` clears both successes and failures after
+external changes. The human equivalent is **Browse materials… → Reload material
+assets**. A failed winning mount does not fall through to a lower-priority
+asset.
+
+Admission failures retain the ordinary helper and an explicit error, without a
+replacement image.
+
+Origins must be finite and within ±65536 units. At most 256 visible icons display
+in entity-ID order. Hidden sources,
+working-region exclusions, invalid origins, nonpoint/brush sources, loaded
+models, model or sprite helpers, specialized lights and ropes suppress the
+image with explicit reasons. Suppression defers asset admission, so the report
+does not claim readiness or provenance for an unread asset. Eligible icons
+display selected or unselected and follow displayed transform previews.
+Ordinary FGD helper boxes retain bounds, picking, area/volume selection,
+placement, framing and working-region inclusion; image extents do not become
+selection targets. Read/render operations preserve source, history and camera.
+Animated icons, generic `sprite()` helpers, runtime `env_sprite` behavior and
+native Sprite rendering modes remain outside this feature.
 
 ### Portable sky assets
 
@@ -1264,6 +1314,8 @@ mounted content. It reloads cached display materials and sky faces, rescans the
 material catalog, re-resolves cached model material paths and refreshes
 desktop/offscreen textures and thumbnails. Decoded model geometry stays shared;
 preferred paths appearing or disappearing are resolved from the existing mounts.
+The icon admission cache, including failures, is cleared for the next inspection
+or render.
 The human equivalent is **Browse materials… → Reload material assets**.
 
 The response contains `generation` (the display-cache generation), `reloaded`

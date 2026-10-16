@@ -1365,6 +1365,39 @@ or desktop input. The software panel test reads the shared summary and
 four-component color, and writes `source-projector-guide-inspector.png` when
 `HAMMERR_UI_SNAPSHOTS` names an existing directory.
 
+### Literal FGD icon sprites
+
+```sh
+cargo test -p render --lib icons::tests
+cargo test -p editor-core --features mcp --lib fgd_helpers::icons
+cargo test -p editor --bin editor fgd_icon_panel_shares_asset_provenance_and_failure_without_authoring
+python3 -B scripts/validate_fgd_icons.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-icons-check
+```
+
+Asset and Session fixtures cover direct Sprite/VTF admission, winning mount
+provenance, retained alpha and aspect ratio, cached failures and reload,
+specialized-helper precedence and unchanged ordinary FGD box bounds.
+
+The private stdio fixture creates its own gameinfo and two ordered mounts; it
+accepts `--binary` and required `--output`, with no `--gameinfo` override. Use a
+fresh output directory and a graphics adapter. Actual PNG controls compare an
+alpha hole against missing/opaque images, asymmetric UV colors in Top, Front,
+Side and two perspective cameras, exact unlit image pixels and independently
+fogged brush pixels. Hidden/working-region/model/error controls, unselected
+display and transform-preview cancellation retain ordinary picks, volume
+selection and framing. Source bytes, entity fields, Undo count and camera are
+preserved through reversible controls. `results.json` records inspection
+receipts, pixel measurements, cameras and PNG/fixture hashes; consecutive camera
+overrides retain the document and selection, while MCP exposes no scene serial.
+The script writes `icon-ring.png`,
+`icon-opaque-alpha-control.png`, `icon-missing-control.png` and paired controls,
+and launches no game or desktop input.
+
+The software panel test exposes the shared provenance/error summary without
+starting the viewport renderer or authoring properties. Set
+`HAMMERR_UI_SNAPSHOTS` to an existing directory for
+`fgd-icon-sprite-inspector.png`.
+
 ### Terrain detail scattering and displayed model bounds
 
 ```sh

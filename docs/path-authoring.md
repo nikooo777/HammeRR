@@ -68,9 +68,9 @@ defaults apply only to inserted nodes.
    same nodes and their links. Applying an unchanged path adds no history step.
 6. Use **New path** to return the table to creation mode.
 
-![Reordering existing named nodes without replacing their identities](images/linked-path-existing.png)
-
 ## Pick a row's position from a surface
+
+Move one path point to an exact visible surface.
 
 1. Create or load the path, then click **Preview**. Use **Review preview** to
    take ownership of another actor's draft. Preview any changed fields first.
@@ -80,10 +80,13 @@ defaults apply only to inserted nodes.
    exact hit point replaces only that row's preview coordinates, and the dialog
    returns. A miss or an invalid point keeps the gesture armed and preserves
    the previous coordinates.
-4. To stop an armed gesture, press **Escape** or click **Cancel position pick**.
-   The preview coordinates stay unchanged. Review a successful pick, then click
-   **Apply** to commit the complete path in one Undo step. **Cancel** discards
-   the whole unapplied path draft.
+4. Press **Escape** to stop an armed gesture in the viewport. After a miss
+   returns the dialog, **Cancel position pick** also stops the gesture. The
+   preview coordinates stay unchanged.
+5. Review a successful pick, then click **Apply** to commit the complete path
+   in one Undo step. **Cancel** discards the whole unapplied path draft.
+
+![Owned path rows with surface-picking controls and retained node identities](images/linked-path-existing.png)
 
 Picking uses the visible surface point without grid rounding, a height offset
 or an orientation change. Path nodes themselves are excluded from target

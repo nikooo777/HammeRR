@@ -13,7 +13,7 @@ use source_formats::fgd::ClassKind;
 use super::super::{Session, working_region::Evaluation};
 
 pub(super) const MAX_DISPLAYED_SPHERES: usize = 128;
-pub(super) const LIMITS: &str = "Selected visible generic point entities only; sphere(property) uses authored values or labeled FGD defaults. Three world-axis guide rings, 32 segments each; at most 16 declarations per entity and 128 displayed spheres in entity-ID order. Property-name/value previews are bounded to 128/256 bytes; oversized values are never parsed. Positive finite native radii up to 65536 units. Nonpositive values have no finite guide and retain entity-specific runtime meaning. Guides do not affect collision, picking, placement, framing or working regions. Zero-argument sphere(), brush, loaded-model, specialized-light and rope helpers are outside this scope.";
+pub(super) const LIMITS: &str = "Selected visible generic point entities only; sphere(property) uses authored values or labeled FGD defaults. Three world-axis guide rings, 32 segments each; at most 16 declarations per entity and 128 displayed spheres in entity-ID order. Property-name/value previews are bounded to 128/256 bytes; oversized values are never parsed. Positive finite native radii up to 65536 units. Nonpositive values have no finite guide and retain entity-specific runtime meaning. Guides do not affect collision, picking, placement, framing or working regions. Zero-argument sphere(), brush, model helpers including missing assets, specialized-light and rope helpers are outside this scope. Model fade distances may use screen pixels rather than world units.";
 
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -101,6 +101,16 @@ impl Session {
                     .any(|rope| class.eq_ignore_ascii_case(rope))
             }) {
                 Some("specialized_rope")
+            } else if class
+                .helpers
+                .iter()
+                .any(|helper| ["studio", "studioprop", "model"].contains(&helper.name.as_str()))
+                || class
+                    .property("model")
+                    .is_some_and(|property| property.kind == "studio")
+                || entity.properties.get("model").is_some()
+            {
+                Some("model_helper")
             } else if entity.hidden {
                 Some("authored_hidden")
             } else if !evaluation.objects.contains(&object) {

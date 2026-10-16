@@ -387,12 +387,23 @@ def tint_resume_inputs(args, report):
             guarded[str(path)] = digest
     return guarded
 
+
+def tint_capture_command(args, fixture_game, control, output, style):
+    command = [sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")), "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--runtime", "--runtime-bsp", control["bsp"], "--fixture-game", fixture_game, "--expected-count", str(control["count"]), "--expected-sprites", str(control["sprites"]), "--sprite-orientation", str(control["orientation"]), "--baked-lighting", "--hdr-level", str(control["hdr_level"]), "--probe-library", str(args.probe_library), "--port", str(args.port)]
+    if style is not None:
+        command += ["--allow-detail-styles", "--detail-style-state", style]
+    return command
+
+
 def native_tint(args, report, resume=False, analyze_only=False):
     captures = {}
     frames = {}
     reused = []
     missing = []
     guarded = tint_resume_inputs(args, report) if resume else {}
+    if args.hdr_control is not None:
+        require(args.hdr_control.is_dir(), "An explicit --hdr-control must be a completed native capture directory")
+        checked_tint_capture(args, report["controls"]["styled-direct_ldr_hdr-white"], args.hdr_control, "on")
     choices = [("fast-direct_ldr", None), ("slow-direct_ldr", None), ("styled-direct_ldr", "on"), ("styled-direct_ldr", "off"), ("styled-direct_ldr_hdr", "on")]
     for suite, style in choices:
         if analyze_only and any(not (args.output / f"native-{suite}-{style or 'static'}-{color}").exists() for color in ["white", "tinted"]):
@@ -403,20 +414,20 @@ def native_tint(args, report, resume=False, analyze_only=False):
             control = report["controls"][f"{suite}-{color}"]
             name = f"{suite}-{style or 'static'}-{color}"
             output = args.output / f"native-{name}"
-            command = [sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")), "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--runtime", "--runtime-bsp", control["bsp"], "--fixture-game", report["fixture_game"], "--expected-count", str(control["count"]), "--expected-sprites", str(control["sprites"]), "--sprite-orientation", str(control["orientation"]), "--baked-lighting", "--hdr-level", str(control["hdr_level"]), "--probe-library", str(args.probe_library), "--port", str(args.port)]
-            if style is not None:
-                command += ["--allow-detail-styles", "--detail-style-state", style]
             if resume and output.exists():
                 reused.append(name)
             else:
                 require(not analyze_only, "Analysis-only tint validation cannot launch a native process")
-                subprocess.run(command, check=True, timeout=150)
+                subprocess.run(tint_capture_command(args, report["fixture_game"], control, output, style), check=True, timeout=150)
             result = checked_tint_capture(args, control, output, style)
             pair[color] = {"on": ppm(output / "runtime/details-on.ppm"), "off": ppm(output / "runtime/details-off.ppm")}
             captures[name] = result["native"]
         hdr_control_frames = None
         if suite == "styled-direct_ldr_hdr":
             control_output = args.hdr_control or args.output / "native-hdr-white-control"
+            if not control_output.exists():
+                require(args.hdr_control is None and not analyze_only, "Analysis-only tint validation needs a completed identical-white HDR control")
+                subprocess.run(tint_capture_command(args, report["fixture_game"], report["controls"][f"{suite}-white"], control_output, style), check=True, timeout=150)
             require(control_output.is_dir(), "HDR tint needs a completed identical-white negative control in --hdr-control or native-hdr-white-control")
             independent = checked_tint_capture(args, report["controls"][f"{suite}-white"], control_output, style)
             pair_receipts = [captures[f"{suite}-{style}-{color}"] for color in ["white", "tinted"]]

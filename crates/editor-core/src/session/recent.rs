@@ -216,6 +216,7 @@ impl Session {
                 visibility: Some(&settings.visibility),
                 bounces: Some(settings.bounces),
                 smoothing_angle: Some(settings.smoothing_angle),
+                generate_reflections: Some(settings.generate_reflections),
             },
         );
         if let Err(error) = result {

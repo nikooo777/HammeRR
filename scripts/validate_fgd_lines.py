@@ -101,11 +101,13 @@ def validate(client, output):
     fgd.write_text(FGD)
     client.call("load_entity_definitions", {"path": str(fgd)})
     check(render("restored-definition", camera)[0] == shown, "Reload restores identical actual line pixels")
-    client.call("transform_objects", {"ids": [end], "translation": [0, 32, 0], "preview": True})
-    check(inspect(source)["lines"][0]["endpoints"][1]["position"] == [120, 112, 16], "Named endpoints follow displayed transform-preview origins")
+    client.call("transform_objects", {"ids": [source, end], "translation": [0, 32, 0], "preview": True})
+    preview_lines = inspect(source)["lines"]
+    check(all(row["displayed"] for row in preview_lines) and [[point["position"] for point in row["endpoints"]] for row in preview_lines] == [[[0, -48, 16], [120, 112, 16]], [[-120, 80, 16], [120, 112, 16]]], "Previewing owner and end keeps both guides displayed, moves both selected origins and leaves Start fixed")
     preview, _ = render("endpoint-transform-preview", camera)
-    check(preview != shown and detail(client, [source, start, end]) == authored, "Preview line pixels move while committed map data stays exact")
+    check(preview != shown and all(value > 80 for value in colors(preview)) and detail(client, [source, start, end]) == authored, "Both actual colored guides remain visible during movement while committed map data stays exact")
     client.call("cancel_transform_preview")
+    client.call("select", {"ids": [source]})
     check(render("cancelled-endpoint-preview", camera)[0] == shown and client.call("get_history")["undo_count"] == history, "Cancelling the preview restores exact pixels without history")
     for projection in ["front", "side", "perspective"]:
         view = {**camera, "projection": projection} if projection != "perspective" else {"projection": "perspective", "position": [260, -320, 240], "look_at": [0, 0, 16]}

@@ -597,7 +597,8 @@ pub fn capture(
     let directory = tempfile::Builder::new()
         .prefix("hammerr_capture_")
         .tempdir()?
-        .keep();
+        .keep()
+        .canonicalize()?;
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
     let staged = crate::adapter::capture_staging_bsp(&request.bsp)?;
     if staged

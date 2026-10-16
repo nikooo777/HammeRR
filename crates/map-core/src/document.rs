@@ -341,6 +341,7 @@ impl Document {
             ),
             doc: self,
             touched: Vec::new(),
+            start_positions: None,
             world: None,
             extra: None,
             cordon: None,
@@ -380,9 +381,11 @@ impl Document {
         if let Some((before, after)) = &step.world {
             self.restore_world_properties(before, after);
         }
-        for change in step.changes.iter().rev() {
-            self.put(change.id, change.before.clone());
-        }
+        self.restore_objects(
+            step.changes
+                .iter()
+                .map(|change| (change.id, change.before.clone())),
+        );
         self.revision += 1;
         self.redo.push(step);
         self.redo.last()
@@ -408,9 +411,11 @@ impl Document {
         if let Some((before, after)) = &step.world {
             self.restore_world_properties(after, before);
         }
-        for change in &step.changes {
-            self.put(change.id, change.after.clone());
-        }
+        self.restore_objects(
+            step.changes
+                .iter()
+                .map(|change| (change.id, change.after.clone())),
+        );
         self.revision += 1;
         self.undo.push(step);
         self.undo.last()
@@ -450,6 +455,20 @@ impl Document {
         })
     }
 
+    fn restore_objects(&mut self, states: impl IntoIterator<Item = (ObjectId, State)>) {
+        let mut insertions = Vec::new();
+        for (id, state) in states {
+            self.take(id);
+            if let Some(state) = state {
+                insertions.push((id, state));
+            }
+        }
+        insertions.sort_by_key(|(_, (index, _))| *index);
+        for (id, state) in insertions {
+            self.put(id, Some(state));
+        }
+    }
+
     fn put(&mut self, id: ObjectId, state: State) {
         self.take(id);
         match state {
@@ -471,6 +490,7 @@ pub struct Transaction<'a> {
     start_ids: (u64, u64, u64),
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
+    start_positions: Option<std::collections::HashMap<ObjectId, usize>>,
     world: Option<Properties>,
     extra: Option<Vec<Node>>,
     cordon: Option<Option<Node>>,
@@ -546,10 +566,38 @@ impl Transaction<'_> {
         Ok(id)
     }
 
+    fn capture_object_order(&mut self) {
+        if self.start_positions.is_none() {
+            self.start_positions = Some(
+                self.doc
+                    .vmf
+                    .world
+                    .solids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, solid)| (ObjectId::Solid(solid.id), index))
+                    .chain(
+                        self.doc
+                            .vmf
+                            .entities
+                            .iter()
+                            .enumerate()
+                            .map(|(index, entity)| (ObjectId::Entity(entity.id), index)),
+                    )
+                    .collect(),
+            );
+        }
+    }
+
     fn touch(&mut self, id: ObjectId) {
         self.doc.context_fingerprint.take();
         if !self.touched.iter().any(|(t, _)| *t == id) {
-            let state = self.doc.state(id);
+            let mut state = self.doc.state(id);
+            if let (Some(positions), Some((index, _))) = (&self.start_positions, &mut state)
+                && let Some(original) = positions.get(&id)
+            {
+                *index = *original;
+            }
             self.touched.push((id, state));
         }
     }
@@ -582,6 +630,7 @@ impl Transaction<'_> {
             std::iter::once(solid.id),
             solid.sides.iter().map(|side| side.id),
         )?;
+        self.capture_object_order();
         self.touch(id);
         self.doc.vmf.world.solids.push(solid);
         Ok(id)
@@ -597,6 +646,7 @@ impl Transaction<'_> {
                 .iter()
                 .flat_map(|solid| solid.sides.iter().map(|side| side.id)),
         )?;
+        self.capture_object_order();
         self.touch(id);
         self.doc.vmf.entities.push(entity);
         Ok(id)
@@ -628,6 +678,7 @@ impl Transaction<'_> {
     }
 
     pub fn remove(&mut self, id: ObjectId) -> Result<Object, EditError> {
+        self.capture_object_order();
         self.touch(id);
         self.doc.take(id).ok_or(EditError::NotFound(id))
     }
@@ -763,9 +814,7 @@ impl Transaction<'_> {
         if let Some(before) = self.world {
             self.doc.vmf.world.properties = before;
         }
-        for (id, before) in self.touched.into_iter().rev() {
-            self.doc.put(id, before);
-        }
+        self.doc.restore_objects(self.touched);
     }
 }
 
@@ -939,6 +988,110 @@ mod tests {
             doc.entity(ids[0]).unwrap().properties.get("targetname"),
             Some("a")
         );
+    }
+
+    fn ordered_edit_fixture() -> (Document, Vec<u32>, Vec<u32>) {
+        let mut document = doc_with_entities(5);
+        document
+            .edit("world brushes", |tx| {
+                for _ in 0..3 {
+                    crate::edit::create_block(
+                        tx,
+                        glam::DVec3::ZERO,
+                        glam::DVec3::splat(16.0),
+                        "test",
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let entities = document
+            .vmf()
+            .entities
+            .iter()
+            .map(|entity| entity.id)
+            .collect();
+        let solids = document
+            .vmf()
+            .world
+            .solids
+            .iter()
+            .map(|solid| solid.id)
+            .collect();
+        (document, entities, solids)
+    }
+
+    fn mixed_order_edit(
+        tx: &mut Transaction<'_>,
+        entities: &[u32],
+        solids: &[u32],
+    ) -> Result<(), EditError> {
+        tx.entity_mut(entities[1])?
+            .properties
+            .set("targetname", "modified then deleted");
+        tx.solid_mut(solids[1])?.hidden = true;
+        let added = tx.new_object_id()?;
+        tx.add_entity(Entity::new(added, "info_target"))?;
+        crate::edit::create_block(tx, glam::DVec3::ZERO, glam::DVec3::splat(16.0), "test")?;
+        tx.remove(ObjectId::Entity(entities[0]))?;
+        tx.remove(ObjectId::Solid(solids[0]))?;
+        tx.entity_mut(entities[4])?
+            .properties
+            .set("targetname", "modified after removal");
+        tx.solid_mut(solids[2])?.hidden = true;
+        let added = tx.new_object_id()?;
+        tx.add_entity(Entity::new(added, "info_target"))?;
+        crate::edit::create_block(tx, glam::DVec3::ZERO, glam::DVec3::splat(16.0), "test")?;
+        tx.remove(ObjectId::Entity(entities[1]))?;
+        tx.remove(ObjectId::Solid(solids[1]))?;
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_add_remove_and_modify_transactions_replay_exact_object_order() {
+        let (mut document, entities, solids) = ordered_edit_fixture();
+        let original = document.vmf().clone();
+        document
+            .edit("mixed ordering", |tx| {
+                mixed_order_edit(tx, &entities, &solids)
+            })
+            .unwrap();
+        let committed = document.vmf().clone();
+        assert_eq!(
+            committed.entities[..3]
+                .iter()
+                .map(|entity| entity.id)
+                .collect::<Vec<_>>(),
+            entities[2..]
+        );
+        assert_eq!(committed.world.solids[0].id, solids[2]);
+        for _ in 0..3 {
+            document.undo().unwrap();
+            assert_eq!(document.vmf(), &original);
+            document.redo().unwrap();
+            assert_eq!(document.vmf(), &committed);
+        }
+    }
+
+    #[test]
+    fn failed_mixed_structural_edits_restore_original_order_and_history() {
+        let (mut document, entities, solids) = ordered_edit_fixture();
+        let original = document.vmf().clone();
+        let revision = document.revision();
+        let history = document
+            .undo_labels()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let next_ids = (document.next_object_id, document.next_side_id);
+        let result = document.edit("failed ordering", |tx| {
+            mixed_order_edit(tx, &entities, &solids)?;
+            Err::<(), _>(EditError::Invalid("reject after mixed edits".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(document.vmf(), &original);
+        assert_eq!(document.revision(), revision);
+        assert_eq!(document.undo_labels().collect::<Vec<_>>(), history);
+        assert_eq!((document.next_object_id, document.next_side_id), next_ids);
     }
 
     #[test]

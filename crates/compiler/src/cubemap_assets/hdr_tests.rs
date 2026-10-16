@@ -146,8 +146,11 @@ fn hdr_canonicalization_preserves_all_six_face_rgb_bits_and_removes_unused_bytes
             for face in 0..6 {
                 let original = before.image_data(mip, 0, face).unwrap();
                 let normalized = after.image_data(mip, 0, face).unwrap();
-                for (original, normalized) in
-                    original.chunks_exact(8).zip(normalized.chunks_exact(8))
+                for (original, normalized) in original
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .zip(normalized.as_chunks::<8>().0)
                 {
                     assert_eq!(&original[..6], &normalized[..6]);
                     assert_eq!(&normalized[6..], &0x3c00u16.to_le_bytes());

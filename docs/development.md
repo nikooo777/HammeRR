@@ -928,6 +928,26 @@ The queued marker does not prove delivery or awake state. Neither outcome alone
 establishes a contact-cache cause, Disable-only recovery or a compiler hull
 defect. The default remains permanent **Kill** removal.
 
+For native contact telemetry, build the optional observation plugin and reuse a
+retained default fixture:
+
+```sh
+cc -shared -fPIC -std=c11 -O2 -Wall -Wextra -Werror -fvisibility=hidden scripts/contact_runtime_probe.c -ldl -lm -o target/debug/hammerr_contact_observer.so
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-contact-observer-client --runtime --reuse-fixture /tmp/hammerr-rotating-removal-check/compile.json --contact-observer-library target/debug/hammerr_contact_observer.so
+```
+
+`--contact-observer-library` loads the plugin only into the owned private game.
+It checks the pinned installed Linux64 module hashes, public interfaces and
+callback phase, then records unique owner/edict/index/object identities,
+sleeping and awake state, contact partners, points and normals. Every temporary
+friction snapshot is destroyed before simulation resumes. Raw data stays in
+`runtime/contact-observer.jsonl`; separate analysis requires complete telemetry
+and the original gameplay recovery assertions. Source and library files must
+stay available for receipt verification. Changed game binaries require a new
+ABI review. Without this option, the existing launch and observer are unchanged.
+The plugin has no contact-refresh, wake or motion operations; model debug labels
+and pointer continuity do not prove unchanged collision geometry bytes.
+
 
 ### Brush-model physics surfaces
 

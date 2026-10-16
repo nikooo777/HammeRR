@@ -33,7 +33,7 @@ fn fgd_icon_panel_shares_asset_provenance_and_failure_without_authoring() {
     };
     let source = session.document().vmf().clone();
     let history = session.document().undo_labels().count();
-    let camera = session.camera;
+    let camera = session.camera();
     let app = AppWindow::new().unwrap();
     refresh_panel(&app, &mut session);
     assert_eq!(
@@ -52,6 +52,7 @@ fn fgd_icon_panel_shares_asset_provenance_and_failure_without_authoring() {
     assert!(app.get_entity_helper_status().contains("Icon VTF source:"));
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 960));
+    super::tests::scroll_inspector_to_control(&app, "Advanced properties");
     super::tests::save_ui_snapshot(app.window(), "fgd-icon-sprite-inspector");
     std::fs::write(&material, "Sprite { invalid }").unwrap();
     session.reload_material_assets(Actor::Agent);
@@ -64,6 +65,6 @@ fn fgd_icon_panel_shares_asset_provenance_and_failure_without_authoring() {
     assert!(session.build_scene().icons.is_empty());
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.document().undo_labels().count(), history);
-    assert_eq!(session.camera, camera);
+    assert_eq!(session.camera(), camera);
     app.hide().unwrap();
 }

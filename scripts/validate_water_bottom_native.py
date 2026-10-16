@@ -351,8 +351,19 @@ def runtime_diagnostics(text):
             lower,
         ):
             continue
-        fixture = "hammerr/" in lower or bool(
-            re.search(r"\bwater(?:_dx[a-z0-9_]*)?\b|_rt_water[a-z0-9_]*", lower)
+        material_diagnostic = bool(
+            re.search(
+                r"\b(?:materials?|shaders?|textures?|render[-_ ]?targets?)\b|\bctexture::",
+                lower,
+            )
+        )
+        fixture = (
+            "hammerr/" in lower
+            or bool(re.search(r"\b_rt_water[a-z0-9_]*\b", lower))
+            or (
+                material_diagnostic
+                and bool(re.search(r"\bwater(?:_dx[a-z0-9_]*)?\b", lower))
+            )
         )
         fatal = fixture or any(
             message in lower

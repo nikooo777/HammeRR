@@ -421,6 +421,7 @@ cargo test -p source-formats --test pak
 cargo test -p native-runtime --lib
 cargo test -p native-runtime --lib isolation::tests::readonly_sources_and_private_writes_retain_host_child_identity -- --ignored --exact --nocapture
 cargo test -p compiler --lib cubemap_assets::
+cargo test -p compiler --lib asset_sources::tests
 cargo test -p editor-core --features mcp --lib reflection_
 cargo test -p editor reflection_controls_toggle_review_cancel_and_freeze_with_the_shared_job -- --test-threads=1
 cargo test -p editor cubemap_window_keeps_cached_inspection_and_requires_current_owned_review -- --test-threads=1

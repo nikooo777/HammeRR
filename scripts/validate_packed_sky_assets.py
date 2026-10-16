@@ -375,6 +375,22 @@ def pixel_evidence(path, index, hdr):
     return {"face": FACES[index], "expected_rgb_signature": list(color), "patches": patches, "quadrant_order": "top-left < top-right < bottom-left < bottom-right", "face_and_orientation_verified": True}
 
 
+def absent_runtime_sources(args, game):
+    with patch.dict(os.environ, {
+        "HAMMERR_RECENT_MAPS_DIR": str(args.output / "recent-maps"),
+        "HAMMERR_BUILD_RECIPES": str(args.output / "build-recipes.json"),
+        "HAMMERR_PREFABS_DIR": str(args.output / "prefabs"),
+    }):
+        client = Client(None, args.binary, args.output, game / "gameinfo.txt")
+    try:
+        set_sky(client, args.family)
+        report = client.call("inspect_sky_assets")
+        require(not report["ldr_ready"] and not report["hdr_ready"] and len(report["faces"]) == 6 and all(face["source"] is None for face in report["faces"]), "A runtime search path still provides an original custom sky material")
+        return {"gameinfo": (game / "gameinfo.txt").read_text(), "before_bsp_mount": report, "all_six_original_materials_absent": True}
+    finally:
+        client.close()
+
+
 def worker(args):
     output = args.output
     require(not os.environ.get("LD_PRELOAD"), "Private sky validation must not inherit LD_PRELOAD")
@@ -383,6 +399,7 @@ def worker(args):
     require(probe.digest((args.game_dir / "bin/linux64/materialsystem.so").read_bytes()) == reflections.MATERIAL_SYSTEM_SHA256, "Material system changed; repeat native HDR interface evidence")
     game = runtime.private_game(args.game_dir, output, engine_physics=True)
     require(not (game / "materials").exists(), "Native sky proof must have no custom source material mount")
+    source_audit = absent_runtime_sources(args, game)
     data = probe.read_bounded(args.bsp, probe.MAX_BSP_BYTES)
     entries = pak(data)
     manifest = json.loads(entries[MANIFEST])
@@ -417,7 +434,7 @@ def worker(args):
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **reflections.HDR_CONTROLS})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "published_bsp_loaded_exact": True, "desktop_input": False, "archive_verified": True, "native_exercised": True}
+    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "published_bsp_loaded_exact": True, "desktop_input": False, "archive_verified": True, "native_exercised": True}
     console = game / "hammerr-packed-sky.log"
     try:
         with private_native_process(command, args.game_dir, game, output, environment, report) as process:

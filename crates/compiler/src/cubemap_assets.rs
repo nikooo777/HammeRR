@@ -22,10 +22,7 @@ pub use sources::{ReflectionSourceGuard, capture_reflection_source_guard};
 pub(crate) use binding::prepare;
 pub(crate) use manifest::pack;
 
-pub(crate) fn hash(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
-}
+pub(crate) use crate::asset_sources::hash;
 
 pub const MANIFEST_PATH: &str = "hammerr/generated-cubemaps.json";
 pub const MAX_SAMPLES: usize = 32;

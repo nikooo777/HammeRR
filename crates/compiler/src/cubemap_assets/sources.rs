@@ -1,24 +1,21 @@
-use std::collections::BTreeMap;
 use std::io;
-use std::path::PathBuf;
 
-use source_formats::gamefs::{AssetSourcePaths, GameFs};
+use source_formats::gamefs::GameFs;
 
-use super::manifest::invalid;
-use super::*;
-use crate::{Control, FileStamp};
+use super::{CubemapAssetManifest, MAX_GENERATED_BYTES};
+use crate::Control;
+use crate::asset_sources::{AssetSourceGuard, SourceGuardPolicy, capture_asset_source_guard};
+
+const MAX_PHYSICAL_PATHS: usize = 8192;
 
 #[derive(Debug)]
 pub struct ReflectionSourceGuard {
-    stamps: Vec<FileStamp>,
+    guard: AssetSourceGuard,
 }
 
 impl ReflectionSourceGuard {
     pub fn verify_metadata(&self) -> io::Result<()> {
-        for stamp in &self.stamps {
-            stamp.verify_metadata()?;
-        }
-        Ok(())
+        self.guard.verify_metadata()
     }
 }
 
@@ -27,83 +24,20 @@ pub fn capture_reflection_source_guard(
     game: &GameFs,
     control: &Control,
 ) -> io::Result<ReflectionSourceGuard> {
-    let mut stamps = BTreeMap::new();
-    for source in &manifest.sources {
-        control.checkpoint().map_err(io::Error::other)?;
-        let before = game
-            .asset_source_paths(&source.path)?
-            .ok_or_else(|| invalid(format!("Reflection source disappeared: {}", source.path)))?;
-        capture_paths(&before, &mut stamps)?;
-        let bytes = game
-            .read_limited(&source.path, MAX_GENERATED_BYTES)?
-            .ok_or_else(|| invalid(format!("Reflection source disappeared: {}", source.path)))?;
-        if hash(&bytes) != source.sha256 {
-            return Err(invalid(format!(
-                "Reflection source changed before publication: {}",
-                source.path
-            )));
-        }
-        let after = game
-            .asset_source_paths(&source.path)?
-            .ok_or_else(|| invalid(format!("Reflection source disappeared: {}", source.path)))?;
-        if before != after {
-            return Err(invalid(format!(
-                "Reflection source resolution changed: {}",
-                source.path
-            )));
-        }
-        capture_paths(&after, &mut stamps)?;
-    }
-    for path in &manifest.missing_sources {
-        control.checkpoint().map_err(io::Error::other)?;
-        let before = game.asset_lookup_paths(path)?;
-        capture_paths(&before, &mut stamps)?;
-        if game.contains(path)? {
-            return Err(invalid(format!(
-                "Reflection model material candidate appeared before publication: {path}"
-            )));
-        }
-        let after = game.asset_lookup_paths(path)?;
-        if before != after {
-            return Err(invalid(format!(
-                "Reflection source resolution changed: {path}"
-            )));
-        }
-        capture_paths(&after, &mut stamps)?;
-    }
-    let guard = ReflectionSourceGuard {
-        stamps: stamps.into_values().collect(),
-    };
-    guard.verify_metadata()?;
-    Ok(guard)
-}
-
-fn capture_paths(
-    paths: &AssetSourcePaths,
-    stamps: &mut BTreeMap<PathBuf, FileStamp>,
-) -> io::Result<()> {
-    for path in paths
-        .files
-        .iter()
-        .chain(&paths.lookup_directories)
-        .chain(&paths.lookup_symlinks)
-    {
-        let stamp = FileStamp::capture_container(path)?;
-        if let Some(old) = stamps.get(path) {
-            if old != &stamp {
-                return Err(invalid(format!(
-                    "Reflection backing file or lookup path changed: {}",
-                    path.display()
-                )));
-            }
-        } else {
-            if stamps.len() >= 8192 {
-                return Err(invalid(
-                    "Reflection source guard exceeds 8192 physical lookup paths",
-                ));
-            }
-            stamps.insert(path.clone(), stamp);
-        }
-    }
-    Ok(())
+    let guard = capture_asset_source_guard(
+        manifest
+            .sources
+            .iter()
+            .map(|source| (source.path.as_str(), source.sha256.as_str())),
+        manifest.missing_sources.iter().map(String::as_str),
+        game,
+        control,
+        SourceGuardPolicy {
+            label: "Reflection",
+            missing_label: "Reflection model material candidate",
+            asset_bytes: MAX_GENERATED_BYTES,
+            physical_paths: MAX_PHYSICAL_PATHS,
+        },
+    )?;
+    Ok(ReflectionSourceGuard { guard })
 }

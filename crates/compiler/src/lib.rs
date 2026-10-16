@@ -1,6 +1,7 @@
 //! Compiles VMF brush maps into Source engine BSP files.
 
 mod areas;
+pub mod asset_sources;
 pub mod control;
 mod cordons;
 pub mod cubemap_assets;

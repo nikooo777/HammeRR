@@ -36,6 +36,9 @@ PATCHES = ((400, 240), (880, 240), (400, 480), (880, 480))
 OBSERVER_NAME = "hammerr_packed_sky_observer"
 RUNTIME_OBSERVER_READY = "HAMMERR_PACKED_SKY_RUNTIME_OBSERVER_CREATED"
 RUNTIME_OBSERVER_SCHEDULED = "HAMMERR_PACKED_SKY_RUNTIME_OBSERVER_SCHEDULED"
+RUNTIME_OBSERVER_REGISTERED = "HAMMERR_PACKED_SKY_PLAYER_SPAWN_LISTENER_REGISTERED"
+RUNTIME_OBSERVER_EVENT = "HAMMERR_PACKED_SKY_PLAYER_SPAWN_CALLBACK"
+RUNTIME_OBSERVER_MISSING = "HAMMERR_PACKED_SKY_RUNTIME_CONTROLLER_MISSING"
 FINISHED = "HAMMERR_PACKED_SKY_FINISHED"
 NATIVE_CASES = ("published-ldr", "published-dual-ldr", "published-dual-hdr", "run-dual-hdr", "run-reflections-hdr")
 OBSERVER = """
@@ -87,12 +90,22 @@ local observer = SpawnEntityFromTable("logic_script", {{
 }});
 if (observer == null) throw "Private sky observer creation failed";
 printl("{RUNTIME_OBSERVER_READY}");
-function HammeRRStartPackedSkyObserver() {{
+HammeRRPackedSkyObserverStarted <- false;
+function OnGameEvent_player_spawn(params) {{
+    if (HammeRRPackedSkyObserverStarted) return;
+    HammeRRPackedSkyObserverStarted = true;
+    if (!("userid" in params) || typeof(params.userid) != "integer" || params.userid <= 0) throw "Private sky player_spawn lacks a positive userid";
+    printl("{RUNTIME_OBSERVER_EVENT} " + params.userid);
     local observer = Entities.FindByName(null, "{OBSERVER_NAME}");
-    if (observer == null) throw "Private sky observer missing after map activation";
+    if (observer == null) {{
+        printl("{RUNTIME_OBSERVER_MISSING} " + params.userid);
+        throw "Private sky observer missing during player_spawn";
+    }}
     AddThinkToEnt(observer, "HammeRRThink");
     printl("{RUNTIME_OBSERVER_SCHEDULED}");
 }}
+__CollectGameEventCallbacks(getroottable());
+printl("{RUNTIME_OBSERVER_REGISTERED}");
 '''
 
 
@@ -461,7 +474,7 @@ def worker(args):
     controls = {"sv_lan": 1, "mat_hdr_level": args.hdr_level, "mat_fullbright": 0, **reflections.HDR_CONTROLS}
     post_map = "toggle sv_lan 1\ntoggle mat_fullbright 0\n" + "".join(f"help {name}\n" for name in controls)
     for name in ["server.cfg", "listenserver.cfg", "hammerr_packed_sky_postmap.cfg"]:
-        (game / "cfg" / name).write_text(post_map + ("script HammeRRStartPackedSkyObserver()\n" if name == "hammerr_packed_sky_postmap.cfg" else ""))
+        (game / "cfg" / name).write_text(post_map)
     settings = output / "settings"
     for name in ["config", "cache", "data"]:
         (settings / name).mkdir(parents=True)
@@ -480,7 +493,7 @@ def worker(args):
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **reflections.HDR_CONTROLS})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "runtime_observer": {"injection": "private mapspawn SpawnEntityFromTable", "scheduling": "private post-map cfg AddThinkToEnt", "mapspawn_sha256": probe.digest(mapspawn.encode()), "script_sha256": probe.digest((game / "scripts/vscripts" / (OBSERVER_NAME + ".nut")).read_bytes()), "bsp_entity_lump_modified": False, "creation_marker": RUNTIME_OBSERVER_READY, "scheduling_marker": RUNTIME_OBSERVER_SCHEDULED, "verified_created": False, "verified_scheduled": False}, "script_free_bsp": True, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
+    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "runtime_observer": {"injection": "private mapspawn SpawnEntityFromTable", "scheduling": "one player_spawn callback AddThinkToEnt", "mapspawn_sha256": probe.digest(mapspawn.encode()), "script_sha256": probe.digest((game / "scripts/vscripts" / (OBSERVER_NAME + ".nut")).read_bytes()), "bsp_entity_lump_modified": False, "creation_marker": RUNTIME_OBSERVER_READY, "listener_marker": RUNTIME_OBSERVER_REGISTERED, "callback_marker": RUNTIME_OBSERVER_EVENT, "callback_userids": [], "scheduling_marker": RUNTIME_OBSERVER_SCHEDULED, "verified_created": False, "verified_listener": False, "verified_scheduled": False}, "script_free_bsp": True, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
     console = game / "hammerr-packed-sky.log"
     try:
         with private_native_process(command, args.game_dir, game, output, environment, report) as process:
@@ -491,7 +504,10 @@ def worker(args):
                 text = probe.read_bounded(console, 2 * 1024**2).decode(errors="replace") if console.exists() else ""
                 report["native_diagnostics"] = native_diagnostics(text, manifest)
                 report["runtime_observer"]["verified_created"] = RUNTIME_OBSERVER_READY in text
+                report["runtime_observer"]["verified_listener"] = RUNTIME_OBSERVER_REGISTERED in text
+                report["runtime_observer"]["callback_userids"] = [int(value) for value in re.findall(r"^" + RUNTIME_OBSERVER_EVENT + r" ([0-9]+)\s*$", text, re.MULTILINE)]
                 report["runtime_observer"]["verified_scheduled"] = RUNTIME_OBSERVER_SCHEDULED in text and RUNTIME_OBSERVER_READY in text and text.index(RUNTIME_OBSERVER_READY) < text.index(RUNTIME_OBSERVER_SCHEDULED)
+                require(RUNTIME_OBSERVER_MISSING not in text, "Trusted player_spawn callback could not find the runtime observer controller")
                 marker = f"HAMMERR_PACKED_SKY_FACE {len(captures)} 2 100"
                 if not ready.exists() and "HAMMERR_PACKED_SKY_FACE 0 2 100" in text:
                     ready.write_text("post-map sky view ready\n")
@@ -503,6 +519,7 @@ def worker(args):
                 if len(captures) < 6 and marker in text and hardware:
                     report["private_launch"] = verify_private_launch(game, text)
                     require(RUNTIME_OBSERVER_READY in text and text.index(RUNTIME_OBSERVER_READY) < text.index("HAMMERR_PACKED_SKY_FACE 0 2 100"), "Trusted runtime observer creation was not observed before the first view")
+                    require(RUNTIME_OBSERVER_REGISTERED in text and RUNTIME_OBSERVER_SCHEDULED in text and len(report["runtime_observer"]["callback_userids"]) == 1 and text.index(RUNTIME_OBSERVER_READY) < text.index(RUNTIME_OBSERVER_REGISTERED) < text.index(RUNTIME_OBSERVER_EVENT) < text.index(RUNTIME_OBSERVER_SCHEDULED), "One registered player_spawn callback with a userid was not observed between creation and scheduling")
                     require(RUNTIME_OBSERVER_SCHEDULED in text and text.index(RUNTIME_OBSERVER_READY) < text.index(RUNTIME_OBSERVER_SCHEDULED) < text.index("HAMMERR_PACKED_SKY_FACE 0 2 100"), "Trusted runtime observer scheduling was not observed after creation and before the first view")
                     report["runtime_observer"]["verified_created"] = True
                     report["runtime_observer"]["verified_scheduled"] = True

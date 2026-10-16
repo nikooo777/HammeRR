@@ -44,7 +44,11 @@ Round connected base quad faces into a smooth terrain surface.
 
 ![Three connected terrain faces rounded across mixed resolutions](images/subdivided-terrain.png)
 
-Limits: 1–16 quad cages, four Catmull–Clark refinement rounds, sampled at each surface's existing power. Exact whole-to-half junctions use a shared quad cage with two grid densities; one large edge may meet one or two smaller edges. Nested chains requiring a third density, inconsistent density cycles, other fractional contacts, corner-only contacts, ambiguous overlaps, non-manifold or inconsistently oriented cages, opaque data and nonzero offset-normal caches reject together. It generates geometry from the base faces, replacing prior sculpting on interiors and boundaries. Unmatched outer base edges stay pinned. Compilation applies its existing mixed-resolution LOD and border-normal rules. The saved `subdiv` marker alone does not block supported editing operations. Crease controls remain planned.
+![A rounded large terrain edge joined to two smaller surfaces](images/subdivided-terrain-half-edge.png)
+
+![Shared seam geometry across three terrain grid resolutions](images/subdivided-terrain-half-edge-wireframe.png)
+
+Limits: 1–16 quad cages, four Catmull–Clark refinement rounds, sampled at each surface's existing power. Exact whole-to-half junctions use a shared quad cage with two grid densities; one large edge may meet one or two smaller edges. Nested chains requiring a third density, inconsistent density cycles, other fractional contacts, corner-only contacts, ambiguous overlaps, non-manifold or inconsistently oriented cages, opaque data and nonzero offset-normal caches reject together. It generates geometry from the base faces, replacing prior sculpting on interiors and boundaries. Unmatched outer base edges stay pinned. Compilation and the displayed surface share mixed-resolution LOD snapping; picking, framing and guides follow that surface. Raw grid inspection and editing retain authored samples, including vertices inactive at a native seam. Border-normal rules remain separate. The saved `subdiv` marker alone does not block supported editing operations. Crease controls remain planned.
 
 ## Sculpt heights
 

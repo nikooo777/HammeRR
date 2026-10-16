@@ -165,7 +165,7 @@ With **Direct LDR** or **Direct LDR + HDR**:
 
 #### HDR channels
 
-**Direct LDR + HDR** keeps face lightmaps, light styles, world lights, reflected light and model-ambient probes separate for the two channels. The editor viewport continues to show its existing preview lighting.
+**Direct LDR + HDR** keeps face lightmaps, light styles, world lights, reflected light and model-ambient probes separate for the two channels. CS:S selects the baked channel according to its HDR setting and hardware support. The editor viewport continues to show its existing preview lighting.
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR + HDR**.
 2. Set **Indirect light**, **Brush smoothing angle** and **Sampling quality**. These settings apply to both channels. Existing **Fast preview** and **Final lighting** recipes keep their original settings; use **Save current as new** to retain a custom HDR recipe.
@@ -173,9 +173,9 @@ With **Direct LDR** or **Direct LDR + HDR**:
 4. Click **Close**, then **Compile**. Open **Build details…** to compare the **LDR Baked lighting**, **HDR baked lighting**, style, brush-model, directional-map, bounce and ambient rows. **Lighting work** shows **LDR**, **HDR** and **Shared total**; authored prop/model geometry is counted once.
 5. Inspect **HDR native map data** and **Diagnostics**. **HDR data ready** reports eligible nonempty map data. **HDR unavailable: incomplete map data** means the map cannot activate native HDR. Changing the lighting mode makes a previous build stale; compile again before **Play built map**.
 
-![Build lighting, sampling and indirect-light controls](images/build-settings.png)
+![Independent LDR and HDR build controls](images/build-hdr-controls.png)
 
-Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh private map load; live changes may trigger save/reload. Exposure authoring, HDR skybox textures, HDR cubemap capture, editor HDR previews and baked prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
+Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh map load; live changes may trigger save/reload. Exposure authoring, HDR skybox textures, HDR cubemap capture, editor HDR previews and baked prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
 
 #### Brush-entity lightmaps
 
@@ -297,7 +297,7 @@ With **CS:S engine physics**:
 
 - Collision bodies are built for the world, player and NPC clips, brush entities (around their pivots), water and terrain. Static props use the collision that ships with their models.
 - The helper checks the collision library's version and the generated geometry, limits its memory and work, and stops after 30 seconds or when the build is cancelled. A missing or unrecognized library fails the build clearly and keeps the previous output. Editing never needs the library.
-- World brush faces and terrain triangles keep the material's `$surfaceprop` for physics contact. Missing properties use **default**. Brush entities retain per-face contact properties through their native collision triangles; generated base masses remain one kilogram.
+- World brush faces and terrain triangles keep the material's `$surfaceprop` for physics contact. Materials without `$surfaceprop` use **default**. Brush entities retain per-face contact properties through their native collision triangles; base masses use material surface definitions and compiled geometry.
 
 1. Select the world or terrain faces under **Selection → Faces · materials & textures**.
 2. Click **Browse materials…**, choose a material with the desired surface property, then **Use material** and **Apply**. **Cancel** keeps the previous material.
@@ -306,9 +306,9 @@ With **CS:S engine physics**:
 
 ![Physics build details with the surface-property count](images/build-status.png)
 
-For brush entities, use **Faces · materials & textures** to assign different physical surfaces to individual faces, or switch **Selection** to **Objects** and apply one material across the entity. A model with a single property also records that property on its native body.
+For brush entities, use **Faces · materials & textures** to assign different physical surfaces to individual faces, or switch **Selection** to **Objects** and apply one material across the entity. A model with a single property also records that property on its native body. The property covering the greatest emitted face area determines the base mass: solid materials use collision volume and density; shell materials use emitted area, thickness and density. Per-face contact properties stay independent. **Build details…** reports the base mass and chosen property in the entity diagnostic. See [Physics and brush-model mass](physics.md) for the 50,000 kg cap, runtime mass controls and asset limits.
 
-Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings preserve the primary `$surfaceprop` and are checked before and after native serialization. Blended secondary properties, material density, compiler-derived brush-model masses, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
+Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings preserve the primary `$surfaceprop` and are checked before and after native serialization. Blended secondary properties, custom density controls, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
 
 ### Brush entities and pivots
 
@@ -348,7 +348,10 @@ unfinished. Ordinary brush-entity pivot and compiler physics limits apply.
 - [Compile regions](compile-regions.md#include-a-water-volume) support fully contained structural world water; crossing volumes stop the build and preserve previous output.
 - Sloped or enclosed tops and conflicting overlapping liquids fail with a diagnostic. Hidden water is left out. Water inside detail brushes or brush entities is reported as unsupported.
 
-Not yet: depth-specific and below-water materials, currents and custom damping.
+Horizontal world-water pools compile exposed top undersides and vertical side
+faces using each face material's `$bottommaterial`. See [Water](water.md) for
+material setup and limits.
+Depth-specific material packing, currents and custom damping remain unfinished.
 
 ### Cubemaps
 
@@ -359,16 +362,16 @@ Not yet: reflections are not baked. Material binding, face lists and capture are
 
 ### Static props
 
-- `prop_static` compiles its model, position and rotation (fractional values included), collision setting, skin, fading and lighting origin.
+- `prop_static` compiles its model, position and rotation (fractional values included), collision setting, skin, fading and lighting origin. Rotated props use conservative clipping of the transformed render/hull header box to determine open-leaf membership; unrotated membership is unchanged. Inspect **Static props**, **Model assets** and **Leaf references** in **Build details…**. See [Static props](static-props.md) for clipping budgets and limits.
 - Models must be MDL version 44 or 48 and marked `$staticprop`. **Use VPhysics** also needs the model's matching `.phy` file.
-- **Direct LDR** traces actual LOD0 model triangles for direct, sun/sky, bounced-light and model-ambient shadows. Shadow casting is independent of collision mode; native `disableshadows` turns it off, and hidden props are omitted. See [Static-prop mesh shadows](prop-shadows.md).
+- **Direct LDR** and **Direct LDR + HDR** trace actual LOD0 model triangles for direct, sun/sky, bounced-light and model-ambient shadows. Shadow casting is independent of collision mode; native `disableshadows` turns it off, and hidden props are omitted. See [Static-prop mesh shadows](prop-shadows.md).
 - Shadow meshes need the model's matching `.vvd` and `.dx90.vtx` companions. Missing or malformed geometry fails with a prop-specific diagnostic and preserves the previous BSP; bounds are never substituted for the mesh. Fullbright and disabled-shadow props do not load these companions.
 - Shadows are two-sided. Models with the native `$casttextureshadows` flag support selected-skin `$alphatest` materials using **VertexLitGeneric** or **UnlitGeneric**. Each ray interpolates triangle UVs and samples the base texture's mip 0 with nearest texels, honoring VTF clamp S/T or repeat. `$alphatestreference` accepts 0–1; absent values use 0.5 for VertexLitGeneric and 0.7 for UnlitGeneric, while explicit zero uses 0.5. Alpha equal to the reference blocks light. This is binary cutout sampling, without filtered edges or fractional transmission.
 - Supported `$basetexturetransform` operations are finite **center**, **scale**, **translate** and **rotate 0**, with each value within ±1024. Requested texture shadows reject rotated transforms, unsupported shaders, translucency/additive or alpha modulation, material animation/conditional blocks, additional opacity effects, nonzero frames, animated/cubemap/volume textures and missing or corrupt assets. The entity diagnostic explains the failure, and the previous BSP is preserved.
 - Models without `$casttextureshadows` keep opaque shadows and existing approximation warnings for alpha/translucent/additive materials, nonstandard shaders, animation/conditional blocks and missing materials. Fullbright and `disableshadows` skip texture-shadow decoding.
 - Texture dimensions are limited to 4096 pixels per axis and decoded alpha to 64 MiB per build. Texture input shares the 256 MiB shadow-asset budget; each asset file is limited to 64 MiB. Invalid assets, scaling, lightmap requests and ambiguous lighting origins fail with a diagnostic. **Build details…** reports participating props, triangles, disabled props, alpha-test triangles and alpha textures under **Prop mesh shadows**.
 
-Not yet: fractional/translucent transmission, filtered cutout edges, per-vertex/per-texel prop lighting, reflected prop sources, animated-prop shadows and exact placement in the BSP tree. Mesh preparation, alpha decoding and ray traversal share the bounded, cancellable lighting work budget; the [mesh-shadow limits](prop-shadows.md#limits) also bound geometry and asset reads. Binary cutouts do not reproduce native VRAD's fractional texture coverage.
+Not yet: fractional/translucent transmission, filtered cutout edges, per-vertex/per-texel prop lighting, reflected prop sources, animated-prop shadows and exact mesh/hull leaf placement. Mesh preparation, alpha decoding and ray traversal share the bounded, cancellable lighting work budget; the [mesh-shadow limits](prop-shadows.md#limits) also bound geometry and asset reads. Binary cutouts do not reproduce native VRAD's fractional texture coverage.
 
 ### Terrain (displacements)
 
@@ -390,15 +393,15 @@ Create flat terrain with [Terrain grid and Create terrain](terrain.md), or open 
 
 Corner-only contacts receive reciprocal native lists when base and displaced corners match, including different powers. **Build details…** reports **Corner pairs** separately from full-edge **Neighbor pairs**.
 
-**Build details…** also reports **Mixed-power pairs**, **Half-edge pairs**, **LOD disabled vertices** and **Snapped vertices**. Snapping can reduce detail near a coarse neighbor; the editable map and viewport retain the authored grid.
+**Build details…** also reports **Mixed-power pairs**, **Half-edge pairs**, **LOD disabled vertices** and **Snapped vertices**. Snapping can reduce detail near a coarse neighbor. Compilation, viewport rendering and surface picking use the same derived geometry; raw grid inspection and editing retain authored samples.
 
-Imported grids marked as already subdivided compile their saved vertex rows. Building does not generate new subdivision geometry.
+Use **Edit terrain… → Operation → Subdivide base cage** to generate rounded grids from compatible connected full and whole-to-half cages. Imported grids marked as already subdivided compile their saved vertex rows; building does not regenerate them.
 
-Not yet: generating subdivision, removed triangles, runtime brush-model terrain, other fractional edge spans. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
+Not yet: deeper cage-density chains, removed triangles, runtime brush-model terrain and other fractional edge spans. Create, sculpt and blend surfaces with the [terrain tools](terrain.md).
 
 ## Overlays
 
-Imported `info_overlay` projections compile on world, detail and terrain surfaces. Set their material, render order and fades in the entity inspector, then inspect **Overlays** and **Surface references** in Build details. See [Overlays](overlays.md) for the workflow and limits.
+Imported `info_overlay` projections compile on world, detail and terrain surfaces. Set their material, render order and fades in the entity inspector, then inspect **Overlays** and **Surface references** in Build details. These counts also include imported `info_overlay_transition` projections from nested VMF blocks. Transition bindings follow face splitting, omit generated water undersides and remain complete in compile regions; missing targets stop the build. Transition authoring, fades and runtime accessors are unavailable. See [Overlays](overlays.md) for the workflow and limits.
 
 ## Compile regions
 

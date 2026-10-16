@@ -76,16 +76,34 @@ fn fixture(half: bool) -> (Document, Vec<FaceId>) {
 
 #[test]
 fn full_and_half_subdivision_keep_native_samples_masks_normals_and_saved_bytes() {
+    verify_subdivision(&common::empty_game(), compiler::PhysicsMode::None);
+}
+
+#[test]
+fn engine_collision_retains_subdivision_geometry_and_saved_bytes() {
+    let Some(root) = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|path| path.join(".local/share/Steam/steamapps/common/Counter-Strike Source"))
+        .filter(|path| path.join("bin/linux64/vphysics.so").is_file())
+    else {
+        return;
+    };
+    let mut game = common::empty_game();
+    game.base_dir = root;
+    verify_subdivision(&game, compiler::PhysicsMode::Engine);
+}
+
+fn verify_subdivision(game: &source_formats::gamefs::GameFs, physics: compiler::PhysicsMode) {
     use displacement::neighbors::{Span, common_span_indices};
 
     for half in [false, true] {
         let (document, faces) = fixture(half);
         let source = document.vmf().clone();
         let options = compiler::Options {
-            physics: compiler::PhysicsMode::Engine,
+            physics,
             ..Default::default()
         };
-        let result = compiler::compile_with_options(&source, &common::empty_game(), options);
+        let result = compiler::compile_with_options(&source, game, options);
         assert!(!result.report.has_errors(), "{:?}", result.report);
         assert_eq!(result.stats.displacements, if half { 3 } else { 2 });
         assert_eq!(
@@ -98,6 +116,10 @@ fn full_and_half_subdivision_keep_native_samples_masks_normals_and_saved_bytes()
         );
         assert!(result.stats.displacement_lod_snapped_vertices > 0);
         let native = result.bsp.unwrap();
+        assert_eq!(
+            native.lumps[bsp::lump::PHYSCOLLIDE].data.is_empty(),
+            physics == compiler::PhysicsMode::None
+        );
         let data = native.displacements().unwrap().unwrap();
         let grids = displacement::edit::inspect(&document, &faces).unwrap();
         let positions = data
@@ -155,7 +177,7 @@ fn full_and_half_subdivision_keep_native_samples_masks_normals_and_saved_bytes()
         assert!(active > 50);
         let lit = compiler::compile_with_options(
             &source,
-            &common::empty_game(),
+            game,
             compiler::Options {
                 lighting: compiler::LightingMode::DirectLdr,
                 ..options
@@ -171,7 +193,7 @@ fn full_and_half_subdivision_keep_native_samples_masks_normals_and_saved_bytes()
             assert_eq!(lit.lumps[lump].data, native.lumps[lump].data);
         }
         let reopened = Vmf::parse(&source.write(&Default::default())).unwrap();
-        let saved = compiler::compile_with_options(&reopened, &common::empty_game(), options);
+        let saved = compiler::compile_with_options(&reopened, game, options);
         assert!(!saved.report.has_errors(), "{:?}", saved.report);
         assert_eq!(saved.bsp.unwrap().to_bytes(), native.to_bytes());
         let mut unmarked = source.clone();
@@ -184,7 +206,7 @@ fn full_and_half_subdivision_keep_native_samples_masks_normals_and_saved_bytes()
         {
             info.subdivided = false;
         }
-        let plain = compiler::compile_with_options(&unmarked, &common::empty_game(), options);
+        let plain = compiler::compile_with_options(&unmarked, game, options);
         assert!(!plain.report.has_errors(), "{:?}", plain.report);
         assert_eq!(plain.bsp.unwrap().to_bytes(), native.to_bytes());
         assert_eq!(document.vmf(), &source);

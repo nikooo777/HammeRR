@@ -48,8 +48,7 @@ function HammeRRThink() {
         stage = 2;
     }
     if (stage == 2 && Time() > ready_at) {
-        SendToConsole("mat_hdr_level; mat_force_tonemap_scale; mat_autoexposure_min; mat_autoexposure_max; mat_disable_bloom; mat_bloomscale; mat_fullbright; sv_lan");
-        printl("HAMMERR_HDR_READY " + player.GetTeam() + " " + player.GetHealth());
+        SendToConsole("mat_hdr_level; mat_force_tonemap_scale; mat_autoexposure_min; mat_autoexposure_max; mat_disable_bloom; mat_bloomscale; mat_fullbright; sv_lan; echo HAMMERR_HDR_READY " + player.GetTeam() + " " + player.GetHealth());
         stage = 3;
     }
     return 0.5;
@@ -239,7 +238,10 @@ def fixture(args):
         assert job["status"] == "completed" and background.read_bytes() == path.read_bytes(), job
         assert (source.read_bytes(), detail(client, ids), client.call("get_map_info")["undo"]) == before
         published = path.read_bytes()
-        client.call("set_entity_properties", {"id": lights[0], "set": {"_lightHDR": "invalid HDR color"}})
+        client.call("set_entity_properties", {"id": lights[0], "set": {"_lightHDR": "invalid HDR color"}}, error=True)
+        assert detail(client, ids) == before[1]
+        assert client.call("get_map_info")["undo"] == before[2]
+        client.call("set_entity_properties", {"id": lights[0], "set": {"_lightscaleHDR": "-1"}})
         client.call("compile_map", {"path": str(path)}, error=True)
         assert path.read_bytes() == published
         report = {"stats": result["stats"], "channels": channels,
@@ -280,7 +282,8 @@ def worker(args):
     assert hashlib.sha256(engine.read_bytes()).hexdigest() == ENGINE_SHA256, "Playable engine changed; re-verify its hardware interface before querying"
     game = runtime.private_game(root, output, args.bsp)
     shutil.copytree(args.fixture_game / "materials", game / "materials", dirs_exist_ok=True)
-    (game / "scripts/vscripts/hammerr_observer.nut").write_text(OBSERVER)
+    (game / "scripts/vscripts/hammerr_observer.nut").write_text(runtime.private_observer(OBSERVER))
+    launch_options = runtime.private_launch_options(root, game, hdr_level=args.hdr_level, controls=CONTROLS)
     ready = output / "probe-ready"
     probe_log = output / "hardware.jsonl"
     assert not ready.exists() and not probe_log.exists(), "Use a fresh runtime output directory"
@@ -293,9 +296,7 @@ def worker(args):
                    "HAMMERR_HDR_PRIVATE_GAME": str(game), "HAMMERR_HDR_READY": str(ready),
                    "HAMMERR_HDR_REPORT": str(probe_log)}
     command = [str(root / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", "1280", "-h", "720",
-               "-novid", "-insecure", "-nomaster", "-nojoy", "-console", "-port", str(27584 + args.hdr_level),
-               "+con_logfile", "hammerr-runtime.log", "+sv_lan", "1", "+mat_hdr_level", str(args.hdr_level),
-               "+fps_max", "60", "+map", "hammerr_runtime"]
+               "-novid", *launch_options, "-nomaster", "-nojoy", "-console", "-port", str(27584 + args.hdr_level)]
     with (output / "launcher.log").open("w") as log:
         process = subprocess.Popen(command, cwd=root, env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
         try:
@@ -324,11 +325,14 @@ def worker(args):
             assert factory and factory[-1]["version"] == HARDWARE_VERSION, records
             subprocess.run(["grim", str(output / "game.png")], check=True, timeout=10)
             subprocess.run(["grim", "-t", "ppm", str(output / "game.ppm")], check=True, timeout=10)
-            controls = verify_controls((game / "hammerr-runtime.log").read_text(errors="replace"), args.hdr_level)
+            console = (game / "hammerr-runtime.log").read_text(errors="replace")
+            controls = verify_controls(console, args.hdr_level)
+            private_launch = runtime.verify_private_launch(game, console)
             fingerprints = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in (root / "bin/linux64").glob("*.so")
                             if path.name in ("engine.so", "materialsystem.so", "shaderapivk.so", "shaderapidx9.so")}
             result = {"hdr_level": args.hdr_level, "controls": controls, "hardware": samples,
+                      "private_launch": private_launch,
                       "acquisition": factory[-1], "probe_records": records, "pid": process.pid,
                       "engine_sha256": ENGINE_SHA256, "module_sha256": fingerprints,
                       "insecure": True, "post_map_sv_lan": True,
@@ -342,6 +346,7 @@ def worker(args):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+            runtime.finish_private_launch(game)
 
 
 def frame_color(path):

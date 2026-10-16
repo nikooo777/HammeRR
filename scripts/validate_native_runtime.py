@@ -13,6 +13,10 @@ from pathlib import Path
 
 from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_visibility import ROOM
+from private_runtime_config import (
+    finish_private_launch, private_launch_options, private_observer,
+    validate_private_game_paths, verify_private_launch,
+)
 
 OBSERVER = """
 stage <- 0;
@@ -45,7 +49,7 @@ function HammeRRThink() {
 
 
 def private_game(root, output, bsp=None, *, engine_physics=False):
-    game = output / "cstrike"
+    game = validate_private_game_paths(root, output)
     if engine_physics:
         output.mkdir(parents=True, exist_ok=True)
         library = output / "bin"
@@ -96,10 +100,10 @@ def private_game(root, output, bsp=None, *, engine_physics=False):
     for name in ["autoexec.cfg", "config.cfg"]:
         (game / "cfg" / name).write_text("")
     for name in ["listenserver.cfg", "server.cfg"]:
-        (game / "cfg" / name).write_text("sv_lan 1\nsv_lan\n")
+        (game / "cfg" / name).write_text("toggle sv_lan 1\nhelp sv_lan\n")
     (game / "motd.txt").write_text("HammeRR private validation\n")
     (game / "scripts/vscripts/mapspawn.nut").write_text('printl("HAMMERR_MAPSPAWN");\n')
-    (game / "scripts/vscripts/hammerr_observer.nut").write_text(OBSERVER)
+    (game / "scripts/vscripts/hammerr_observer.nut").write_text(private_observer(OBSERVER))
     if bsp is not None:
         shutil.copyfile(bsp, game / "maps/hammerr_runtime.bsp")
     (game / "hammerr-runtime.log").unlink(missing_ok=True)
@@ -110,6 +114,7 @@ def worker(args):
     root = args.game_dir.resolve()
     output = args.output.resolve()
     game = private_game(root, output, args.bsp)
+    launch_options = private_launch_options(root, game)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     env = {
         **os.environ,
@@ -128,22 +133,12 @@ def worker(args):
         "-h",
         "720",
         "-novid",
-        "-insecure",
+        *launch_options,
         "-nomaster",
         "-nojoy",
         "-console",
         "-port",
         "27583",
-        "+con_logfile",
-        "hammerr-runtime.log",
-        "+sv_lan",
-        "1",
-        "+mat_hdr_level",
-        "0",
-        "+fps_max",
-        "60",
-        "+map",
-        "hammerr_runtime",
     ]
     with (output / "launcher.log").open("w") as log:
         process = subprocess.Popen(
@@ -187,6 +182,7 @@ def worker(args):
             assert '"mat_fullbright" = "0"' in text and "Level unlit" not in text
             assert props, "Physics prop did not enter the observer"
             report = {
+                "private_launch": verify_private_launch(game, text),
                 "players": players,
                 "prop_positions": props,
                 "display": os.environ.get("DISPLAY"),
@@ -200,6 +196,7 @@ def worker(args):
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=10)
+            finish_private_launch(game)
 
 
 def compile_cases(args):
@@ -297,6 +294,37 @@ def check_positions(results, fluid):
 
 
 
+def private_group_members(group):
+    members = []
+    for directory in Path("/proc").iterdir():
+        if not directory.name.isdigit():
+            continue
+        try:
+            status = (directory / "stat").read_text()
+            fields = status[status.rfind(")") + 2:].split()
+            if int(fields[2]) == group and int(fields[3]) == group and fields[0] not in {"Z", "X"}:
+                members.append(int(directory.name))
+        except (OSError, ValueError, IndexError):
+            continue
+    return members
+
+
+def drain_private_group(process):
+    for kind, seconds in [(signal.SIGTERM, 5), (signal.SIGKILL, 3)]:
+        if private_group_members(process.pid):
+            try:
+                os.killpg(process.pid, kind)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + seconds
+        while private_group_members(process.pid) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if not private_group_members(process.pid):
+            process.wait(timeout=2)
+            return
+    raise RuntimeError(f"Private process group did not exit: {private_group_members(process.pid)}")
+
+
 def private_compositor(command, output, timeout=65, extra_environment=None):
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -313,20 +341,42 @@ def private_compositor(command, output, timeout=65, extra_environment=None):
     }
     environment.pop("DISPLAY", None)
     environment.pop("WAYLAND_DISPLAY", None)
+    failure = None
+    cleanup_failures = []
+    result = None
     with (output / "compositor.log").open("w") as stream:
         process = subprocess.Popen(["cage", "--", *command], cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             result = process.wait(timeout=timeout)
+            if result:
+                failure = RuntimeError((output / "compositor.log").read_text())
+        except BaseException as error:
+            failure = error
         finally:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGTERM)
+            try:
+                drain_private_group(process)
+            except BaseException as error:
+                cleanup_failures.append(error)
+            if (output / "private-preservation-before.json").is_file():
                 try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-    if result:
-        raise RuntimeError((output / "compositor.log").read_text())
+                    finish_private_launch(output / "cstrike", observer="compositor")
+                except BaseException as error:
+                    cleanup_failures.append(error)
+            (output / "private-cleanup.json").write_text(json.dumps({
+                "worker_result": result,
+                "worker_failure": {"type": type(failure).__name__, "message": str(failure)} if failure else None,
+                "cleanup_failures": [{"type": type(error).__name__, "message": str(error)} for error in cleanup_failures],
+                "remaining_live_processes": private_group_members(process.pid),
+            }, indent=2) + "\n")
+    if failure is not None:
+        for error in cleanup_failures:
+            failure.add_note(f"Private cleanup also failed: {type(error).__name__}: {error}")
+        raise failure
+    if cleanup_failures:
+        first, *rest = cleanup_failures
+        for error in rest:
+            first.add_note(f"Private cleanup also failed: {type(error).__name__}: {error}")
+        raise first
     return output
 
 

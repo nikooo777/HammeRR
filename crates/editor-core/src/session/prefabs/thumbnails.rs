@@ -260,7 +260,7 @@ impl Session {
             45.0,
             WIDTH as f32 / HEIGHT as f32,
         );
-        let report = json!({"name":source.entry.name,"width":WIDTH,"height":HEIGHT,"style":"flat_geometry","textures_loaded":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities,"bounds":[mesh.mins.to_array(),mesh.maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
+        let report = json!({"name":source.entry.name,"width":WIDTH,"height":HEIGHT,"style":"flat_geometry","textures_loaded":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities - mesh.stats.model_entities,"bounds":[mesh.mins.to_array(),mesh.maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
         Ok(Prepared {
             mesh,
             materials,

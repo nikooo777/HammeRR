@@ -231,6 +231,56 @@ fn thumbnail_includes_authored_hidden_geometry_and_preflights_brush_work_limits(
 }
 
 #[test]
+fn thumbnail_real_models_use_shared_instances_without_texture_assets_or_helper_substitution() {
+    let Ok(game) = crate::startup::mount_game(None) else {
+        eprintln!("CS:S not installed; skipping");
+        return;
+    };
+    let mut session = Session::new(Ok(game));
+    let directory = tempfile::tempdir().unwrap();
+    session.prefabs.store = Ok(prefabs::Store {
+        directory: directory.path().into(),
+    });
+    let entity = session
+        .create_entity(
+            Actor::User,
+            "prop_static",
+            Some(DVec3::new(64.0, 32.0, 16.0)),
+            std::collections::BTreeMap::from([
+                (
+                    "model".into(),
+                    "models/props_junk/wood_crate001a.mdl".into(),
+                ),
+                ("angles".into(), "0 90 0".into()),
+            ]),
+        )
+        .unwrap();
+    let stamp = session.prefab_report("", 0, 64, None)["snapshot"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    session
+        .save_prefab(Actor::User, "Real model", &[entity], &stamp)
+        .unwrap();
+    let history = session.history_snapshot();
+    let report = session.prefab_thumbnail_report("Real model");
+    assert!(report["error"].is_null(), "{report}");
+    assert_eq!(report["model_instances"], 1);
+    assert_eq!(report["point_helpers"], 0);
+    assert!(report["vertices"].as_u64().unwrap() > 24);
+    let prepared = session
+        .prepare_prefab_thumbnail(&session.thumbnail_source("Real model").unwrap())
+        .unwrap();
+    assert_eq!(prepared.mesh.stats.model_entities, 1);
+    for id in 0..prepared.materials.len() {
+        assert!(prepared.materials.get(id).base.is_none());
+        assert!(prepared.materials.get(id).blend.is_none());
+    }
+    assert_eq!(session.history_snapshot(), history);
+    assert!(!session.prefabs.thumbnails.renderer.initialized());
+}
+
+#[test]
 #[ignore = "requires a graphics adapter for actual prefab thumbnail validation"]
 fn prefab_thumbnail_gpu_cache_refresh_and_source_changes_preserve_editor_state() {
     let (mut session, directory) = saved();

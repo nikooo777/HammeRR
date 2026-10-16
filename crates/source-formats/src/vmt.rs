@@ -10,6 +10,8 @@ use crate::keyvalues::{self, Node, Value};
 
 /// How many `patch` includes to follow before assuming a cycle.
 const MAX_PATCH_DEPTH: usize = 8;
+const MAX_MATERIAL_DEPTH: usize = 64;
+const MAX_MATERIAL_NODES: usize = 4096;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -39,7 +41,11 @@ impl Material {
     /// Parses a VMT that isn't a `patch`; use [`Material::load`] to resolve
     /// patches through the filesystem.
     pub fn parse(text: &str) -> Result<Self, Error> {
-        let nodes = keyvalues::parse_lenient(strip_bom(text))?;
+        let nodes = keyvalues::parse_lenient_bounded(
+            strip_bom(text),
+            MAX_MATERIAL_DEPTH,
+            MAX_MATERIAL_NODES,
+        )?;
         let (shader, children) = shader_block(&nodes)?;
         Ok(Self::from_shader(shader, children))
     }
@@ -85,7 +91,11 @@ impl Material {
             return Ok(None);
         };
         let text = String::from_utf8_lossy(&bytes);
-        let nodes = keyvalues::parse_lenient(strip_bom(&text))?;
+        let nodes = keyvalues::parse_lenient_bounded(
+            strip_bom(&text),
+            MAX_MATERIAL_DEPTH,
+            MAX_MATERIAL_NODES,
+        )?;
         let (shader, children) = shader_block(&nodes)?;
         if shader != "patch" {
             return Ok(Some(Self::from_shader(shader, children)));
@@ -217,6 +227,109 @@ fn asset_path(name: &str, extension: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn nested_material(depth: usize) -> String {
+        "UnlitGeneric { ".to_owned()
+            + &"nested { ".repeat(depth - 1)
+            + "$basetexture test "
+            + &"} ".repeat(depth)
+    }
+
+    fn many_parameter_material(count: usize) -> String {
+        let mut text = "UnlitGeneric { ".to_owned();
+        for index in 0..count {
+            text.push_str(&format!("$parameter_{index} value "));
+        }
+        text.push('}');
+        text
+    }
+
+    fn syntax_kind(result: Result<Material, Error>) -> keyvalues::ParseErrorKind {
+        let Err(Error::Syntax(error)) = result else {
+            panic!("expected a bounded material syntax error");
+        };
+        error.kind
+    }
+
+    #[test]
+    fn bounded_material_parse_rejects_deep_blocks_and_excessive_parameters() {
+        assert!(Material::parse(&nested_material(MAX_MATERIAL_DEPTH)).is_ok());
+        assert_eq!(
+            syntax_kind(Material::parse(&nested_material(100_000))),
+            keyvalues::ParseErrorKind::NestingLimit
+        );
+        let parameters = many_parameter_material(MAX_MATERIAL_NODES - 1);
+        assert_eq!(
+            Material::parse(&parameters).unwrap().params.len(),
+            MAX_MATERIAL_NODES - 1
+        );
+        assert_eq!(
+            syntax_kind(Material::parse(&many_parameter_material(100_000))),
+            keyvalues::ParseErrorKind::NodeLimit
+        );
+    }
+
+    #[test]
+    fn bounded_material_parse_retains_bom_comments_and_unclosed_blocks() {
+        let material = Material::parse(
+            "\u{feff}UnlitGeneric { /* ignored { $bad 1 } */ $basetexture test // comment\nProxies { AnimatedTexture { animatedtexturevar $basetexture",
+        ).unwrap();
+        assert_eq!(material.shader, "unlitgeneric");
+        assert_eq!(material.get("$basetexture"), Some("test"));
+        assert_eq!(material.get("$bad"), None);
+        let proxies = material.blocks[0].children().unwrap();
+        assert_eq!(material.blocks[0].key, "Proxies");
+        assert_eq!(proxies[0].key, "AnimatedTexture");
+        assert_eq!(
+            proxies[0].children().unwrap()[0].as_str(),
+            Some("$basetexture")
+        );
+    }
+
+    #[test]
+    fn bounded_material_load_checks_every_patch_file_and_preserves_patch_overrides() {
+        let patch = b"Patch { /* comment */ include materials/base.vmt replace { $basetexture replacement } insert { $basetexture ignored $new added";
+        let mut reads = Vec::new();
+        let material = Material::load_with_reader("materials/patch.vmt", &mut |path| {
+            reads.push(path.to_owned());
+            Ok(Some(match path {
+                "materials/patch.vmt" => patch.to_vec(),
+                "materials/base.vmt" => {
+                    b"UnlitGeneric { $basetexture original $unchanged yes".to_vec()
+                }
+                _ => panic!("unexpected material path {path}"),
+            }))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(reads, ["materials/patch.vmt", "materials/base.vmt"]);
+        assert_eq!(material.shader, "unlitgeneric");
+        assert_eq!(material.get("$basetexture"), Some("replacement"));
+        assert_eq!(material.get("$unchanged"), Some("yes"));
+        assert_eq!(material.get("$new"), Some("added"));
+        for (text, expected) in [
+            (
+                nested_material(100_000),
+                keyvalues::ParseErrorKind::NestingLimit,
+            ),
+            (
+                many_parameter_material(100_000),
+                keyvalues::ParseErrorKind::NodeLimit,
+            ),
+        ] {
+            for invalid_path in ["materials/patch.vmt", "materials/base.vmt"] {
+                let result = Material::load_with_reader("materials/patch.vmt", &mut |path| {
+                    Ok(Some(if path == invalid_path {
+                        text.as_bytes().to_vec()
+                    } else {
+                        patch.to_vec()
+                    }))
+                })
+                .and_then(|material| material.ok_or(Error::NoShader));
+                assert_eq!(syntax_kind(result), expected);
+            }
+        }
+    }
 
     #[test]
     fn bounded_material_load_checks_patch_includes() {

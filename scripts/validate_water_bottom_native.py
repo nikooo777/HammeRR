@@ -42,6 +42,7 @@ CONTROLS = {
 REGION = (400, 200, 880, 520)
 COLLISION_LUMPS = (1, 3, 5, 10, 12, 13, 14, 18, 19, 29, 36, 46)
 WATER_PARAMETERS = """
+    %tooltexture hammerr/water_white
     $normalmap hammerr/water_flat_normal
     $reflecttexture _rt_WaterReflection
     $reflecttint "[0 0 0]"
@@ -253,9 +254,11 @@ def compile_fixture(args):
         for name, bottom in BOTTOMS.items():
             top_file.write_text(top_material(bottom))
             for material in [TOP, bottom]:
-                assert not client.call("preview_material", {"material": material})[
-                    "missing"
-                ], material
+                preview = client.call("preview_material", {"material": material})
+                assert not preview["missing"] and (
+                    preview["width"],
+                    preview["height"],
+                ) == (32, 32), (material, preview)
             bsp = args.output / f"{name}.bsp"
             result = client.call("compile_map", {"path": str(bsp)})
             assert result["success"] and result["stats"]["water_regions"] == 1

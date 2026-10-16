@@ -8,6 +8,7 @@ use super::bake::{Budget, Emitter};
 use super::culling::Candidates;
 use super::shadows::{ShadowIndex, Triangle};
 use super::{Occluder, encode_color};
+use crate::detail_props::Tint;
 use crate::map::{MAX_COMPILE_COORD, Map};
 use crate::tree::Tree;
 use crate::visibility::Visibility;
@@ -32,6 +33,7 @@ pub(super) struct Context<'a> {
     pub kind: LightingKind,
     pub model_centers: &'a [DVec3],
     pub lighting_origins: &'a [Option<DVec3>],
+    pub lighting_tints: &'a [Tint],
     pub lights: &'a [Emitter],
     pub shadows: &'a ShadowIndex<Occluder>,
     pub terrain: &'a ShadowIndex<Triangle>,
@@ -167,6 +169,11 @@ pub(super) fn bake(
             "Detail lighting origin metadata does not match the sorted native records".into(),
         );
     }
+    if ctx.lighting_tints.len() != details.props.len() {
+        return Err(
+            "Detail lighting tint metadata does not match the sorted native records".into(),
+        );
+    }
     if details.props.is_empty() {
         return Ok(None);
     }
@@ -191,6 +198,7 @@ pub(super) fn bake(
             );
         }
         let lighting_origin = ctx.lighting_origins[index];
+        let tint = ctx.lighting_tints[index];
         let (point, normal) = receiver(&prop, &details, ctx.model_centers, lighting_origin)?;
         let mut colors = direct(ctx, candidates, point, normal, budget).map_err(|error| {
             if lighting_origin.is_some() && error==OPEN_RECEIVER {
@@ -215,7 +223,8 @@ pub(super) fn bake(
         }
         budget.consume(STYLE_COUNT)?;
         let ambient_scale = LIGHTING_SCALE / ctx.directions.len() as f64;
-        details.props[index].lighting = encode_color(colors[0] + ambient[0] * ambient_scale)?;
+        details.props[index].lighting =
+            encode_color(tint.apply(colors[0] + ambient[0] * ambient_scale))?;
         let start = records.len();
         for (style, (color, ambient)) in colors.iter_mut().zip(ambient).enumerate().skip(1) {
             *color += ambient * ambient_scale;
@@ -227,7 +236,7 @@ pub(super) fn bake(
                 }
                 records.push(DetailPropLighting {
                     style: style as u8,
-                    lighting: encode_color(*color * 0.5)?,
+                    lighting: encode_color(tint.apply(*color * 0.5))?,
                 });
             }
         }
@@ -619,6 +628,7 @@ mod tests {
             kind: LightingKind::Ldr,
             model_centers: &[DVec3::ZERO],
             lighting_origins: &[],
+            lighting_tints: &[],
             lights: &[],
             shadows: &shadows,
             terrain: &terrain,

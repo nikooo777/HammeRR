@@ -1,6 +1,8 @@
 mod common;
 #[path = "common/detail_model.rs"]
 mod detail_model;
+#[path = "detail_lighting/tint.rs"]
+mod tint;
 
 use compiler::{LightingMode, Options, SkyQuality};
 use glam::DVec3;
@@ -480,9 +482,31 @@ fn reflected_styles_reach_details_even_when_the_direct_normal_faces_away() {
         ],
     );
     let base = color(&compiled(&fixture, LightingMode::DirectLdr, 0));
-    let bounced = color(&compiled(&fixture, LightingMode::DirectLdr, 1));
+    let bounced_bsp = compiled(&fixture, LightingMode::DirectLdr, 1);
+    let bounced = color(&bounced_bsp);
     assert!(base.x > 0.0 && base.y > 0.0 && base.z == 0.0, "{base}");
     assert!(bounced.x > base.x, "{base} -> {bounced}");
+    let prop = fixture
+        .source
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("prop_detail"))
+        .unwrap();
+    prop.properties.set("_detail_lighting_tint", "128 64 0");
+    let tinted = compiled(&fixture, LightingMode::DirectLdr, 1);
+    tint::assert_record(
+        tinted.detail_props().unwrap().unwrap().props[0],
+        bounced_bsp.detail_props().unwrap().unwrap().props[0],
+        [128, 64, 0],
+    );
+    fixture
+        .source
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("prop_detail"))
+        .unwrap()
+        .properties
+        .remove("_detail_lighting_tint");
     fixture.source.entities[light].properties.set("style", "1");
     let bsp = compiled(&fixture, LightingMode::DirectLdr, 0);
     let extra = bsp.detail_prop_lighting(false).unwrap().unwrap();
@@ -491,6 +515,20 @@ fn reflected_styles_reach_details_even_when_the_direct_normal_faces_away() {
     let reflected = DVec3::from_array(extra[0].lighting.linear());
     assert!((reflected * 2.0 - base).abs().max_element() <= 1.0);
     assert_eq!(color(&bsp), DVec3::ZERO);
+    fixture
+        .source
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("prop_detail"))
+        .unwrap()
+        .properties
+        .set("_detail_lighting_tint", "128 64 0");
+    let tinted = compiled(&fixture, LightingMode::DirectLdr, 0);
+    tint::assert_color(
+        tinted.detail_prop_lighting(false).unwrap().unwrap()[0].lighting,
+        extra[0].lighting,
+        [128, 64, 0],
+    );
 }
 
 #[test]
@@ -645,6 +683,26 @@ fn material_sprites_and_explicit_models_share_baked_color_without_reseeding() {
         baked_bsp.to_bytes()
     );
     assert_eq!(fixture.source.write(&Default::default()), before);
+    fixture
+        .source
+        .entities
+        .iter_mut()
+        .find(|entity| entity.classname() == Some("prop_detail"))
+        .unwrap()
+        .properties
+        .set("_detail_lighting_tint", "128 64 0");
+    let tinted = compiled(&fixture, LightingMode::DirectLdr, 0)
+        .detail_props()
+        .unwrap()
+        .unwrap();
+    let original = baked_bsp.detail_props().unwrap().unwrap();
+    for (&actual, &old) in tinted.props.iter().zip(&original.props) {
+        if actual.kind == 0 {
+            tint::assert_record(actual, old, [128, 64, 0]);
+        } else {
+            assert_eq!(actual, old);
+        }
+    }
 }
 
 #[test]

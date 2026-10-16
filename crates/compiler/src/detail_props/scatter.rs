@@ -6,7 +6,7 @@ use source_formats::gamefs::asset_relative;
 use source_formats::keyvalues::{self, Node};
 use source_formats::vmf::Vmf;
 
-use super::{Builder, sprites};
+use super::{Builder, Tint, sprites};
 use crate::{Control, Diagnostic, Report, emit, faces::Face, map::Map};
 
 mod terrain;
@@ -369,7 +369,7 @@ fn place(
         + normal * LEAF_BIAS
         + inward * (LEAF_BIAS / inward.length().max(LEAF_BIAS));
     match &model.asset {
-        Asset::Model(path) => builder.add(path, prop, leaf_point, None, control),
+        Asset::Model(path) => builder.add(path, prop, leaf_point, None, Tint::default(), control),
         Asset::Sprite(sprite) => {
             prop.scale = random.sprite_scale(sprite.random_scale)?;
             prop.orientation = sprite.orientation;
@@ -380,7 +380,7 @@ fn place(
                 prop.shape_angle = shape.angle;
                 prop.shape_size = shape.size;
             }
-            builder.add_sprite(sprite.record, prop, leaf_point, control)
+            builder.add_sprite(sprite.record, prop, leaf_point, Tint::default(), control)
         }
     }
 }

@@ -141,8 +141,10 @@ fn neutral_bootstraps_add_no_energy_and_keep_opaque_black_capture_freshness() {
                         .decode_rgba8(mip, 0, face)
                         .unwrap()
                         .pixels
-                        .chunks_exact(4)
-                        .all(|pixel| pixel == [0, 0, 0, 0])
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .all(|pixel| *pixel == [0, 0, 0, 0])
                 );
             }
         }
@@ -156,8 +158,10 @@ fn neutral_bootstraps_add_no_energy_and_keep_opaque_black_capture_freshness() {
                         .decode_rgba8(mip, 0, face)
                         .unwrap()
                         .pixels
-                        .chunks_exact(4)
-                        .all(|pixel| pixel == [0, 0, 0, 255])
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .all(|pixel| *pixel == [0, 0, 0, 255])
                 );
             }
         }

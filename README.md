@@ -24,7 +24,7 @@ HammeRR opens and saves Hammer's VMF files, renders your map with the game's own
 You need Linux, Rust 1.92 or newer, a Vulkan graphics driver, and Counter-Strike: Source installed through Steam.
 
 ```sh
-cargo build --release -p editor -p editor-core -p compiler
+cargo build --release -p editor -p editor-core -p compiler -p native-runtime
 ./target/release/editor path/to/map.vmf
 ```
 
@@ -343,6 +343,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Independent LDR and HDR build controls](docs/images/build-hdr-controls.png) |
 | Bake separate light colors, styles, bounces and ambient probes for LDR and HDR. |
 
+| Reflection face bindings | Generated reflections |
+| --- | --- |
+| ![Reviewing reflection sample assignments](docs/images/cubemap-faces.png) | ![Local reflections on a compiled floor in Counter-Strike: Source](docs/images/compiled-reflections.png) |
+| Preview and override which reflection sample a face uses. | Capture local LDR reflections during Compile and keep them working when you play. |
+
+[Cubemap faces →](docs/cubemap-faces.md) · [Generated reflections →](docs/reflections.md)
+
 | Static-prop cutout shadows |
 | --- |
 | ![Baked light passing through a fence model's cutout texture](docs/images/prop-shadow-cutouts.png) |
@@ -371,7 +378,7 @@ The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: creation, resolution edits, live sculpt/blend strokes, vertex handles and full/half-edge subdivision work; other fractional edge tools remain planned.
 - **Models**: static meshes, reference poses, skins, bodygroups and visual browsing work; animation and scaling remain planned.
-- **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting and up to four diffuse bounces work; exposure, cubemap generation and prop lighting remain planned.
+- **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting, diffuse bounces and LDR reflections work; exposure, HDR cubemap capture and prop lighting remain planned.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

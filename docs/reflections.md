@@ -29,6 +29,8 @@ Generate reflections for the map's `env_cubemap` samples as part of **Compile** 
 
 Runtime paths apply to this machine. They are separate from the source-content mounts and stay outside build recipes and recent-map settings. Configuration does not launch a game. Capture uses a private client with `-insecure` and `sv_lan 1`.
 
+![Capture installation and Steam client settings](images/build-reflection-runtime.png)
+
 ## Recipes, recent maps and agents
 
 **Save current as new** and **Replace with current** store the generation setting with the other build values. **Fast preview** and **Final lighting** keep generation disabled. Older recipes and recent-map files load with generation disabled. Opening a compatible recent map restores its saved generation setting.
@@ -49,9 +51,11 @@ Use `--reflection-steam-root` to provide the Steam client override. The editor a
 
 - Generation supports Direct LDR and one capture bounce. HDR reflection capture, moving-scene reassignment and reflection preview inside the editor are unavailable.
 - A build supports 1–32 samples at distinct integer positions. Sample size `0` uses the declared 128-pixel default. Explicit cube edges up to 128 pixels are supported; 256 pixels is rejected before launch. The private capture viewport must verify as 1280×720.
-- A supported CS:S installation, running Steam client, native runtime helper and private compositor dependencies must pass preflight. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.
+- A supported CS:S installation, running Steam client, native runtime helper, Cage, grim and Bubblewrap must pass preflight. Bubblewrap needs usable Linux user namespaces. Unsupported materials, sample sizes, missing assets or unverified captures fail the build with diagnostics.
+- The capture client reads external files through a read-only filesystem view. Only its owned capture directory is writable; source mounts keep their files and caches. Graphics devices and Steam IPC remain available.
 - Capture rejects authored scripts, script thinkers, script entities and command-executing entity inputs. This is a conservative capture restriction; the saved VMF and published entity lump keep their authored contents. An already running CS:S client blocks capture.
 - Native capture keeps each private job within a 256 MiB file budget, including two BSP copies and 64 MiB of scratch admission. BSP staging larger than 96 MiB is rejected. Captured assets and retained diagnostics have additional limits.
 - Active builds freeze compiler settings and runtime configuration. Changing generation afterward makes a previous build stale while its saved settings differ.
 - Failed, cancelled or stale generation preserves the previously published BSP. Capture does not add map Undo entries. **Cancel build** remains pending until owned processes stop and the preservation audit finishes.
+- Saving the map under another filename during capture rejects publication. Compile again from its new path.
 - Sample records and temporary bootstrap textures alone do not count as generated reflections. A BSP becomes available only after capture, packed-asset verification and publication succeed.

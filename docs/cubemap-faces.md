@@ -1,3 +1,5 @@
+[← Manual](README.md)
+
 # Cubemap faces
 
 Choose which `env_cubemap` sample a reflective face uses. The inspector shows
@@ -22,6 +24,8 @@ the chosen sample position, original material and generated material alias.
    choose **Refresh**. **Previous** and **Next** page through this helper's
    assignments.
 
+![Reviewed manual binding removal and automatic sample choices](images/cubemap-faces.png)
+
 The draft label identifies its current owner. **Review current draft** takes
 ownership and issues a new token; the previous owner cannot apply or cancel
 it. Changes to the map, face selection, mounted content or output namespace
@@ -30,7 +34,7 @@ make a draft stale. Preview the intended operation again before applying it.
 The same operations are available through `get_cubemap_bindings` and
 `set_cubemap_bindings`. Inspection and previews do not capture reflections or
 require reflection generation to be enabled. Build and capture settings are
-described in [Compile and play](compile-and-play.md).
+described in [Generated reflections](reflections.md).
 
 ## Limits
 

@@ -31,6 +31,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
 | [Overlays](overlays.md) | Compiling imported surface projections, material, render order and distance fading |
 | [Cubemap faces](cubemap-faces.md) | Inspecting sample choices and previewing manual reflection bindings |
+| [Generated reflections](reflections.md) | Capturing LDR reflection samples during a build and packing them for play |
 | [Models](models.md) | Static mesh previews, skin materials, bounds, picking and model inspection |
 | [Particle effects](particles.md) | Active manifest definitions, metadata and guarded effect-name choices |
 | [Sounds](sounds.md) | Sound files and script names, audition, volume and entity assignment |

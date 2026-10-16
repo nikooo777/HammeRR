@@ -296,15 +296,19 @@ def verify_assets(data, namespace, output):
     require(bindings and bindings == manifest["texinfo_bindings"], "Actual TexInfo vectors/materials differ from registered bindings")
     alias_infos = {row["index"] for row in bindings}
     consumers = []
+    original_materials = {alias["material"] for alias in manifest["aliases"]}
     for lump, size, offset in [(7, 56, 10), (27, 56, 10), (19, 8, 2)]:
         payload = lumps[lump][2]
         require(len(payload) % size == 0, "Malformed reflection consumer lump")
         for index in range(len(payload) // size):
             texinfo = struct.unpack_from("<h", payload, index * size + offset)[0]
+            if texinfo >= 0:
+                require(texinfo < len(infos), "Reflection consumer has an invalid TexInfo index")
+                require(names[infos[texinfo][17]] not in original_materials, "A geometry consumer still uses an unbound reflective material")
             if texinfo in alias_infos:
                 consumers.append({"lump": lump, "index": index, "texinfo": texinfo})
     require(consumers and consumers == manifest["face_bindings"], "Actual face/brushside alias consumers differ from registered bindings")
-    return {"manifest": manifest, "samples": sample_reports, "pak": records, "bound_texinfos": len(bindings), "bound_consumers": len(consumers), "bsp_sha256": probe.digest(data)}
+    return {"manifest": manifest, "samples": sample_reports, "pak": records, "bound_texinfos": len(bindings), "bound_consumers": len(consumers), "unused_original_materials": sorted(original_materials), "bsp_sha256": probe.digest(data)}
 
 
 def ppm(path):
@@ -340,6 +344,7 @@ def worker(args):
     game = runtime.private_game(args.game_dir, output, engine_physics=True)
     shutil.copytree(args.fixture_game / "materials" / MATERIALS, game / "materials" / MATERIALS)
     data = probe.read_bounded(args.bsp, probe.MAX_BSP_BYTES)
+    bindings = verify_assets(data, args.map_name, output / "verified-assets")
     entities = probe.bsp_lumps(data)[0][2]
     require(b'hammerr_reflection_observer' not in entities, "Observer name collides with authored source")
     observer = b'\n{\n"classname" "logic_script"\n"targetname" "hammerr_reflection_observer"\n"origin" "-192 -176 80"\n"vscripts" "hammerr_reflection_observer.nut"\n"thinkfunction" "HammeRRThink"\n}\n\0'
@@ -406,7 +411,10 @@ def worker(args):
                 require(values and float(values[-1]) == expected, f"Native {name} control differs from the proof: {values}")
                 controls[name] = float(values[-1])
             require(not re.search(r'(?:Error reading texture data "|couldn.t find )maps/' + re.escape(args.map_name) + r'/', text, re.IGNORECASE), "Native engine rejected a generated reflection texture")
-            require("env_cubemap used on world geometry without rebuilding map" not in text, "The rendered surface retained an unbound placeholder")
+            unused_warnings = sorted(set(re.findall(r"env_cubemap used on world geometry[^\r\n]*ignoring: ([^\r\n]+)", text)))
+            require(set(unused_warnings).issubset(bindings["unused_original_materials"]), f"The engine reported an unverified unbound material: {unused_warnings}")
+            report["unused_material_diagnostics"] = unused_warnings
+            report["geometry_consumers_verified"] = bindings["bound_consumers"]
             delta = difference(ppm(output / "specular-on.ppm"), ppm(output / "specular-off.ppm"))
             require(delta["mean_component_difference"] > 8 and delta["changed_fraction"] > 0.05, f"The actual floor did not display a measurable reflection: {delta}")
             gains = [on - off for on, off in zip(delta["first_rgb"], delta["second_rgb"], strict=True)]

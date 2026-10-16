@@ -96,6 +96,9 @@ To build the map, set the build options once, then compile:
 
 ## Tools by task
 
+The shared desktop and private stdio server register 384 tools. `tools/list`
+returns their current schemas and descriptions.
+
 | Task | Tools |
 | --- | --- |
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
@@ -106,7 +109,7 @@ To build the map, set the build options once, then compile:
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
-| Prefab library | `get_prefabs`, `save_prefab`, `preview_prefab`, `rename_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
+| Prefab library | `get_prefabs`, `inspect_prefab_thumbnail`, `render_prefab_thumbnail`, `save_prefab`, `preview_prefab`, `rename_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
 | Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
 | Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
@@ -114,7 +117,7 @@ To build the map, set the build options once, then compile:
 | Brush drawing and transforms | `set_spatial_settings`, `draw_block`, `cancel_block_preview`, `create_block`, `transform_objects` |
 | Transform handles | `set_transform_tool`, `get_transform_handles`, `begin_transform_drag`, `update_transform_drag`, `commit_transform_preview`, `cancel_transform_preview` |
 | Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
-| Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
+| Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `preview_overlay_corners`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
 | New entities on surfaces | `get_entity_placement`, `begin_entity_placement`, `pick_entity_placement`, `review_entity_placement`, `apply_entity_placement`, `cancel_entity_placement` |
 | Rope preview | `get_rope_preview`, `set_view`; `render_view` and `pick_at_pixel` accept `rope_preview` overrides |
@@ -295,7 +298,17 @@ for controls and limits.
 and snapshot. `edit` takes that snapshot and ordered `nodes: [{id, origin}]`;
 it reuses Review/Apply/Cancel while retaining node IDs, names, custom values,
 flags, connections and outside references. Its preview reports `existing: true`.
-Insertion, removal, renaming, branching and open/closed conversion are unsupported.
+To insert or remove nodes, pass the inspected `seed` with `action: "edit"`,
+ordered `nodes` and the same snapshot. Retained rows use `id`; new rows omit it.
+Optional `prefix` (default `path`) names only new nodes. Keep at least one
+original node and 2–64 distinct finite points within ±65536. The preview reports
+`seed`, each row's `source_id` (null for inserted nodes) and exact `removed`
+IDs/names. Removed names are not recycled. A removed node with I/O connections
+or references beyond the chain's ordinary `target` links rejects; retained nodes
+keep other values and incoming references, while inserted nodes receive FGD
+defaults. Apply revalidates the complete plan and makes one Undo step. Omitting
+`seed` retains the earlier requirement to provide every original node exactly
+once. Renaming, branching and open/closed conversion are unsupported.
 
 ### History, measurements and surface creation
 
@@ -307,9 +320,23 @@ At most 256 transactions can be traversed in one request. See [History](history.
 
 `get_measurements` reports saved rulers, the owned draft, limits, errors and a
 snapshot. `set_measurement` supports `preview`, `review`, `apply`, `cancel`,
-`delete`, `frame` and `view`. Rulers use editor-only metadata and the shared guide
-mesh, with no BSP output. See [Measurement guides](measurements.md) for inputs,
-ownership and limits.
+`delete`, `frame`, `view`, `begin_pick`, `pick_ray`, `pick_pixel` and `cancel_pick`.
+Rulers use editor-only metadata and the shared guide mesh, with no BSP output.
+
+Preview first. `begin_pick` requires its owned `token`, `endpoint: "start"|"end"`,
+`width`, `height` (1–8192), and the latest `pick_snapshot`. Optional `camera`
+matches `render_view` without moving the desktop camera. Use the new token for
+`pick_ray` with finite `ray_origin` / nonzero finite `ray_direction`, or
+`pick_pixel` with integer `x` / `y` and the captured `width` / `height`. Pixel
+picks use the pixel center. The first visible brush, terrain triangle or supported
+model mesh supplies the exact world endpoint; hidden targets, entity helpers and
+empty space provide no substitute plane. Misses, coincident endpoints and stale
+map/scene/camera/pixel dimensions preserve the draft. Successful picks return a
+new token and `last_pick: {endpoint, target, solid, side, point, normal}`; brush
+IDs are null for model hits. `cancel_pick` stops only the owned pending pick,
+including stale cleanup, and returns a new token with both endpoints retained.
+Apply rejects while picking. Numeric edits remain exact and unsnapped; endpoints
+do not follow later object changes. See [Measurement guides](measurements.md).
 
 `get_entity_placement` reports the current snapshot and owned draft.
 `begin_entity_placement` takes that snapshot, a point `classname`, optional
@@ -362,7 +389,19 @@ Load/search responses and `get_map_info.definitions` include the same metadata.
 FGD `@mapsize` is informational: reversed endpoints sort, equal endpoints leave
 the previous preference, and the last effective declaration wins in existing
 include order. An absent declaration reports null; coordinate limits do not
-change. See [Entity definitions](entities.md).
+change. `get_entity_inspector.helpers` also reports resolved FGD visual helpers:
+`status`, `bounds_source`, `invalid_size`, `local_bounds`, `world_bounds`,
+`class_color`, `errors`, `unsupported` declaration names and `definition_sources`.
+Inherited/extended `size(width height depth)` and `size(mins, maxs)` declarations
+supply world-aligned generic point boxes; `color(r g b)` sets their unselected
+class color. Native integer arguments, positive volume and local coordinates
+within ±65536 are required. Loaded model meshes and specialized lights retain
+precedence. Invalid/ambiguous size declarations expose an amber marker and
+`invalid_fgd_size`; working-region bounds remain unresolved with an explicit
+error. Picking, framing, area/volume selection and placement use the same valid
+bounds. Other helper declarations remain listed and unevaluated. Catalog source
+paths are available; individual inherited helpers lack file/line provenance.
+FGD reload changes no source values or Undo history. See [Entity definitions](entities.md).
 
 ### Generated LDR reflections
 
@@ -391,25 +430,25 @@ Explicit `prop_detail`/`detail_prop` models may set `lightingorigin` through exi
 
 Use existing `create_entity` and `set_entity_properties` calls with `classname: "prop_detail_sprite"`, an `origin`, and required string properties `position_ul`, `position_lr`, `tex_ul`, `tex_size` and `tex_total_size`. For example, `"-20 45"`, `"20 0"`, `"0 0"`, `"128 128"` and `"512"` respectively make a 40-by-45-unit card from the first logical 128-by-128 atlas rectangle. `position_ul`/`position_lr` are local world-unit corners; `tex_ul`/`tex_size` are logical atlas coordinates and `tex_total_size` supplies the positive scalar atlas size with a half-texel inset. The rectangle must fit that atlas and span at least one logical texel per axis. All fields require finite values.
 
-`detailOrientation` accepts integers 0 (default fixed), 1 (full billboard) or 2 (vertical billboard). `angles` uses the existing Source pitch/yaw/roll path. Native scale is one, and sprites share world `detailmaterial` and the existing checked atlas. No model asset is needed. Origins and complete card bounds must fit ±16384 units; origins must resolve to open visible leaves. Lit sampling also needs an open visible receiver. Named lighting-origin overrides, tint, I/O, parenting, scripts, collision, random scale, procedural shapes, sway and nondefault rendering/fading are unsupported. Compile regions select visible sprites by inclusive authored origin, defaulting to world zero when omitted. Outside and hidden sprites are omitted before card/atlas validation; visible malformed or out-of-range origins still reject. Included cards keep their geometry and pass normal bounds, open-leaf and lighting checks, even when they cross the box. A selected boundary point is never moved inward and can fail the normal open-leaf check.
+`detailOrientation` accepts integers 0 (default fixed), 1 (full billboard) or 2 (vertical billboard). `angles` uses the existing Source pitch/yaw/roll path. Optional `scale` defaults to 1 and must remain positive and finite as a native float. `sprite_shape` may be `cross` or `tri`, both requiring orientation 0; tri `shape_angle` is an integer 0–255 and `shape_size` is finite 0–1, defaulting to zero. Cross parameters must be omitted or zero. Plain sprites accept all three orientations. `sway` is finite 0–1 (default zero), stored through SDK float conversion and truncated byte encoding; 0.5 becomes 127. Shape size uses the same byte quantization. Sprites share world `detailmaterial` and the existing checked atlas. No model asset is needed. Origins and complete card bounds must fit ±16384 units; origins must resolve to open visible leaves. Lit sampling also needs an open visible receiver. Named lighting-origin overrides, tint, I/O, parenting, scripts, collision, nonzero `spriterandomscale`, nondefault `modelscale` and nondefault rendering/fading are unsupported. Orphan nonzero shape parameters reject. Fixed/full sprites, cross/tri shapes and vertical sprites with encoded nonzero sway or styles require a native half-path scale from 2⁻²⁴ to 65504; unstyled vertical sprites with encoded sway zero keep the positive-float fast path. Native intermediates and complete rest bounds are checked before publication. Runtime motion still requires a nonzero client `cl_detail_max_sway`; animated bounds are not generated. Compile regions select visible sprites by inclusive authored origin, defaulting to world zero when omitted. Outside and hidden sprites are omitted before card/atlas validation; visible malformed or out-of-range origins still reject. Included cards keep their geometry and pass normal bounds, open-leaf and lighting checks, even when they cross the box. A selected boundary point is never moved inward and can fail the normal open-leaf check.
 
 The shared compiler used by `compile_map`, `start_compile` and `run_map` removes these source entities from runtime output, adds native detail records and reports the existing `detail_props` and `detail_prop_sprites` statistics. Bounds, instance/dictionary/asset budgets, lighting modes and style extras are shared with generated sprites. The human workflow uses the custom-class field in **Entity…**, **Place entity** and **Advanced properties → Property key / Value**, with no new tool or setting. See [Explicit detail sprites](detail-sprites.md).
 
 ### Material detail scattering
 
-For [material-driven model and sprite scattering](material-detail-scattering.md), assign a mounted VMT declaring `%detailtype` through `edit_faces` or the material tools, and set world `detailvbsp` through the shared property draft (**World settings… → Detail.vbsp file**). Compilation samples exposed world/detail polygons and parallelogram terrain patches deterministically, including clipped flat regions and wholly retained terrain. Final terrain LOD triangles supply positions, geometric normals and barycentric alpha; adjacent alpha groups are selected probabilistically. Flat faces use the highest group. Selected empty groups emit nothing without substitution; unsupported unused groups do not reject a different selection. Generated and explicit records share statistics, bounds and resource caps.
+For [material-driven model and sprite scattering](material-detail-scattering.md), assign a mounted VMT declaring `%detailtype` through `edit_faces` or the material tools, and set world `detailvbsp` through the shared property draft (**World settings… → Detail.vbsp file**). Compilation samples exposed world/detail polygons and valid convex planar terrain quads, including skewed bases, with deterministic samples on clipped flat regions and wholly retained terrain. Skewed bases use projected final native base-triangle areas to distribute samples; final terrain LOD triangles supply displaced positions, geometric normals and barycentric alpha; adjacent alpha groups are selected probabilistically. Flat faces use the highest group. Selected empty groups emit nothing without substitution; unsupported unused groups do not reject a different selection. Generated and explicit records share statistics, bounds and resource caps.
 
 Plain sprite dictionary entries use `sprite` for logical atlas coordinates and `spritesize` for anchors and world dimensions. `detailOrientation` accepts exact integers: `0` (default) keeps stored angles, `1` faces the camera including its height, and `2` faces the camera while remaining vertical. All three accept `spriterandomscale` from 0–1 as Gaussian standard deviation around one followed by absolute value; omitted or zero deviation keeps scale one. World `detailmaterial` (**Detail material file**) selects the atlas, defaulting to `detail/detailsprites`. Custom atlases require checked `UnlitGeneric` material flags and a static square texture; see the manual for exact asset limits.
 
 Fixed shapes use `sprite_shape "cross"` or `sprite_shape "tri"` in the same sprite dictionary entry. Both require `detailOrientation 0` (the default) and accept the same Gaussian random scale. Cross ignores horizontal anchoring and requires `shape_angle` and `shape_size` omitted or zero. Tri accepts integer `shape_angle` 0–255 (default 0) and finite `shape_size` 0–1 (default 0); size is quantized to one byte, so 0.5 becomes 127/255. Bounds follow the raw scaled, rotated cards at rest. These shapes share the existing instance, sprite-dictionary, atlas and lighting limits and statistics.
 
-Generated plain sprites at orientations 0/1/2 and cross/tri shapes at orientation 0 may use finite dictionary `sway` from 0–1, default 0. SDK encoding converts to float, multiplies by 255 and truncates to a byte: 0/0.5/1 become 0/127/255. Dictionary models and explicit detail entities reject nonzero sway. The CS:S client global `cl_detail_max_sway` defaults to 0, so authored sway needs an explicit runtime opt-in such as `cl_detail_max_sway 8` in the game console; set it back to 0 to disable motion. Runtime sway and player avoidance can move vertices outside the checked rest bounds. No new map property, compiler setting, MCP tool, animated bounds or collision is added.
+Generated plain sprites at orientations 0/1/2 and cross/tri shapes at orientation 0 may use finite dictionary `sway` from 0–1, default 0. SDK encoding converts to float, multiplies by 255 and truncates to a byte: 0/0.5/1 become 0/127/255. Dictionary and explicit model details reject nonzero sway; explicit sprites accept it through their properties. The CS:S client global `cl_detail_max_sway` defaults to 0, so authored sway needs an explicit runtime opt-in such as `cl_detail_max_sway 8` in the game console; set it back to 0 to disable motion. Runtime sway and player avoidance can move vertices outside the checked rest bounds. No new map property, compiler setting, MCP tool, animated bounds or collision is added.
 
 Existing `set_compile_settings` lighting controls apply to explicit/generated models, plain sprites and fixed shapes. `lighting: "fullbright"` retains white unbaked base colors without style extras. `direct_ldr` bakes static direct light plus spherical ambient from filtered world/terrain lightmaps and sky, including configured diffuse bounces through those maps. `direct_ldr_hdr` leaves the HDR pass's final color in the native format's single shared detail base field; detail records do not hold separate LDR/HDR base colors. Placement and source/history stay unchanged by the lighting mode, and failed builds preserve the previous output.
 
 Styles 1–63 contribute through separate native extras alongside style 0's base. Author named groups, appearances and initial state through the existing light properties (`targetname`, `style`, `pattern`, `spawnflags`) and control them through connections. Following the SDK, each extra encodes half its direct-plus-filtered-ambient color; the client applies the current style value without restoring a factor of two. Its final intensity can differ from an equivalent static-base light. Each receiver permits 63 extras. LDR stores its array in `dplt`; dual-channel builds add `dplh` with matching per-receiver sorted style unions and zero color for a style absent from one channel. Both arrays together permit 65,536 records, so dual builds allow at most 32,768 union entries per channel. Static builds without extras emit no new style lumps. Contribution counts appear in build diagnostics.
 
-Invalid dictionaries, unsupported shapes or sway forms, skewed terrain bases, crossing terrain regions, runtime models, missing or vertex-lit assets, invalid style layouts and exceeded budgets reject before publication. Fixed/full billboards, cross/tri shapes and vertical billboards with styles or encoded nonzero sway reject raw scale below 2⁻²⁴ for the native half-precision path; positive half conversion truncates downward. Emitted float scales remain unchanged for SDK lighting, while raw scaled bounds conservatively cover the smaller static native geometry at rest. Unstyled vertical billboards with encoded sway zero retain their existing fast path and positive-float scale rules, including authored values that quantize to byte zero. Detail objects do not cast new baked shadows. Generated models, sprites and shapes keep their existing lighting points; authored tint remains unavailable. Use the existing `compile_map`, `start_compile` and `run_map` calls; no additional tool or setting is required.
+Invalid dictionaries, unsupported shapes or sway forms, folded/collapsed/nonplanar terrain bases, crossing terrain regions, runtime models, missing or vertex-lit assets, invalid style layouts and exceeded budgets reject before publication. Fixed/full billboards, cross/tri shapes and vertical billboards with styles or encoded nonzero sway require raw scale from 2⁻²⁴ to 65504 for the native half-precision path; positive half conversion truncates downward. Emitted float scales remain unchanged for SDK lighting, while raw scaled bounds conservatively cover the smaller static native geometry at rest. Unstyled vertical billboards with encoded sway zero retain their existing fast path and positive-float scale rules, including authored values that quantize to byte zero. Detail objects do not cast new baked shadows. Generated models, sprites and shapes keep their existing lighting points; authored tint remains unavailable. Use the existing `compile_map`, `start_compile` and `run_map` calls; no additional tool or setting is required.
 
 ### HDR build channels
 
@@ -857,6 +896,8 @@ to the current map/selection/clipboard state.
 
 | Tool | Arguments and behavior |
 | --- | --- |
+| `inspect_prefab_thumbnail` | Exact `name`; detached CPU geometry/count/bounds diagnostics, cache state, graphics availability and limits. Initializes no graphics. |
+| `render_prefab_thumbnail` | Exact `name`, optional `refresh` (default false); returns the same 320×240 PNG and report as **Render thumbnail / Refresh thumbnail**. |
 | `save_prefab` | Latest `snapshot`, new `name` and optional whole-object `ids` (selection by default). Captures before atomically creating a new file. Never overwrites; map/history/clipboard stay unchanged. |
 | `preview_prefab` | Latest `snapshot`, `name`, optional world `position` (defaults to zero), XYZ `rotation` in degrees, positive XYZ `scale`, source-world `pivot` (bounds center when omitted) and `keep_external_links` (false). Scale then rotation precede placement; nonidentity scale requires brushes only. Privately validates before changing clipboard/preview state. Returns `paste.preview.token` for `apply_paste` / `cancel_paste`. |
 | `rename_prefab` | Latest `snapshot`, original `name` and `new_name`. Atomically renames without overwriting an existing entry. Retains VMF bytes, clipboard, selection and map history. |
@@ -875,6 +916,17 @@ changed file metadata or Session state invalidates stale requests. Renamed or
 replaced sources invalidate loaded placement reviews; deletion alone retains the
 detached draft. Direct replacement, private formats and referenced instances are
 unavailable. Rename requires Linux atomic no-replace support.
+
+Thumbnails render flat brush/terrain/model geometry and normal point helpers,
+including authored hidden objects; textures and sky are omitted. The isolated
+scene/camera leave map, selection, clipboard, owned drafts and history unchanged.
+Inspection and rendering reject unresolved instances, invalid geometry and missing
+or unsupported model geometry with explicit errors. Failed rendering returns no
+image and leaves CPU inspection available. At most eight images are cached;
+every retrieval checks exact source bytes, file identity and content/FGD epochs.
+Caps are 2 MiB text, 128 brushes, 1024 sides, 64 sides per brush, 65536 displacement
+vertices, eight model paths, sixteen model instances, 64 material bindings,
+200000 vertices and 600000 indices. Larger assemblies can still use placement.
 See [Prefab library](prefabs.md).
 
 ### Overlay authoring
@@ -885,15 +937,17 @@ See [Prefab library](prefabs.md).
 | `browse_overlay_targets` | Search existing overlays by `query` (name/material/ID, at most 256 bytes), `offset` and `limit` (default 20, maximum 50). Returns snapshot, exact total and `entries` with numeric `id`, `entity` identity, name/material, source/settings, `eligible` and rejection `error`. Does not change selection. |
 | `preview_overlay` | Latest `snapshot`, explicit `source:{solid,side}` and `material`; optional `targetname`, `render_order` (0–3), `u`/`v` endpoint pairs and `fade_min`/`fade_max` world distances. Fits a new owned draft without editing source/history/selection. |
 | `preview_overlay_refit` | Latest `snapshot` and optional overlay `id` (defaults to selection); previews refitting its one existing visible world/detail quad binding. Keeps identity, raw settings and metadata. |
+| `preview_overlay_corners` | Latest `snapshot`, optional overlay `id` (single selected overlay by default) and exactly four local world-unit `corners: [[u,v],…]` in perimeter order. Previews updating its existing single-face projection. |
 | `preview_overlay_rebind` | Latest `snapshot`, existing overlay `id: "entity:<id>"` and a different destination `source:{solid,side}`. Both bindings must be eligible visible world/detail quads. Returns `operation: "rebind"`, same entity and `previous_source`; preserves raw settings and metadata. |
 | `review_overlay` | A valid draft `token`; transfers ownership and issues a fresh token without editing the map. |
-| `apply_overlay` | Current owned `token`; one Undo step. `operation: "create"` returns `created`; `refit` and `rebind` return `updated` for the same entity. |
+| `apply_overlay` | Current owned `token`; one Undo step. `operation: "create"` returns `created`; `refit`, `rebind` and `corners` return `updated` for the same entity. |
 | `cancel_overlay` | Matching owned `token`; discards only that draft, including a stale owned draft. |
 
 Creation supports one visible convex planar world or `func_detail` quad,
 including tilted trapezoids. Defaults are order `0`, U/V `0–1`, fade start `-1`
 and end `0` (disabled). Preview fits the actual source corners; it does not accept
-derived basis/corner fields. The compiler and authoring share projection checks.
+derived basis fields. Numeric corner editing is the explicit operation below.
+The compiler and authoring share projection checks.
 Source availability and final surface budgets are checked during compilation.
 
 Map/selection changes stale Apply and Review. Invalid requests preserve valid
@@ -907,6 +961,20 @@ existing named overlay and use **Preview rebind → Apply rebind**. Missing,
 hidden, multiside, terrain, model and nonquad existing bindings reject; rebind
 cannot repair those bindings. Projected viewport materials, terrain/model
 creation or refitting, and automatic rebinding remain unavailable.
+
+`get_overlay_state.selected_corners` exposes the eligible entity/source,
+`options`, world `corners`, `local_corners`, `basis_origin`, `basis_u` and `basis_v`;
+`corners_error` explains an unavailable selection. The draft additionally exposes
+`basis_normal`.
+`preview_overlay_corners` returns `operation: "corners"`; it retains the same
+entity, single visible world/detail quad binding and raw basis/origin/settings,
+connections and metadata. Apply changes only `uv0`–`uv3` local XY values in one
+Undo step. Corners must be finite, noncollapsed, convex and perimeter ordered,
+with complete world extents within ±16384 on the current projection plane,
+including native float precision. They may extend past the bound face; native rendering clips to that surface. Map/selection/token
+changes reject; invalid input preserves the previous valid draft. The shared
+Review/Apply/Cancel ownership rules still apply. Viewport corner dragging,
+terrain/model/multiside corner editing and new basis authoring remain unavailable.
 See [Overlays](overlays.md).
 
 ### Compile regions

@@ -171,17 +171,17 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Measurement guides | Rope preview |
 | --- | --- |
-| ![Exact named rulers and coordinate controls](docs/images/measurements.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |
-| Save named rulers with exact endpoints, distances and XYZ components. | Inspect linked rope spans with authored slack, width and subdivision. |
+| ![Surface-picked named ruler and exact coordinate controls](docs/images/measurements-surface-picked.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |
+| Pick ruler endpoints on visible surfaces or enter exact coordinates; save distances and XYZ components. | Inspect linked rope spans with authored slack, width and subdivision. |
 
 [Editor basics →](docs/basics.md) · [Selecting →](docs/selection.md)
 
 ### Entities and logic
 
-| Place entities on surfaces |
-| --- |
-| ![Reviewing a new point entity on a picked surface](docs/images/entity-placement-controls.png) |
-| Pick a surface and review snapped contact, bounds and orientation before creating an entity. |
+| Place entities on surfaces | FGD helper boxes |
+| --- | --- |
+| ![Reviewing a new point entity on a picked surface](docs/images/entity-placement-controls.png) | ![Inherited point-entity size and class color](docs/images/class-color-size-box.png) |
+| Pick a surface and review snapped contact, bounds and orientation before creating an entity. | Loaded class dimensions and colors drive shared boxes, picking and framing. |
 
 | Particle effects |
 | --- |
@@ -196,7 +196,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Linked paths |
 | --- |
 | ![Reviewing an ordered linked path](docs/images/linked-path.png) |
-| Create named path chains or reorder and move existing nodes while retaining their identities. |
+| Create path chains or insert, remove, reorder and move nodes while retaining surviving identities. |
 
 [Linked paths →](docs/path-authoring.md)
 
@@ -233,8 +233,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Prefab library |
 | --- |
-| ![Reusable assembly rotation, scale and source-pivot controls](docs/images/prefab-transformed-placement.png) |
-| Save and rename assemblies, then place rotated or brush-scaled copies with checked links. |
+| ![Selected prefab with an isolated flat geometry thumbnail](docs/images/prefab-thumbnail.png) |
+| Browse assembly shapes, save and rename prefabs, then place rotated or brush-scaled copies. |
 
 | Transaction history |
 | --- |
@@ -307,7 +307,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Explicit detail sprites |
 | --- |
 | ![Individual atlas sprites in Counter-Strike: Source](docs/images/explicit-detail-sprites.png) |
-| Place decorative atlas cards at chosen positions with fixed or camera-facing orientation. |
+| Place scaled atlas cards or fixed cross/tri shapes, with optional client sway. |
 
 [Explicit detail sprites →](docs/detail-sprites.md)
 
@@ -417,8 +417,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Overlays |
 | --- |
-| ![Fitted overlay controls with material preview and source corners](docs/images/overlay-authoring.png) |
-| Fit, refit or explicitly rebind markings on world/detail faces while retaining settings and entity links. |
+| ![Numeric overlay projection corner controls](docs/images/overlay-corners.png) |
+| Fit, rebind or edit projection corners on world/detail faces while retaining settings and entity links. |
 
 [Overlays →](docs/overlays.md)
 

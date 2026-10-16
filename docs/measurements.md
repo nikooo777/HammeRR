@@ -30,7 +30,7 @@ MCP renders.
    preview and explicitly takes ownership before editing, applying or cancelling
    it.
 
-![Saved measurement and exact endpoint controls](images/measurements.png)
+![Surface-picked ruler with exact endpoint controls](images/measurements-surface-picked.png)
 
 MCP uses `get_measurements` and `set_measurement`. The latter supports `preview`,
 `review`, `apply`, `cancel`, `delete`, `frame`, `view`, `begin_pick`, `pick_ray`,

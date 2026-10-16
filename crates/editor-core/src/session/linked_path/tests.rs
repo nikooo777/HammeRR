@@ -159,16 +159,21 @@ fn names_avoid_case_insensitive_hidden_collisions_and_reference_acquisitions_rej
     }
     session
         .edit(Actor::Agent, "unresolved I/O fixture", |tx| {
-            map_core::edit::create_entity(
+            let ObjectId::Entity(id) = map_core::edit::create_entity(
                 tx,
                 "logic_relay",
                 Some(DVec3::ZERO),
                 &[],
-                vec![source_formats::vmf::Connection {
-                    output: "OnTrigger".into(),
-                    value: "wire_*,Trigger,,0,-1".into(),
-                }],
-            )
+                Vec::new(),
+            )?
+            else {
+                unreachable!()
+            };
+            tx.entity_mut(id)?.connections = Some(vec![source_formats::vmf::Connection {
+                output: "OnTrigger".into(),
+                value: "wire_*,Trigger,,0,-1".into(),
+            }]);
+            Ok(())
         })
         .unwrap();
     let state = preview(&mut session, Actor::Agent, request());

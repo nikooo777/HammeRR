@@ -994,6 +994,7 @@ retained default fixture:
 cc -shared -fPIC -std=c11 -O2 -Wall -Wextra -Werror -fvisibility=hidden scripts/contact_runtime_probe.c -ldl -lm -o target/debug/hammerr_contact_observer.so
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-contact-observer-client --runtime --reuse-fixture /tmp/hammerr-rotating-removal-check/compile.json --contact-observer-library target/debug/hammerr_contact_observer.so
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-disable-contact-client --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-initial-contact-profile --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so --contact-initial-profile
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-refresh-contact-client --runtime --release-mode disable-refresh --contact-observer-library target/debug/hammerr_contact_observer.so
 ```
 
@@ -1008,6 +1009,16 @@ stay available for receipt verification. Changed game binaries require a new
 ABI review. Without this option, the existing launch and observer are unchanged.
 Baseline modes explicitly disable interventions. Model debug labels and pointer
 continuity do not prove unchanged collision geometry bytes.
+
+`--contact-initial-profile` adds one read-only profile for each tracked crate,
+door and brace on the first safe frame after activation. It records live mass,
+linear/angular damping, material index/name and contents through pinned public
+getters. Surface names must resolve back to the same valid index; invalid or
+aliased indices fail. The option requires the native library and cannot be
+combined with `disable-refresh`. Initial profiles have separate telemetry
+acceptance; a pure Disable recovery failure remains a failed gameplay result.
+These are initialized-object observations, not creation-hook arguments or a
+reference-compiler comparison.
 
 `--release-mode disable` sends only **Disable** to the four braces and queues no
 **Wake**. Its separate fixture receipt prevents reuse of a Kill or Disable/Wake

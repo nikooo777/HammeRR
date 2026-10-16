@@ -585,9 +585,9 @@ static bool observe_brace_solid(Tracked *brace) {
         return false;
     }
     void *collideable = collideable_at(brace->entity);
-    PointerQuery handle_at = (PointerQuery)method(collideable, 0xb53618, 0, &server, 0x521400);
-    SolidQuery solid_at = (SolidQuery)method(collideable, 0xb53618, 13, &server, 0x521430);
-    SolidQuery flags_at = (SolidQuery)method(collideable, 0xb53618, 14, &server, 0x4dc250);
+    PointerQuery handle_at = (PointerQuery)method(collideable, 0xb7c000, 0, &server, 0x521400);
+    SolidQuery solid_at = (SolidQuery)method(collideable, 0xb7c000, 13, &server, 0x521430);
+    SolidQuery flags_at = (SolidQuery)method(collideable, 0xb7c000, 14, &server, 0x4dc250);
     if (!handle_at || !solid_at || !flags_at)
         return false;
     void *handle = handle_at(collideable);

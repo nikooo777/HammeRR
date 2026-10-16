@@ -1,0 +1,55 @@
+import { Button, TextEdit } from "std-widgets.slint";
+
+export component SkyAssetsWindow inherits Window {
+    title: "Sky assets - HammeRR";
+    preferred-width: 980px;
+    preferred-height: 860px;
+    min-width: 700px;
+    min-height: 620px;
+    in property <string> family;
+    in property <string> summary;
+    in property <string> issues;
+    in property <string> report;
+    callback refresh-assets();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+    }
+    VerticalLayout {
+        padding: 18px;
+        spacing: 10px;
+        Text { text: "Sky assets"; font-size: 24px; font-weight: 600; }
+        Text { text: root.family; wrap: word-wrap; }
+        Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
+        if root.issues != "": TextEdit {
+            text: root.issues;
+            read-only: true;
+            wrap: word-wrap;
+            height: 70px;
+            accessible-label: "Sky family issues";
+        }
+        TextEdit {
+            text: root.report;
+            read-only: true;
+            wrap: word-wrap;
+            vertical-stretch: 1;
+            accessible-label: "Sky material and texture inspection";
+        }
+        Text {
+            text: "Inspects the applied world skyname. Apply properties before inspecting pending sky changes. Readiness checks mounted material declarations and VTF structure. The editor previews LDR; this report does not establish the game's selected channel, HDR radiance, shader rendering or portable sky packing.";
+            wrap: word-wrap;
+            color: #bac2ce;
+            font-size: 12px;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Refresh sky assets"; clicked => { root.refresh-assets(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Close"; clicked => { root.close-dialog(); } }
+        }
+    }
+}

@@ -1,6 +1,10 @@
 use super::*;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct InspectSkyAssetsArgs {}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct PointfileLoadArgs {
     pub(in crate::mcp) path: String,
 }

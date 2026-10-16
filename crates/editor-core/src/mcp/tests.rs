@@ -1,6 +1,52 @@
 use super::*;
 
 #[test]
+fn sky_inspection_tool_has_strict_empty_arguments_and_matches_read_only_session_report() {
+    let _: InspectSkyAssetsArgs = serde_json::from_value(json!({})).unwrap();
+    for value in [json!({"skyname":"sky_dust_hdr"}), json!({"channel":"hdr"})] {
+        assert!(serde_json::from_value::<InspectSkyAssetsArgs>(value).is_err());
+    }
+    let schema = serde_json::to_value(schemars::schema_for!(InspectSkyAssetsArgs)).unwrap();
+    assert_eq!(schema["additionalProperties"], false);
+    let mut session = Session::new(Err("fixture has no mounted content".into()));
+    session.begin_property_edit(PropertyTarget::World).unwrap();
+    let token = session.property_draft().unwrap().token;
+    session
+        .append_property_change(
+            token,
+            PropertyChange::Set {
+                key: "skyname".into(),
+                value: "pending_family".into(),
+            },
+        )
+        .unwrap();
+    let document = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let camera = session.camera();
+    let draft = json!(session.property_draft());
+    let serial = session.management_serial();
+    let expected = json!(session.inspect_sky_assets());
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let result = server
+        .inspect_sky_assets(Parameters(InspectSkyAssetsArgs {}))
+        .unwrap();
+    assert!(!result.is_error.unwrap_or(false));
+    let actual: Value = serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+    assert_eq!(actual, expected);
+    assert_ne!(actual["authored_name"], "pending_family");
+    assert_eq!(actual["ldr_ready"], false);
+    assert_eq!(actual["hdr_ready"], false);
+    assert_eq!(actual["limits"]["asset_lookups"], 128);
+    let session = lock(&shared);
+    assert_eq!(session.document().vmf(), &document);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.camera(), camera);
+    assert_eq!(json!(session.property_draft()), draft);
+    assert_eq!(session.management_serial(), serial);
+}
+
+#[test]
 fn selection_outlines_parameters_share_default_on_view_and_temporary_render_overrides() {
     assert_eq!(
         view_state(ViewOptions::default())["selection_outlines"],

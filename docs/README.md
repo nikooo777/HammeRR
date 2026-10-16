@@ -30,7 +30,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Material source](material-source.md) | Mounted VMT origins, raw source, Patch includes and resolved declarations |
 | [Working region](working-region.md) | Temporary whole-object display bounds and visibility reasons |
 | [Fog preview](fog.md) | Choosing an authored static fog controller for perspective Textured views |
-| [2D sky preview](sky.md) | Previewing the selected mounted sky through authored sky surfaces |
+| [Sky preview and assets](sky.md) | Previewing LDR sky surfaces and inspecting the applied family's LDR/HDR material and texture structure |
 | [Rope preview](ropes.md) | Static linked rope curves, diagnostics and source-entity picking |
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
 | [Overlays](overlays.md) | Fit, rebind and edit projection corners; compile imported overlays and fades |

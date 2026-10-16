@@ -265,6 +265,18 @@ fn world_family(bsp: &Bsp, control: &Control) -> io::Result<String> {
     let mut worlds = 0;
     for (index, block) in blocks.iter().enumerate() {
         checkpoint(control)?;
+        for (key, _) in block {
+            checkpoint(control)?;
+            let trimmed = key.trim_end_matches(' ');
+            if trimmed != key
+                && (trimmed.eq_ignore_ascii_case("classname")
+                    || trimmed.eq_ignore_ascii_case("skyname"))
+            {
+                return Err(invalid(
+                    "Packed sky entity identity keys cannot contain trailing ASCII spaces",
+                ));
+            }
+        }
         let classes = block
             .iter()
             .filter(|(key, _)| key.eq_ignore_ascii_case("classname"));

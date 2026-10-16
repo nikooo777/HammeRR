@@ -684,3 +684,50 @@ fn reflection_rebasing_preserves_every_registered_sky_byte_and_manifest() {
         "private_run"
     );
 }
+
+#[test]
+fn world_identity_rejects_trailing_space_aliases_without_normalizing_authored_keys() {
+    for text in [
+        "{ classname worldspawn \"skyname \" test }",
+        "{ classname worldspawn \"SkYnAmE   \" test }",
+        "{ \"classname \" worldspawn skyname test }",
+        "{ \"ClAsSnAmE   \" worldspawn skyname test }",
+        "{ classname worldspawn skyname test } { \"classname \" worldspawn }",
+    ] {
+        let mut bsp = Bsp::new();
+        bsp.set_entities(text);
+        let before = bsp.clone();
+        let error = world_family(&bsp, &Control::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("identity keys cannot contain trailing ASCII spaces"),
+            "{error}"
+        );
+        assert_eq!(bsp, before);
+    }
+    let mut bsp = Bsp::new();
+    bsp.set_entities("{ classname worldspawn skyname test \"message \" preserved }");
+    assert_eq!(world_family(&bsp, &Control::default()).unwrap(), "test");
+}
+
+#[test]
+fn world_identity_rejects_trailing_space_alias_duplicates_in_either_order() {
+    for text in [
+        "{ classname worldspawn skyname test \"skyname \" other }",
+        "{ classname worldspawn \"skyname \" other skyname test }",
+        "{ classname worldspawn skyname test \"classname \" info_player_start }",
+        "{ \"classname \" info_player_start classname worldspawn skyname test }",
+        "{ classname worldspawn skyname test } { classname info_player_start \"classname \" worldspawn }",
+    ] {
+        let mut bsp = Bsp::new();
+        bsp.set_entities(text);
+        let error = world_family(&bsp, &Control::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("identity keys cannot contain trailing ASCII spaces"),
+            "{error}"
+        );
+    }
+}

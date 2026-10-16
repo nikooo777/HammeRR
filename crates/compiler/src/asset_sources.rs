@@ -6,7 +6,7 @@ use source_formats::gamefs::{AssetSourcePaths, GameFs};
 
 use crate::{Control, FileStamp};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssetSourceGuard {
     stamps: Vec<FileStamp>,
 }
@@ -18,6 +18,48 @@ impl AssetSourceGuard {
         }
         Ok(())
     }
+}
+
+#[derive(Debug)]
+pub struct OutputAssetSourceGuard {
+    reflections: Option<crate::cubemap_assets::ReflectionSourceGuard>,
+    sky: Option<crate::sky_assets::SkyAssetSourceGuard>,
+}
+
+impl OutputAssetSourceGuard {
+    pub fn verify_metadata(&self) -> io::Result<()> {
+        if let Some(reflections) = &self.reflections {
+            reflections.verify_metadata()?;
+        }
+        if let Some(sky) = &self.sky {
+            sky.verify_metadata()?;
+        }
+        Ok(())
+    }
+}
+
+pub fn capture_output_asset_source_guard(
+    output: &crate::Output,
+    game: &GameFs,
+    control: &Control,
+) -> io::Result<OutputAssetSourceGuard> {
+    control.checkpoint().map_err(io::Error::other)?;
+    let reflections = output
+        .cubemap_assets
+        .as_ref()
+        .map(|manifest| {
+            crate::cubemap_assets::capture_reflection_source_guard(manifest, game, control)
+        })
+        .transpose()?;
+    let sky = output
+        .sky_assets
+        .as_ref()
+        .map(|plan| plan.capture_source_guard(game, control))
+        .transpose()?;
+    let guard = OutputAssetSourceGuard { reflections, sky };
+    control.checkpoint().map_err(io::Error::other)?;
+    guard.verify_metadata()?;
+    Ok(guard)
 }
 
 #[derive(Debug, Clone, Copy)]

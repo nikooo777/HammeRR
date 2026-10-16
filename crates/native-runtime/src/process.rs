@@ -355,6 +355,59 @@ fn drain_record(directory: &Path) -> io::Result<()> {
     Err(invalid("Owned native session did not exit"))
 }
 
+struct CallerChild {
+    child: Child,
+    directory: PathBuf,
+    audited: bool,
+}
+
+impl CallerChild {
+    fn finish(&mut self) -> io::Result<()> {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+        }
+        let reaped = reap(&mut self.child);
+        let drain = drain_record(&self.directory);
+        let audit = if self
+            .directory
+            .join("private-preservation-before.json")
+            .exists()
+        {
+            util::json_read::<Baseline>(
+                &self.directory.join("private-preservation-before.json"),
+                util::MAX_CONFIG,
+            )
+            .and_then(|baseline| guard::finish(&baseline, &self.directory, "caller"))
+        } else {
+            guard::finish_preflight(&self.directory)
+        };
+        let evidence = util::json_write(
+            &self.directory.join("private-caller-cleanup.json"),
+            &json!({
+                "supervisor_reaped":reaped.is_ok(),"session_drained":drain.is_ok(),"preservation_passed":audit.is_ok(),
+                "reap_error":reaped.as_ref().err().map(ToString::to_string),
+                "drain_error":drain.as_ref().err().map(ToString::to_string),
+                "preservation_error":audit.as_ref().err().map(ToString::to_string),
+            }),
+        );
+        self.audited = true;
+        combine([
+            ("supervisor reap".into(), reaped),
+            ("owned session drain".into(), drain),
+            ("preservation audit".into(), audit),
+            ("cleanup evidence".into(), evidence),
+        ])
+    }
+}
+
+impl Drop for CallerChild {
+    fn drop(&mut self) {
+        if !self.audited {
+            let _ = self.finish();
+        }
+    }
+}
+
 pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
     let directory = directory.canonicalize()?;
     let request: WorkerRequest = util::json_read(&directory.join("request.json"), 2 * 1024 * 1024)?;
@@ -424,11 +477,9 @@ pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
             let mut cancel_at = None;
             loop {
                 let parent_alive = caller_alive(&request);
-                if !parent_alive || directory.join("cancel").exists() {
-                    if cancel_at.is_none() {
-                        cancel_at = Some(Instant::now());
-                        util::atomic_write(&directory.join("cancel"), b"cancel\n")?;
-                    }
+                if (!parent_alive || directory.join("cancel").exists()) && cancel_at.is_none() {
+                    cancel_at = Some(Instant::now());
+                    util::atomic_write(&directory.join("cancel"), b"cancel\n")?;
                 }
                 util::private_budget(&directory, &request.environment.engine_root)?;
                 if fs::metadata(directory.join("compositor.log"))?.len() > 8 * 1024 * 1024 {
@@ -596,18 +647,22 @@ pub fn capture(
             }
         });
     }
-    let mut child = command.spawn()?;
+    let mut owned = CallerChild {
+        child: command.spawn()?,
+        directory: directory.clone(),
+        audited: false,
+    };
     let start = Instant::now();
     let mut cancel_at = None;
     let mut cancellation = None;
     let result = (|| {
         loop {
-            if cancellation.is_none() {
-                if let Err(error) = observer.checkpoint() {
-                    cancellation = Some(error);
-                    cancel_at = Some(Instant::now());
-                    util::atomic_write(&directory.join("cancel"), b"cancel\n")?;
-                }
+            if cancellation.is_none()
+                && let Err(error) = observer.checkpoint()
+            {
+                cancellation = Some(error);
+                cancel_at = Some(Instant::now());
+                util::atomic_write(&directory.join("cancel"), b"cancel\n")?;
             }
             if let Ok(progress) =
                 util::json_read::<[usize; 2]>(&directory.join("progress.json"), 1024)
@@ -617,7 +672,7 @@ pub fn capture(
             if fs::metadata(directory.join("supervisor.log"))?.len() > util::MAX_LOG as u64 {
                 return Err(invalid("Native supervisor log exceeds 2 MiB"));
             }
-            if let Some(status) = child.try_wait()? {
+            if let Some(status) = owned.child.try_wait()? {
                 if !status.success() {
                     let report = util::json_read::<WorkerResult>(
                         &directory.join("supervisor-result.json"),
@@ -647,37 +702,7 @@ pub fn capture(
         }
         util::json_read::<WorkerResult>(&directory.join("supervisor-result.json"), 64 * 1024)
     })();
-    if child.try_wait().ok().flatten().is_none() {
-        let _ = child.kill();
-    }
-    let reaped = reap(&mut child);
-    let drain = drain_record(&directory);
-    let audit = if directory.join("private-preservation-before.json").exists() {
-        util::json_read::<Baseline>(
-            &directory.join("private-preservation-before.json"),
-            util::MAX_CONFIG,
-        )
-        .and_then(|baseline| guard::finish(&baseline, &directory, "caller"))
-    } else {
-        guard::finish_preflight(&directory)
-    };
-    let evidence = util::json_write(
-        &directory.join("private-caller-cleanup.json"),
-        &json!({
-            "supervisor_reaped":reaped.is_ok(),
-            "session_drained":drain.is_ok(),
-            "preservation_passed":audit.is_ok(),
-            "reap_error":reaped.as_ref().err().map(ToString::to_string),
-            "drain_error":drain.as_ref().err().map(ToString::to_string),
-            "preservation_error":audit.as_ref().err().map(ToString::to_string),
-        }),
-    );
-    let cleanup = combine([
-        ("supervisor reap".into(), reaped),
-        ("owned session drain".into(), drain),
-        ("preservation audit".into(), audit),
-        ("cleanup evidence".into(), evidence),
-    ]);
+    let cleanup = owned.finish();
     if let Err(error) = cleanup {
         return Err(invalid(format!(
             "{}; cleanup/audit: {error}; inspect {}",
@@ -833,6 +858,10 @@ mod tests {
         else {
             return;
         };
+        #[allow(
+            clippy::zombie_processes,
+            reason = "The early-exit branch deliberately leaves a descendant for owned-session cleanup"
+        )]
         let mut child = Command::new("sleep")
             .arg("60")
             .process_group(0)
@@ -896,5 +925,65 @@ mod tests {
             cleanup.unwrap();
             assert!(members(session).unwrap().is_empty());
         }
+    }
+
+    #[test]
+    fn caller_unwind_drains_the_owned_session_before_returning() {
+        let directory = private_directory();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "process::tests::owned_session_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("HAMMERR_OWNERSHIP_FIXTURE", directory.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+        let child = command.spawn().unwrap();
+        let session = child.id();
+        util::json_write(
+            &directory.path().join("owned-session.json"),
+            &OwnedSession {
+                pid: session,
+                start: start_time(session).unwrap(),
+            },
+        )
+        .unwrap();
+        let mut owned = CallerChild {
+            child,
+            directory: directory.path().to_owned(),
+            audited: false,
+        };
+        let started = Instant::now();
+        while !directory.path().join("child").exists() && started.elapsed() < Duration::from_secs(3)
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+        if !directory.path().join("child").exists() {
+            let _ = owned.finish();
+            panic!("Caller cleanup fixture did not start");
+        }
+        let result = std::panic::catch_unwind(move || {
+            let _owned = owned;
+            panic!("observer panic fixture");
+        });
+        assert!(result.is_err());
+        assert!(members(session).unwrap().is_empty());
+        let report: serde_json::Value =
+            util::json_read(&directory.path().join("private-caller-cleanup.json"), 4096).unwrap();
+        assert_eq!(report["supervisor_reaped"], true);
+        assert_eq!(report["session_drained"], true);
     }
 }

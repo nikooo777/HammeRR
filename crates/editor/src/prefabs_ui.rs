@@ -118,6 +118,7 @@ fn thumbnail_image(window: &PrefabsWindow, thumbnail: &crate::session::prefabs::
 
 fn refresh_thumbnail(window: &PrefabsWindow, session: &Session, selected: Option<&str>) {
     window.set_has_thumbnail(false);
+    window.set_thumbnail(Default::default());
     window.set_can_render_thumbnail(false);
     let Some(name) = selected else {
         window.set_thumbnail_status(
@@ -429,6 +430,7 @@ impl Controller {
                     Ok(thumbnail) => thumbnail_image(&window, &thumbnail),
                     Err(error) => {
                         window.set_has_thumbnail(false);
+                        window.set_thumbnail(Default::default());
                         window.set_thumbnail_status(error.into());
                     }
                 }

@@ -281,6 +281,34 @@ fn thumbnail_real_models_use_shared_instances_without_texture_assets_or_helper_s
 }
 
 #[test]
+fn thumbnail_framing_ignores_inactive_bodygroup_vertices_and_disabled_rope_batches() {
+    let (session, _directory) = saved();
+    let source = session.thumbnail_source("Fixture").unwrap();
+    let mut prepared = session.prepare_prefab_thumbnail(&source).unwrap();
+    let expected = geometry_bounds(&prepared.mesh).unwrap();
+    let mut inactive = prepared.mesh.vertices[0];
+    inactive.position = [32768.0; 3];
+    let inactive_index = prepared.mesh.vertices.len() as u32;
+    prepared.mesh.vertices.push(inactive);
+    prepared.mesh.maxs = Vec3::splat(32768.0);
+    assert_eq!(geometry_bounds(&prepared.mesh).unwrap(), expected);
+    let first_index = prepared.mesh.indices.len() as u32;
+    prepared.mesh.indices.push(inactive_index);
+    prepared.mesh.batches.push(render::scene::Batch {
+        material: 0,
+        first_index,
+        index_count: 1,
+        rope: true,
+    });
+    assert_eq!(geometry_bounds(&prepared.mesh).unwrap(), expected);
+    prepared.mesh.batches.last_mut().unwrap().rope = false;
+    assert_eq!(
+        geometry_bounds(&prepared.mesh).unwrap().1,
+        Vec3::splat(32768.0)
+    );
+}
+
+#[test]
 #[ignore = "requires a graphics adapter for actual prefab thumbnail validation"]
 fn prefab_thumbnail_gpu_cache_refresh_and_source_changes_preserve_editor_state() {
     let (mut session, directory) = saved();

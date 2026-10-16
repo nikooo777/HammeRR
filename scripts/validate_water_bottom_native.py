@@ -112,6 +112,30 @@ def material_hashes(game):
     }
 
 
+def verify_runtime_materials(actual, expected, preservation):
+    assert preservation["success"] is True, preservation
+    assert {name: actual.get(name) for name in expected} == expected, (
+        "Runtime fixture material hashes changed",
+        actual,
+        expected,
+    )
+    extras = {name: value for name, value in actual.items() if name not in expected}
+    allowed = {f"materials/vgui/logos/spray.{suffix}" for suffix in ["vmt", "vtf"]}
+    assert extras.keys() <= allowed, ("Unexpected runtime materials", extras)
+    before = preservation["before"]
+    remote = Path(before["steam"]) / "userdata" / before["account"] / "240/remote"
+    imports = {}
+    for name, value in extras.items():
+        source = str(remote / name)
+        assert before["files"].get(source) == value, ("Unverified Cloud import", name)
+        assert preservation["after"]["files"].get(source) == value, (
+            "Cloud import changed during validation",
+            name,
+        )
+        imports[name] = {"sha256": value, "cloud_source": source}
+    return imports
+
+
 def assets(args):
     game = runtime.private_game(
         args.game_dir.resolve(), args.output / "source-game", engine_physics=True
@@ -604,7 +628,14 @@ def native_cases(args, fixture):
         ]
         runtime.private_compositor(command, output, timeout=63)
         results[name] = json.loads((output / "runtime.json").read_text())
-        assert results[name]["materials_sha256"] == expected_materials
+        assert material_hashes(Path(results[name]["game"])) == results[name][
+            "materials_sha256"
+        ]
+        results[name]["cloud_material_imports"] = verify_runtime_materials(
+            results[name]["materials_sha256"],
+            expected_materials,
+            json.loads((output / "private-preservation.json").read_text()),
+        )
         results[name]["frames"] = {
             view: frame_stats(output / f"{view}-0.ppm") for view in VIEWS
         }
@@ -638,7 +669,8 @@ def native_cases(args, fixture):
     assert differences["below"]["changed"] > differences["below"]["pixels"] * 0.6
     return {
         "cases": results,
-        "runtime_materials_sha256": expected_materials,
+        "fixture_materials_sha256": expected_materials,
+        "runtime_materials_sha256": results["red"]["materials_sha256"],
         "runtime_top_bottom": BOTTOMS["red"],
         "runtime_materials_identical": True,
         "roi": REGION,

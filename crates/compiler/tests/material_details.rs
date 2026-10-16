@@ -216,6 +216,45 @@ fn native_dictionary_selection_uses_alpha_one_normalized_amounts_and_sparse_weig
 }
 
 #[test]
+fn native_empty_alpha_groups_emit_only_the_selected_group_without_fallback() {
+    let fixture = fixture();
+    let path = fixture.directory.path().join("detail.vbsp");
+    std::fs::write(&path,
+        "detail { tufts { density 64 Group1 { alpha 1 grass { model models/props/test.mdl upright 1 } } Group0 { alpha 0 } } }")
+        .unwrap();
+    let populated = compiled(&fixture.source, &fixture.game);
+    assert_eq!(populated.stats.detail_props, 16);
+    assert_eq!(populated.stats.detail_prop_models, 1);
+    assert!(
+        !populated
+            .report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("selects an empty group"))
+    );
+    for text in [
+        "detail { tufts { density 64 Group0 { alpha 0 grass { model models/props/test.mdl upright 1 } } Group1 { alpha 1 } } }",
+        "detail { tufts { density 64 Group0 { alpha 0 } } }",
+    ] {
+        std::fs::write(&path, text).unwrap();
+        let output = compiled(&fixture.source, &fixture.game);
+        assert_eq!(output.stats.detail_props, 0);
+        assert_eq!(output.stats.detail_prop_models, 0);
+        assert_eq!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message.contains("selects an empty group"))
+                .count(),
+            1
+        );
+        let details = output.bsp.unwrap().detail_props().unwrap().unwrap();
+        assert!(details.props.is_empty() && details.models.is_empty());
+    }
+}
+
+#[test]
 fn dictionary_failures_preserve_existing_output_and_source() {
     let fixture = fixture();
     let destination = fixture.directory.path().join("previous.bsp");

@@ -125,9 +125,6 @@ fn definition(nodes: &[Node]) -> Result<Definition, String> {
                 return Err(format!("Unsupported detail group field {}", entry.key));
             }
         }
-        if models.is_empty() {
-            return Err("Detail dictionary group must contain at least one model".into());
-        }
         if total > 1.0 {
             for model in &mut models {
                 model.amount /= total;
@@ -217,6 +214,9 @@ fn emit_face(
         return Err(
             "Material detail scattering requires a solid world or func_detail surface".into(),
         );
+    }
+    if definition.models.is_empty() {
+        return Ok(());
     }
     let mut random = Random::face(face)?;
     let normal = map.planes.get(face.plane).normal;
@@ -354,7 +354,15 @@ pub(super) fn bake(
                     let fields = matches[0]
                         .children()
                         .ok_or("Detail type requires a block")?;
-                    definitions.insert(name.to_owned(), definition(fields)?);
+                    let parsed = definition(fields)?;
+                    if parsed.models.is_empty() {
+                        report.diagnostics.push(Diagnostic::info(
+                            format!("Material %detailtype {name} selects an empty group for flat-face alpha 1; this type emits no detail models"),
+                            None,
+                            None,
+                        ));
+                    }
+                    definitions.insert(name.to_owned(), parsed);
                 }
                 emit_face(
                     map,

@@ -1,4 +1,6 @@
 mod common;
+#[path = "common/detail_model.rs"]
+mod detail_model;
 
 use glam::DVec3;
 use map_core::{Document, compile_region};
@@ -15,22 +17,7 @@ fn game() -> (tempfile::TempDir, GameFs) {
         "UnlitGeneric { }",
     )
     .unwrap();
-    let mut model = vec![0; 240];
-    model[..4].copy_from_slice(b"IDST");
-    for (offset, value) in [(4, 48_i32), (76, 240), (152, 16), (224, 1)] {
-        model[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-    }
-    for (offset, values) in [
-        (104, [-16.0_f32, -8.0, 0.0]),
-        (116, [16.0, 8.0, 32.0]),
-        (128, [-16.0, -8.0, 0.0]),
-        (140, [16.0, 8.0, 32.0]),
-    ] {
-        for (axis, value) in values.into_iter().enumerate() {
-            model[offset + axis * 4..offset + axis * 4 + 4].copy_from_slice(&value.to_le_bytes());
-        }
-    }
-    std::fs::write(directory.path().join("models/props/test.mdl"), model).unwrap();
+    detail_model::write(directory.path(), "test");
     let mut game = common::empty_game();
     game.mounts.push(MountedPath {
         ids: vec!["game".into()],
@@ -134,6 +121,11 @@ fn invalid_detail_models_preserve_previous_output_and_source() {
         ("renderamt", "128"),
         ("solid", "6"),
         ("lightingorigin", "sample"),
+        ("parentname", "moving_parent"),
+        ("globalname", "shared_state"),
+        ("target", "next_target"),
+        ("vscripts", "detail.nut"),
+        ("thinkfunction", "UpdateDetail"),
         ("fademaxdist", "500"),
     ] {
         let mut source = common::room();
@@ -223,4 +215,73 @@ fn maps_without_visible_detail_props_keep_the_existing_empty_payload() {
     assert_eq!(output.stats.detail_props, 0);
     assert_eq!(output.stats.detail_prop_models, 0);
     assert_eq!(output.bsp.unwrap().to_bytes(), baseline);
+}
+
+#[test]
+fn vertex_lit_and_missing_materials_reject_before_the_engine_substitutes_error_models() {
+    let (directory, game) = game();
+    let material = directory.path().join("materials/models/test/one.vmt");
+    let base = directory.path().join("materials/models/test/base.vmt");
+    std::fs::write(&base, "VertexLitGeneric { }").unwrap();
+    let mut source = common::room();
+    add(&mut source, "prop_detail", "0 0 16");
+    let destination = directory.path().join("previous.bsp");
+    for text in [
+        Some("VertexLitGeneric { }"),
+        Some("Patch { include materials/models/test/base.vmt }"),
+        Some("invalid"),
+        None,
+    ] {
+        if let Some(text) = text {
+            std::fs::write(&material, text).unwrap();
+        } else {
+            std::fs::remove_file(&material).unwrap();
+        }
+        std::fs::write(&destination, b"previous valid BSP").unwrap();
+        let output = compiler::compile(&source, &game);
+        assert!(output.report.has_errors(), "{:?}", output.report);
+        assert!(!output.write(&destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous valid BSP");
+    }
+    std::fs::write(&base, "UnlitGeneric { }").unwrap();
+    std::fs::write(
+        &material,
+        "Patch { include materials/models/test/base.vmt }",
+    )
+    .unwrap();
+    let output = compiler::compile(&source, &game);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.stats.detail_props, 1);
+}
+
+#[test]
+fn incomplete_or_malformed_model_companions_preserve_previous_output() {
+    let (directory, game) = game();
+    let mut source = common::room();
+    add(&mut source, "prop_detail", "0 0 16");
+    let destination = directory.path().join("previous.bsp");
+    let before = source.write(&Default::default());
+    for (name, offset) in [
+        ("test.vvd", None),
+        ("test.dx90.vtx", None),
+        ("test.vvd", Some(8)),
+        ("test.dx90.vtx", Some(16)),
+        ("test.mdl", Some(228)),
+    ] {
+        detail_model::write(directory.path(), "test");
+        let path = directory.path().join("models/props").join(name);
+        if let Some(offset) = offset {
+            let mut data = std::fs::read(&path).unwrap();
+            data[offset..offset + 4].copy_from_slice(&i32::MAX.to_le_bytes());
+            std::fs::write(path, data).unwrap();
+        } else {
+            std::fs::remove_file(path).unwrap();
+        }
+        std::fs::write(&destination, b"previous valid BSP").unwrap();
+        let output = compiler::compile(&source, &game);
+        assert!(output.report.has_errors(), "{name}: {:?}", output.report);
+        assert!(!output.write(&destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous valid BSP");
+        assert_eq!(source.write(&Default::default()), before);
+    }
 }

@@ -207,6 +207,27 @@ python3 -B scripts/validate_terrain_creation.py --output /tmp/hammerr-terrain-cr
 
 `light_culling` checks shared counts and exact foreground/background builds in connected/disconnected rooms with finite-range named lights and fractional brush-model pivots. Compiler reference regressions compare complete BSP bytes with culling disabled, including terrain, styles and both visibility modes.
 
+### Model detail props
+
+```sh
+cargo test -p source-formats --lib bsp::detail_props::tests
+cargo test -p compiler --test detail_props
+python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-check
+python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-native-check --runtime
+```
+
+The MCP check covers native model records, defaults, hidden omission, rejected
+overrides, saved source and history, and identical foreground/background output.
+`--runtime` additionally compares detail rendering enabled and disabled in a
+private installed-engine launch, with read-only source assets and configuration
+preservation. It needs the installed CS:S game, SDK FGD, running Steam and private
+compositor dependencies. Override `--game-dir`, `--fgd` or `--port` as needed.
+
+`--runtime-bsp <path> --runtime --expected-count <n>` reuses this native check for
+an already checked BSP containing the same observer entity; `--fixture-game`
+copies its private materials. This mode checks records and runtime rendering,
+and explicitly does not repeat authored-source validation.
+
 ### Direct UV vectors
 
 ```sh

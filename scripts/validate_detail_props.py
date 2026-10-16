@@ -26,8 +26,8 @@ from validate_cubemap_reflections import ppm
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
 
-CRATE = "models/props_junk/wood_crate001a.mdl"
-CABINET = "models/props/cs_office/file_cabinet1.mdl"
+SMALL_BUSH = "models/props/de_inferno/bushgreensmall.mdl"
+TRAIN_BUSH = "models/props/de_train/bush.mdl"
 ON_READY = "HAMMERR_DETAIL_ON_READY 2 100"
 OFF_READY = "HAMMERR_DETAIL_OFF_READY 2 100"
 FINISHED = "HAMMERR_DETAIL_FINISHED"
@@ -127,7 +127,7 @@ def compile_pair(client, output, name, ids):
 
 
 def validate(args):
-    client = Client(None, args.binary, args.output)
+    client = Client(None, args.binary, args.output, gameinfo=args.game_dir / "cstrike/gameinfo.txt")
     try:
         with stopped_on_exit(client):
             client.call("load_entity_definitions", {"path": str(args.fgd)})
@@ -147,9 +147,9 @@ def validate(args):
             require(not empty_records["props"] and not empty_records["models"] and empty_result["stats"]["detail_props"] == 0, "Empty control emitted details")
             require(empty_records["payload_sha256"] == probe.digest(bytes(12)), "Empty control changed the established dprp placeholder")
             expected = [
-                {"origin": [-64.125, 32.25, 20.375], "angles": [0.0, 37.5, 0.0], "model": CRATE},
-                {"origin": [64.0, 32.0, 0.375], "angles": [0.0, 0.0, 0.0], "model": CABINET},
-                {"origin": [0.0, 112.0, 20.375], "angles": [0.0, 0.0, 0.0], "model": CRATE},
+                {"origin": [-64.125, 32.25, 20.375], "angles": [0.0, 37.5, 0.0], "model": SMALL_BUSH},
+                {"origin": [64.0, 32.0, 0.375], "angles": [0.0, 0.0, 0.0], "model": TRAIN_BUSH},
+                {"origin": [0.0, 112.0, 20.375], "angles": [0.0, 0.0, 0.0], "model": SMALL_BUSH},
             ]
             for index, row in enumerate(expected):
                 properties = {"model": row["model"]}
@@ -190,10 +190,11 @@ def validate(args):
                 ("skin", "prop_detail", [0, 0, 32], {"skin": "1"}),
                 ("scale", "prop_detail", [0, 0, 32], {"modelscale": "2"}),
                 ("orientation", "prop_detail", [0, 0, 32], {"detailOrientation": "1"}),
+                ("vertex-lit-material", "prop_detail", [0, 0, 32], {"model": "models/props_junk/wood_crate001a.mdl"}),
                 ("solid-origin", "prop_detail", [0, 0, -8], {}),
                 ("sprite", "prop_detail_sprite", [0, 0, 32], {}),
             ]:
-                invalid = client.call("create_entity", {"classname": classname, "origin": origin, "properties": {"model": CRATE, **changes}})["id"]
+                invalid = client.call("create_entity", {"classname": classname, "origin": origin, "properties": {"model": SMALL_BUSH, **changes}})["id"]
                 before = snapshot(client, [*ids, invalid])
                 response = client.call("compile_map", {"path": str(destination)}, error=True)
                 failure = json.loads(response["content"][0]["text"])
@@ -229,19 +230,24 @@ def worker(args):
     require(not os.environ.get("LD_PRELOAD"), "Native validation must not inherit LD_PRELOAD")
     require(os.environ.get("WAYLAND_DISPLAY") and os.environ.get("XDG_RUNTIME_DIR") == str(output / "wayland"), "Native view requires its private compositor")
     original = probe.read_bounded(args.bsp, probe.MAX_BSP_BYTES)
-    require(len(detail_records(original)["props"]) == 3, "Native input is not the checked detail fixture")
+    require(len(detail_records(original)["props"]) == args.expected_count, "Native input has an unexpected detail count")
     game = runtime.private_game(args.game_dir, output)
+    if args.fixture_game is not None:
+        shutil.copytree(args.fixture_game / "materials", game / "materials")
     staged = game / "maps/hammerr_detail_props.bsp"
     staged.write_bytes(original)
     (game / "scripts/vscripts/hammerr_detail_observer.nut").write_text(private_observer(OBSERVER))
     cfg = game / "cfg/hammerr_detail_once.cfg"
     probe.write_cfg(cfg, "echo HAMMERR_DETAIL_WAIT\n")
+    post_map = "toggle sv_lan 1\ntoggle mat_fullbright 0\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\n"
+    for name in ["server.cfg", "listenserver.cfg", "hammerr_detail_postmap.cfg"]:
+        (game / "cfg" / name).write_text(post_map)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     settings = output / "settings"
     for name in ["config", "cache", "data"]:
         (settings / name).mkdir(parents=True)
     environment = {**os.environ, "LD_LIBRARY_PATH": str(args.game_dir / "bin/linux64"), "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11", "XDG_CONFIG_HOME": str(settings / "config"), "XDG_CACHE_HOME": str(settings / "cache"), "XDG_DATA_HOME": str(settings / "data")}
-    flags = private_launch_options(args.game_dir, game, hdr_level=0, map_name="hammerr_detail_props", log_name="hammerr-detail.log", controls={"mat_fullbright": 0})
+    flags = private_launch_options(args.game_dir, game, hdr_level=0, map_name="hammerr_detail_props", log_name="hammerr-detail.log", controls={"servercfgfile": "hammerr_detail_postmap.cfg", "mat_fullbright": 0})
     native = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
     command, environment = private_readonly_launch(native, output, environment)
     report = {"success": False, "command": command, "bsp_sha256": probe.digest(original), "exact_compiled_bsp": True, "module_fingerprints": probe.module_fingerprints(args.game_dir), "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False}
@@ -280,7 +286,7 @@ def worker(args):
             for name, expected in {"sv_lan": 1, "mat_hdr_level": 0, "mat_fullbright": 0, "r_drawdetailprops": 0}.items():
                 values = re.findall(r'"' + re.escape(name) + r'" = "([^"\n]+)"', text, re.IGNORECASE)
                 require(values and float(values[-1]) == expected, f"Native {name} control differs: {values}")
-            require(not re.search(r'(?:error|failed|not found|couldn.t)[^\n]*(?:wood_crate001a|file_cabinet1|detail prop)', text, re.IGNORECASE), "Engine reported a detail asset failure")
+            require(not re.search(r'(?:error|failed|not found|couldn.t)[^\n]*(?:\.mdl|detail prop)|Detail prop model[^\n]*using vertex-lit', text, re.IGNORECASE), "Engine reported a detail asset failure or substituted an error model")
             delta = frame_difference(ppm(output / "details-on.ppm"), ppm(output / "details-off.ppm"))
             require(delta["mean_component_difference"] > 0.5 and delta["changed_fraction"] > 0.002, f"No measurable detail model rendering: {delta}")
             require(staged.read_bytes() == original and args.bsp.read_bytes() == original, "Native validation changed the compiled BSP")
@@ -312,6 +318,9 @@ def main():
     parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--runtime-bsp", type=Path, help="Render an existing checked detail BSP instead of creating the explicit fixture")
+    parser.add_argument("--fixture-game", type=Path, help="Copy this private fixture's materials for an existing BSP")
+    parser.add_argument("--expected-count", type=int, default=3)
     parser.add_argument("--port", type=int, default=27689)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
@@ -320,16 +329,29 @@ def main():
     args.binary = args.binary.resolve(strict=True)
     args.game_dir = args.game_dir.resolve(strict=True)
     require(1024 <= args.port <= 65533, "Invalid native port")
+    require(1 <= args.expected_count <= 16384, "Invalid expected detail count")
     if args.worker:
         require(args.bsp is not None, "Private worker requires the compiled BSP")
         worker(args)
         return
     require(not args.output.exists(), "Use a fresh absent output directory")
     args.output.mkdir(parents=True, mode=0o700)
-    bsp = validate(args)
+    if args.runtime_bsp is None:
+        require(args.fixture_game is None, "Fixture materials require --runtime-bsp")
+        bsp = validate(args)
+    else:
+        require(args.runtime, "--runtime-bsp requires --runtime")
+        bsp = args.runtime_bsp.resolve(strict=True)
+        data = probe.read_bounded(bsp, probe.MAX_BSP_BYTES)
+        parsed = detail_records(data)
+        require(len(parsed["props"]) == args.expected_count, "Existing detail BSP count differs")
+        report = {"success": True, "native_exercised": False, "records": parsed, "bsp": str(bsp), "bsp_sha256": probe.digest(data), "source_validation": "external BSP; authored source checks are not performed in this mode"}
+        (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
     if args.runtime:
         output = args.output / "runtime"
-        command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--bsp", str(bsp), "--port", str(args.port)]
+        command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--bsp", str(bsp), "--port", str(args.port), "--expected-count", str(args.expected_count)]
+        if args.fixture_game is not None:
+            command += ["--fixture-game", str(args.fixture_game.resolve(strict=True))]
         runtime.private_compositor(command, output, timeout=110)
         report = json.loads((args.output / "results.json").read_text())
         report["native_exercised"] = True

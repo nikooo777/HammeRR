@@ -17,6 +17,7 @@ pub mod physics;
 pub mod planes;
 pub mod portals;
 mod publication;
+pub mod sky_assets;
 mod static_props;
 pub mod tree;
 mod visibility;

@@ -741,6 +741,7 @@ CPU tests check six-face loading, VMT patches, dimensions, LDR selection, suppor
 ### Sky asset inspection
 
 ```sh
+cargo test -p compiler --lib sky_assets::tests
 cargo test -p editor-core sky_assets::tests
 cargo test -p editor-core sky_inspection_tool_has_strict_empty_arguments_and_matches_read_only_session_report
 cargo test -p editor sky_assets_ui::tests

@@ -206,6 +206,7 @@ fn upload_lines(steam: &Path, cursor: u64) -> io::Result<Vec<String>> {
 }
 
 pub fn validate_environment(environment: &CaptureEnvironment) -> io::Result<()> {
+    crate::isolation::preflight()?;
     let root = environment.engine_root.canonicalize()?;
     if !root.join("cstrike_linux64").is_file() || !root.join("cstrike/gameinfo.txt").is_file() {
         return Err(invalid(

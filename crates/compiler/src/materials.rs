@@ -97,6 +97,21 @@ impl<'a> Materials<'a> {
         self.infos.iter()
     }
 
+    pub(crate) fn add_alias(&mut self, source: usize, name: &str) -> Result<usize, String> {
+        let key = name.to_ascii_lowercase();
+        if self.by_name.contains_key(&key) {
+            return Err(format!(
+                "Generated reflection material collides with an existing material: {name}"
+            ));
+        }
+        let mut info = self.infos[source].clone();
+        info.name = name.to_ascii_uppercase();
+        let index = self.infos.len();
+        self.infos.push(info);
+        self.by_name.insert(key, index);
+        Ok(index)
+    }
+
     pub fn load(&mut self, name: &str) -> Result<usize, String> {
         let key = name.trim().replace('\\', "/").to_ascii_lowercase();
         if let Some(&index) = self.by_name.get(&key) {

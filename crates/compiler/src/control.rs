@@ -83,6 +83,8 @@ pub struct Progress {
     pub stage: Stage,
     pub cancellable: bool,
     pub cancel_requested: bool,
+    pub reflection_samples_complete: usize,
+    pub reflection_samples_total: usize,
 }
 
 struct Inner {
@@ -101,12 +103,27 @@ impl Default for Control {
                 stage: Stage::Queued,
                 cancellable: true,
                 cancel_requested: false,
+                reflection_samples_complete: 0,
+                reflection_samples_total: 0,
             }),
         }))
     }
 }
 
 impl Control {
+    pub fn reflection_sample_progress(&self, current: usize, total: usize) {
+        if total > crate::cubemap_assets::MAX_SAMPLES || current > total {
+            return;
+        }
+        let mut progress = self
+            .0
+            .progress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        progress.reflection_samples_complete = current;
+        progress.reflection_samples_total = total;
+    }
+
     pub fn progress(&self) -> Progress {
         *self
             .0

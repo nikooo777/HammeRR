@@ -14,6 +14,7 @@ mod overlays;
 pub mod physics;
 pub mod planes;
 pub mod portals;
+mod publication;
 mod static_props;
 pub mod tree;
 mod visibility;
@@ -35,8 +36,13 @@ use source_formats::vmf::Vmf;
 
 pub use control::{Control, Stage};
 pub use cordons::RegionSummary;
-pub use portals::Leak;
 pub use cubemap_assets::{CompileContext, CubemapAssetManifest, CubemapAssetPhase};
+pub use cubemap_assets::{
+    finalize_reflections, inspect_cubemap_bindings, read_generated_cubemaps,
+    rebase_generated_cubemaps, verify_generated_cubemaps,
+};
+pub use portals::Leak;
+pub use publication::{FileIdentity, FileStamp, OutputLease};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -444,8 +450,20 @@ pub struct Stats {
     pub physics_fluids: usize,
     pub physics_mesh_triangles: usize,
     pub physics_surface_properties: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reflections: Option<ReflectionStats>,
     #[serde(rename = "elapsed_ms", serialize_with = "serialize_elapsed")]
     pub elapsed: Duration,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ReflectionStats {
+    pub channel: &'static str,
+    pub verified_samples: usize,
+    pub material_aliases: usize,
+    pub packed_bytes: usize,
+    pub capture_ms: u64,
+    pub artifacts: std::path::PathBuf,
 }
 
 fn serialize_elapsed<S: serde::Serializer>(
@@ -480,6 +498,26 @@ impl PreparedWrite {
                 .map_err(|error| error.error)
         })
     }
+
+    pub fn commit_checked(self, lease: &OutputLease, control: &Control) -> io::Result<bool> {
+        self.commit_checked_with(lease, control, || Ok(()))
+    }
+
+    pub fn commit_checked_with(
+        self,
+        lease: &OutputLease,
+        control: &Control,
+        validate: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<bool> {
+        control.publish(|| {
+            validate()?;
+            lease.verify_commit(&self.destination)?;
+            self.temporary
+                .persist(&self.destination)
+                .map(|_| self.success)
+                .map_err(|error| error.error)
+        })
+    }
 }
 
 impl Output {
@@ -500,8 +538,32 @@ impl Output {
         control: &Control,
     ) -> io::Result<Option<PreparedWrite>> {
         control.checkpoint().map_err(io::Error::other)?;
-        if self.cubemap_assets.as_ref().is_some_and(|assets| assets.phase != CubemapAssetPhase::Verified) {
-            return Err(io::Error::other("Reflection assets are pending native capture; no BSP can be published"));
+        if self
+            .cubemap_assets
+            .as_ref()
+            .is_some_and(|assets| assets.phase != CubemapAssetPhase::Verified)
+        {
+            return Err(io::Error::other(
+                "Reflection assets are pending native capture; no BSP can be published",
+            ));
+        }
+        if let Some(assets) = &self.cubemap_assets {
+            let bsp = self
+                .bsp
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Verified reflection output has no BSP"))?;
+            if self.report.has_errors() {
+                return Err(io::Error::other(
+                    "Reflection build diagnostics contain errors",
+                ));
+            }
+            cubemap_assets::verify_generated_cubemaps(bsp, assets, control)?;
+            let destination = CompileContext::from_output(path).map_err(io::Error::other)?;
+            if destination.namespace() != assets.namespace {
+                return Err(io::Error::other(
+                    "Reflection output basename differs from its verified asset namespace",
+                ));
+            }
         }
         if self.bsp.is_none() && self.leak.is_none() {
             return Ok(None);
@@ -529,7 +591,11 @@ impl Output {
             temporary.write_all(chunk)?;
         }
         temporary.as_file().sync_all()?;
-        Ok(Some(PreparedWrite { temporary, destination, success }))
+        Ok(Some(PreparedWrite {
+            temporary,
+            destination,
+            success,
+        }))
     }
 }
 
@@ -546,13 +612,32 @@ fn build(
         return Err("Generate LDR reflections requires an explicit output CompileContext".into());
     }
     if options.generate_reflections {
-        return Err("Reflection asset preparation is not available in this API-only revision".into());
+        cubemap_assets::binding::capture_preflight(vmf)?;
     }
     control.advance(Stage::Loading)?;
     let prepared = cordons::prepare(vmf, fs, &mut output.report, control)?;
     output.stats.compile_region = prepared.region;
     let vmf = prepared.vmf.as_ref();
     let mut map = map::Map::load_controlled(vmf, fs, &mut output.report, control)?;
+    let reflection_plan = if options.generate_reflections && !output.report.has_errors() {
+        control.advance(Stage::PrepareReflections)?;
+        output.report.diagnostics.retain(|item| {
+            !item.message.starts_with("Cubemap sample records compiled;")
+                && !item
+                    .message
+                    .starts_with("Cubemap face bindings are not implemented yet;")
+        });
+        Some(cubemap_assets::prepare(
+            vmf,
+            fs,
+            &mut map,
+            context.unwrap(),
+            true,
+            control,
+        )?)
+    } else {
+        None
+    };
     output.stats.brushes = map.brushes.len();
     output.stats.cubemap_samples = map.cubemaps.len();
     output.stats.displacements = map.terrains.len();
@@ -913,6 +998,11 @@ fn build(
         output.stats.physics_surface_properties = stats.surface_properties;
     }
     control.checkpoint()?;
+    if let Some(mut plan) = reflection_plan {
+        cubemap_assets::pack(&mut bsp, &mut plan.manifest, plan.entries, control)
+            .map_err(|error| error.to_string())?;
+        output.cubemap_assets = Some(plan.manifest);
+    }
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
     output.stats.faces = bsp.records::<bsp::Face>().map_err(|e| e.to_string())?.len();

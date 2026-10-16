@@ -193,6 +193,10 @@ To attenuate baked lighting on every generated model, card and shape in this map
    result. The edit supports Undo and save/reopen; the viewport does not preview
    compiled detail colors.
 
+| White factors `255 255 255` | Warm factors `255 32 16` |
+| --- | --- |
+| ![Generated models and grass with white lighting factors](images/generated-detail-white.png) | ![The same generated foliage with green and blue attenuated](images/generated-detail-tint.png) |
+
 Each channel must be an integer from 0 to 255 and multiplies that channel's
 linear lighting by its value divided by 255. These are attenuation factors,
 not display sRGB values: `128` keeps approximately half the linear intensity.

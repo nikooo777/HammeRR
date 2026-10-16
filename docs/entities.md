@@ -78,6 +78,8 @@ Model entities can display mounted static meshes directly. See [Models](models.m
 
 Point lights are drawn as a light bulb. Spotlights and sunlight show direction helpers, and a selected spotlight shows its cone. These helpers are editor-only: they appear in the viewport and in agent renders, but add nothing to the compiled map.
 
+The bulb is a [CC0 model by Josh Dean / Poly Haven](https://polyhaven.com/a/lightbulb_led); see its [provenance](../crates/render/assets/lightbulb/SOURCE.txt).
+
 FGD `size()` declarations draw point-entity boxes with the declared dimensions and origin offset. Both centered `size(width height depth)` and `size(mins, maxs)` forms are supported after includes, inheritance and extensions resolve. A class `color()` sets the generic box color. Loaded model meshes and specialized lights keep their existing geometry.
 
 1. Click **Entity…**, then **Load FGD…** to load the definitions.
@@ -205,6 +207,8 @@ inspector states this distinction and agents read the declared argument in
    or suppressed visibility. Select another object, hide the source or exclude
    its ordinary box with **Working region…** to suppress the guide.
 
+![Selected projector's square near and far planes in the top view](images/source-projector-guide.png)
+
 Authored values precede individually labeled FGD defaults. The helper summary
 lists fields using FGD defaults and notes that engine defaults may differ.
 The shipped FGD uses
@@ -227,8 +231,6 @@ Model helpers, loaded meshes and brush sources keep their existing behavior.
 The guide does not change bounds, picking, selection, placement, framing or
 working regions, and does not preview projected textures, illumination,
 shadows, targets, parent movement or runtime enabled state.
-
-The bulb is a [CC0 model by Josh Dean / Poly Haven](https://polyhaven.com/a/lightbulb_led); see its [provenance](../crates/render/assets/lightbulb/SOURCE.txt).
 
 ## Brush entities
 

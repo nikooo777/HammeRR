@@ -286,7 +286,7 @@ def verify_assets(data, namespace, output):
     for row in struct.iter_unpack("<3f5i", lumps[2][2]):
         offset = offsets[row[3]]
         end = strings.index(0, offset)
-        names.append(strings[offset:end].decode())
+        names.append(strings[offset:end].decode().lower())
     infos = list(struct.iter_unpack("<16f2i", lumps[6][2]))
     bindings = []
     for index, row in enumerate(infos):

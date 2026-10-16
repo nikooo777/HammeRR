@@ -398,6 +398,16 @@ def absent_runtime_sources(args, game):
         client.close()
 
 
+def native_diagnostics(text, manifest):
+    resources = {asset["path"].removeprefix("materials/") for asset in manifest["assets"]}
+    resources.update(str(Path(path).with_suffix("")) for path in list(resources))
+    resource_pattern = re.compile(r"(?<![a-z0-9_./-])(?:materials/)?(?:" + "|".join(re.escape(path) for path in sorted(resources, key=len, reverse=True)) + r")(?![a-z0-9_./-])", re.IGNORECASE)
+    warning_pattern = re.compile(r"\berror\b|\bwarning\b|\bfailed\b|\bmissing\b|\bunable\b|fall\s*back|could(?:n.t| not)|can(?:.t|not)|not (?:found|present)", re.IGNORECASE)
+    warnings = sorted({line.strip() for line in text.splitlines() if warning_pattern.search(line)})
+    sky = [line for line in warnings if resource_pattern.search(line.replace("\\", "/"))]
+    return {"sky_resource_failures": sky, "other_native_warnings": [line for line in warnings if line not in sky]}
+
+
 def worker(args):
     output = args.output
     require(not os.environ.get("LD_PRELOAD"), "Private sky validation must not inherit LD_PRELOAD")
@@ -441,19 +451,23 @@ def worker(args):
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **reflections.HDR_CONTROLS})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "published_bsp_loaded_exact": True, "desktop_input": False, "archive_verified": True, "native_exercised": True}
+    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "published_bsp_loaded_exact": True, "desktop_input": False, "archive_verified": True, "native_exercised": True, "faces": [], "hardware": None}
     console = game / "hammerr-packed-sky.log"
     try:
         with private_native_process(command, args.game_dir, game, output, environment, report) as process:
             started = time.monotonic()
-            captures = []
+            captures = report["faces"]
             hardware = None
             while time.monotonic() - started < 110:
                 text = probe.read_bounded(console, 2 * 1024**2).decode(errors="replace") if console.exists() else ""
+                report["native_diagnostics"] = native_diagnostics(text, manifest)
                 marker = f"HAMMERR_PACKED_SKY_FACE {len(captures)} 2 100"
                 if not ready.exists() and "HAMMERR_PACKED_SKY_FACE 0 2 100" in text:
                     ready.write_text("post-map sky view ready\n")
-                hardware = reflections.verify_hardware(read_probe(hardware_log), args.hdr_level)
+                report["hardware_observations"] = read_probe(hardware_log)
+                hardware = reflections.verify_hardware(report["hardware_observations"], args.hdr_level)
+                if hardware:
+                    report["hardware"] = hardware
                 if len(captures) < 6 and marker in text and hardware:
                     report["private_launch"] = verify_private_launch(game, text)
                     index = len(captures)
@@ -471,13 +485,14 @@ def worker(args):
             else:
                 raise TimeoutError("Native six-face sky handshake exceeded 110 seconds")
             text = probe.read_bounded(console, 2 * 1024**2).decode(errors="replace")
+            report["native_diagnostics"] = native_diagnostics(text, manifest)
             require(process.returncode == 0 and len(captures) == 6 and FINISHED in text, f"Native sky view failed; inspect {console}")
             positions = [text.index(f"HAMMERR_PACKED_SKY_FACE {index} 2 100") for index in range(6)]
             require(positions == sorted(positions) and positions[-1] < text.index(FINISHED), "Sky frames were taken outside the ordered handshake")
             for name, expected in controls.items():
                 values = re.findall(r'"' + re.escape(name) + r'" = "([^"\n]+)"', text)
                 require(values and float(values[-1]) == expected, f"Native {name} control differs from proof: {values}")
-            require(not any(args.family in line.lower() and re.search(r"error|couldn.t|can.t|failed|fallback", line, re.IGNORECASE) for line in text.splitlines()), "Engine reported a custom sky asset failure")
+            require(not report["native_diagnostics"]["sky_resource_failures"], f'Engine reported a packed sky resource failure: {report["native_diagnostics"]["sky_resource_failures"]}')
             require(staged.read_bytes() == data and probe.digest(args.bsp.read_bytes()) == report["bsp_sha256"], "Native proof changed the published or staged BSP")
             report.update({"success": True, "hardware": hardware, "controls": controls, "faces": captures, "elapsed_seconds": time.monotonic() - started})
     except BaseException as error:

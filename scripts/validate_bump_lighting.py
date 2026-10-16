@@ -1,10 +1,8 @@
 import argparse
 import json
 import math
-import os
 import shutil
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
@@ -247,45 +245,35 @@ def main():
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--assets", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    args.output = args.output.resolve()
+    args.game_dir = args.game_dir.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.worker:
         worker(args)
         return
     files, materials = fixture(args)
     if args.runtime:
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
         for name, bsp in files:
             output = args.output / name
             output.mkdir(exist_ok=True)
-            with (output / "compositor.log").open("w") as log:
-                subprocess.run(
-                    [
-                        "cage",
-                        "--",
-                        sys.executable,
-                        "-B",
-                        str(Path(__file__).resolve()),
-                        "--worker",
-                        "--bsp",
-                        str(bsp),
-                        "--assets",
-                        str(materials),
-                        "--output",
-                        str(output),
-                        "--game-dir",
-                        str(args.game_dir),
-                    ],
-                    env=env,
-                    stdout=log,
-                    stderr=log,
-                    check=True,
-                    timeout=55,
-                )
+            runtime.private_compositor(
+                [
+                    sys.executable,
+                    "-B",
+                    str(Path(__file__).resolve()),
+                    "--worker",
+                    "--bsp",
+                    str(bsp),
+                    "--assets",
+                    str(materials),
+                    "--output",
+                    str(output),
+                    "--game-dir",
+                    str(args.game_dir),
+                ],
+                output,
+                timeout=55,
+            )
         result = compare(args.output)
         (args.output / "render-results.json").write_text(
             json.dumps(result, indent=2) + "\n"

@@ -1,14 +1,12 @@
 import argparse
 import json
-import os
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
 import validate_native_runtime as runtime
 from validate_compile_jobs import wait_job
-from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_portal_flow import compare_captures
 from validate_visibility import ROOM, bit, cluster_at, visibility
 
@@ -206,38 +204,25 @@ def main():
         return
     cases = fixture(args)
     if args.runtime:
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
         for name, bsp in cases:
             output = args.output / name
             output.mkdir(exist_ok=True)
-            with (output / "compositor.log").open("w") as log:
-                subprocess.run(
-                    [
-                        "cage",
-                        "--",
-                        sys.executable,
-                        "-B",
-                        str(Path(__file__).resolve()),
-                        "--worker",
-                        "--bsp",
-                        str(bsp),
-                        "--output",
-                        str(output),
-                        "--game-dir",
-                        str(args.game_dir),
-                    ],
-                    cwd=ROOT,
-                    env=env,
-                    stdout=log,
-                    stderr=log,
-                    check=True,
-                    timeout=55,
-                )
+            runtime.private_compositor(
+                [
+                    sys.executable,
+                    "-B",
+                    str(Path(__file__).resolve()),
+                    "--worker",
+                    "--bsp",
+                    str(bsp),
+                    "--output",
+                    str(output),
+                    "--game-dir",
+                    str(args.game_dir),
+                ],
+                output,
+                timeout=55,
+            )
         report = compare_captures(args.output, ("baseline", "hint"))
         (args.output / "render-results.json").write_text(
             json.dumps(report, indent=2) + "\n"

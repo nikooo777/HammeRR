@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 import re
 import struct
 import subprocess
@@ -14,7 +13,7 @@ from validate_authored_planes import records
 from validate_bounced_lighting import model_top_color
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import FACE_FORMAT, lightmaps
-from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
 
 
@@ -397,36 +396,23 @@ def main():
     if args.runtime:
         output = args.output / "runtime"
         output.mkdir(exist_ok=True)
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
-        with (output / "compositor.log").open("w") as log:
-            subprocess.run(
-                [
-                    "cage",
-                    "--",
-                    sys.executable,
-                    "-B",
-                    str(Path(__file__).resolve()),
-                    "--worker",
-                    *(["--bounced-model"] if args.bounced_model else []),
-                    "--bsp",
-                    str(bsp),
-                    "--output",
-                    str(output),
-                    "--game-dir",
-                    str(args.game_dir),
-                ],
-                cwd=ROOT,
-                env=env,
-                stdout=log,
-                stderr=log,
-                check=True,
-                timeout=55,
-            )
+        runtime.private_compositor(
+            [
+                sys.executable,
+                "-B",
+                str(Path(__file__).resolve()),
+                "--worker",
+                *(["--bounced-model"] if args.bounced_model else []),
+                "--bsp",
+                str(bsp),
+                "--output",
+                str(output),
+                "--game-dir",
+                str(args.game_dir),
+            ],
+            output,
+            timeout=55,
+        )
     print(json.dumps({"output": str(args.output), "light_styles": True}))
 
 

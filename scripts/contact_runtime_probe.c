@@ -65,7 +65,7 @@ static Tracked tracked[TRACKED_COUNT] = {
 };
 static void *tools, *entities, *engine_server, *physics_system;
 static int report_fd = -1;
-static bool invalidated, activated, entered, loaded, level_init_seen;
+static bool invalidated, activated, entered, loaded, level_init_seen, initial_shutdown_seen;
 static unsigned long frame_count, sample_count;
 static long simulation_thread;
 
@@ -733,6 +733,13 @@ static void plugin_frame(void *self, bool simulating) {
 }
 static void plugin_shutdown(void *self) {
     (void)self;
+    if (loaded && !invalidated && !level_init_seen && !activated && !entered && !frame_count &&
+        !sample_count && !initial_shutdown_seen) {
+        initial_shutdown_seen = true;
+        emit(
+            "{\"event\":\"initial_shutdown\",\"frame\":0,\"sample\":0,\"before_target_init\":true}\n");
+        return;
+    }
     activated = false;
     fail("level_shutdown");
 }

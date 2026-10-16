@@ -10,6 +10,9 @@ use source_formats::vmf::Vmf;
 
 const TOP: &str = "water/top";
 const BOTTOM: &str = "WATER/BELOW";
+const SIDE: &str = "water/side";
+const SIDE_BOTTOM: &str = "WATER/SIDE_BELOW";
+const SIDE_TEXT: &str = "Water { $abovewater 1 $bottommaterial water/side_below }";
 
 fn game() -> (tempfile::TempDir, GameFs) {
     let directory = tempfile::tempdir().unwrap();
@@ -29,6 +32,8 @@ fn game() -> (tempfile::TempDir, GameFs) {
             "Patch { include materials/water/below_base.vmt replace { $abovewater 0 } }",
         ),
         ("below_base", "Water { $abovewater 1 }"),
+        ("side", SIDE_TEXT),
+        ("side_below", "Water { $abovewater 0 }"),
     ] {
         std::fs::write(materials.join(format!("{name}.vmt")), text).unwrap();
     }
@@ -85,6 +90,22 @@ fn compiled(vmf: &Vmf, game: &GameFs, physics: compiler::PhysicsMode) -> Bsp {
     assert!(!output.report.has_errors(), "{:?}", output.report);
     assert!(output.leak.is_none());
     Bsp::parse(&output.bsp.unwrap().to_bytes()).unwrap()
+}
+
+fn paint_pool_side(vmf: &mut Vmf, normal: DVec3) {
+    for side in &mut vmf.world.solids.last_mut().unwrap().sides {
+        if Plane::from_points(side.plane.0)
+            .unwrap()
+            .normal
+            .abs_diff_eq(normal, 1e-8)
+        {
+            side.material = SIDE.into();
+            side.u_axis.offset = 31.0;
+            side.v_axis.offset = -29.0;
+            side.u_axis.scale = 0.25;
+            side.v_axis.scale = -0.75;
+        }
+    }
 }
 
 fn material_faces(bsp: &Bsp, name: &str) -> Vec<Face> {
@@ -280,12 +301,13 @@ fn missing_bottom_key_warns_and_explicit_bad_bottom_assets_preserve_prior_output
 #[test]
 fn underside_materials_leave_collision_and_water_metadata_bytes_unchanged() {
     let (directory, mut game) = game();
-    let vmf = add_pool(
+    let mut vmf = add_pool(
         common::room(),
         [-128.0, -128.0, 0.0],
         [128.0, 128.0, 64.0],
         TOP,
     );
+    paint_pool_side(&mut vmf, DVec3::NEG_Y);
     let native = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .map(|path| path.join(".local/share/Steam/steamapps/common/Counter-Strike Source"))
@@ -297,9 +319,12 @@ fn underside_materials_leave_collision_and_water_metadata_bytes_unchanged() {
     }
     for physics in modes {
         let top = directory.path().join("materials/water/top.vmt");
+        let side = directory.path().join("materials/water/side.vmt");
         std::fs::write(&top, "Water { $abovewater 1 }").unwrap();
+        std::fs::write(&side, "Water { $abovewater 1 }").unwrap();
         let previous = compiled(&vmf, &game, physics);
         std::fs::write(&top, "Water { $abovewater 1 $bottommaterial water/below }").unwrap();
+        std::fs::write(&side, SIDE_TEXT).unwrap();
         let current = compiled(&vmf, &game, physics);
         for lump in [
             lump::LEAFWATERDATA,
@@ -503,8 +528,198 @@ fn shared_top_and_bottom_texinfo_does_not_generate_a_backside_for_the_authored_b
     let below = material_faces(&bsp, BOTTOM);
     assert!(!below.is_empty());
     let planes = bsp.records::<bsp::Plane>().unwrap();
+    assert!(
+        below
+            .iter()
+            .any(|face| planes[face.plane as usize].normal[2] != 0.0)
+    );
     for face in below {
-        assert_eq!(planes[face.plane as usize].normal, [0.0, 0.0, -1.0]);
-        assert!(face_points(&bsp, &face).iter().all(|point| point.z == 64.0));
+        let normal = planes[face.plane as usize].normal;
+        if normal[2] != 0.0 {
+            assert_eq!(normal, [0.0, 0.0, -1.0]);
+            assert!(face_points(&bsp, &face).iter().all(|point| point.z == 64.0));
+        }
+    }
+}
+
+#[test]
+fn vertical_water_faces_use_their_own_material_and_clip_touching_solid_and_wet_covers() {
+    let (_directory, game) = game();
+    let mut vmf = add_pool(
+        common::room(),
+        [-128.0, -128.0, 0.0],
+        [128.0, 128.0, 64.0],
+        TOP,
+    );
+    paint_pool_side(&mut vmf, DVec3::NEG_Y);
+    let mut document = Document::new(vmf);
+    document
+        .edit("touching vertical water cover", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-32.0, -160.0, 0.0),
+                DVec3::new(32.0, -128.0, 64.0),
+                "dev/dev_measuregeneric01",
+            )
+        })
+        .unwrap();
+    let vmf = add_pool(
+        document.vmf().clone(),
+        [64.0, -160.0, 0.0],
+        [96.0, -128.0, 32.0],
+        TOP,
+    );
+    let source = vmf.clone();
+    let bsp = compiled(&vmf, &game, compiler::PhysicsMode::None);
+    let inward = material_faces(&bsp, SIDE_BOTTOM);
+    assert!(!inward.is_empty());
+    assert_eq!(
+        inward.iter().map(|face| face.area).sum::<f32>(),
+        256.0 * 64.0 - 64.0 * 64.0 - 32.0 * 32.0
+    );
+    let infos = bsp.records::<TexInfo>().unwrap();
+    let outward = material_faces(&bsp, SIDE);
+    assert_eq!(
+        outward.iter().map(|face| face.area).sum::<f32>(),
+        inward.iter().map(|face| face.area).sum::<f32>()
+    );
+    let side_info = infos[outward[0].texinfo as usize];
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let water = bsp.records::<LeafWaterData>().unwrap();
+    let region = water
+        .iter()
+        .position(|region| region.surface_z == 64.0)
+        .unwrap() as i16;
+    for face in inward {
+        assert_eq!(planes[face.plane as usize].normal, [0.0, 1.0, 0.0]);
+        assert_eq!(face.fog_volume, region);
+        let info = infos[face.texinfo as usize];
+        assert_eq!(info.texture_vecs, side_info.texture_vecs);
+        assert_eq!(info.lightmap_vecs, side_info.lightmap_vecs);
+        assert_eq!(info.flags, side_info.flags);
+        assert_ne!(info.texdata, side_info.texdata);
+        let points = face_points(&bsp, &face);
+        assert!(points.iter().all(|point| point.y == -128.0));
+        assert!(
+            (points[2] - points[0])
+                .cross(points[1] - points[0])
+                .dot(DVec3::Y)
+                > 0.0
+        );
+        assert!(
+            points.iter().all(|point| point.x <= -32.0)
+                || points.iter().all(|point| point.x >= 32.0)
+        );
+        assert!(
+            points.iter().all(|point| point.x <= 64.0)
+                || points.iter().all(|point| point.x >= 96.0)
+                || points.iter().all(|point| point.z >= 32.0)
+        );
+    }
+    assert_eq!(vmf, source);
+}
+
+#[test]
+fn shared_vertical_texinfo_keeps_generated_faces_in_their_own_wet_regions() {
+    let (_directory, game) = game();
+    for (height, top) in [(64.0, "water/top_patch"), (96.0, TOP)] {
+        let mut vmf = add_pool(
+            common::room(),
+            [-128.0, -128.0, 0.0],
+            [0.0, 128.0, 64.0],
+            TOP,
+        );
+        paint_pool_side(&mut vmf, DVec3::NEG_Y);
+        paint_pool_side(&mut vmf, DVec3::X);
+        let first = vmf.world.solids.last().unwrap().id;
+        let mut vmf = add_pool(vmf, [0.0, -128.0, 0.0], [128.0, 128.0, height], top);
+        paint_pool_side(&mut vmf, DVec3::NEG_Y);
+        paint_pool_side(&mut vmf, DVec3::NEG_X);
+        let second = vmf.world.solids.last().unwrap().id;
+        let map = compiler::map::Map::load(&vmf, &game, &mut compiler::Report::default()).unwrap();
+        let front_infos = [first, second].map(|id| {
+            map.brushes
+                .iter()
+                .find(|brush| brush.id == id)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map.planes.get(side.plane).normal == DVec3::NEG_Y)
+                .unwrap()
+                .texinfo
+        });
+        assert_eq!(front_infos[0], front_infos[1]);
+        let bsp = compiled(&vmf, &game, compiler::PhysicsMode::None);
+        let records = bsp.records::<LeafWaterData>().unwrap();
+        assert_eq!(records.len(), 2);
+        let infos = bsp.records::<TexInfo>().unwrap();
+        let texdata = bsp.records::<bsp::TexData>().unwrap();
+        let names = bsp.texdata_strings().unwrap();
+        let region_names: Vec<_> = records
+            .iter()
+            .map(|region| {
+                names[texdata[infos[region.surface_texinfo as usize].texdata as usize].name_index
+                    as usize]
+                    .as_str()
+            })
+            .collect();
+        let planes = bsp.records::<bsp::Plane>().unwrap();
+        let leaves = bsp.records::<Leaf>().unwrap();
+        let leaf_faces = bsp.values::<u16>(lump::LEAFFACES).unwrap();
+        let all_faces = bsp.records::<Face>().unwrap();
+        for (material, wet) in [(SIDE_BOTTOM, true), (SIDE, false)] {
+            let mut areas = [0.0; 2];
+            for face in material_faces(&bsp, material) {
+                let normal = planes[face.plane as usize].normal;
+                if normal[0] != 0.0 {
+                    assert!(height > 64.0);
+                    assert_eq!(normal, [if wet { 1.0 } else { -1.0 }, 0.0, 0.0]);
+                    assert_eq!(records[face.fog_volume as usize].surface_z, height as f32);
+                    assert!(face_points(&bsp, &face).iter().all(|point| point.z >= 64.0));
+                    continue;
+                }
+                assert_eq!(normal, [0.0, if wet { 1.0 } else { -1.0 }, 0.0]);
+                let region = face.fog_volume as usize;
+                assert!(region < records.len());
+                let points = face_points(&bsp, &face);
+                let first_region = if height == 64.0 {
+                    region_names[region].eq_ignore_ascii_case(TOP)
+                } else {
+                    records[region].surface_z == 64.0
+                };
+                assert!(
+                    points
+                        .iter()
+                        .all(|point| point.y == -128.0
+                            && point.z <= records[region].surface_z as f64)
+                );
+                assert!(points.iter().all(|point| if first_region {
+                    point.x <= 0.0
+                } else {
+                    point.x >= 0.0
+                }));
+                let id = all_faces
+                    .iter()
+                    .position(|candidate| candidate == &face)
+                    .unwrap() as u16;
+                let references: Vec<_> = leaves
+                    .iter()
+                    .filter(|leaf| {
+                        leaf_faces[leaf.first_leaf_face as usize
+                            ..leaf.first_leaf_face as usize + leaf.leaf_face_count as usize]
+                            .contains(&id)
+                    })
+                    .collect();
+                assert!(!references.is_empty());
+                assert!(
+                    references
+                        .iter()
+                        .all(|leaf| (leaf.contents & bsp::contents::WATER != 0) == wet
+                            && (!wet || leaf.water_data == face.fog_volume))
+                );
+                areas[usize::from(!first_region)] += face.area;
+            }
+            assert_eq!(areas, [128.0 * 64.0, 128.0 * height as f32]);
+        }
     }
 }

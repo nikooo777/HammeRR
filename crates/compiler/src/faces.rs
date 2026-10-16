@@ -7,6 +7,7 @@ use source_formats::bsp::{TexInfo, contents, surf};
 use crate::Control;
 use crate::map::Map;
 use crate::tree::Tree;
+use crate::water;
 use crate::winding::{ON_EPSILON, Winding};
 
 const MAX_LIGHTMAP_EXTENT: i32 = 32;
@@ -34,6 +35,7 @@ pub struct Face {
     pub winding: Winding,
     pub node: Option<usize>,
     pub leaves: Vec<usize>,
+    pub water_region: Option<i16>,
     pub displacement: Option<usize>,
 }
 
@@ -98,6 +100,7 @@ fn subdivide(
             winding: front,
             node: face.node,
             leaves: face.leaves.clone(),
+            water_region: face.water_region,
             displacement: face.displacement,
         });
         pending.push(Face {
@@ -142,6 +145,49 @@ pub fn build_with_smoothing(
     retained_points: &mut usize,
 ) -> Result<Vec<Face>, String> {
     control.checkpoint()?;
+    let needs_regions = entity == 0
+        && map.entities[entity].brushes.iter().any(|&index| {
+            let brush = &map.brushes[index];
+            water::has_horizontal_surface(map, brush)
+                && brush.sides.iter().any(|side| {
+                    side.visible
+                        && !side.bevel
+                        && map.planes.get(side.plane).normal.z.abs() <= 1e-8
+                        && map.water_bottom_texinfos.contains_key(&side.texinfo)
+                })
+        });
+    if needs_regions {
+        let portals = crate::portals::build_controlled(tree, &map.planes, control)?;
+        let mut report = crate::Report::default();
+        let water = water::build(map, tree, &portals, &mut report, control)?;
+        if report.has_errors() {
+            return Err(
+                "Water face generation requires valid horizontal world-water regions".into(),
+            );
+        }
+        return build_with_water_regions(
+            map,
+            tree,
+            entity,
+            control,
+            retention,
+            retained_points,
+            &water.leaves,
+        );
+    }
+    build_with_water_regions(map, tree, entity, control, retention, retained_points, &[])
+}
+
+pub(crate) fn build_with_water_regions(
+    map: &Map,
+    tree: &Tree,
+    entity: usize,
+    control: &Control,
+    retention: SourceRetention,
+    retained_points: &mut usize,
+    water_regions: &[i16],
+) -> Result<Vec<Face>, String> {
+    control.checkpoint()?;
     type Group = (
         Option<usize>,
         usize,
@@ -149,6 +195,7 @@ pub fn build_with_smoothing(
         u32,
         Arc<[usize]>,
         Option<usize>,
+        Option<i16>,
     );
     let mut groups: BTreeMap<Group, Vec<Face>> = BTreeMap::new();
     let mut provenance_work = 0;
@@ -156,6 +203,7 @@ pub fn build_with_smoothing(
     for &brush_index in &map.entities[entity].brushes {
         control.checkpoint()?;
         let brush = &map.brushes[brush_index];
+        let vertical = water::has_horizontal_surface(map, brush);
         for side in brush.sides.iter().filter(|s| s.visible && !s.bevel) {
             let Some(winding) = &side.winding else {
                 continue;
@@ -164,18 +212,24 @@ pub fn build_with_smoothing(
             let bottom = if entity == 0
                 && brush.structural()
                 && brush.contents & contents::WATER != 0
-                && map
-                    .planes
-                    .get(side.plane)
-                    .normal
-                    .abs_diff_eq(DVec3::Z, 1e-8)
+                && water::inward_surface(map.planes.get(side.plane).normal, vertical)
             {
                 map.water_bottom_texinfos.get(&side.texinfo).copied()
             } else {
                 None
             };
-            let mut pending = vec![(0, winding.clone(), None, side.plane, side.texinfo, false)];
-            while let Some((index, winding, on_node, face_plane, texinfo, below_water)) =
+            let vertical_side =
+                bottom.is_some() && map.planes.get(side.plane).normal.z.abs() <= 1e-8;
+            let mut pending = vec![(
+                0,
+                winding.clone(),
+                None,
+                side.plane,
+                side.texinfo,
+                false,
+                None,
+            )];
+            while let Some((index, winding, on_node, face_plane, texinfo, below_water, paired)) =
                 pending.pop()
             {
                 control.checkpoint()?;
@@ -198,6 +252,7 @@ pub fn build_with_smoothing(
                             face_plane,
                             texinfo,
                             below_water,
+                            paired,
                         ));
                     }
                     Some((plane, children)) => {
@@ -215,6 +270,7 @@ pub fn build_with_smoothing(
                                     face_plane,
                                     texinfo,
                                     below_water,
+                                    paired,
                                 ));
                             }
                         }
@@ -222,6 +278,53 @@ pub fn build_with_smoothing(
                     None if !node.solid() && winding.area() > ON_EPSILON * ON_EPSILON => {
                         if below_water && node.contents & contents::WATER == 0 {
                             continue;
+                        }
+                        if vertical_side
+                            && !below_water
+                            && node.contents & (contents::WATER | contents::SLIME) != 0
+                        {
+                            continue;
+                        }
+                        let water_region = if below_water
+                            && map.planes.get(face_plane).normal.z.abs() <= 1e-8
+                        {
+                            let Some(&region) = water_regions.get(index) else {
+                                return Err("Vertical water faces require checked world-water region ownership".into());
+                            };
+                            if region < 0 {
+                                continue;
+                            }
+                            Some(region)
+                        } else {
+                            None
+                        };
+                        if let Some((dry_leaf, dry_node)) = paired {
+                            water_budget.polygon(winding.0.len(), control)?;
+                            let mut outward = winding.clone();
+                            outward.0.reverse();
+                            groups
+                                .entry((
+                                    dry_node,
+                                    side.plane,
+                                    side.texinfo,
+                                    side.smoothing_groups,
+                                    map.overlays.membership(side.source_id),
+                                    None,
+                                    water_region,
+                                ))
+                                .or_default()
+                                .push(Face {
+                                    smoothing_source: None,
+                                    source_sides: source_sides.clone(),
+                                    displacement: None,
+                                    plane: side.plane,
+                                    texinfo: side.texinfo,
+                                    smoothing_groups: side.smoothing_groups,
+                                    winding: outward,
+                                    node: dry_node,
+                                    leaves: vec![dry_leaf],
+                                    water_region,
+                                });
                         }
                         if !below_water
                             && node.contents & (contents::WATER | contents::SLIME) == 0
@@ -237,7 +340,11 @@ pub fn build_with_smoothing(
                                 face_plane ^ 1,
                                 bottom,
                                 true,
+                                vertical_side.then_some((index, on_node)),
                             ));
+                            if vertical_side {
+                                continue;
+                            }
                         }
                         groups
                             .entry((
@@ -251,6 +358,7 @@ pub fn build_with_smoothing(
                                     side.source_id
                                 }),
                                 below_water.then_some(side.texinfo),
+                                water_region,
                             ))
                             .or_default()
                             .push(Face {
@@ -267,6 +375,7 @@ pub fn build_with_smoothing(
                                 winding,
                                 node: on_node,
                                 leaves: vec![index],
+                                water_region,
                             });
                     }
                     None => {}
@@ -276,7 +385,7 @@ pub fn build_with_smoothing(
     }
     let mut output = Vec::new();
     for (group, mut faces) in groups {
-        let generated_water = group.5.is_some();
+        let generated_water = group.5.is_some() || group.6.is_some();
         let mut i = 0;
         while i < faces.len() {
             let normal = map.planes.get(faces[i].plane).normal;

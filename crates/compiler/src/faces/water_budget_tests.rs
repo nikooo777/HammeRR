@@ -13,6 +13,7 @@ fn crossed_partitions() -> (tempfile::TempDir, GameFs, Vmf) {
     for (name, text) in [
         ("water", "Water { $abovewater 1 $bottommaterial below }"),
         ("below", "Water { $abovewater 0 }"),
+        ("side", "Water { $abovewater 1 $bottommaterial below }"),
         ("nodraw", "UnlitGeneric { %compilenodraw 1 }"),
     ] {
         std::fs::write(materials.join(format!("{name}.vmt")), text).unwrap();
@@ -220,4 +221,53 @@ fn reservations_fail_before_mutating_the_water_ledger() {
         "Compilation cancelled"
     );
     assert_eq!(budget.usage(), before);
+}
+
+#[test]
+fn vertical_only_generated_water_is_budgeted_and_cancellable_before_publication() {
+    let (directory, game, mut source) = crossed_partitions();
+    std::fs::write(
+        directory.path().join("materials/water.vmt"),
+        "Water { $abovewater 1 }",
+    )
+    .unwrap();
+    let pool = source
+        .world
+        .solids
+        .iter_mut()
+        .find(|solid| solid.sides.iter().any(|side| side.material == "water"))
+        .unwrap();
+    for side in &mut pool.sides {
+        if Plane::from_points(side.plane.0).unwrap().normal == DVec3::NEG_Y {
+            side.material = "side".into();
+        }
+    }
+    let original = source.clone();
+    let baseline = successful(&source, &game);
+    let path = directory.path().join("vertical-previous.bsp");
+    assert!(baseline.write(&path).unwrap());
+    let previous = std::fs::read(&path).unwrap();
+    for config in [
+        TestConfig {
+            limits: Limits {
+                fragments: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        TestConfig {
+            cancel_after_visits: Some(3),
+            ..Default::default()
+        },
+    ] {
+        let control = Control::default();
+        let output = with_config(config, || {
+            crate::compile_controlled(&source, &game, &control)
+        });
+        assert!(output.bsp.is_none(), "{:?}", output.report);
+        assert_eq!(control.progress().stage, Stage::Faces);
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(source, original);
+    }
 }

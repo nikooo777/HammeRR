@@ -15,8 +15,10 @@ mod assets;
 mod scatter;
 mod shapes;
 mod sprites;
+mod tint;
 
 pub(crate) use sprites::check_native_transform as check_native_sprite_transform;
+pub(crate) use tint::Tint;
 
 const MAX_PROPS: usize = 16_384;
 const MAX_LEAF_WORK: usize = 4_000_000;
@@ -28,6 +30,7 @@ pub(crate) struct Stats {
     pub sprites: usize,
     pub model_centers: Vec<DVec3>,
     pub lighting_origins: Vec<Option<DVec3>>,
+    pub lighting_tints: Vec<Tint>,
 }
 
 fn class(entity: &Entity) -> bool {
@@ -98,7 +101,7 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
         .map_err(|error| error.to_string())?
         != [255; 3]
     {
-        return Err("Tinted detail props are unsupported; rendercolor must be 255 255 255".into());
+        return Err("Detail rendercolor must be 255 255 255; _detail_lighting_tint controls only baked linear lighting".into());
     }
     let origin = if entity.properties.get("origin").is_some() {
         entity
@@ -123,6 +126,7 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
 struct Pending {
     prop: DetailProp,
     lighting_origin: Option<DVec3>,
+    lighting_tint: Tint,
 }
 
 struct Builder<'a> {
@@ -200,6 +204,7 @@ impl<'a> Builder<'a> {
         mut prop: DetailProp,
         leaf_point: DVec3,
         lighting_origin: Option<DVec3>,
+        lighting_tint: Tint,
         control: &Control,
     ) -> Result<(), String> {
         if self.pending.len() >= MAX_PROPS {
@@ -219,7 +224,7 @@ impl<'a> Builder<'a> {
         let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
         bounds.check_transform(origin, rotation)?;
         prop.model = model;
-        self.add_record(prop, leaf_point, lighting_origin, control)
+        self.add_record(prop, leaf_point, lighting_origin, lighting_tint, control)
     }
 
     fn add_sprite(
@@ -227,6 +232,7 @@ impl<'a> Builder<'a> {
         sprite: source_formats::bsp::DetailSprite,
         mut prop: DetailProp,
         leaf_point: DVec3,
+        lighting_tint: Tint,
         control: &Control,
     ) -> Result<(), String> {
         sprites::check_prop_bounds(sprite, &prop)?;
@@ -248,7 +254,7 @@ impl<'a> Builder<'a> {
             index
         };
         prop.model = index;
-        self.add_record(prop, leaf_point, None, control)
+        self.add_record(prop, leaf_point, None, lighting_tint, control)
     }
 
     fn add_record(
@@ -256,6 +262,7 @@ impl<'a> Builder<'a> {
         mut prop: DetailProp,
         leaf_point: DVec3,
         lighting_origin: Option<DVec3>,
+        lighting_tint: Tint,
         control: &Control,
     ) -> Result<(), String> {
         if self.pending.len() >= MAX_PROPS {
@@ -300,9 +307,11 @@ impl<'a> Builder<'a> {
         }
         prop.leaf = u16::try_from(leaf)
             .map_err(|_| "Detail model leaf exceeds the native unsigned short")?;
+        prop.lighting = lighting_tint.fullbright();
         self.pending.push(Pending {
             prop,
             lighting_origin,
+            lighting_tint,
         });
         Ok(())
     }
@@ -347,6 +356,7 @@ pub(crate) fn bake(
         control.checkpoint()?;
         let result: Result<(), String> = (|| {
             let mut prop = record(entity)?;
+            let lighting_tint = Tint::from_entity(entity)?;
             let point = DVec3::from_array(prop.origin.map(f64::from));
             if entity
                 .classname()
@@ -360,7 +370,7 @@ pub(crate) fn bake(
                     return Err("Explicit detail sprites do not support named lightingorigin; this override is model-only".into());
                 }
                 let sprite = sprites::explicit(entity, &mut prop)?;
-                return builder.add_sprite(sprite, prop, point, control);
+                return builder.add_sprite(sprite, prop, point, lighting_tint, control);
             }
             let lighting_origin = lighting.resolve(
                 entity
@@ -373,6 +383,7 @@ pub(crate) fn bake(
                 prop,
                 point,
                 lighting_origin,
+                lighting_tint,
                 control,
             )
         })();
@@ -391,15 +402,17 @@ pub(crate) fn bake(
     }
     builder.pending.sort_by_key(|entry| entry.prop.leaf);
     let mut lighting_origins = Vec::with_capacity(builder.pending.len());
+    let mut lighting_tints = Vec::with_capacity(builder.pending.len());
     for entry in builder.pending {
         control.checkpoint()?;
         builder.props.props.push(entry.prop);
         lighting_origins.push(entry.lighting_origin);
+        lighting_tints.push(entry.lighting_tint);
     }
     if !builder.props.props.is_empty() {
         bsp.set_detail_props(&builder.props)
             .map_err(|error| error.to_string())?;
-        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and cross/tri shapes; Fullbright uses unbaked white lighting, while lit builds bake direct, ambient and style colors; bounds cover rest geometry, while shape sway and avoidance depend on client settings", None, None));
+        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and cross/tri shapes; Fullbright uses unbaked white lighting unless an explicit baked lighting tint is set, while lit builds bake direct, ambient and style colors; bounds cover rest geometry, while shape sway and avoidance depend on client settings", None, None));
     }
     let mut model_centers = vec![DVec3::ZERO; builder.props.models.len()];
     for &(index, bounds) in builder.models.values() {
@@ -412,5 +425,6 @@ pub(crate) fn bake(
         sprites: builder.props.sprites.len(),
         model_centers,
         lighting_origins,
+        lighting_tints,
     })
 }

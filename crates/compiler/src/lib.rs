@@ -935,6 +935,7 @@ fn build(
                 model_entities: &emission.model_entities,
                 detail_model_centers: &detail_stats.model_centers,
                 detail_lighting_origins: &detail_stats.lighting_origins,
+                detail_lighting_tints: &detail_stats.lighting_tints,
             },
         )?;
         if output.report.has_errors() {

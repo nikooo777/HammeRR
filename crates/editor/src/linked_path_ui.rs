@@ -7,8 +7,13 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use crate::{
     LinkedPathPoint, LinkedPathWindow,
     runtime::{SharedSession, lock},
-    session::{Actor, Session, linked_path::Request},
+    session::{
+        Actor, Session,
+        linked_path::{MAX_POINTS, MIN_POINTS, Request},
+    },
 };
+
+const POINT_STEP: f64 = 128.0;
 
 #[derive(Default)]
 struct Form {
@@ -51,10 +56,10 @@ fn set_rows(window: &LinkedPathWindow, mut rows: Vec<LinkedPathPoint>) {
 
 fn request(window: &LinkedPathWindow) -> Result<Request, String> {
     Ok(Request {
-        classname: if window.get_class_index() == 1 {
-            "path_track"
-        } else {
-            "path_corner"
+        classname: match window.get_class_index() {
+            0 => "path_corner",
+            1 => "path_track",
+            _ => return Err("Choose path_corner or path_track".into()),
         }
         .into(),
         prefix: window.get_prefix().into(),
@@ -73,34 +78,80 @@ fn request(window: &LinkedPathWindow) -> Result<Request, String> {
     })
 }
 
-fn load_preview(window: &LinkedPathWindow, preview: &Value) {
-    window.set_class_index(i32::from(preview["classname"] == "path_track"));
-    window.set_prefix(preview["prefix"].as_str().unwrap_or("path").into());
-    window.set_closed(preview["closed"] == true);
-    let points = preview["points"].as_array().cloned().unwrap_or_default();
+fn load_preview(window: &LinkedPathWindow, preview: &Value) -> Result<(), String> {
+    let invalid = "Linked path preview data is invalid; preview it again";
+    let class_index = match preview["classname"].as_str() {
+        Some("path_corner") => 0,
+        Some("path_track") => 1,
+        _ => return Err(invalid.into()),
+    };
+    let prefix = preview["prefix"].as_str().ok_or(invalid)?;
+    let closed = preview["closed"].as_bool().ok_or(invalid)?;
+    let points = preview["points"].as_array().ok_or(invalid)?;
+    let nodes = preview["nodes"].as_array().ok_or(invalid)?;
+    if !(MIN_POINTS..=MAX_POINTS).contains(&points.len()) || nodes.len() != points.len() {
+        return Err(invalid.into());
+    }
     let rows = points
         .iter()
         .enumerate()
         .map(|(index, point)| {
-            let mut row = point_row(
-                DVec3::new(
-                    point[0].as_f64().unwrap_or_default(),
-                    point[1].as_f64().unwrap_or_default(),
-                    point[2].as_f64().unwrap_or_default(),
-                ),
-                index,
-            );
-            let node = &preview["nodes"][index];
-            row.link = format!(
-                "{} → {}",
-                node["targetname"].as_str().unwrap_or(""),
-                node["target"].as_str().unwrap_or("end")
-            )
-            .into();
-            row
+            let values = point
+                .as_array()
+                .filter(|values| values.len() == 3)
+                .ok_or(invalid)?;
+            let mut coordinates = [0.0; 3];
+            for (coordinate, value) in coordinates.iter_mut().zip(values) {
+                *coordinate = value
+                    .as_f64()
+                    .filter(|value| value.is_finite() && value.abs() <= crate::spatial::MAX_EXTENT)
+                    .ok_or_else(|| {
+                        format!(
+                            "Linked path preview point {} has invalid coordinates",
+                            index + 1
+                        )
+                    })?;
+            }
+            let node = &nodes[index];
+            let name = node["targetname"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .ok_or(invalid)?;
+            let target = match node.get("target") {
+                Some(Value::Null) => "end",
+                Some(Value::String(target)) if !target.is_empty() => target,
+                _ => return Err(invalid.into()),
+            };
+            let mut row = point_row(DVec3::from_array(coordinates), index);
+            row.link = format!("{name} → {target}").into();
+            Ok(row)
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
+    window.set_class_index(class_index);
+    window.set_prefix(prefix.into());
+    window.set_closed(closed);
     window.set_points(ModelRc::new(VecModel::from(rows)));
+    Ok(())
+}
+
+fn adopt_preview(
+    window: &LinkedPathWindow,
+    state: &Value,
+    form: &RefCell<Form>,
+) -> Result<(), String> {
+    form.borrow_mut().dirty = true;
+    let preview = &state["preview"];
+    if preview["owner"] != Actor::User.label() || preview["valid"] != true {
+        return Err("Linked path preview is not current and owned by you".into());
+    }
+    let token = preview["token"]
+        .as_u64()
+        .ok_or("Linked path preview has no token")?;
+    form.borrow_mut().owned_token = Some(token);
+    load_preview(window, preview)?;
+    form.borrow_mut().dirty = false;
+    window.set_message("Review the ordered points and links before Apply.".into());
+    Ok(())
 }
 
 fn refresh(window: &LinkedPathWindow, session: &Session, form: &RefCell<Form>) {
@@ -108,7 +159,7 @@ fn refresh(window: &LinkedPathWindow, session: &Session, form: &RefCell<Form>) {
     let preview = &state["preview"];
     let form = form.borrow();
     let same_map = form.generation == session.document_generation();
-    let editable = same_map && state["editable"] != false;
+    let editable = same_map && state["editable"] == true;
     let token = preview["token"].as_u64();
     let user_owned = preview["owner"] == Actor::User.label();
     let current = !preview.is_null() && preview["valid"] == true;
@@ -175,17 +226,26 @@ impl Controller {
             move || {
                 let window = window.unwrap();
                 let mut rows = window.get_points().iter().collect::<Vec<_>>();
-                if rows.len() >= 64 {
+                if rows.len() >= MAX_POINTS {
                     return;
                 }
-                let point = match request(&window) {
-                    Ok(request) => request.points.last().copied().unwrap_or_default(),
-                    Err(error) => {
-                        window.set_message(error.into());
-                        return;
-                    }
+                let point =
+                    match request(&window).and_then(|request| {
+                        request.points.last().copied().ok_or_else(|| {
+                            "No path point to extend; reopen Create linked path…".into()
+                        })
+                    }) {
+                        Ok(point) => point,
+                        Err(error) => {
+                            window.set_message(error.into());
+                            return;
+                        }
+                    };
+                let step = if point.x <= crate::spatial::MAX_EXTENT - POINT_STEP {
+                    POINT_STEP
+                } else {
+                    -POINT_STEP
                 };
-                let step = if point.x <= 65408.0 { 128.0 } else { -128.0 };
                 rows.push(point_row(point + DVec3::X * step, rows.len()));
                 set_rows(&window, rows);
                 edited(&window, &lock(&shared), &form);
@@ -196,7 +256,7 @@ impl Controller {
             move |index| {
                 let window = window.unwrap();
                 let mut rows = window.get_points().iter().collect::<Vec<_>>();
-                if rows.len() > 2 && index >= 0 && (index as usize) < rows.len() {
+                if rows.len() > MIN_POINTS && index >= 0 && (index as usize) < rows.len() {
                     rows.remove(index as usize);
                     set_rows(&window, rows);
                     edited(&window, &lock(&shared), &form);
@@ -234,17 +294,8 @@ impl Controller {
                     let snapshot = session.linked_path_stamp();
                     session.preview_linked_path(Actor::User, request, &snapshot)
                 })();
-                match result {
-                    Ok(state) => {
-                        let preview = &state["preview"];
-                        form.borrow_mut().owned_token = preview["token"].as_u64();
-                        form.borrow_mut().dirty = false;
-                        load_preview(&window, preview);
-                        window.set_message(
-                            "Review the ordered points and links before Apply.".into(),
-                        );
-                    }
-                    Err(error) => window.set_message(error.into()),
+                if let Err(error) = result.and_then(|state| adopt_preview(&window, &state, &form)) {
+                    window.set_message(error.into());
                 }
                 refresh(&window, &session, &form);
             }
@@ -264,17 +315,8 @@ impl Controller {
                         .ok_or("No linked path preview to review")?;
                     session.review_linked_path(Actor::User, token)
                 })();
-                match result {
-                    Ok(state) => {
-                        let preview = &state["preview"];
-                        form.borrow_mut().owned_token = preview["token"].as_u64();
-                        form.borrow_mut().dirty = false;
-                        load_preview(&window, preview);
-                        window.set_message(
-                            "Review the ordered points and links before Apply.".into(),
-                        );
-                    }
-                    Err(error) => window.set_message(error.into()),
+                if let Err(error) = result.and_then(|state| adopt_preview(&window, &state, &form)) {
+                    window.set_message(error.into());
                 }
                 refresh(&window, &session, &form);
             }
@@ -328,9 +370,15 @@ impl Controller {
                 ..Default::default()
             };
             let state = session.linked_path();
+            self.window
+                .set_message("Names use prefix_001, with unused names chosen at Preview.".into());
             if state["preview"].is_null() {
                 let origin = session.placement_origin();
-                let step = if origin.x <= 65408.0 { 128.0 } else { -128.0 };
+                let step = if origin.x <= crate::spatial::MAX_EXTENT - POINT_STEP {
+                    POINT_STEP
+                } else {
+                    -POINT_STEP
+                };
                 self.window.set_class_index(0);
                 self.window.set_prefix("path".into());
                 self.window.set_closed(false);
@@ -338,11 +386,9 @@ impl Controller {
                     &self.window,
                     vec![point_row(origin, 0), point_row(origin + DVec3::X * step, 1)],
                 );
-            } else {
-                load_preview(&self.window, &state["preview"]);
+            } else if let Err(error) = load_preview(&self.window, &state["preview"]) {
+                self.window.set_message(error.into());
             }
-            self.window
-                .set_message("Names use prefix_001, with unused names chosen at Preview.".into());
         }
         self.refresh(session);
         self.window.show()

@@ -137,7 +137,7 @@ fn source_projector_runtime_branches_remain_explicitly_unsupported() {
     ] {
         let result = fixture(&[(key, raw)]);
         assert_eq!(result.state, "unsupported", "{key}");
-        assert!(result.error.unwrap().contains(key));
+        assert!(result.error.as_ref().unwrap().contains(key));
         assert!(result.lines().is_empty());
     }
 }
@@ -148,7 +148,9 @@ fn source_projector_pitch_metadata_is_bounded_and_never_changes_geometry() {
         "frustum(lightfov,nearz,farz,lightcolor,-1)",
         &format!(
             "{} frustum(a,b,c,d,{})",
-            "frustum(a,b,c,d,100) ".repeat(MAX_PITCH_SCALES),
+            (0..MAX_PITCH_SCALES)
+                .map(|scale| format!("frustum(a,b,c,d,{scale}) "))
+                .collect::<String>(),
             "x".repeat(400)
         ),
     ))

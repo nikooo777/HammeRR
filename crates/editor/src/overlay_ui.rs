@@ -1216,11 +1216,10 @@ mod tests {
             app.show().unwrap();
             app.window().set_size(slint::PhysicalSize::new(1600, 1100));
             app.window().take_snapshot().unwrap();
+            let overlay = crate::ui::tests::scroll_inspector_to_control(&app, "Overlay…");
             crate::ui::tests::assert_dialog_button_visible(&app, "Overlay…");
-            i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Overlay…")
-                .next()
-                .unwrap()
-                .invoke_accessible_default_action();
+            crate::ui::tests::save_ui_snapshot(app.window(), "overlay-draft-entry");
+            overlay.invoke_accessible_default_action();
             assert!(review.window.window().is_visible());
             assert!(!review.window.get_can_preview());
             assert!(review.window.get_can_review());

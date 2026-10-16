@@ -1,20 +1,32 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use compiler::{Level, LightingMode, Options, PhysicsMode, compile_with_options};
+use compiler::{
+    CompileContext, Control, FileIdentity, Level, LightingMode, Options, OutputLease, PhysicsMode,
+    compile_with_context_controlled, finalize_reflections,
+};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let mut map = None;
     let mut game = None;
     let mut destination = None;
     let mut options = Options::default();
+    let mut reflection_engine = None;
+    let mut reflection_steam = PathBuf::new();
     while let Some(arg) = args.next() {
         match arg.to_str() {
+            Some("--generate-reflections") => options.generate_reflections = true,
+            Some("--reflection-engine-root") => {
+                reflection_engine = Some(PathBuf::from(args.next().ok_or(USAGE)?))
+            }
+            Some("--reflection-steam-root") => {
+                reflection_steam = PathBuf::from(args.next().ok_or(USAGE)?)
+            }
             Some("--game") => game = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
             Some("-o" | "--output") => destination = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
             Some("--lighting") => {
@@ -32,7 +44,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Some("--smoothing-angle") => {
                 let value = args.next().ok_or(USAGE)?;
                 options.smoothing_angle = value.to_str().ok_or(USAGE)?.parse::<u8>()?;
-                options.validate()?;
             }
             Some("--bounces") => {
                 let value = args.next().ok_or(USAGE)?;
@@ -68,9 +79,51 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("output must be a .bsp file distinct from the source map".into());
     }
-    let vmf = Vmf::parse(&std::fs::read_to_string(&map)?)?;
+    options.validate()?;
+    let lease = options
+        .generate_reflections
+        .then(|| OutputLease::acquire(&path, control))
+        .transpose()?;
+    let source_identity = options
+        .generate_reflections
+        .then(|| FileIdentity::capture(&map, control))
+        .transpose()?;
+    let path = lease
+        .as_ref()
+        .map(|lease| lease.path().to_path_buf())
+        .unwrap_or(path);
+    let source_path = source_identity
+        .as_ref()
+        .map(FileIdentity::path)
+        .unwrap_or(&map);
+    let vmf = Vmf::parse(&std::fs::read_to_string(source_path)?)?;
+    if let Some(identity) = &source_identity {
+        identity.verify(control)?;
+    }
     let fs = GameFs::from_gameinfo(game)?;
-    let output = compile_with_options(&vmf, &fs, options);
+    let context = options
+        .generate_reflections
+        .then(|| CompileContext::from_output(&path))
+        .transpose()?;
+    let mut output = compile_with_context_controlled(&vmf, &fs, options, context.as_ref(), control);
+    if let Some(context) = &context {
+        if output.bsp.is_some() && !output.report.has_errors() {
+            let environment =
+                native_runtime::resolve_environment(&native_runtime::CaptureEnvironment {
+                    engine_root: reflection_engine.unwrap_or_else(|| fs.base_dir.clone()),
+                    steam_root: reflection_steam,
+                    mounts: fs
+                        .mounts
+                        .iter()
+                        .map(|mount| native_runtime::ContentMount {
+                            ids: mount.ids.clone(),
+                            path: mount.mount.location().to_path_buf(),
+                        })
+                        .collect(),
+                })?;
+            output = finalize_reflections(output, context, &fs, &environment, control)?;
+        }
+    }
     for diagnostic in &output.report.diagnostics {
         let level = match diagnostic.level {
             Level::Info => "info",
@@ -80,7 +133,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let object = diagnostic.object.as_deref().unwrap_or("map");
         eprintln!("{level}: {object}: {}", diagnostic.message);
     }
-    if !output.write(&path)? {
+    let published = if let Some(lease) = &lease {
+        if let Some(identity) = &source_identity {
+            identity.verify(control)?;
+        }
+        let assets = output
+            .cubemap_assets
+            .as_ref()
+            .map(|manifest| {
+                compiler::cubemap_assets::capture_reflection_source_guard(manifest, &fs, control)
+            })
+            .transpose()?;
+        lease.verify(control)?;
+        let validate = || {
+            if let Some(identity) = &source_identity {
+                identity.verify_metadata()?;
+            }
+            if let Some(assets) = &assets {
+                assets.verify_metadata()?;
+            }
+            Ok(())
+        };
+        match output.prepare_write_controlled(&path, control)? {
+            Some(prepared) if output.bsp.is_none() && output.leak.is_some() => {
+                let pointfile = OutputLease::acquire(&path.with_extension("lin"), control)?;
+                pointfile.verify(control)?;
+                prepared.commit_checked_with(&pointfile, control, validate)?
+            }
+            Some(prepared) => prepared.commit_checked_with(lease, control, validate)?,
+            None => false,
+        }
+    } else {
+        output.write_controlled(&path, control)?
+    };
+    if !published {
         return Err("compilation failed; no BSP written".into());
     }
     let stats = &output.stats;
@@ -253,11 +339,48 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> ExitCode {
-    match run() {
+    let control = Control::default();
+    match run_with_signals(&control) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_with_signals(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+        extern "C" fn interrupt(_signal: libc::c_int) {
+            INTERRUPTED.store(true, Ordering::Relaxed);
+        }
+        unsafe {
+            libc::signal(libc::SIGINT, interrupt as libc::sighandler_t);
+            libc::signal(libc::SIGTERM, interrupt as libc::sighandler_t);
+        }
+        let finished = AtomicBool::new(false);
+        struct Finish<'a>(&'a AtomicBool);
+        impl Drop for Finish<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        return std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !finished.load(Ordering::Relaxed) {
+                    if INTERRUPTED.load(Ordering::Relaxed) {
+                        let _ = control.cancel();
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            });
+            let _finish = Finish(&finished);
+            run(control)
+        });
+    }
+    #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+    run(control)
 }

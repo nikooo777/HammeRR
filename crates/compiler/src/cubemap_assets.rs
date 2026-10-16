@@ -2,6 +2,28 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod binding;
+mod finalize;
+mod manifest;
+mod material;
+mod sources;
+#[cfg(test)]
+mod tests;
+
+pub use binding::inspect_cubemap_bindings;
+pub use finalize::finalize_reflections;
+pub use finalize::verify_sources as verify_reflection_sources;
+pub use manifest::{read_generated_cubemaps, rebase_generated_cubemaps, verify_generated_cubemaps};
+pub use sources::{ReflectionSourceGuard, capture_reflection_source_guard};
+
+pub(crate) use binding::prepare;
+pub(crate) use manifest::pack;
+
+pub(crate) fn hash(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 pub const MANIFEST_PATH: &str = "hammerr/generated-cubemaps.json";
 pub const MAX_SAMPLES: usize = 32;
 pub const MAX_ALIASES: usize = 1024;
@@ -21,15 +43,26 @@ impl CompileContext {
         let namespace = namespace.into();
         if namespace.is_empty()
             || namespace.len() > 64
-            || !namespace.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            || !namespace
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         {
-            return Err("Reflection output basename must contain 1–64 ASCII letters, digits, '_' or '-'".into());
+            return Err(
+                "Reflection output basename must contain 1–64 ASCII letters, digits, '_' or '-'"
+                    .into(),
+            );
         }
-        Ok(Self { namespace: namespace.to_ascii_lowercase() })
+        Ok(Self {
+            namespace: namespace.to_ascii_lowercase(),
+        })
     }
 
     pub fn from_output(path: &Path) -> Result<Self, String> {
-        Self::new(path.file_stem().and_then(|name| name.to_str()).ok_or("Reflection output has no UTF-8 basename")?)
+        Self::new(
+            path.file_stem()
+                .and_then(|name| name.to_str())
+                .ok_or("Reflection output has no UTF-8 basename")?,
+        )
     }
 
     pub fn namespace(&self) -> &str {
@@ -74,6 +107,7 @@ pub struct CubemapAliasAsset {
     pub sample: usize,
     pub sha256: String,
     pub dependencies: Vec<String>,
+    pub envmaps: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +115,22 @@ pub struct CubemapAliasAsset {
 pub struct CubemapSourceAsset {
     pub path: String,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CubemapTexInfoBinding {
+    pub index: usize,
+    pub alias: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CubemapFaceBinding {
+    pub lump: usize,
+    pub index: usize,
+    pub texinfo: i16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +145,9 @@ pub struct CubemapAssetManifest {
     pub assignments: Vec<CubemapAssignment>,
     pub aliases: Vec<CubemapAliasAsset>,
     pub sources: Vec<CubemapSourceAsset>,
+    pub default_texture: Option<CubemapSourceAsset>,
+    pub texinfo_bindings: Vec<CubemapTexInfoBinding>,
+    pub face_bindings: Vec<CubemapFaceBinding>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -103,10 +156,22 @@ pub struct CubemapBindingQuery {
     pub offset: usize,
     pub limit: usize,
     pub query: Option<String>,
+    pub namespace: Option<String>,
+    pub face_ids: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CubemapHelperStatus {
+    pub helper_id: u32,
+    pub hidden: bool,
+    pub excluded: bool,
+    pub origin: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CubemapBindingReport {
+    pub namespace: String,
+    pub helpers: Vec<CubemapHelperStatus>,
     pub samples: Vec<CubemapSampleAsset>,
     pub total: usize,
     pub assignments: Vec<CubemapAssignment>,

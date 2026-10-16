@@ -8,6 +8,8 @@ mod recipes;
 mod reflection_settings_tests;
 #[cfg(test)]
 mod reflection_transaction_tests;
+#[cfg(test)]
+mod sky_packing_settings_tests;
 
 #[derive(Default)]
 pub struct State {
@@ -253,6 +255,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub bounces: Option<u8>,
     pub smoothing_angle: Option<u8>,
     pub generate_reflections: Option<bool>,
+    pub pack_sky_assets: Option<bool>,
 }
 
 impl Session {
@@ -296,7 +299,7 @@ impl Session {
             .enumerate()
             .map(|(count, label)| json!({"bounces": count, "label": label}))
             .collect::<Vec<_>>();
-        json!({"generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Generate one native reflection bounce during Compile or Run Map. Direct LDR captures LDR; Direct LDR + HDR captures and verifies both channels before publication. Requires a verified CS:S capture runtime. Fullbright generation is unsupported.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
+        json!({"pack_sky_assets":self.compilation.options.pack_sky_assets,"sky_packing_description":"Pack the complete exact authored sky family, original materials, Patch dependencies and supported LDR/HDR textures during Compile or Run Map. Default off. Incomplete or unsupported families fail without publication or automatic family fallback. Does not pack unrelated assets or select the game's rendering channel.","generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Generate one native reflection bounce during Compile or Run Map. Direct LDR captures LDR; Direct LDR + HDR captures and verifies both channels before publication. Requires a verified CS:S capture runtime. Fullbright generation is unsupported.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "recipe":self.compilation.recipes.active,"editable":!self.compiling && !self.closing,"choices":choices,"physics_choices":physics_choices})
     }
 
@@ -358,9 +361,11 @@ impl Session {
             bounces,
             smoothing_angle,
             generate_reflections,
+            pack_sky_assets,
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
         let options = compiler::Options {
+            pack_sky_assets: pack_sky_assets.unwrap_or(self.compilation.options.pack_sky_assets),
             generate_reflections: generate_reflections
                 .unwrap_or(self.compilation.options.generate_reflections),
             bounces,
@@ -398,13 +403,14 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · reflections {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · reflections {} · sky packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
                     options.bounces,
                     options.smoothing_angle,
-                    if options.generate_reflections { "on" } else { "off" }
+                    if options.generate_reflections { "on" } else { "off" },
+                    if options.pack_sky_assets { "on" } else { "off" }
                 ),
             );
         }
@@ -691,8 +697,8 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
-                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.options.generate_reflections && job.content_epoch != self.content_epoch),"result":job.result})
+                "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"pack_sky_assets":job.options.pack_sky_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.options.requires_guarded_publication() && job.content_epoch != self.content_epoch),"result":job.result})
         });
         let launch = match self.launch_readiness() {
             Ok(path) => json!({"ready":true,"bsp":path.display().to_string(),"reason":null}),

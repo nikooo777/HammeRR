@@ -2,6 +2,8 @@ use super::super::*;
 
 #[cfg(test)]
 mod reflection_settings_tests;
+#[cfg(test)]
+mod sky_packing_settings_tests;
 
 #[tool_router(router = build_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
@@ -17,7 +19,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared build lighting/physics settings and limitations. Defaults are fullbright, no physics bodies and generate_reflections:false. Native reflection generation requires direct_ldr or direct_ldr_hdr and a verified capture runtime; direct_ldr_hdr requires complete LDR and HDR captured samples before publishing. direct_ldr_hdr separately bakes LDR/HDR channels with channel-specific authored inputs; stats.hdr reports HDR counters and native map-data eligibility, lighting_total_work is shared aggregate, and flat lighting counters remain LDR. Runtime HDR selection still requires game/hardware support. direct_ldr bakes static/switchable/animated point/spot and static direct-sky and sampled sky ambient on world/brush-entity faces and power-2/3/4 terrain, including legacy/percentage falloff, shadows and smoothed terrain normals. Engine physics builds checked brush/fluid/terrain bodies using an isolated verified CS:S Linux64 worker. Settings leave VMF/undo unchanged."
+        description = "Inspect shared build settings and limitations. Defaults are fullbright, no physics bodies, pack_sky_assets:false and generate_reflections:false. Sky packing retains the exact authored family's complete supported material/Patch/LDR/HDR closure; incomplete or unsupported families fail without automatic fallback. It is independent of baked lighting and does not select the game's rendering channel. Native reflection generation requires direct_ldr or direct_ldr_hdr and a verified capture runtime; direct_ldr_hdr requires complete LDR and HDR captured samples before publishing. direct_ldr_hdr separately bakes LDR/HDR channels with channel-specific authored inputs; stats.hdr reports HDR counters and native map-data eligibility, lighting_total_work is shared aggregate, and flat lighting counters remain LDR. Runtime HDR selection still requires game/hardware support. direct_ldr bakes static/switchable/animated point/spot and static direct-sky and sampled sky ambient on world/brush-entity faces and power-2/3/4 terrain, including legacy/percentage falloff, shadows and smoothed terrain normals. Engine physics builds checked brush/fluid/terrain bodies using an isolated verified CS:S Linux64 worker. Settings leave VMF/undo unchanged."
     )]
     pub(in crate::mcp) fn get_compile_settings(&self) -> ToolResult {
         ok(self.session().compile_settings())
@@ -110,7 +112,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Update shared build lighting (fullbright/direct_ldr/direct_ldr_hdr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 sky/model ambient and bounce directions) visibility (fast/detailed: conservative flood/portal clipping) bounces (0..4: direct only/up to four diffuse world-terrain-source bounces into world/model receivers) smoothing_angle (whole degrees 0–90; zero disables automatic unassigned brush smoothing) or generate_reflections (boolean, default false; native one-bounce capture per selected lighting channel and verified packing). Omitted fields retain their values and all fields validate first. Reflection generation requires direct_ldr or direct_ldr_hdr. The HDR mode captures both channels and publishes only after both verify; Fullbright rejects atomically. get_native_capture_runtime inspects readiness; set_native_capture_runtime configures machine-local roots. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. World/terrain triangles retain VMT surface properties through a checked 127-entry native table; detail/model fluids, brush-model surfaces, density and compiler-derived masses remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo remain unchanged."
+        description = "Update shared build lighting (fullbright/direct_ldr/direct_ldr_hdr), physics (none/engine) sky_quality (fast/balanced/detailed: 32/128/512 sky/model ambient and bounce directions) visibility (fast/detailed: conservative flood/portal clipping) bounces (0..4: direct only/up to four diffuse world-terrain-source bounces into world/model receivers) smoothing_angle (whole degrees 0–90; zero disables automatic unassigned brush smoothing), pack_sky_assets (boolean, default false; pack the exact complete authored sky material/Patch/LDR/HDR closure), or generate_reflections (boolean, default false; native one-bounce capture per selected lighting channel and verified packing). Omitted fields retain their values and all fields validate first; unknown arguments reject. Enabling sky packing starts no process or asset lookup. Compilation fails on incomplete/unsupported sky families without automatic family fallback; a declared HDR channel must be complete even with an LDR bake. Sky packing supports every lighting mode and does not require a native capture runtime or select the game's channel. Reflection generation requires direct_ldr or direct_ldr_hdr. The HDR mode captures both channels and publishes only after both verify; Fullbright reflection generation rejects atomically. get_native_capture_runtime inspects readiness; set_native_capture_runtime configures machine-local roots. Engine physics needs hammerr-physics beside the editor and verified Linux64 vphysics.so. Builds world/clip/brush-model bodies, horizontal world-fluid hulls and terrain meshes; static props use model assets. World/terrain triangles retain VMT surface properties through a checked 127-entry native table; detail/model fluids, brush-model surfaces, density and compiler-derived masses remain unfinished. Active builds freeze settings; differing settings stale previous output. VMF/undo/drafts remain unchanged."
     )]
     pub(in crate::mcp) fn set_compile_settings(
         &self,
@@ -120,6 +122,7 @@ impl EditorServer {
             self.session().update_build_settings(
                 Actor::Agent,
                 crate::session::compilation::BuildSettingsUpdate {
+                    pack_sky_assets: args.pack_sky_assets,
                     lighting: args.lighting.as_deref(),
                     physics: args.physics.as_deref(),
                     sky_quality: args.sky_quality.as_deref(),

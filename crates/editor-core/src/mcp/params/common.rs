@@ -623,8 +623,11 @@ pub struct BuildRecipeIdArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CompileSettingsArgs {
-    /// Generate one native LDR reflection bounce; default false. Requires lighting direct_ldr; incompatible combinations reject atomically.
+    /// Pack the exact complete authored sky family and supported LDR/HDR dependencies; default false. Incomplete or unsupported families fail during compilation without automatic family fallback.
+    pub pack_sky_assets: Option<bool>,
+    /// Generate one native reflection bounce per selected lighting channel; default false. Requires direct_ldr or direct_ldr_hdr; incompatible combinations reject atomically.
     pub generate_reflections: Option<bool>,
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.
     pub smoothing_angle: Option<u8>,

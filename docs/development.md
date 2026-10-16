@@ -934,6 +934,8 @@ retained default fixture:
 ```sh
 cc -shared -fPIC -std=c11 -O2 -Wall -Wextra -Werror -fvisibility=hidden scripts/contact_runtime_probe.c -ldl -lm -o target/debug/hammerr_contact_observer.so
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-contact-observer-client --runtime --reuse-fixture /tmp/hammerr-rotating-removal-check/compile.json --contact-observer-library target/debug/hammerr_contact_observer.so
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-disable-contact-client --runtime --release-mode disable --contact-observer-library target/debug/hammerr_contact_observer.so
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-refresh-contact-client --runtime --release-mode disable-refresh --contact-observer-library target/debug/hammerr_contact_observer.so
 ```
 
 `--contact-observer-library` loads the plugin only into the owned private game.
@@ -945,8 +947,28 @@ friction snapshot is destroyed before simulation resumes. Raw data stays in
 and the original gameplay recovery assertions. Source and library files must
 stay available for receipt verification. Changed game binaries require a new
 ABI review. Without this option, the existing launch and observer are unchanged.
-The plugin has no contact-refresh, wake or motion operations; model debug labels
-and pointer continuity do not prove unchanged collision geometry bytes.
+Baseline modes explicitly disable interventions. Model debug labels and pointer
+continuity do not prove unchanged collision geometry bytes.
+
+`--release-mode disable` sends only **Disable** to the four braces and queues no
+**Wake**. Its separate fixture receipt prevents reuse of a Kill or Disable/Wake
+BSP. The plugin reads live public solid types, flags and entity handles to
+require all four braces to remain present and become nonsolid. Its own observed
+transition brackets the authored release time; contact and sleeping-state
+analysis covers the interval before the door retry. Telemetry is retained and
+checked even when gameplay recovery fails. A successful
+`runtime/contact-observer-analysis.json` does not turn a failed recovery into a
+passing aggregate or establish a compiler defect.
+
+The separate experimental `--release-mode disable-refresh` requires the plugin
+and a fresh fixture receipt. It permits exactly one public
+`RecheckContactPoints` call on the same crate, outside simulation, after observing
+disabled braces, settled sleeping state and actual retained brace contacts.
+Before/after snapshots and the next frame record actual contact and awake-state
+changes. No separate Wake, impulse, motion setter, teleport or replacement is
+issued. The call itself may wake the crate, so the result cannot isolate contact
+deletion from waking. Full gameplay recovery remains required; this opt-in probe
+does not change normal map compilation or game launch behavior.
 
 
 ### Brush-model physics surfaces

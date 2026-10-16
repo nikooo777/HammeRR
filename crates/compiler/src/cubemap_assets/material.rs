@@ -653,10 +653,9 @@ fn rewrite_nodes(
                     .iter()
                     .any(|key| node.key.eq_ignore_ascii_case(key))
                     && !value.trim().is_empty()
+                    && let Some(replacement) = dependencies.get(&material_name(value)?)
                 {
-                    if let Some(replacement) = dependencies.get(&material_name(value)?) {
-                        *value = replacement.clone();
-                    }
+                    *value = replacement.clone();
                 }
             }
             Value::Block(children) => rewrite_nodes(children, texture, dependencies)?,

@@ -241,20 +241,19 @@ mod tests {
         controller.refresh(&lock(&shared));
         assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
         assert!(controller.window.get_generate_reflections());
+        if let Some(engine_root) = std::env::var_os("HAMMERR_UI_CAPTURE_ENGINE_ROOT") {
+            let state = lock(&shared)
+                .configure_native_capture_runtime(Actor::User, Some(Path::new(&engine_root)), None)
+                .unwrap();
+            assert_eq!(state["ready"], true);
+            controller.refresh(&lock(&shared));
+        }
         controller.window.show().unwrap();
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-reflection-controls");
         let runtime = lock(&shared).native_capture_runtime();
         controller.window.invoke_begin_capture_edit();
         assert!(controller.window.get_capture_editing());
-        controller
-            .window
-            .window()
-            .set_size(slint::LogicalSize::new(720.0, 1400.0));
         crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-reflection-runtime");
-        controller
-            .window
-            .window()
-            .set_size(slint::LogicalSize::new(720.0, 920.0));
         controller
             .window
             .set_capture_engine_root("/missing/hammerr-capture-install".into());
@@ -333,7 +332,11 @@ mod tests {
         controller.window.invoke_change_reflections(true);
         controller.window.invoke_apply_capture_runtime();
         assert!(!lock(&shared).compile_options().generate_reflections);
-        assert_eq!(lock(&shared).native_capture_runtime(), runtime);
+        let active_runtime = lock(&shared).native_capture_runtime();
+        assert_eq!(active_runtime["editable"], false);
+        let mut expected_runtime = runtime.clone();
+        expected_runtime["editable"] = false.into();
+        assert_eq!(active_runtime, expected_runtime);
         assert!(controller.window.get_capture_editing());
         controller.window.invoke_cancel_capture_edit();
         controller.window.invoke_cancel_build();

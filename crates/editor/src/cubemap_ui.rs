@@ -262,7 +262,7 @@ fn refresh(window: &CubemapFacesWindow, session: &Session, form: &RefCell<Form>)
     let ready = token.is_some()
         && token == form.owned_token
         && token == form.reviewed_token
-        && draft["owner"] == "user"
+        && draft["owner"] == Actor::User.label()
         && draft["valid"] == true
         && draft["helper"].as_u64() == form.helper.map(u64::from)
         && same_map;
@@ -273,7 +273,7 @@ fn refresh(window: &CubemapFacesWindow, session: &Session, form: &RefCell<Form>)
             "No pending binding change".into()
         } else {
             format!(
-                "{} draft · helper {} · {} faces · {}{}",
+                "Draft by {} · helper {} · {} faces · {}{}",
                 draft["owner"].as_str().unwrap_or("unknown"),
                 draft["helper"],
                 draft["faces"].as_array().map_or(0, Vec::len),
@@ -446,10 +446,10 @@ impl Controller {
                         .and_then(|index| form.report.as_ref()?.get("assignments")?.get(index))
                         .and_then(|row| face(&row["face"]))
                 };
-                if let Some(source) = source {
-                    if let Err(error) = session.select_faces(&[source], SelectMode::Toggle) {
-                        window.unwrap().set_message(error.into());
-                    }
+                if let Some(source) = source
+                    && let Err(error) = session.select_faces(&[source], SelectMode::Toggle)
+                {
+                    window.unwrap().set_message(error.into());
                 }
                 refresh(&window.unwrap(), &session, &form);
             }

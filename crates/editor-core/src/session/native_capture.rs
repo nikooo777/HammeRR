@@ -53,10 +53,10 @@ impl Session {
     }
 
     pub(super) fn capture_environment(&self) -> Result<CaptureEnvironment, String> {
-        if let Some((epoch, cached)) = self.native_capture.cache.borrow().as_ref() {
-            if *epoch == self.content_epoch {
-                return cached.clone();
-            }
+        if let Some((epoch, cached)) = self.native_capture.cache.borrow().as_ref()
+            && *epoch == self.content_epoch
+        {
+            return cached.clone();
         }
         let resolved = self.resolve_native_capture(
             self.native_capture.engine_root.as_deref(),
@@ -73,7 +73,7 @@ impl Session {
             "configured_steam_root":self.native_capture.steam_root,
             "engine_root":environment.as_ref().ok().map(|e|&e.engine_root),
             "steam_root":environment.as_ref().ok().map(|e|&e.steam_root),
-            "steam_root_source":if self.native_capture.steam_root.is_some(){"configured"}else{"steam_client_configuration"},
+            "steam_root_source":if self.native_capture.steam_root.is_some(){"configured"}else{"running_steam_client"},
             "ready":environment.is_ok(),
             "reason":environment.as_ref().err(),
             "editable":!self.compiling&&!self.closing,

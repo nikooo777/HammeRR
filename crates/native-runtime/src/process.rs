@@ -492,7 +492,19 @@ pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
                 }
                 if let Some(status) = owned.child.try_wait()? {
                     if !status.success() {
-                        return Err(invalid(format!("Private worker exited with {status}")));
+                        let report = util::json_read::<WorkerResult>(
+                            &directory.join("result.json"),
+                            64 * 1024,
+                        );
+                        let detail = match report {
+                            Ok(report) => report
+                                .error
+                                .unwrap_or_else(|| "Worker did not report its failure".into()),
+                            Err(error) => format!("Cannot read worker failure report: {error}"),
+                        };
+                        return Err(invalid(format!(
+                            "Private worker exited with {status}: {detail}"
+                        )));
                     }
                     break;
                 }

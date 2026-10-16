@@ -206,7 +206,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Linked paths |
 | --- |
 | ![Reviewing an ordered linked path](docs/images/linked-path.png) |
-| Create path chains or insert, remove, reorder and move nodes while retaining surviving identities. |
+| Place path points on surfaces, then insert, remove, reorder or move nodes while preserving links. |
 
 [Linked paths →](docs/path-authoring.md)
 

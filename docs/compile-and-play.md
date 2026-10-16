@@ -297,7 +297,7 @@ With **CS:S engine physics**:
 
 - Collision bodies are built for the world, player and NPC clips, brush entities (around their pivots), water and terrain. Static props use the collision that ships with their models.
 - The helper checks the collision library's version and the generated geometry, limits its memory and work, and stops after 30 seconds or when the build is cancelled. A missing or unrecognized library fails the build clearly and keeps the previous output. Editing never needs the library.
-- World brush faces and terrain triangles keep the material's `$surfaceprop` for physics contact. Materials without `$surfaceprop` use **default**. Brush entities retain per-face contact properties through their native collision triangles; base masses use material surface definitions and compiled geometry.
+- World brush faces keep the material's `$surfaceprop` for physics contact. Terrain can choose `$surfaceprop2` from its painted blend weights; see [Terrain contact surfaces](physics.md#terrain-contact-surfaces). Materials without `$surfaceprop` use **default**. Brush entities retain per-face contact properties through their native collision triangles; base masses use material surface definitions and compiled geometry.
 
 1. Select the world or terrain faces under **Selection → Faces · materials & textures**.
 2. Click **Browse materials…**, choose a material with the desired surface property, then **Use material** and **Apply**. **Cancel** keeps the previous material.
@@ -308,7 +308,7 @@ With **CS:S engine physics**:
 
 For brush entities, use **Faces · materials & textures** to assign different physical surfaces to individual faces, or switch **Selection** to **Objects** and apply one material across the entity. A model with a single property also records that property on its native body. The property covering the greatest emitted face area determines the base mass: solid materials use collision volume and density; shell materials use emitted area, thickness and density. Per-face contact properties stay independent. **Build details…** reports the base mass and chosen property in the entity diagnostic. See [Physics and brush-model mass](physics.md) for the 50,000 kg cap, runtime mass controls and asset limits.
 
-Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings preserve the primary `$surfaceprop` and are checked before and after native serialization. Blended secondary properties, custom density controls, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
+Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings preserve the primary or selected terrain secondary property and are checked before and after native serialization. Custom density controls, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
 
 ### Brush entities and pivots
 
@@ -355,10 +355,19 @@ Depth-specific material packing, currents and custom damping remain unfinished.
 
 ### Cubemaps
 
-- Visible `env_cubemap` entities become cubemap samples, up to 1,024.
-- **Cubemap Size** can be the game default or 1–256 pixels.
+1. Use **Place entity** to add visible `env_cubemap` samples. Set **Cubemap Size**
+   to choose their resolution.
+2. Select a helper and open **Cubemap faces…** to inspect automatic choices or
+   preview manual face bindings. Review them before **Apply**; **Cancel** keeps
+   the previous bindings.
+3. Open **Build settings…**, choose **Build lighting → Direct LDR**, enable
+   **Generate LDR reflections**, then **Close** and **Compile** or **Run Map**.
 
-Not yet: reflections are not baked. Material binding, face lists and capture are still missing, so samples alone give no reflections.
+See [Generated reflections](reflections.md) for runtime setup, cancellation and
+limits, and [Cubemap faces](cubemap-faces.md) for binding controls. Generation
+supports up to 32 samples and 128-pixel cube edges. With generation disabled,
+the compiler retains the legacy sample-only limit of 1,024 and sizes up to
+256 pixels; these records alone do not produce reflections.
 
 ### Static props
 

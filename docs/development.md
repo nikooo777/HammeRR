@@ -13,6 +13,7 @@
 | `crates/editor-ui` | Generated Slint windows and rows; UI definitions remain in `crates/editor/ui/`. |
 | `crates/editor` | UI controllers, desktop startup and software UI tests. |
 | `crates/compiler` | The native VMF-to-BSP compiler, `hammerr-compile` and the `hammerr-physics` helper. |
+| `crates/native-runtime` | Supervised private CS:S capture, runtime identity and preservation checks, and `hammerr-native-runtime`. |
 | `scripts/` | End-to-end validation scripts. |
 | `docs/` | This manual and its screenshots. |
 
@@ -25,7 +26,7 @@ Shared session locking and compile/game workers live in `editor-core/src/runtime
 ## Build and test
 
 ```sh
-cargo build --release -p editor -p editor-core -p compiler
+cargo build --release -p editor -p editor-core -p compiler -p native-runtime
 cargo test --workspace
 ```
 
@@ -127,7 +128,7 @@ python3 -B scripts/validate_headless.py --output /tmp/hammerr-headless-check
 | Map checks | `spawn_clearance`, `audit_fixes` |
 | Particle definitions | `particles` (active manifest discovery, bounded binary DMX parsing, metadata, owned choices and retryable errors) |
 | Local preferences | `recent_maps`, `build_recipes` |
-| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `water_metadata`, `water_bottom`, `water_bottom_native`, `water_overlays`, `static_prop_leaves`, `direct_lighting`, `hdr_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals`, `terrain_subdivision` |
+| Compiler | `compile_jobs`, `authored_planes`, `visibility`, `portal_flow`, `parallel_visibility`, `hints`, `sky_visibility`, `origin_brushes`, `cubemap_samples`, `reflection_settings`, `cubemap_reflections`, `water_metadata`, `water_bottom`, `water_bottom_native`, `water_overlays`, `static_prop_leaves`, `direct_lighting`, `hdr_lighting`, `bounced_lighting`, `brush_smoothing`, `smoothing_angle`, `spotlights`, `direct_sky`, `shadow_index`, `engine_physics`, `physics_surfaces`, `static_props`, `terrain`, `terrain_creation`, `terrain_normals`, `terrain_subdivision` |
 | In game | `prop_shadows_native` and `hdr_lighting` (optional `--runtime`), `native_runtime`, `brush_runtime`, `vphysics_backend` |
 
 `transform_display` also checks `preview_snap_to_grid`: fractional negative world bounds-minimum anchors, mixed selections, shared texture-lock policy, source/history preservation, Apply/Cancel, aligned no-ops, model-reload cancellation and exact typed transforms with snapping enabled.
@@ -335,6 +336,60 @@ measure natural reflection or refraction quality.
 Output directories must be fresh. The saved compile fixture avoids rebuilding
 for a repeated native observation; use the same `--vertical-sides` mode when
 reusing it.
+
+### Generated reflections
+
+```sh
+cargo test -p source-formats --test pak
+cargo test -p native-runtime --lib
+cargo test -p native-runtime --lib isolation::tests::readonly_sources_and_private_writes_retain_host_child_identity -- --ignored --exact --nocapture
+cargo test -p compiler --lib cubemap_assets::
+cargo test -p editor-core --features mcp --lib reflection_
+cargo test -p editor reflection_controls_toggle_review_cancel_and_freeze_with_the_shared_job -- --test-threads=1
+cargo test -p editor cubemap_window_keeps_cached_inspection_and_requires_current_owned_review -- --test-threads=1
+cargo build -p compiler -p native-runtime -p editor-core --features editor-core/mcp --bins
+python3 -B scripts/validate_reflection_settings.py --check-staleness --output /tmp/hammerr-reflection-settings-check
+python3 -B scripts/validate_cubemap_reflections.py --output /tmp/hammerr-cubemap-reflections-check
+```
+
+The format and library checks cover bounded ZIP/PAK data, source provenance,
+capture receipts, registered namespace rebasing, cancellation and publication
+guards. Software UI checks exercise shared settings, runtime drafts and owned
+binding review without desktop input; `HAMMERR_UI_SNAPSHOTS` saves their windows.
+Set `HAMMERR_UI_CAPTURE_ENGINE_ROOT` to a supported running Steam installation
+for a capture-runtime readiness screenshot. This only configures the runtime;
+the software UI check never launches CS:S.
+`reflection_settings` checks MCP settings and persistence; `--check-staleness`
+also compiles a generation-disabled baseline to check freshness reporting.
+
+`cubemap_reflections` requires the supported running Steam/CS:S installation
+and a fresh absent output directory. It authors its own fixture through MCP,
+captures and verifies complete native VTFs, and checks reflected pixels with
+specular enabled and disabled. The ordinary Run path stages through a private
+recording executable; a guarded native client then loads that exact staged BSP
+and compares its appearance with the published map. It checks rejection of a
+missing generated sample and preserves source assets and shared configuration.
+Use `--game-dir` and `--steam-root` for nondefault installations. The native
+client always uses the shared private launch and preservation guards below.
+The explicit ignored isolation fixture requires working Bubblewrap/user
+namespaces. It checks denied source/cache writes, allowed private output and
+the real host child PID used for module verification. Reflection capture and
+its native view validator expose external files read-only.
+
+### Terrain collision surfaces
+
+```sh
+cargo test -p compiler --lib physics::terrain::tests
+cargo test -p compiler --test terrain_physics -- --nocapture
+python3 -B scripts/validate_terrain_physics_surfaces.py --binary target/debug/hammerr-headless --output /tmp/hammerr-terrain-physics-surfaces-check
+```
+
+Checks actual emitted LOD triangles, strict stored-float blend thresholds,
+primary/secondary surface indices, missing-property compatibility, invalid
+definitions and native collision serialization/reload. The MCP validator paints
+an inclined patch, saves and reopens it, compares foreground/background output
+and checks unchanged geometry. It uses the native physics helper; it does not
+launch a game or measure friction in a running client.
 
 ### Private launch guards and cubemap capture probe
 

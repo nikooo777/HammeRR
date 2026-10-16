@@ -49,7 +49,10 @@ impl Session {
                 })
                 .collect(),
         };
-        native_runtime::resolve_environment(&environment).map_err(|e| e.to_string())
+        let environment =
+            native_runtime::resolve_environment(&environment).map_err(|e| e.to_string())?;
+        native_runtime::validate_environment(&environment).map_err(|e| e.to_string())?;
+        Ok(environment)
     }
 
     pub(super) fn capture_environment(&self) -> Result<CaptureEnvironment, String> {

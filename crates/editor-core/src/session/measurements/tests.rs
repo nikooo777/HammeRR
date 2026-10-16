@@ -861,3 +861,111 @@ fn endpoint_picks_hit_actual_model_triangles_and_skip_hidden_models() {
     );
     assert_eq!(session.measurement_state(), state);
 }
+
+#[test]
+fn endpoint_arming_rejects_live_paint_area_volume_and_transform_operations_atomically() {
+    for actor in [Actor::User, Actor::Agent] {
+        for operation in 0..4 {
+            let mut session = surface_fixture();
+            session.set_camera(Camera::planar(Projection::Top, glam::Vec3::ZERO, 256.0));
+            let ruler_token = preview(&mut session, actor, request(None));
+            let pointer = Pointer {
+                position: glam::DVec2::new(100.0, 100.0),
+                size: (511, 511),
+            };
+            match operation {
+                0 => {
+                    session
+                        .begin_paint_selection(super::super::paint::Spec {
+                            camera: session.camera(),
+                            pointer,
+                            radius: 6.0,
+                            mode: super::super::SelectMode::Replace,
+                            faces: false,
+                        })
+                        .unwrap();
+                }
+                1 => {
+                    session
+                        .preview_area_selection(
+                            Actor::User,
+                            session.camera(),
+                            pointer,
+                            glam::DVec2::new(300.0, 300.0),
+                            map_core::region::Match::Intersecting,
+                            super::super::SelectMode::Replace,
+                        )
+                        .unwrap();
+                }
+                2 => {
+                    session
+                        .preview_volume_selection(super::super::volume::Spec {
+                            mins: DVec3::splat(-32.0),
+                            maxs: DVec3::splat(32.0),
+                            rule: map_core::region::Match::Intersecting,
+                            mode: super::super::SelectMode::Replace,
+                            faces: false,
+                        })
+                        .unwrap();
+                }
+                3 => {
+                    let mut tool = session.transform_tool();
+                    tool.mode = Some(render::handles::Mode::Move);
+                    session.set_transform_tool(actor, tool).unwrap();
+                    session
+                        .begin_transform_drag(render::handles::Handle::X, None)
+                        .unwrap();
+                    assert!(session.transform_preview().is_none());
+                }
+                _ => unreachable!(),
+            }
+            let state = session.measurement_state();
+            let source = session.document().vmf().clone();
+            let selection = session.selected_ids();
+            let history = session.document().undo_labels().count();
+            let paint = session.paint_selection_json(0, 50);
+            let volume = session.volume_selection_json(0, 50);
+            let scene_serial = session.scene_serial();
+            let view_serial = session.view_serial();
+            let error = session
+                .begin_measurement_pick(
+                    actor,
+                    ruler_token,
+                    Endpoint::End,
+                    session.camera(),
+                    pointer.size,
+                    &session.measurement_pick_stamp(),
+                )
+                .unwrap_err();
+            assert!(error.contains("active viewport tool"), "{error}");
+            assert_eq!(session.measurement_state(), state);
+            assert_eq!(session.document().vmf(), &source);
+            assert_eq!(session.selected_ids(), selection);
+            assert_eq!(session.document().undo_labels().count(), history);
+            assert_eq!(session.paint_selection_json(0, 50), paint);
+            assert_eq!(session.volume_selection_json(0, 50), volume);
+            assert_eq!(session.scene_serial(), scene_serial);
+            assert_eq!(session.view_serial(), view_serial);
+            match operation {
+                0 => {
+                    let token = session.paint_stroke().unwrap().token;
+                    session
+                        .update_paint_selection(token, &[glam::DVec2::new(110.0, 110.0)])
+                        .unwrap();
+                    session.commit_paint_selection(actor, token).unwrap();
+                }
+                1 => {
+                    session.commit_area_selection().unwrap();
+                }
+                2 => {
+                    let token = session.volume_preview().unwrap().token;
+                    session.commit_volume_selection(actor, token).unwrap();
+                }
+                3 => {
+                    assert!(session.transform_drag().is_some());
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}

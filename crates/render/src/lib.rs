@@ -6,6 +6,7 @@ pub mod gpu;
 mod grid;
 pub mod handles;
 mod helpers;
+pub mod icons;
 pub mod materials;
 pub mod models;
 pub mod ropes;

@@ -93,6 +93,51 @@ Malformed or ambiguous definitions show **Invalid FGD size; generic editor marke
 
 Limits: These are world-aligned editor boxes in Source units, independent of `angles` and `modelscale`; they do not describe engine collision hulls. Arguments must be native integers; boxes need positive volume and local coordinates within ±65536. Class colors take precedence over the generic box's stored editor color; selection keeps its usual red highlight and **Selection outlines** behavior. Existing authored-model, light and rope previews remain independent. The report lists the loaded catalog sources; individual inherited helpers do not retain file/line provenance.
 
+### Display a literal FGD icon
+
+A generic point class can declare `iconsprite("editor/info_target.vmt")` to
+show a mounted static image. The image faces the current viewport camera in
+perspective, top, front and side views, including temporary agent render cameras.
+It remains visible when the entity is unselected.
+
+1. Click **Entity…**, then **Load FGD…** and load a definition containing one
+   literal `iconsprite("material")` declaration.
+2. Place or select the point entity. Read **FGD icon sprite** in the inspector's
+   helper summary. A displayed image reports its dimensions, the unlit RGBA
+   policy, and the winning VMT and VTF sources.
+3. Change the viewport camera or projection. The image follows the live camera;
+   authored entity angles do not rotate it. **Selection outlines** controls the
+   original box outline independently.
+4. Pick, frame or use **Working region…** with the entity. These operations keep
+   using its ordinary FGD box, including asymmetric offsets; image pixels outside
+   that box do not become pickable.
+5. Use **Reload Materials** after replacing an icon asset. Admission failures are
+   cached too; reloading clears them before the next inspection or render.
+
+Missing or rejected assets retain an editable box marker and an explicit error,
+with an amber unselected marker. Hidden, excluded, invalid-size, model, sprite,
+light and rope sources report why the image is suppressed. Suppressed images do
+not trigger asset reads or claim that their material is ready. Agents read the
+same report through `get_entity_inspector.helpers.icon_sprite` and receive the
+same image from `render_view`.
+
+Limits: This is an editor image, with a 32 Source-unit long axis and the texture's
+aspect ratio. It uses unlit RGBA alpha compositing without fog. It does not
+preview native Sprite render modes, animation, illumination or runtime
+`sprite()`/`env_sprite` behavior. Only a direct `Sprite` material with explicit
+`$spriteorientation vp_parallel`, centered `$spriteorigin "[0.5 0.5]"` (optional
+third component zero), `$basetexture`, and optional `$no_fullbright 1` is admitted.
+Other parameters, nested blocks, Patch materials and legacy `.spr` aliases are
+explicitly unsupported. LDR color VTFs must have one frame, one face, depth one,
+and axes no larger than 512 pixels; HDR and UV data formats are rejected.
+References cap at 256 bytes before canonical prefixes/extensions, VMT reads at
+64 KiB, VTF reads at 4 MiB, and the asset cache at 64 success/failure entries and
+32 MiB encoded bytes per material generation. At most 256 visible images are
+admitted in entity-ID order. Reloading content or materials clears the cache.
+An authored finite origin within ±65536 is required. Loaded catalog source
+files remain available, but inherited helper declarations do not retain their
+own file/line provenance.
+
 ### Inspect a property radius
 
 FGD `sphere(property)` declarations add three world-axis guide rings around a
@@ -144,8 +189,9 @@ sphere declarations per entity and 128 guides per frame are accepted, with 32
 segments per ring. Scalar values must be finite and within ±65536; native
 floating-point conversion must retain a finite, noncollapsed guide. Diagnostic
 previews retain at most 256 bytes of raw value and 128 bytes of property name,
-with explicit truncation flags. `iconsprite`, `sprite`, `studio`,
-frustum and other helper declarations remain outside this preview scope.
+with explicit truncation flags. This radius preview does not evaluate `sprite`,
+`studio`, frustum or other helper declarations. Literal icon images use the
+separate admission rules above.
 
 FGD `line(R G B, targetname, property)` draws a selected generic point entity's
 origin to the point named by that property. A second `targetname, property` pair

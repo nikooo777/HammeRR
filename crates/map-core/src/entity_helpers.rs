@@ -60,6 +60,13 @@ impl Appearance {
                 _ => unreachable!(),
             }
         }
+        let one_icon = class
+            .helpers
+            .iter()
+            .filter(|helper| helper.name == "iconsprite")
+            .take(2)
+            .count()
+            == 1;
         result.unsupported = class
             .helpers
             .iter()
@@ -67,6 +74,11 @@ impl Appearance {
                 !["size", "color"].contains(&helper.name.as_str())
                     && !spheres::supported(class, helper)
                     && !lines::supported(class, helper)
+                    && !(helper.name == "iconsprite"
+                        && helper.arguments.len() == 1
+                        && !helper.arguments[0].is_empty()
+                        && helper.arguments[0].len() <= 256
+                        && one_icon)
             })
             .map(|helper| helper.name.clone())
             .collect::<std::collections::BTreeSet<_>>()

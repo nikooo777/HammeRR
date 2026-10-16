@@ -4074,6 +4074,7 @@ dependencies = [
  "map-core",
  "png",
  "pollster 1.0.1",
+ "serde",
  "source-formats",
  "tempfile",
  "wgpu",

@@ -92,6 +92,7 @@ pub struct SceneStats {
 pub struct SceneMesh {
     pub issues: Vec<SceneIssue>,
     pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+    pub icons: Vec<crate::icons::Instance>,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub batches: Vec<Batch>,
@@ -135,6 +136,9 @@ pub struct FaceOverlay {
 }
 
 struct Builder<'a> {
+    icons: &'a BTreeMap<u32, crate::icons::Instance>,
+    displayed_icons: Vec<crate::icons::Instance>,
+    icon_bounds: Vec<Vec3>,
     models: &'a [crate::models::Instance],
     helpers: &'a BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
     overlays: &'a [FaceOverlay],
@@ -414,7 +418,12 @@ impl Builder<'_> {
         let helper = self.helpers.get(&ObjectId::Entity(entity.id));
         let [r, g, b] = if selected {
             SELECTED_EDGE[..3].try_into().expect("three channels")
-        } else if helper.is_some_and(|helper| !helper.errors.is_empty()) {
+        } else if helper.is_some_and(|helper| !helper.errors.is_empty())
+            || self
+                .icons
+                .get(&entity.id)
+                .is_some_and(|icon| icon.asset.material.is_none())
+        {
             INVALID_HELPER_COLOR
         } else {
             helper
@@ -435,6 +444,15 @@ impl Builder<'_> {
             .unwrap_or_else(|| map_core::query::point_entity_bounds(origin));
         let center = ((mins + maxs) * 0.5).as_vec3();
         let half = ((maxs - mins) * 0.5).as_vec3();
+        let icon = self
+            .icons
+            .get(&entity.id)
+            .filter(|icon| icon.asset.material.is_some())
+            .cloned();
+        if let Some(icon) = &icon {
+            self.displayed_icons.push(icon.clone());
+            self.icon_bounds.extend([mins.as_vec3(), maxs.as_vec3()]);
+        }
         for normal in [
             Vec3::X,
             Vec3::NEG_X,
@@ -451,6 +469,12 @@ impl Builder<'_> {
             };
             let right = up.cross(normal);
             let corners = [up - right, up + right, -up + right, -up - right];
+            if icon.is_some() {
+                if selected {
+                    self.selection_loop(corners.map(|c| center + (normal + c) * half * 1.05));
+                }
+                continue;
+            }
             let first = self.vertices.len() as u32;
             for corner in corners {
                 self.push_vertex(Vertex {
@@ -892,10 +916,39 @@ impl SceneMesh {
         ),
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_helpers_and_icons_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            entities,
+            &BTreeMap::new(),
+            include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_helpers_and_icons_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        icons: &BTreeMap<u32, crate::icons::Instance>,
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
+            icons,
+            displayed_icons: Vec::new(),
+            icon_bounds: Vec::new(),
             models,
             helpers,
             overlays,
@@ -953,10 +1006,9 @@ impl SceneMesh {
         let (mins, maxs) = builder
             .vertices
             .iter()
-            .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), v| {
-                let p = Vec3::from(v.position);
-                (lo.min(p), hi.max(p))
-            });
+            .map(|v| Vec3::from(v.position))
+            .chain(builder.icon_bounds.iter().copied())
+            .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
         let mut indices = Vec::with_capacity(builder.indices.iter().map(Vec::len).sum());
         let mut batches = Vec::new();
         let mut stats = builder.stats;
@@ -974,6 +1026,7 @@ impl SceneMesh {
             indices.extend(list);
         }
         let mut mesh = Self {
+            icons: builder.displayed_icons,
             issues: terrain.issues,
             skybox: vmf
                 .world

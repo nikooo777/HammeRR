@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::{Session, models::Models, working_region::Evaluation};
 
+mod icons;
 mod lines;
 mod projectors;
 mod spheres;
@@ -23,6 +24,8 @@ pub struct Report {
     pub unsupported: Vec<String>,
     pub definition_sources: Vec<String>,
     pub spheres: Vec<spheres::Report>,
+    pub icon_sprite: Option<render::icons::Report>,
+    pub icon_limits: &'static str,
     pub sphere_limits: &'static str,
     pub lines: Vec<lines::Report>,
     pub line_limits: &'static str,
@@ -139,6 +142,33 @@ impl Session {
                 appearance.unsupported.join(", ")
             );
         }
+        let icon_sprite = self.inspected_icon(id);
+        if let Some(icon) = &icon_sprite {
+            status += &format!(
+                ". FGD icon sprite: {}; {}",
+                if icon.displayed {
+                    "displayed"
+                } else {
+                    icon.suppression_reason.unwrap_or(icon.status)
+                },
+                icon.material
+            );
+            if icon.status == "ready" {
+                status += &format!(
+                    " ({}×{}; live-camera unlit RGBA; box bounds retained)",
+                    icon.width, icon.height
+                );
+            }
+            if let Some(source) = &icon.source {
+                status += &format!(". Icon VMT source: {}", source.summary());
+            }
+            if let Some(source) = &icon.texture_source {
+                status += &format!(". Icon VTF source: {}", source.summary());
+            }
+            if let Some(error) = &icon.error {
+                status += &format!(" ({error})");
+            }
+        }
         let spheres = self.inspected_spheres(id);
         let lines = self.inspected_lines(id);
         let source_projector = self.inspected_projector(id);
@@ -216,6 +246,8 @@ impl Session {
             status,
             spheres,
             sphere_limits: spheres::LIMITS,
+            icon_sprite,
+            icon_limits: render::icons::LIMITS,
             lines,
             line_limits: lines::LIMITS,
             source_projector,

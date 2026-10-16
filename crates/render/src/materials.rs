@@ -130,6 +130,7 @@ pub type MaterialId = usize;
 /// rebuild geometry. Ids are stable for the library's lifetime.
 #[derive(Debug)]
 pub struct MaterialLibrary {
+    pub icons: crate::icons::Library,
     generation: u64,
     materials: Vec<MaterialInfo>,
     by_name: HashMap<String, MaterialId>,
@@ -141,6 +142,7 @@ impl Default for MaterialLibrary {
     fn default() -> Self {
         Self {
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+            icons: crate::icons::Library::default(),
             materials: vec![MaterialInfo::untextured(Self::EDITOR_NAME)],
             by_name: HashMap::from([(Self::EDITOR_NAME.to_owned(), Self::EDITOR)]),
             unavailable_model: None,
@@ -185,6 +187,7 @@ impl MaterialLibrary {
 
     pub fn reload(&mut self, fs: &GameFs) -> ReloadReport {
         let mut report = ReloadReport::default();
+        self.icons.clear();
         for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
             if material.helper.is_some() || Some(id) == self.unavailable_model {
                 continue;

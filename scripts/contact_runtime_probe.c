@@ -27,7 +27,8 @@ enum {
     SOLID_LAST = 7,
     FSOLID_NOT_SOLID = 4,
     MAX_SURFACE_PROPERTIES = 4096,
-    MAX_DIRECT_SURFACE_INDEX = 127
+    MAX_DIRECT_SURFACE_INDEX = 127,
+    SHADOW_MATERIAL_INDEX = 0xf000
 };
 
 typedef void *(*Factory)(const char *, int *);
@@ -708,6 +709,11 @@ static bool initial_profiles(float time) {
         fail("initial_profile_surface_count");
         return false;
     }
+    int shadow_index = index_at(surface_properties, "$MATERIAL_INDEX_SHADOW");
+    if (shadow_index != SHADOW_MATERIAL_INDEX) {
+        fail("initial_profile_shadow_sentinel_mismatch");
+        return false;
+    }
     for (size_t index = 0; index < TRACKED_COUNT; index++) {
         Tracked *item = &tracked[index];
         if (!item->present || item->object_count != 1 || !item->collide ||
@@ -731,9 +737,10 @@ static bool initial_profiles(float time) {
         damping_at(item->object, &linear, &angular);
         int material = material_at(item->object);
         unsigned int contents = contents_at(item->object);
+        bool shadow = material == SHADOW_MATERIAL_INDEX;
         if (!isfinite(mass) || mass < 0 || !isfinite(linear) || linear < 0 ||
-            !isfinite(angular) || angular < 0 || material < 0 || material >= count ||
-            material > MAX_DIRECT_SURFACE_INDEX) {
+            !isfinite(angular) || angular < 0 ||
+            (!shadow && (material < 0 || material >= count || material > MAX_DIRECT_SURFACE_INDEX))) {
             emit("{\"event\":\"initial_profile_failure\",\"name\":\"%s\",\"sample\":%lu,"
                  "\"material_index\":%d,\"surface_count\":%d,\"finite_mass\":%s,"
                  "\"finite_linear_damping\":%s,\"finite_angular_damping\":%s}\n",
@@ -742,39 +749,49 @@ static bool initial_profiles(float time) {
             fail("initial_profile_values_or_surface_alias");
             return false;
         }
-        char name[128];
-        size_t copied;
-        const char *address = name_at(surface_properties, material);
-        if (!copy_mapped_string(address, name, sizeof(name), &copied) || !name[0]) {
-            fail("initial_profile_unreadable_surface_name");
-            return false;
-        }
-        for (const unsigned char *at = (const unsigned char *)name; *at; at++) {
-            if (*at < 32 || *at > 126 || *at == '"' || *at == '\\') {
-                fail("initial_profile_unrepresentable_surface_name");
+        char name[128], roundtrip_json[16] = "null";
+        if (!shadow) {
+            size_t copied;
+            const char *address = name_at(surface_properties, material);
+            if (!copy_mapped_string(address, name, sizeof(name), &copied) || !name[0]) {
+                fail("initial_profile_unreadable_surface_name");
                 return false;
             }
+            for (const unsigned char *at = (const unsigned char *)name; *at; at++) {
+                if (*at < 32 || *at > 126 || *at == '"' || *at == '\\') {
+                    fail("initial_profile_unrepresentable_surface_name");
+                    return false;
+                }
+            }
+            int roundtrip = index_at(surface_properties, name);
+            if (roundtrip != material) {
+                fail("initial_profile_surface_roundtrip");
+                return false;
+            }
+            snprintf(roundtrip_json, sizeof(roundtrip_json), "%d", roundtrip);
         }
-        int roundtrip = index_at(surface_properties, name);
-        if (roundtrip != material || count_at(surface_properties) != count ||
+        if (count_at(surface_properties) != count ||
             object_owner(item->object) != item->entity || simulating(item->environment)) {
             fail("initial_profile_surface_or_owner_changed");
             return false;
         }
-        if (!emit("{\"event\":\"initial_object_profile\",\"profile_schema\":1,\"sample\":%lu,"
+        if (!emit("{\"event\":\"initial_object_profile\",\"profile_schema\":2,\"sample\":%lu,"
                   "\"frame\":%lu,\"simulation_time\":%.9g,\"name\":\"%s\",\"owner\":\"%p\","
                   "\"edict\":\"%p\",\"index\":%d,\"object\":\"%p\",\"environment\":\"%p\","
                   "\"collide\":\"%p\",\"mass\":%.9g,\"linear_damping\":%.9g,\"angular_damping\":%.9g,"
-                  "\"material_index\":%d,\"material_name\":\"%s\",\"material_roundtrip_index\":%d,"
+                  "\"material_index\":%d,\"material_kind\":\"%s\",\"material_name\":%s%s%s,\"material_roundtrip_index\":%s,"
                   "\"surface_count\":%d,\"contents\":%u,\"in_simulation\":false,\"observation_only\":true}\n",
                   sample_count, frame_count, time, item->name, item->entity, item->edict,
                   item->index, item->object, item->environment, item->collide, mass, linear,
-                  angular, material, name, roundtrip, count, contents))
+                  angular, material, shadow ? "shadow_sentinel" : "surface", shadow ? "" : "\"",
+                  shadow ? "null" : name, shadow ? "" : "\"", roundtrip_json, count, contents))
             return false;
     }
     initial_profile_done = true;
-    return emit("{\"event\":\"initial_profiles_complete\",\"profile_schema\":1,\"sample\":0,"
-                "\"frame\":%lu,\"objects\":7,\"observation_only\":true}\n", frame_count);
+    return emit("{\"event\":\"initial_profiles_complete\",\"profile_schema\":2,\"sample\":0,"
+                "\"frame\":%lu,\"objects\":7,\"observation_only\":true,"
+                "\"shadow_sentinel_token\":\"$MATERIAL_INDEX_SHADOW\",\"shadow_sentinel_index\":%d}\n",
+                frame_count, shadow_index);
 }
 
 static bool contacts(void *object, size_t *count) {

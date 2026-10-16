@@ -22,7 +22,10 @@ enum {
     MAX_REPORT_BYTES = 32 * 1024 * 1024,
     SAMPLE_STRIDE = 7,
     TRACKED_COUNT = 7,
-    STABLE_COUNT = 3
+    STABLE_COUNT = 3,
+    SOLID_NONE = 0,
+    SOLID_LAST = 7,
+    FSOLID_NOT_SOLID = 4
 };
 
 typedef void *(*Factory)(const char *, int *);
@@ -38,7 +41,7 @@ typedef struct {
 } Module;
 typedef struct {
     const char *name;
-    void *entity, *edict, *object, *environment, *collide;
+    void *entity, *edict, *object, *environment, *collide, *collideable;
     int index, object_count;
     bool seen, freed, present;
 } Tracked;
@@ -569,6 +572,44 @@ static bool finite_vector(Vector vector) {
     return isfinite(vector.x) && isfinite(vector.y) && isfinite(vector.z);
 }
 
+static bool observe_brace_solid(Tracked *brace) {
+    typedef void *(*PointerQuery)(void *);
+    typedef int (*SolidQuery)(const void *);
+    PointerQuery base_at = (PointerQuery)method(brace->entity, 0xbc6ef8, 6, &server, 0x3a9960);
+    PointerQuery collideable_at =
+        (PointerQuery)method(brace->entity, 0xbc6ef8, 4, &server, 0x3a9940);
+    if (!base_at || !collideable_at)
+        return false;
+    if (base_at(brace->entity) != brace->entity) {
+        fail("brace_public_base_identity");
+        return false;
+    }
+    void *collideable = collideable_at(brace->entity);
+    PointerQuery handle_at = (PointerQuery)method(collideable, 0xb53618, 0, &server, 0x521400);
+    SolidQuery solid_at = (SolidQuery)method(collideable, 0xb53618, 13, &server, 0x521430);
+    SolidQuery flags_at = (SolidQuery)method(collideable, 0xb53618, 14, &server, 0x4dc250);
+    if (!handle_at || !solid_at || !flags_at)
+        return false;
+    void *handle = handle_at(collideable);
+    if (handle != brace->entity || (brace->collideable && brace->collideable != collideable)) {
+        fail("brace_collideable_identity_changed");
+        return false;
+    }
+    int solid = solid_at(collideable), flags = flags_at(collideable);
+    if (solid < SOLID_NONE || solid >= SOLID_LAST || flags < 0 || flags > UINT16_MAX) {
+        fail("invalid_brace_solid_values");
+        return false;
+    }
+    brace->collideable = collideable;
+    bool not_solid = (flags & FSOLID_NOT_SOLID) != 0;
+    emit(
+        "{\"event\":\"brace_solid\",\"sample\":%lu,\"name\":\"%s\",\"owner\":\"%p\",\"edict\":\"%p\",\"index\":%d,\"collideable\":\"%p\",\"entity_handle\":\"%p\",\"solid_type\":%d,\"solid_flags\":%d,\"not_solid\":%s,\"is_solid\":%s}\n",
+        sample_count, brace->name, brace->entity, brace->edict, brace->index, collideable, handle,
+        solid, flags, not_solid ? "true" : "false",
+        solid != SOLID_NONE && !not_solid ? "true" : "false");
+    return !invalidated;
+}
+
 static bool copy_mapped_string(const char *source, char *value, size_t capacity, size_t *copied) {
     uintptr_t start = (uintptr_t)source;
     *copied = 0;
@@ -720,6 +761,8 @@ static void observe(void) {
             fail("ambiguous_or_missing_physics_owner");
             return;
         }
+        if (index >= STABLE_COUNT && item->present && !observe_brace_solid(item))
+            return;
         emit("{\"event\":\"entity\",\"sample\":%lu,\"name\":\"%s\",\"present\":%s,\"entity\":\"%"
              "p\",\"edict\":\"%p\",\"index\":%d,\"object_count\":%d,\"object\":\"%p\",\"collide\":"
              "\"%p\"}\n",

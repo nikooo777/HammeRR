@@ -260,14 +260,15 @@ impl Session {
         }
         let mut materials = MaterialLibrary::flat(names);
         let empty = std::collections::HashSet::new();
-        let mesh = SceneMesh::build_with_models(
+        let helpers = self.fgd_helper_appearances(&document, &models);
+        let mesh = SceneMesh::build_with_helpers_filtered(
             document.vmf(),
             &self.game,
             &mut materials,
-            &empty,
-            &std::collections::HashSet::new(),
+            (&empty, &std::collections::HashSet::new()),
             &[],
-            &models.instances,
+            (&models.instances, &helpers),
+            |_| true,
         );
         if mesh.stats.invalid_brushes != 0 {
             return Err("Prefab thumbnail contains invalid brush geometry".into());

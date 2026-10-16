@@ -426,6 +426,17 @@ fn validate_editable_projection(
     {
         return Err("Overlay corners must lie on the existing bound face plane, including native float precision; use Refit selected overlay after moving its source".into());
     }
+    if native_points
+        .iter()
+        .zip(definition.corners())
+        .any(|(native, authored)| {
+            !native
+                .as_dvec3()
+                .abs_diff_eq(DVec3::from_array(authored), ON_EPSILON)
+        })
+    {
+        return Err("Overlay corner frame differs from native projection precision; use Refit selected overlay before editing corners".into());
+    }
     let mut turn = 0.0f64;
     for index in 0..4 {
         let [a, b, c] = [index, (index + 1) % 4, (index + 2) % 4].map(|index| native_points[index]);

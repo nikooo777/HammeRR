@@ -774,7 +774,7 @@ python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-h
 
 Compiler fixtures cover complete original LDR/HDR/Patch bytes, overridden runtime references, source and mount-lookup identity, strict raw-material admission, manifest/world consistency, offline closure reconstruction, collisions, aggregate budgets, cancellation and reflection rebasing. The compiler integration target covers default/explicit-off parity, Fullbright packing without capture context, unchanged non-PAK data, final write verification and CLI leases/failures. Session checks cover captured settings, atomic updates, freeze/closing rules, deferred source/destination/content guards, preserved previous outputs and source-free packed Run. Recipe/recent-map tests retain absent-field and disabled-field compatibility.
 
-Flat entity verification preserves key order and duplicates, requires one first worldspawn and exact authored sky identity, rejects trailing-space identity aliases, and limits every key/value token to 2047 UTF-8 bytes. `classname` keys require lowercase spelling; worldspawn values and `skyname` keys remain case-insensitive, while the family value stays exact. Bare tokens admit ASCII without parentheses, single quotes or unsupported controls; quoted UTF-8/punctuation/non-NUL controls remain literal. These and the 4-MiB text, 65,536-block and 262,144-pair budgets are HammeRR admission limits. Material admission also rejects duplicate/unknown/nested declarations, directives, C-style block comments, bracket-wrapped scalar values and ambiguous Patch edits; these checks do not certify scalar shader semantics or HDR radiance.
+Flat entity verification preserves key order and duplicates, requires one first worldspawn and exact authored sky identity, rejects trailing-space identity aliases, and limits every key/value token to 2047 UTF-8 bytes. `classname` keys require lowercase spelling; worldspawn values and `skyname` keys remain case-insensitive, while the family value stays exact. Bare tokens reject non-ASCII, parentheses, single quotes, unsupported control separators and immediate trailing double-quote adjacency. Quoted-first adjacency and quoted UTF-8/punctuation/non-NUL controls remain literal. The packed verifier separately rejects tokens equal to `{` or beginning with `}`, preserving empty quoted tokens, quoted `{prefix` and embedded braces. These and the 4-MiB text, 65,536-block and 262,144-pair budgets are HammeRR admission rules. Material admission also rejects duplicate/unknown/nested declarations, directives, C-style block comments, bracket-wrapped scalar values and ambiguous Patch edits; these checks do not certify scalar shader semantics or HDR radiance.
 
 The software UI test clicks **Pack sky assets**, restores it through recipes and recent maps, rejects active-job edits and displays only completed published packing statistics. It also prepares real packed statistics, changes the source VMF before publication, and checks that rejection preserves the old BSP without showing a **Packed sky assets** result. Create `HAMMERR_UI_SNAPSHOTS` before requesting snapshots; keys are `build-pack-sky-default`, `build-pack-sky-controls`, `build-pack-sky-active` and `build-pack-sky-details`.
 
@@ -785,9 +785,12 @@ Build the [native HDR observer](#independent-ldr-and-hdr-lighting) before adding
 ```sh
 python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-headless --runtime --probe-library target/debug/hammerr_hdr_probe.so --output /tmp/hammerr-packed-sky-native
 python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-headless --runtime --reflections --probe-library target/debug/hammerr_hdr_probe.so --output /tmp/hammerr-packed-sky-reflections
+python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-headless --runtime --reflections --native-case run-reflections-hdr --probe-library target/debug/hammerr_hdr_probe.so --output /tmp/hammerr-packed-sky-reflections-view
 ```
 
 `--runtime` requires the supported installed engine, running Steam, Cage, grim and the private launch prerequisites above. Each native case uses a fresh private process with `-insecure`, post-map `sv_lan 1`, verified hardware channel and no desktop input/focus change. Before loading the exact published or Run-staged BSP, an independent mounted-source inspection must show all six original custom materials absent. Native image checks compare all six face hues and quadrant orientation for LDR and HDR. `--reflections` additionally captures paired cubemaps and checks both manifests and private Run rebasing. Use `--steam-root` for a nondefault checked Steam root; `--reuse-fixture /path/to/fixture.json` repeats native views from hash-checked saved BSPs without repeating authoring/capture. Inspect `results.json`, `fixture.json` and per-view `runtime.json`; archive consistency alone does not establish native sky display.
+
+Repeat `--native-case` to select only named native views: `published-ldr`, `published-dual-ldr`, `published-dual-hdr`, `run-dual-hdr` or `run-reflections-hdr`. Omission requests all available views. Selection requires `--runtime`; `run-reflections-hdr` also requires `--reflections` and a fixture containing combined output. The targeted command above selects only that view, while authoring and required reflection capture still run unless `--reuse-fixture` supplies existing hash-checked output. `results.json` records `native_case_scope`, `requested_native_cases`, `executed_native_cases` and `passed_native_cases`; a selected-case result makes no claim about omitted views.
 
 ### Recent maps and build recipes
 
@@ -1282,18 +1285,25 @@ launches no game or desktop input. Software UI callbacks capture
 ### FGD property sphere guides
 
 ```sh
+cargo test -p map-core --lib entity_helpers::spheres::tests
+cargo test -p editor-core --features mcp --lib fgd_helpers
 python3 -B scripts/validate_fgd_spheres.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-spheres-check
 ```
 
 The private stdio fixture checks authored values versus inherited FGD defaults,
-independent float/integer/string radii, explicit zero/negative behavior, missing
-and malformed diagnostics, and atomic rejection of an invalid property batch.
+independent float/integer/string radii, named versus implicit declared-radius
+bindings, effective-key deduplication and retained `implicit_property` provenance,
+explicit zero/negative behavior, missing/wrong-type/malformed diagnostics and
+atomic rejection of an invalid property batch. Pure and Session checks retain
+the same limits, specialized-helper exclusions and unchanged object bounds.
 Actual MCP PNGs compare guide pixels outside the selected box and around a
 distinct inner radius in Top, Front, Side and perspective views with selection
 outlines disabled. Guide-only rays and volumes remain unpickable; object bounds,
 selection framing and working-region inclusion retain the class box. Selected,
 unselected, hidden and filtered controls retain source fields, saved bytes,
-history and camera. The script produces `fgd-spheres.png` plus paired controls,
+history and camera. Implicit/named PNG parity and definition reload exercise the
+same existing command; no new tool, script or viewport setting is added. The
+script produces `fgd-spheres.png` plus paired controls,
 needs a graphics adapter, and launches no game or desktop input.
 
 ### FGD literal targetname line guides

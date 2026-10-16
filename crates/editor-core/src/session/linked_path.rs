@@ -14,6 +14,7 @@ const MAX_NAME_ATTEMPTS: usize = 4096;
 const MAX_REFERENCE_WORK: usize = 4_000_000;
 
 mod existing;
+mod picking;
 
 type NodeProperties = Vec<(String, String)>;
 
@@ -66,6 +67,8 @@ pub(super) struct Preview {
     generation: u64,
     revision: u64,
     definitions: u64,
+    picking: Option<picking::Picking>,
+    last_pick: Option<(usize, map_core::query::SurfaceHit)>,
 }
 
 struct Plan {
@@ -193,10 +196,12 @@ impl Session {
                 "classname":preview.request.classname,"prefix":preview.request.prefix,
                 "points":preview.request.points.iter().map(|point|point.to_array()).collect::<Vec<_>>(),
                 "closed":preview.request.closed,"nodes":nodes,
+                "picking":preview.picking.as_ref().map(|pick|json!({"row":pick.row,"width":pick.size.0,"height":pick.size.1,"valid":self.checked_linked_path_pick(preview.owner,preview.token).is_ok()})),
+                "last_pick":preview.last_pick.map(|(row,surface)|json!({"row":row,"target":object_name(surface.hit.object),"solid":surface.hit.solid,"side":surface.hit.side,"point":surface.hit.point.to_array(),"normal":surface.normal.to_array()})),
             })
         });
         json!({
-            "snapshot":self.linked_path_stamp(),"preview":preview,"editable":!self.closing,
+            "snapshot":self.linked_path_stamp(),"pick_snapshot":self.linked_path_pick_stamp(),"preview":preview,"editable":!self.closing,
             "classes":["path_corner","path_track"],
             "limits":{"min_points":MIN_POINTS,"max_points":MAX_POINTS,"prefix_bytes":MAX_PREFIX_BYTES,"coordinate_extent":crate::spatial::MAX_EXTENT},
         })
@@ -454,6 +459,8 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             definitions: self.definitions_serial,
+            picking: None,
+            last_pick: None,
         });
         self.scene_serial += 1;
         self.view_serial += 1;
@@ -466,12 +473,16 @@ impl Session {
         let preview = self.geometry.linked_path.preview.as_mut().unwrap();
         preview.token = self.geometry.linked_path.serial;
         preview.owner = actor;
+        preview.picking = None;
         self.view_serial += 1;
         Ok(self.linked_path())
     }
 
     pub fn apply_linked_path(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
         let preview = self.checked_linked_path(token)?;
+        if preview.picking.is_some() {
+            return Err("Finish or cancel position picking before applying the path".into());
+        }
         if preview.owner != actor {
             return Err(
                 "Another actor owns this linked path; Review preview before applying it".into(),

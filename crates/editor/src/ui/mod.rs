@@ -1856,6 +1856,28 @@ pub(super) fn run(
                 ui.pick_release = false;
                 return;
             }
+            let path_picking = !lock(&ui.session).linked_path()["preview"]["picking"].is_null();
+            if button == 0 && path_picking {
+                if down {
+                    ui.pick_release = true;
+                    let Some(controller) = ui.linked_path.as_ref() else {
+                        app.set_message("Open Create linked path… and Review preview before picking.".into());
+                        return;
+                    };
+                    let mut session = lock(&ui.session);
+                    let result = if session.camera() != ui.viewport.camera {
+                        Err("Viewport camera changed; choose Pick position again".into())
+                    } else {
+                        controller.pick_at_pixel(&mut session,DVec2::new(f64::from(x),f64::from(y)),(viewport_size.0.round().max(1.0) as u32,viewport_size.1.round().max(1.0) as u32))
+                    };
+                    match result {
+                        Ok(()) => app.set_message("Position picked into the path preview; Apply is still required.".into()),
+                        Err(error) => { controller.window.set_message(error.clone().into()); app.set_message(error.into()); controller.refresh(&session); let _ = controller.window.show(); }
+                    }
+                    refresh_interaction(&app,&session);
+                }
+                return;
+            }
             let measurement_picking =
                 !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
             if button == 0 && measurement_picking {
@@ -3033,6 +3055,13 @@ pub(super) fn run(
                 lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
             let measurement_picking =
                 !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
+            if let Some(controller) = &ui.linked_path {
+                controller.set_viewport((
+                    app.get_viewport_width().round().max(1.0) as u32,
+                    app.get_viewport_height().round().max(1.0) as u32,
+                ));
+            }
+            let path_picking = !lock(&ui.session).linked_path()["preview"]["picking"].is_null();
             if let Some(controller) = &ui.measurements {
                 controller.set_viewport((
                     app.get_viewport_width().round().max(1.0) as u32,
@@ -3042,7 +3071,8 @@ pub(super) fn run(
             app.set_surface_picking(
                 lock(&ui.session).surface_placement()["picking"] == true
                     || entity_picking
-                    || measurement_picking,
+                    || measurement_picking
+                    || path_picking,
             );
             if let Some(controller) = &ui.entity_placement
                 && controller.window.window().is_visible()

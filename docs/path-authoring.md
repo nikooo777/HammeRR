@@ -70,6 +70,27 @@ defaults apply only to inserted nodes.
 
 ![Reordering existing named nodes without replacing their identities](images/linked-path-existing.png)
 
+## Pick a row's position from a surface
+
+1. Create or load the path, then click **Preview**. Use **Review preview** to
+   take ownership of another actor's draft. Preview any changed fields first.
+2. Click **Pick position…** beside the row to move. The dialog hides while
+   the viewport accepts a surface click.
+3. Click a visible brush face, terrain sheet or supported model mesh. The
+   exact hit point replaces only that row's preview coordinates, and the dialog
+   returns. A miss or an invalid point keeps the gesture armed and preserves
+   the previous coordinates.
+4. To stop an armed gesture, press **Escape** or click **Cancel position pick**.
+   The preview coordinates stay unchanged. Review a successful pick, then click
+   **Apply** to commit the complete path in one Undo step. **Cancel** discards
+   the whole unapplied path draft.
+
+Picking uses the visible surface point without grid rounding, a height offset
+or an orientation change. Path nodes themselves are excluded from target
+surfaces. Changing the map, definitions, view, camera or captured viewport size
+requires a fresh pick gesture; another actor must explicitly review the draft
+before taking ownership. Picking never changes the source map before **Apply**.
+
 Limits: editing requires one complete, visible, unparented simple chain or
 closed loop of 2–64 distinct points, all of the same point class. Every name
 must be unique across the map, including hidden entities and case variants.
@@ -84,5 +105,5 @@ Inserted names use the same occupied-name and reference-acquisition guards
 as creation. Removed names are not recycled for new nodes. New nodes receive
 fresh IDs; Undo/Redo restore the exact original/resulting node identities.
 FGD defaults that add a parent or alternate path to a new node are rejected.
-Renaming, open/closed conversion, branching, viewport point input, train setup
+Renaming, open/closed conversion, branching, train setup
 and runtime movement validation remain outside this workflow.

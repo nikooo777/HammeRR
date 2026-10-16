@@ -22,6 +22,27 @@ pub(super) fn edit_selection(
 pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
     let shared = session_of(ui);
     let mut session = lock(&shared);
+    let path = session.linked_path();
+    if !path["preview"]["picking"].is_null() {
+        if path["preview"]["owner"] != Actor::User.label() {
+            app.set_message(
+                "Review the shared linked path before cancelling position picking.".into(),
+            );
+            return true;
+        }
+        let result = if let Some(controller) = &ui.borrow().linked_path {
+            controller.cancel_pick(&mut session)
+        } else {
+            session
+                .cancel_linked_path_pick(Actor::User, path["preview"]["token"].as_u64().unwrap())
+                .map(|_| ())
+        };
+        match result {
+            Ok(()) => app.set_surface_picking(false),
+            Err(error) => app.set_message(error.into()),
+        }
+        return true;
+    }
     let measurement_report = session.measurement_state();
     if !measurement_report["draft"]["picking"].is_null() {
         if measurement_report["draft"]["owner"] != Actor::User.label() {

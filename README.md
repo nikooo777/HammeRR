@@ -304,6 +304,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Model detail props →](docs/model-detail-props.md)
 
+| Explicit detail sprites |
+| --- |
+| ![Individual atlas sprites in Counter-Strike: Source](docs/images/explicit-detail-sprites.png) |
+| Place decorative atlas cards at chosen positions with fixed or camera-facing orientation. |
+
+[Explicit detail sprites →](docs/detail-sprites.md)
+
 | Material detail scattering |
 | --- |
 | ![Material-generated foliage on displaced terrain in Counter-Strike: Source](docs/images/terrain-detail-scattering.png) |

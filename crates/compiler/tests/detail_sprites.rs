@@ -352,6 +352,145 @@ fn gaussian_scaling_preserves_sampling_and_sprite_dictionary_deduplication() {
     assert_eq!(mixed.props.len(), 134);
 }
 
+fn explicit_sprite(id: u32, orientation: u8) -> Entity {
+    let mut entity = Entity::new(id, "prop_detail_sprite");
+    for (key, value) in [
+        ("origin", "0 0 32"),
+        ("angles", "15 35 5"),
+        ("position_ul", "-4 16"),
+        ("position_lr", "12 -16"),
+        ("tex_ul", "0 0"),
+        ("tex_size", "4 4"),
+        ("tex_total_size", "8"),
+    ] {
+        entity.properties.set(key, value);
+    }
+    entity
+        .properties
+        .set("detailOrientation", orientation.to_string());
+    entity
+}
+
+#[test]
+fn explicit_sprites_preserve_sdk_fields_deduplication_and_runtime_consumption() {
+    let mut fixture = fixture();
+    for orientation in 0..=2 {
+        let mut entity = explicit_sprite(800_000 + u32::from(orientation), orientation);
+        entity
+            .properties
+            .set("origin", format!("{} 0 32", 32 * i32::from(orientation)));
+        fixture.source.entities.push(entity);
+    }
+    let authored = fixture.source.write(&Default::default());
+    let bsp = compiled(&fixture);
+    let rows = bsp.detail_props().unwrap().unwrap();
+    assert_eq!(
+        (rows.models.len(), rows.sprites.len(), rows.props.len()),
+        (0, 1, 19)
+    );
+    let explicit = rows
+        .props
+        .iter()
+        .filter(|prop| prop.origin[2] == 32.0)
+        .collect::<Vec<_>>();
+    assert_eq!(explicit.len(), 3);
+    for orientation in 0..=2 {
+        let prop = explicit
+            .iter()
+            .find(|prop| prop.origin[0] == 32.0 * f32::from(orientation))
+            .unwrap();
+        assert_eq!(
+            (prop.kind, prop.orientation, prop.scale, prop.model),
+            (1, orientation, 1.0, 0)
+        );
+        assert_eq!(prop.angles, [15.0, 35.0, 5.0]);
+    }
+    let text = std::str::from_utf8(&bsp.lump(source_formats::bsp::lump::ENTITIES).data).unwrap();
+    assert!(!text.contains("prop_detail_sprite"));
+    let reopened = Vmf::parse(&authored).unwrap();
+    assert_eq!(
+        compiler::compile(&reopened, &fixture.game)
+            .bsp
+            .unwrap()
+            .to_bytes(),
+        bsp.to_bytes()
+    );
+    assert_eq!(fixture.source.write(&Default::default()), authored);
+    std::fs::write(
+        fixture.directory.path().join("materials/test/ground.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
+    std::fs::write(fixture.directory.path().join("detail.vbsp"), "malformed").unwrap();
+    let standalone = details(&fixture);
+    assert_eq!(
+        (
+            standalone.models.len(),
+            standalone.sprites.len(),
+            standalone.props.len()
+        ),
+        (0, 1, 3)
+    );
+    dictionary(&fixture, 64, SPRITE);
+    std::fs::write(
+        fixture.directory.path().join("materials/test/ground.vmt"),
+        "UnlitGeneric { %detailtype tufts }",
+    )
+    .unwrap();
+    fixture
+        .source
+        .entities
+        .retain(|entity| entity.classname() != Some("prop_detail_sprite"));
+    assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
+}
+
+#[test]
+fn explicit_sprite_failures_are_atomic_without_model_assets() {
+    let mut fixture = fixture();
+    for (key, value, expected) in [
+        ("position_ul", "bad", "position_ul"),
+        ("position_ul", "-40000 16", "bounds"),
+        ("angles", "0 inf 0", "angles"),
+        ("position_lr", "-4 -16", "geometry"),
+        ("tex_ul", "NaN 0", "tex_ul"),
+        ("tex_size", "0 4", "texture rectangle"),
+        ("tex_total_size", "0", "texture rectangle"),
+        ("detailOrientation", "0.5", "integer"),
+        ("scale", "2", "scale=1"),
+        ("rendercolor", "128 255 255", "rendercolor"),
+        ("lightingorigin", "missing", "model-only"),
+        ("parentname", "moving", "parentname"),
+        ("sway", "0.1", "sway=0"),
+        ("spriterandomscale", "0.2", "spriterandomscale=0"),
+    ] {
+        let mut entity = explicit_sprite(800_000, 2);
+        entity.properties.set(key, value);
+        fixture.source.entities.push(entity);
+        rejected(&fixture, expected);
+        fixture.source.entities.pop();
+    }
+    for key in [
+        "position_ul",
+        "position_lr",
+        "tex_ul",
+        "tex_size",
+        "tex_total_size",
+    ] {
+        let mut missing = explicit_sprite(800_000, 2);
+        missing.properties.remove(key);
+        fixture.source.entities.push(missing);
+        rejected(&fixture, &format!("requires {key}"));
+        fixture.source.entities.pop();
+    }
+    fixture.source.entities.push(explicit_sprite(800_000, 2));
+    std::fs::write(
+        fixture.directory.path().join("materials/test/atlas.vmt"),
+        "Water { }",
+    )
+    .unwrap();
+    rejected(&fixture, "UnlitGeneric");
+}
+
 #[test]
 fn default_sprite_geometry_and_mixed_model_dictionary_references_remain_distinct() {
     let mut fixture = fixture();

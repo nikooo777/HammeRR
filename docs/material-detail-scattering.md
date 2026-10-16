@@ -177,8 +177,8 @@ assignment stay unchanged across these lighting modes.
 
 Limits: model and sprite detail types on world and `func_detail` surfaces. Terrain
 requires a parallelogram base quad, including rectangles and sheared or sloped
-parallelograms; skewed base quads reject. Nonzero sway, explicit
-`prop_detail_sprite` entities, runtime brush models, non-integer or unsupported sprite orientations
+parallelograms; skewed base quads reject. Nonzero sway,
+runtime brush models, non-integer or unsupported sprite orientations
 and fluid surfaces reject. Selected groups must contain supported
 entries and finite values; an unsupported selected group rejects the
 complete build before replacing its previous BSP. Unused groups do not reject
@@ -197,7 +197,7 @@ Lighting samples use each model's rotated hull midpoint, each plain sprite's
 scaled anchor midpoint, or a cross/tri shape's stored origin, with the stored
 local-up normal. Shape angle and size do not move that lighting receiver.
 The receiver must remain in open visible world space. Animated and named switchable light styles also reach
-detail objects. Use the light's existing **Appearance**, name and
+detail objects. Use the light's existing **Light pattern**, name and
 **Initially dark** controls, then rebuild. Style extras use Valve VRAD's native
 0.5 encoding factor; an equivalent static and named light can look different.
 The engine's current light-style pattern controls their runtime brightness.
@@ -215,6 +215,10 @@ style arrays.
 can sample at a named `info_lighting` helper. Generated models, sprites and
 shapes keep their existing sample points. Authored render tint remains
 unfinished. Detail objects do not cast new baked shadows.
+
+[Explicit detail sprites](detail-sprites.md) place individual cards from the same
+atlas without a scatter dictionary. They use scale one and require full-map
+builds; generated models, sprites and shapes retain this dictionary workflow.
 
 Explicit model detail props are selected for a compile region by their authored
 origin, including the box boundary; an absent origin means world zero. Outside

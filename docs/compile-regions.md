@@ -133,7 +133,7 @@ pending draft stale. Preview it again before applying.
   omitted origin treated as zero. Included records retain their source properties
   and pass the normal model, transform, bounds, leaf and lighting checks. Their
   geometry is never clipped or moved inward. Visible invalid origins reject before
-  selection. Explicit sprite entities remain unsupported.
+  selection. [Explicit detail sprites](detail-sprites.md) require full-map builds.
 - Instances and visibility clusters require full-map builds. Retained slime,
   detail/model water and boundary-crossing water or terrain are also unsupported. These
   cases stop compilation and preserve prior output.

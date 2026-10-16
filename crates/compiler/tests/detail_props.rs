@@ -147,7 +147,7 @@ fn invalid_detail_models_preserve_previous_output_and_source() {
 }
 
 #[test]
-fn model_type_bounds_and_sprites_reject_while_regions_retain_eligible_models() {
+fn model_type_bounds_and_malformed_sprites_reject_while_regions_retain_eligible_models() {
     let (directory, game) = game();
     let path = directory.path().join("models/props/test.mdl");
     let original = std::fs::read(&path).unwrap();
@@ -175,7 +175,7 @@ fn model_type_bounds_and_sprites_reject_while_regions_retain_eligible_models() {
     assert!(output.report.diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("prop_detail_sprite compilation is unsupported")
+            .contains("Explicit detail sprite requires position_ul")
     }));
     let mut document = Document::new(common::room());
     document

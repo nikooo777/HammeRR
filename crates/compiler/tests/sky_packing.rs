@@ -114,11 +114,11 @@ fn fullbright_packs_without_a_capture_context_and_only_changes_the_pak() {
 
 #[test]
 fn default_off_keeps_missing_sky_output_and_statistics_unchanged() {
-    let fixture = Fixture::new();
-    let mut source = fixture.vmf.clone();
+    let game = common::empty_game();
+    let mut source = common::room();
     source.world.properties.set("skyname", "absent");
-    let baseline = compiler::compile(&source, &fixture.game);
-    let explicit_off = compiler::compile_with_options(&source, &fixture.game, Options::default());
+    let baseline = compiler::compile(&source, &game);
+    let explicit_off = compiler::compile_with_options(&source, &game, Options::default());
     assert!(!baseline.report.has_errors());
     assert!(baseline.sky_assets.is_none() && baseline.stats.sky_assets.is_none());
     assert_eq!(
@@ -131,7 +131,7 @@ fn default_off_keeps_missing_sky_output_and_statistics_unchanged() {
             .get("sky_assets")
             .is_none()
     );
-    let failed = compiler::compile_with_options(&source, &fixture.game, packed_options());
+    let failed = compiler::compile_with_options(&source, &game, packed_options());
     assert!(failed.report.has_errors() && failed.bsp.is_none());
     assert!(failed.sky_assets.is_none());
 }

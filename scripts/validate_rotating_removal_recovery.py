@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import sys
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
@@ -765,6 +766,7 @@ def main():
         "--release-mode", choices=["kill", "disable-wake"], default="kill"
     )
     parser.add_argument("--reuse-fixture", type=Path)
+    parser.add_argument("--contact-observer-library", type=Path)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -772,9 +774,37 @@ def main():
     args.game_dir = args.game_dir.resolve()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.contact_observer_library:
+        args.contact_observer_library = args.contact_observer_library.resolve(strict=True)
+        assert args.runtime or args.worker, "--contact-observer-library requires --runtime"
     if args.worker:
         runtime.OBSERVER = observer(args.release_mode)
         args.observe_seconds = 48
+        if args.contact_observer_library:
+            import contact_runtime_observer as contact
+
+            failures = []
+            try:
+                runtime.worker(
+                    args,
+                    launch_adapter=partial(contact.prepare, args.contact_observer_library, args.release_mode),
+                )
+            except BaseException as error:
+                failures.append(error)
+            try:
+                check(args)
+            except BaseException as error:
+                failures.append(error)
+            try:
+                contact.verify(args.output, args.release_mode)
+            except BaseException as error:
+                failures.append(error)
+            if failures:
+                first, *others = failures
+                for error in others:
+                    first.add_note(f"Contact/recovery observation also failed: {type(error).__name__}: {error}")
+                raise first
+            return
         runtime.worker(args)
         check(args)
         return
@@ -814,9 +844,13 @@ def main():
         ]
         if args.release_mode == "disable-wake":
             command.extend(["--release-mode", "disable-wake"])
+        if args.contact_observer_library:
+            command.extend(["--contact-observer-library", str(args.contact_observer_library)])
         runtime.private_compositor(command, output, timeout=90)
         report["native"] = json.loads((output / "rotating-removal-recovery.json").read_text())
         report["runtime_checked"] = True
+        if args.contact_observer_library:
+            report["contact_observer"] = json.loads((output / "contact-observer-analysis.json").read_text())
         for kind in ["bsp", "source"]:
             assert digest(Path(compiled[kind])) == compiled[f"{kind}_sha256"]
     (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")

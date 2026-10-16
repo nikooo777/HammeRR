@@ -417,7 +417,7 @@ export component ComponentsWindow inherits Window {
                                     LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.wall-material; accessible-label: "Extrusion wall material"; edited => { root.edited(); } }
                                     Button { text: "Browse…"; clicked => { root.browse-extrusion-material(); } }
                                 }
-                                Text { text: "Adds separate volumes. Original brushes and saved pieces remain."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Text { text: root.extrusion-direction == 1 ? "Replaces source brushes with convex fragments and consumes their saved pieces. Undo restores both." : "Adds separate volumes. Original brushes and saved pieces remain."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
                             }
                             Button { text: "Return to flat"; enabled: !root.partition-flat || root.has-extrusion-preview; clicked => { root.flatten-partitions(); } }
                         }

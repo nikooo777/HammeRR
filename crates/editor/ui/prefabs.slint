@@ -1,8 +1,8 @@
-import {Button,CheckBox,LineEdit,ListView} from "std-widgets.slint";
+import {Button,CheckBox,ComboBox,LineEdit,ListView,ScrollView} from "std-widgets.slint";
 export struct PrefabRow {name:string,detail:string}
 export component PrefabsWindow inherits Window {
     title:"Prefab library - HammeRR";
-    preferred-width:1000px;preferred-height:690px;
+    preferred-width:1000px;preferred-height:880px;
     in property <[PrefabRow]> entries;
     in property <string> selected;
     in property <string> page-label;
@@ -13,6 +13,8 @@ export component PrefabsWindow inherits Window {
     in property <bool> next;
     in property <bool> saving;
     in property <bool> deleting;
+    in property <bool> renaming;
+    in property <bool> editing;
     in property <bool> can-save;
     in property <bool> can-preview;
     in-out property <string> query;
@@ -20,6 +22,16 @@ export component PrefabsWindow inherits Window {
     in-out property <string> center-x:"0";
     in-out property <string> center-y:"0";
     in-out property <string> center-z:"0";
+    in-out property <string> rotation-x:"0";
+    in-out property <string> rotation-y:"0";
+    in-out property <string> rotation-z:"0";
+    in-out property <string> scale-x:"1";
+    in-out property <string> scale-y:"1";
+    in-out property <string> scale-z:"1";
+    in-out property <int> pivot-mode;
+    in-out property <string> pivot-x:"0";
+    in-out property <string> pivot-y:"0";
+    in-out property <string> pivot-z:"0";
     in-out property <bool> keep-external;
     callback choose(string);
     callback search();
@@ -29,58 +41,63 @@ export component PrefabsWindow inherits Window {
     callback save();
     callback begin-delete();
     callback delete();
+    callback begin-rename();
+    callback rename();
     callback preview();
     callback cancel();
     callback close-dialog();
     forward-focus:keys;
     keys:=FocusScope {
         width:parent.width;height:parent.height;
-        key-pressed(event)=>{if event.text==Key.Escape {if root.saving||root.deleting {root.cancel();}else{root.close-dialog();}accept}else{reject}}
+        key-pressed(event)=>{if event.text==Key.Escape {if root.editing {root.cancel();}else{root.close-dialog();}accept}else{reject}}
         VerticalLayout {
             padding:22px;spacing:12px;
             Text {text:"Prefab library";font-size:24px;font-weight:600;}
             Text {text:"Reuse brush and entity assemblies. Review placement in the map before applying.";wrap:word-wrap;color:#bac2ce;}
             HorizontalLayout {
                 spacing:8px;
-                Button {text:"Save selection…";enabled:root.can-save&&!root.saving&&!root.deleting;clicked=>{root.begin-save();}}
-                Button {text:"Refresh library";enabled:!root.saving&&!root.deleting;clicked=>{root.refresh();}}
+                Button {text:"Save selection…";enabled:root.can-save&&!root.editing;clicked=>{root.begin-save();}}
+                Button {text:"Refresh library";enabled:!root.editing;clicked=>{root.refresh();}}
                 Rectangle {horizontal-stretch:1;}
-                Button {text:"Delete prefab…";enabled:root.selected!=""&&!root.saving&&!root.deleting;clicked=>{root.begin-delete();}}
+                Button {text:"Rename…";enabled:root.selected!=""&&!root.editing;clicked=>{root.begin-rename();}}
+                Button {text:"Delete prefab…";enabled:root.selected!=""&&!root.editing;clicked=>{root.begin-delete();}}
             }
             HorizontalLayout {
-                spacing:20px;
+                spacing:20px;vertical-stretch:1;
                 VerticalLayout {
                     width:320px;spacing:8px;
-                    LineEdit {text<=>root.query;placeholder-text:"Find a prefab";enabled:!root.saving&&!root.deleting;edited=>{root.search();}}
+                    LineEdit {text<=>root.query;placeholder-text:"Find a prefab";enabled:!root.editing;edited=>{root.search();}}
                     ListView {
                         min-height:220px;
                         for entry in root.entries: VerticalLayout {
                             padding-bottom:8px;spacing:4px;
-                            Button {text:(root.selected==entry.name?"● ":"")+entry.name;enabled:!root.saving&&!root.deleting;clicked=>{root.choose(entry.name);}}
+                            Button {text:(root.selected==entry.name?"● ":"")+entry.name;enabled:!root.editing;clicked=>{root.choose(entry.name);}}
                             Text {text:entry.detail;font-size:12px;color:#bac2ce;}
                         }
                     }
                     HorizontalLayout {
                         spacing:6px;
-                        Button {text:"Previous";enabled:root.previous&&!root.saving&&!root.deleting;clicked=>{root.page(-1);}}
+                        Button {text:"Previous";enabled:root.previous&&!root.editing;clicked=>{root.page(-1);}}
                         Text {text:root.page-label;horizontal-stretch:1;vertical-alignment:center;}
-                        Button {text:"Next";enabled:root.next&&!root.saving&&!root.deleting;clicked=>{root.page(1);}}
+                        Button {text:"Next";enabled:root.next&&!root.editing;clicked=>{root.page(1);}}
                     }
                 }
                 VerticalLayout {
                     horizontal-stretch:1;spacing:10px;
-                    Text {text:root.saving?"Save the current selection":root.deleting?"Delete “"+root.selected+"”?":root.selected==""?"Choose an assembly":root.selected;font-size:18px;font-weight:600;wrap:word-wrap;}
-                    if root.saving: VerticalLayout {
+                    Text {text:root.saving?"Save the current selection":root.deleting?"Delete “"+root.selected+"”?":root.renaming?"Rename “"+root.selected+"”":root.selected==""?"Choose an assembly":root.selected;font-size:18px;font-weight:600;wrap:word-wrap;}
+                    if root.saving||root.renaming: VerticalLayout {
                         spacing:8px;
                         Text {text:"Prefab name";}
                         LineEdit {text<=>root.prefab-name;placeholder-text:"Corridor lights";}
-                        Text {text:"Captures committed whole objects, groups, layers, supported links and object notes. Existing files are never overwritten.";wrap:word-wrap;color:#bac2ce;}
+                        Text {text:root.renaming?"Changes the library filename and preserves VMF bytes, object IDs and asset references. Existing placement reviews from this entry become stale; choose the renamed prefab and preview again. Existing names are never overwritten.":"Captures committed whole objects, groups, layers, supported links and object notes. Existing files are never overwritten.";wrap:word-wrap;color:#bac2ce;}
                     }
                     if root.deleting: Text {text:"Removes this VMF from the library. Placed copies stay in the map. Library deletion is not part of map Undo.";wrap:word-wrap;color:#ffce84;}
-                    if !root.saving&&!root.deleting: VerticalLayout {
-                        spacing:12px;
+                    if !root.editing: ScrollView {
+                      vertical-stretch:1;
+                      VerticalLayout {
+                        spacing:8px;
                         Text {text:root.detail;wrap:word-wrap;color:#bac2ce;}
-                        Text {text:"Placement center · world units";font-weight:600;}
+                        Text {text:"Placement position · world units";font-weight:600;}
                         HorizontalLayout {
                             spacing:8px;
                             Text {text:"X";vertical-alignment:center;}
@@ -90,11 +107,47 @@ export component PrefabsWindow inherits Window {
                             Text {text:"Z";vertical-alignment:center;}
                             LineEdit {text<=>root.center-z;input-type:decimal;}
                         }
+                        Text {text:"Rotation · world XYZ degrees";font-weight:600;}
+                        HorizontalLayout {
+                            spacing:8px;
+                            Text {text:"X";vertical-alignment:center;}
+                            LineEdit {text<=>root.rotation-x;input-type:decimal;}
+                            Text {text:"Y";vertical-alignment:center;}
+                            LineEdit {text<=>root.rotation-y;input-type:decimal;}
+                            Text {text:"Z";vertical-alignment:center;}
+                            LineEdit {text<=>root.rotation-z;input-type:decimal;}
+                        }
+                        Text {text:"Scale · positive XYZ factors";font-weight:600;}
+                        HorizontalLayout {
+                            spacing:8px;
+                            Text {text:"X";vertical-alignment:center;}
+                            LineEdit {text<=>root.scale-x;input-type:decimal;}
+                            Text {text:"Y";vertical-alignment:center;}
+                            LineEdit {text<=>root.scale-y;input-type:decimal;}
+                            Text {text:"Z";vertical-alignment:center;}
+                            LineEdit {text<=>root.scale-z;input-type:decimal;}
+                        }
+                        HorizontalLayout {
+                            spacing:8px;
+                            Text {text:"Source pivot";vertical-alignment:center;}
+                            ComboBox {model:["Bounds center","Source origin","Custom"];current-index<=>root.pivot-mode;}
+                        }
+                        if root.pivot-mode==2: HorizontalLayout {
+                            spacing:8px;
+                            Text {text:"X";vertical-alignment:center;}
+                            LineEdit {text<=>root.pivot-x;input-type:decimal;}
+                            Text {text:"Y";vertical-alignment:center;}
+                            LineEdit {text<=>root.pivot-y;input-type:decimal;}
+                            Text {text:"Z";vertical-alignment:center;}
+                            LineEdit {text<=>root.pivot-z;input-type:decimal;}
+                        }
+                        Text {text:"Scale, then rotate about the source pivot; move that pivot to the placement position. Scaling requires only brushes or brush entities. Textures stay attached.";wrap:word-wrap;color:#bac2ce;}
                         CheckBox {text:"Keep external links by name";checked<=>root.keep-external;}
-                        Button {text:"Preview placement…";enabled:root.can-preview;clicked=>{root.preview();}}
-                        Text {text:"Opens the shared Paste review. Apply records one Undo step; Cancel discards the placement. Names and native IDs are remapped safely.";wrap:word-wrap;color:#bac2ce;}
+                      }
                     }
-                    Rectangle {vertical-stretch:1;}
+                    if !root.editing: Button {text:"Preview placement…";enabled:root.can-preview;clicked=>{root.preview();}}
+                    if !root.editing: Text {text:"Opens the shared Paste review. Apply records one Undo step; Cancel discards the placement. Names and native IDs are remapped safely.";wrap:word-wrap;color:#bac2ce;}
+                    if root.editing: Rectangle {vertical-stretch:1;}
                 }
             }
             Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:#919aaa;font-size:12px;}
@@ -103,9 +156,10 @@ export component PrefabsWindow inherits Window {
                 spacing:8px;
                 Button {text:"Close";clicked=>{root.close-dialog();}}
                 Rectangle {horizontal-stretch:1;}
-                if root.saving||root.deleting: Button {text:"Cancel";clicked=>{root.cancel();}}
+                if root.editing: Button {text:"Cancel";clicked=>{root.cancel();}}
                 if root.saving: Button {text:"Save prefab";enabled:root.prefab-name!="";clicked=>{root.save();}}
                 if root.deleting: Button {text:"Delete prefab";clicked=>{root.delete();}}
+                if root.renaming: Button {text:"Rename prefab";enabled:root.prefab-name!=""&&root.prefab-name!=root.selected;clicked=>{root.rename();}}
             }
         }
     }

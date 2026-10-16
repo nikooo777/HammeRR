@@ -49,6 +49,15 @@ pub struct Preview {
     definitions: u64,
     content: u64,
     options: transfer::Options,
+    prefab_source: Option<crate::prefabs::Entry>,
+    source_error: std::sync::OnceLock<String>,
+}
+
+pub(super) struct PreparedPaste {
+    document: Document,
+    result: transfer::Result,
+    options: transfer::Options,
+    prefab_source: Option<crate::prefabs::Entry>,
 }
 
 struct Receipt {
@@ -140,9 +149,13 @@ impl Session {
             "external_links":links.as_ref().ok().map(|links|links.iter().map(|link|json!({"source":link.source,"target":link.target,"location":link.location,"destination_matches":link.matches})).collect::<Vec<_>>()),
             "reference_error":links.err().map(|error|error.to_string()),
         }) });
-        let preview = self.geometry.clipboard.preview.as_ref().map(|preview| json!({
+        let preview = self.geometry.clipboard.preview.as_ref().map(|preview| {
+            let stale_reason = self.checked_paste(preview.token).err();
+            json!({
             "token":preview.token,
-            "valid":self.checked_paste(preview.token).is_ok(),
+            "valid":stale_reason.is_none(),
+            "stale_reason":stale_reason,
+            "prefab_source":preview.prefab_source.as_ref().map(|source|&source.name),
             "content_revision":preview.content,
             "offset":preview.options.offset.to_array(),
             "texture_lock":preview.options.texture_lock,
@@ -150,7 +163,7 @@ impl Session {
             "restore_cut_names":preview.options.restore_names,
             "bounds":map_core::query::bounds_of(&preview.document,&preview.result.objects).map(|(mins,maxs)|[mins.to_array(),maxs.to_array()]),
             "result":result_json(&preview.result),
-        }));
+        })});
         json!({"snapshot":self.clipboard_stamp(),"payload":payload,"preview":preview,"can_restore_cut_names":self.can_restore_cut_names(),
             "native_format":"UTF-8 VMF text; system access is explicit and may be unavailable on headless displays. Private Hammer clipboard formats are unsupported.",
             "limits":{"bytes":transfer::MAX_BYTES,"objects":map_core::repeat::MAX_SOURCES,"objects_including_owned_brushes":map_core::repeat::MAX_OBJECTS,"sides":map_core::repeat::MAX_SIDES,"groups":transfer::MAX_GROUPS,"layers":transfer::MAX_GROUPS,"depth":transfer::MAX_DEPTH,"nodes":transfer::MAX_NODES},
@@ -288,6 +301,16 @@ impl Session {
         if preview.options.restore_names && !self.can_restore_cut_names() {
             return Err("Cut-name receipt changed; preview with unique names".into());
         }
+        if let Some(error) = preview.source_error.get() {
+            return Err(error.clone());
+        }
+        if let Some(source) = &preview.prefab_source {
+            let result = self.check_prefab_preview_source(source);
+            if let Err(error) = result {
+                let _ = preview.source_error.set(error.clone());
+                return Err(error);
+            }
+        }
         Ok(preview)
     }
 
@@ -296,25 +319,97 @@ impl Session {
         options: transfer::Options,
         snapshot: &str,
     ) -> Result<Value, String> {
-        self.check_clipboard_stamp(snapshot)?;
-        self.ensure_partitions_resolved()?;
-        if options.restore_names && !self.can_restore_cut_names() {
-            return Err(
-                "Restore cut names requires an unchanged same-map Cut; use unique names".into(),
-            );
+        let source = self
+            .geometry
+            .clipboard
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.prefab_source.clone());
+        if source.is_some() {
+            let token = self.geometry.clipboard.preview.as_ref().unwrap().token;
+            self.checked_paste(token)?;
         }
+        self.check_clipboard_stamp(snapshot)?;
         let payload = self
             .geometry
             .clipboard
             .payload
             .clone()
             .ok_or("Copy objects or import VMF text first")?;
+        let prepared = self.prepare_paste(&payload, options, source)?;
+        self.install_prepared_paste(prepared);
+        Ok(self.clipboard_report())
+    }
+
+    pub(super) fn stale_prefab_preview(&self, name: &str, new_name: &str) {
+        if let Some(preview) = &self.geometry.clipboard.preview
+            && preview
+                .prefab_source
+                .as_ref()
+                .is_some_and(|source| source.name == name)
+        {
+            let _ = preview.source_error.set(format!(
+                "Prefab was renamed to {new_name}; choose it in Prefabs and preview again"
+            ));
+        }
+    }
+
+    pub(super) fn prepare_paste(
+        &self,
+        payload: &transfer::Payload,
+        options: transfer::Options,
+        prefab_source: Option<crate::prefabs::Entry>,
+    ) -> Result<PreparedPaste, String> {
+        self.ensure_partitions_resolved()?;
+        if options.restore_names && !self.can_restore_cut_names() {
+            return Err(
+                "Restore cut names requires an unchanged same-map Cut; use unique names".into(),
+            );
+        }
         let mut document = self.document.preview_snapshot();
         let result = document
             .edit("preview paste", |tx| {
-                transfer::paste(tx, &payload, options, &self.definitions)
+                transfer::paste(tx, payload, options, &self.definitions)
             })
             .map_err(|error| error.to_string())?;
+        if let Some(source) = &prefab_source {
+            self.check_prefab_preview_source(source)?;
+        }
+        Ok(PreparedPaste {
+            document,
+            result,
+            options,
+            prefab_source,
+        })
+    }
+
+    pub(super) fn install_prefab_paste(
+        &mut self,
+        actor: Actor,
+        payload: transfer::Payload,
+        prepared: PreparedPaste,
+    ) -> Value {
+        if !self
+            .geometry
+            .clipboard
+            .payload
+            .as_ref()
+            .is_some_and(|current| current.text() == payload.text())
+        {
+            self.install_clipboard(payload);
+            self.log(actor, "imported VMF clipboard payload");
+        }
+        self.install_prepared_paste(prepared);
+        self.clipboard_report()
+    }
+
+    fn install_prepared_paste(&mut self, prepared: PreparedPaste) {
+        let PreparedPaste {
+            document,
+            result,
+            options,
+            prefab_source,
+        } = prepared;
         self.changed();
         self.clear_paint_stroke();
         self.clip_tool = false;
@@ -330,10 +425,11 @@ impl Session {
             definitions: self.definitions_serial,
             content: self.geometry.clipboard.content,
             options,
+            prefab_source,
+            source_error: Default::default(),
         });
         self.scene_serial += 1;
         self.view_serial += 1;
-        Ok(self.clipboard_report())
     }
 
     pub fn apply_paste(&mut self, actor: Actor, token: u64) -> Result<Value, String> {

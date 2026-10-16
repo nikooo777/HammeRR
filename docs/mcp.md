@@ -100,9 +100,10 @@ To build the map, set the build options once, then compile:
 | --- | --- |
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
-| Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo` |
+| Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
+| Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
-| Prefab library | `get_prefabs`, `save_prefab`, `preview_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
+| Prefab library | `get_prefabs`, `save_prefab`, `preview_prefab`, `rename_prefab`, `delete_prefab`; placement uses `apply_paste` / `cancel_paste` |
 | Layers | `get_layers`, `begin_layer_edit`, `update_layer_edit`, `apply_layer_edit`, `cancel_layer_edit`, `select_layer_members`, `set_layer_visibility` |
 | Clipboard and transfer | `get_clipboard`, `copy_objects`, `cut_objects`, `import_clipboard`, `export_clipboard`, `preview_paste`, `apply_paste`, `cancel_paste` |
 | Object edits | `move_objects`, `duplicate_objects`, `delete_objects` |
@@ -112,6 +113,8 @@ To build the map, set the build options once, then compile:
 | Absolute grid placement | `preview_snap_to_grid`; inspect and apply/cancel through the transform tools |
 | Overlay authoring | `get_overlay_state`, `browse_overlay_targets`, `preview_overlay`, `preview_overlay_refit`, `preview_overlay_rebind`, `review_overlay`, `apply_overlay`, `cancel_overlay` |
 | Surface placement | `preview_surface_placement`, `begin_surface_placement_pick`, `pick_surface_placement`, `get_surface_placement`, `apply_surface_placement`, `cancel_surface_placement` |
+| New entities on surfaces | `get_entity_placement`, `begin_entity_placement`, `pick_entity_placement`, `review_entity_placement`, `apply_entity_placement`, `cancel_entity_placement` |
+| Rope preview | `get_rope_preview`, `set_view`; `render_view` and `pick_at_pixel` accept `rope_preview` overrides |
 | Area selection | `set_area_selection_options`, `select_area`, `get_area_selection`, `commit_area_selection`, `cancel_area_selection` |
 | Volume selection | `select_volume`, `get_volume_selection`, `commit_volume_selection`, `cancel_volume_selection`, `frame_volume_selection` |
 | Paint selection | `set_paint_tool`, `begin_paint_selection`, `update_paint_selection`, `get_paint_selection`, `commit_paint_selection`, `cancel_paint_selection` |
@@ -284,6 +287,44 @@ nodes in one Undo step. Occupied names receive bounded numeric suffixes; names
 that would acquire existing references reject. Open endpoints omit `target`;
 closed paths link the last node to the first. See [Linked paths](path-authoring.md)
 for controls and limits.
+
+`inspect` accepts one existing node `id` and returns its complete simple chain
+and snapshot. `edit` takes that snapshot and ordered `nodes: [{id, origin}]`;
+it reuses Review/Apply/Cancel while retaining node IDs, names, custom values,
+flags, connections and outside references. Its preview reports `existing: true`.
+Insertion, removal, renaming, branching and open/closed conversion are unsupported.
+
+### History, measurements and surface creation
+
+`get_history` returns bounded transaction pages, authors, actual object/section
+changes, the current state and navigation blockers. `navigate_history` requires
+the returned `snapshot` and a retained `target` state ID; `"0"` selects the initial
+state. Jumps use ordinary Undo/Redo, retain the redo chain and never save the file.
+At most 256 transactions can be traversed in one request. See [History](history.md).
+
+`get_measurements` reports saved rulers, the owned draft, limits, errors and a
+snapshot. `set_measurement` supports `preview`, `review`, `apply`, `cancel`,
+`delete`, `frame` and `view`. Rulers use editor-only metadata and the shared guide
+mesh, with no BSP output. See [Measurement guides](measurements.md) for inputs,
+ownership and limits.
+
+`get_entity_placement` reports the current snapshot and owned draft.
+`begin_entity_placement` takes that snapshot, a point `classname`, optional
+`properties`, `offset`, `align` and `snap`. `pick_entity_placement` takes the
+returned `token` and `ray_origin` / `ray_direction`. Inspect the plan's target,
+contact, bounds and final
+properties before Apply. Review replaces the ownership token; Apply creates one
+entity and one Undo step. Cancel preserves source/history. Armed drafts block
+save/build/play until applied or cancelled. See [Entities](entities.md).
+
+### Rope preview
+
+`set_view` accepts `rope_preview`; `get_rope_preview` reports checked static
+spans, diagnostics and limits. `get_map_info` exposes the same state. Temporary
+`render_view` and `pick_at_pixel` overrides preserve the shared setting; use the
+same override when picking a rendered image. Spans belong to their source
+entity and obey depth, visibility and working-region filtering. This preview
+does not simulate runtime physics or render rope materials. See [Ropes](ropes.md).
 
 ### Generated LDR reflections
 
@@ -755,7 +796,8 @@ to the current map/selection/clipboard state.
 | Tool | Arguments and behavior |
 | --- | --- |
 | `save_prefab` | Latest `snapshot`, new `name` and optional whole-object `ids` (selection by default). Captures before atomically creating a new file. Never overwrites; map/history/clipboard stay unchanged. |
-| `preview_prefab` | Latest `snapshot`, `name`, optional world `position` (bounds center; defaults to zero) and `keep_external_links` (false). Privately validates before changing clipboard/preview state. Returns `paste.preview.token` for existing `apply_paste` / `cancel_paste`; rendering uses that same draft. |
+| `preview_prefab` | Latest `snapshot`, `name`, optional world `position` (defaults to zero), XYZ `rotation` in degrees, positive XYZ `scale`, source-world `pivot` (bounds center when omitted) and `keep_external_links` (false). Scale then rotation precede placement; nonidentity scale requires brushes only. Privately validates before changing clipboard/preview state. Returns `paste.preview.token` for `apply_paste` / `cancel_paste`. |
+| `rename_prefab` | Latest `snapshot`, original `name` and `new_name`. Atomically renames without overwriting an existing entry. Retains VMF bytes, clipboard, selection and map history. |
 | `delete_prefab` | Latest `snapshot` and exact `name`. Removes only its library VMF, separately from map Undo. Placed copies and loaded detached paste drafts remain usable. |
 
 Placement retains clipboard name/reference/ID checks, native group/layer remapping,
@@ -767,8 +809,10 @@ Limits: 128 VMFs, 8 MiB each, 64 MiB total, 512 scanned directory entries and
 1–80 UTF-8-byte names using letters/numbers/spaces/dashes/underscores. The usual
 clipboard geometry/reference limits apply. `HAMMERR_PREFABS_DIR` overrides the
 normal recovery/state folder's `prefabs` child. External writers are uncoordinated;
-changed file metadata or Session state invalidates stale requests. Direct library
-replacement/renaming, private formats and referenced instances are unavailable.
+changed file metadata or Session state invalidates stale requests. Renamed or
+replaced sources invalidate loaded placement reviews; deletion alone retains the
+detached draft. Direct replacement, private formats and referenced instances are
+unavailable. Rename requires Linux atomic no-replace support.
 See [Prefab library](prefabs.md).
 
 ### Overlay authoring

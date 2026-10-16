@@ -1,3 +1,4 @@
+export { HistoryWindow, HistoryRow } from "history.slint";
 export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
@@ -10,6 +11,7 @@ export { CarveWindow, CarveRow } from "carve.slint";
 export { HollowWindow } from "hollow.slint";
 export { ComponentsWindow, ComponentRow, ComponentCreaseRow } from "components.slint";
 export { SavedViewsWindow, SavedViewRow } from "saved-views.slint";
+export { MeasurementsWindow, MeasurementRow } from "measurements.slint";
 export { CompileWindow } from "compile.slint";
 export { VolumeWindow } from "volume.slint";
 export { SurfaceGroupWindow } from "surface-group.slint";
@@ -23,6 +25,7 @@ export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-brows
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 export {ParticleBrowserWindow, ParticleChoiceRow} from "particles.slint";
 export {PlacementWindow} from "placement.slint";
+export {EntityPlacementWindow} from "entity-placement.slint";
 export {PolygonWindow,PolygonCorner} from "polygon.slint";
 export {RepeatWindow} from "repeat.slint";
 export {PrefabsWindow,PrefabRow} from "prefabs.slint";
@@ -377,6 +380,7 @@ export component EntityWindow inherits Window {
     in-out property <string> origin-z;
     callback filter-changed();
     callback class-selected();
+    callback pick-surface();
     callback create();
     callback load-fgd();
     callback cancel();
@@ -434,6 +438,11 @@ export component EntityWindow inherits Window {
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                if !root.brush-mode: Button {
+                    text: "Pick surface…";
+                    enabled: root.classname != "";
+                    clicked => { root.pick-surface(); }
+                }
                 Button {
                     text: root.brush-mode ? "Tie selected brushes to entity" : "Place entity";
                     enabled: root.classname != "";
@@ -1862,6 +1871,8 @@ export component AppWindow inherits Window {
     changed has-transform-preview => { if root.has-transform-preview { root.refresh-transform-values(); } }
     in-out property <bool> show-tools: true;
     in-out property <bool> sky-preview: false;
+    in-out property <bool> rope-preview: false;
+    in property <string> rope-preview-status: "Rope preview is off";
     in property <string> fog-preview-status: "Fog preview is off";
     callback fog-preview();
     in-out property <string> sky-preview-status: "Set world skyname to select a 2D sky";
@@ -1898,11 +1909,13 @@ export component AppWindow inherits Window {
     callback stop-game();
     callback undo();
     callback redo();
+    callback history();
     callback create-block();
     callback projection-changed(int);
     callback spatial-changed();
     callback frame-selection();
     callback saved-views();
+    callback measurements();
     callback start-clip();
     callback clip-points-action(int);
     callback preview-clip-plane();
@@ -2080,6 +2093,8 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                Button { text: "History…"; clicked => { root.history(); } }
+
                 ToolbarSeparator { }
 
                 Button {
@@ -2236,6 +2251,7 @@ export component AppWindow inherits Window {
                         }
                         Button { text: "Frame · F"; clicked => { root.frame-selection(); } }
                         Button { text: "Saved views…"; clicked => { root.saved-views(); } }
+                        Button { text: "Measurements…"; clicked => { root.measurements(); } }
                         Text { text: "Grid"; vertical-alignment: center; color: #c8ccd4; }
                         LineEdit { width: 65px; text <=> root.grid-size; input-type: decimal; accepted => { root.spatial-changed(); } }
                         CheckBox { text: "Snap"; checked <=> root.snap-grid; toggled => { root.spatial-changed(); } }
@@ -2475,6 +2491,17 @@ export component AppWindow inherits Window {
                     }
                     Button { text: "Fog preview…"; clicked => { root.fog-preview(); } }
                     Text { text: root.fog-preview-status; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    CheckBox {
+                        text: "Rope preview";
+                        checked <=> root.rope-preview;
+                        toggled => { root.options-changed(); }
+                    }
+                    if root.rope-preview: Text {
+                        text: root.rope-preview-status + "\nStatic authored curves · no physics";
+                        color: #aeb9c8;
+                        wrap: word-wrap;
+                        font-size: 12px;
+                    }
                     if root.surface-view == 4: HorizontalLayout {
                         Text { text: "Highlight group"; color: #c8ccd4; vertical-alignment: center; }
                         SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }

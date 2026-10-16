@@ -387,6 +387,17 @@ pub struct PrefabEntryArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct RenamePrefabArgs {
+    /// Existing exact library entry name.
+    pub name: String,
+    /// New portable name, 1–80 UTF-8 bytes. Case-only changes are allowed.
+    pub new_name: String,
+    /// Latest get_prefabs.snapshot; stale library/map/selection state rejects.
+    pub snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersArgs {
     pub query: Option<String>,
     pub offset: Option<usize>,

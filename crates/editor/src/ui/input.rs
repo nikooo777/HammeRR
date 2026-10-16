@@ -22,6 +22,20 @@ pub(super) fn edit_selection(
 pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
     let shared = session_of(ui);
     let mut session = lock(&shared);
+    let entity_report = session.get_entity_placement();
+    if entity_report["draft"]["picking"] == true {
+        if entity_report["draft"]["owner"] != Actor::User.label() {
+            app.set_message(
+                "Review shared entity placement in Entity… → Pick surface… before cancelling it."
+                    .into(),
+            );
+            return true;
+        }
+        let token = entity_report["draft"]["token"].as_u64().unwrap();
+        let _ = session.cancel_entity_placement(Actor::User, token);
+        app.set_surface_picking(false);
+        return true;
+    }
     let report = session.surface_placement();
     if report["picking"] != true {
         return false;

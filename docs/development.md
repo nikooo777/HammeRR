@@ -385,6 +385,10 @@ bounded points and safe names, reviewed/stale tokens, source/history
 preservation, one Undo/Redo and exact saved/reopened links and IDs. The MCP
 validator launches no compiler or game; User/Agent ownership is exercised by
 the core and software UI checks. Set `HAMMERR_UI_SNAPSHOTS` to save the dialog.
+Existing-path tests additionally reorder and reposition named nodes while keeping
+IDs, flags, custom values, I/O and external train references; ambiguous graphs
+reject atomically and unchanged paths add no history. The software callbacks
+capture `linked-path-existing.png` alongside the creation dialog.
 
 ### Generated reflections
 
@@ -809,14 +813,18 @@ HAMMERR_UI_SNAPSHOTS=/tmp/hammerr-prefab-ui cargo test -p editor --bin editor pr
 python3 -B scripts/validate_prefabs.py --binary target/debug/hammerr-headless --output /tmp/hammerr-prefab-check
 ```
 
-Storage checks cover atomic unique creation, filename scope, stale metadata,
+Storage checks cover atomic unique creation and no-replace renaming, filename scope, stale metadata,
 symlink rejection and preservation of unrelated files. Session/software UI checks
 cover source preservation, capture/preview/Apply/Cancel, stale source requests,
 failed load/placement retention and deletion review; the UI capture is
 `prefab-library.png`. The MCP script uses private Sessions and a private library
 for cross-map IDs/links/groups/layers/notes, exact centered placement, Undo/Redo,
-native save/reopen, restart, malformed files and deletion after loading a detached
-draft. Use a fresh output directory. These checks use no desktop input, native
+native save/reopen, restart, malformed files, rotated/brush-scaled placement,
+source pivots, renaming and deletion after loading a detached draft. Map-core
+`prefab_` tests cover transforms and attached UVs. UI captures also include
+`prefab-transformed-placement.png`, `prefab-transformed-paste.png` and
+`prefab-rename.png`. Late source-file failures must preserve the previous
+clipboard, owned preview and history. Use a fresh output directory. These checks use no desktop input, native
 clipboard or game launch.
 
 ### Compile regions
@@ -1000,3 +1008,65 @@ content, changes the copy's texture-shadow flag and material, and compares opaqu
 and alpha-tested builds from unchanged source. Assertions require both newly lit
 and still blocked floor luxels; optional runtime captures use the existing private
 display with `-insecure` and `sv_lan 1`. No installed game asset is modified.
+
+### History inspection and draft interaction
+
+```sh
+cargo test -p map-core --lib document::history_tests
+cargo test -p editor-core --features mcp --lib history
+cargo test -p editor --bin editor history_window_inspects_cancels_navigates_guards_and_reopens_with_software_rendering
+python3 -B scripts/validate_history.py --binary target/debug/hammerr-headless --output /tmp/hammerr-history-check
+```
+
+Checks cover bounded pages and object summaries, original actors, exact undo/redo
+states, branch replacement, stale snapshots, save/reopen and navigation limits.
+The combined draft regression preserves armed and picked entity placement and
+measurement tokens, including different owners, until explicit cancellation.
+`HAMMERR_UI_SNAPSHOTS` captures `history.png` through the software backend.
+
+### Contextual point-entity creation
+
+```sh
+cargo test -p editor-core --features mcp --lib point_entity_
+cargo test -p editor --bin editor point_entity_placement_controls_pick_review_apply_cancel_and_reject_replacement
+python3 -B scripts/validate_entity_placement.py --binary target/debug/hammerr-headless --output /tmp/hammerr-entity-placement-check
+```
+
+Uses private maps and shared operations for brush/terrain/model contact, grid
+snapping, source orientation, FGD defaults, reviewed ownership, stale recovery,
+Cancel, save/build guards, Undo/Redo and saved identities. The script renders the
+shared draft offscreen. Software callbacks capture `entity-placement-controls.png`
+when `HAMMERR_UI_SNAPSHOTS` points to an existing directory.
+
+### Persistent measurement guides
+
+```sh
+cargo test -p map-core --lib measurements
+cargo test -p editor-core --features mcp --lib measurement
+cargo test -p compiler --test measurement_metadata
+cargo test -p editor --bin editor measurement_window
+mkdir -p /tmp/hammerr-measurement-renders
+HAMMERR_MEASUREMENT_SNAPSHOTS=/tmp/hammerr-measurement-renders cargo test -p editor-core --features mcp --lib measurement_offscreen_mcp_renders_preview_saved_hidden_and_undo_in_all_projections -- --ignored --test-threads=1
+```
+
+Checks exact endpoint metadata, malformed-import preservation, draft ownership,
+edit/delete/Undo, framing and visibility. Compiler checks require identical BSP
+bytes with and without rulers. The explicit graphics check compares real MCP
+pixels before preview, after Apply, hidden and after Undo in all four projections.
+Software callbacks capture `measurements.png`, `measurements-preview.png` and
+`measurements-reviewed.png` through `HAMMERR_UI_SNAPSHOTS`.
+
+### Static rope previews
+
+```sh
+cargo test -p render --lib ropes
+cargo test -p editor-core --features mcp --lib rope_preview
+cargo test -p editor --bin editor rope_preview_control_uses_shared_view_and_reports_bad_links_without_map_edits
+python3 -B scripts/validate_rope_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-rope-preview-check
+```
+
+Checks bounded curves, link/parameter diagnostics, oversized UTF-8 identifiers,
+shared and temporary view options, actual offscreen pixels and pixel picks,
+depth occlusion, hidden/region-filtered endpoints and source/history preservation.
+These editor checks launch no game and send no desktop input. Use fresh private
+output directories for scripts.

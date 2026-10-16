@@ -55,6 +55,7 @@ impl Record {
 
 pub(super) struct Evaluation {
     pub models: Models,
+    pub ropes: Arc<render::ropes::Preview>,
     pub objects: HashSet<ObjectId>,
     pub solids: HashSet<u32>,
     records: Vec<Record>,
@@ -313,7 +314,11 @@ impl Session {
             Vec::new()
         };
         let excluded = records.iter().filter(|record| !record.included).count();
+        let ropes = Arc::new(render::ropes::prepare(document.vmf(), |id| {
+            objects.contains(&id)
+        }));
         let evaluation = Arc::new(Evaluation {
+            ropes,
             models,
             objects,
             solids,

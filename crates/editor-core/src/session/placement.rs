@@ -74,12 +74,12 @@ struct Draft {
     source_position: Option<DVec3>,
 }
 
-struct Plan {
+pub(super) struct Plan {
     method: Method,
-    surface: SurfaceHit,
-    transform: Transform,
-    support_points: usize,
-    contact: f64,
+    pub(super) surface: SurfaceHit,
+    pub(super) transform: Transform,
+    pub(super) support_points: usize,
+    pub(super) contact: f64,
     corner: Option<CornerSnap>,
 }
 
@@ -89,7 +89,7 @@ struct CornerSnap {
     position: DVec3,
 }
 
-struct SupportPoint {
+pub(super) struct SupportPoint {
     point: DVec3,
     helper_offset: DVec3,
 }
@@ -295,18 +295,21 @@ impl Session {
         Ok(())
     }
 
-    fn placement_points(&self, ids: &[ObjectId]) -> Result<Vec<SupportPoint>, String> {
+    pub(super) fn placement_points_in(
+        &self,
+        document: &map_core::Document,
+        ids: &[ObjectId],
+    ) -> Result<Vec<SupportPoint>, String> {
         if ids.is_empty() {
             return Err("Select objects to place".into());
         }
         let models = self
-            .model_instances(&self.document)
+            .model_instances(document)
             .instances
             .into_iter()
             .map(|instance| (instance.id, instance))
             .collect::<BTreeMap<_, _>>();
-        let hidden = self
-            .document
+        let hidden = document
             .vmf()
             .entities
             .iter()
@@ -322,14 +325,11 @@ impl Session {
                     }
                     solid_points(
                         &mut points,
-                        self.document.solid(id).ok_or("Selected brush is missing")?,
+                        document.solid(id).ok_or("Selected brush is missing")?,
                     )?;
                 }
                 ObjectId::Entity(id) => {
-                    let entity = self
-                        .document
-                        .entity(id)
-                        .ok_or("Selected entity is missing")?;
+                    let entity = document.entity(id).ok_or("Selected entity is missing")?;
                     if entity.hidden {
                         return Err("Show selected entities before placing them".into());
                     }
@@ -377,7 +377,7 @@ impl Session {
         Ok(points)
     }
 
-    fn placement_surface(
+    pub(super) fn placement_surface(
         &mut self,
         ids: &[ObjectId],
         ray: Ray,
@@ -497,7 +497,7 @@ impl Session {
         if method != Method::Ray && ray.is_some() {
             return Err("Ray coordinates are only used for picked-surface placement".into());
         }
-        let points = self.placement_points(ids)?;
+        let points = self.placement_points_in(&self.document, ids)?;
         let low = points
             .iter()
             .map(|point| point.point + point.helper_offset)
@@ -520,50 +520,15 @@ impl Session {
             Method::BrushCorner => unreachable!(),
         };
         let surface = self.placement_surface(ids, ray, false)?;
-        let normal = surface.normal;
-        let up = self.transform_basis(ids, true)?.z_axis;
-        let rotation = if options.align {
-            DQuat::from_rotation_arc(up, normal)
-        } else {
-            DQuat::IDENTITY
-        };
-        let minimum = points
-            .iter()
-            .map(|point| normal.dot(rotation * (point.point - pivot) + point.helper_offset))
-            .fold(f64::INFINITY, f64::min);
-        let translation = if method == Method::Ray {
-            surface.hit.point + normal * (options.offset - minimum) - pivot
-        } else {
-            let dot = normal.dot(ray.direction);
-            if dot.abs() < 1e-6 {
-                return Err(
-                    "Surface is parallel to the drop direction; pick a different surface".into(),
-                );
-            }
-            ray.direction
-                * ((normal.dot(surface.hit.point) + options.offset - normal.dot(pivot) - minimum)
-                    / dot)
-        };
-        let (z, y, x) = rotation.to_euler(EulerRot::ZYX);
-        let clean = |value: f64| if value.abs() < 1e-9 { 0.0 } else { value };
-        let transform = Transform {
-            translation: translation.map(clean),
-            rotation: DVec3::new(x, y, z).map(|angle| clean(angle.to_degrees())),
-            pivot,
-            texture_lock: options.texture_lock,
-            texture_scale_lock: self.transform_tool.texture_scale_lock,
-            ..Transform::default()
-        };
-        let contact =
-            normal.dot(pivot + transform.translation) + minimum - normal.dot(surface.hit.point);
-        Ok(Plan {
+        contact_plan(
+            points,
+            self.transform_basis(ids, true)?.z_axis,
             method,
+            ray,
             surface,
-            transform,
-            support_points: points.len(),
-            contact,
-            corner: None,
-        })
+            options,
+            self.transform_tool.texture_scale_lock,
+        )
     }
 
     fn install_placement(
@@ -617,7 +582,7 @@ impl Session {
         self.placement_context()?;
         let source_position = self.placement_source_corner(ids, &options)?;
         if source_position.is_none() {
-            self.placement_points(ids)?;
+            self.placement_points_in(&self.document, ids)?;
         }
         if !options.offset.is_finite() || options.offset.abs() > 65536.0 {
             return Err("Surface offset must be finite and within ±65536 units".into());
@@ -778,4 +743,69 @@ impl Session {
             }
         }
     }
+}
+
+pub(super) fn contact_plan(
+    points: Vec<SupportPoint>,
+    up: DVec3,
+    method: Method,
+    ray: Ray,
+    surface: SurfaceHit,
+    options: &Options,
+    texture_scale_lock: Option<bool>,
+) -> Result<Plan, String> {
+    let (low, high) = support_bounds(&points);
+    let pivot = (low + high) * 0.5;
+    let normal = surface.normal;
+    let rotation = if options.align {
+        DQuat::from_rotation_arc(up, normal)
+    } else {
+        DQuat::IDENTITY
+    };
+    let minimum = points
+        .iter()
+        .map(|point| normal.dot(rotation * (point.point - pivot) + point.helper_offset))
+        .fold(f64::INFINITY, f64::min);
+    let translation = if method == Method::Ray {
+        surface.hit.point + normal * (options.offset - minimum) - pivot
+    } else {
+        let dot = normal.dot(ray.direction);
+        if dot.abs() < 1e-6 {
+            return Err(
+                "Surface is parallel to the drop direction; pick a different surface".into(),
+            );
+        }
+        ray.direction
+            * ((normal.dot(surface.hit.point) + options.offset - normal.dot(pivot) - minimum) / dot)
+    };
+    let (z, y, x) = rotation.to_euler(EulerRot::ZYX);
+    let clean = |value: f64| if value.abs() < 1e-9 { 0.0 } else { value };
+    let transform = Transform {
+        translation: translation.map(clean),
+        rotation: DVec3::new(x, y, z).map(|angle| clean(angle.to_degrees())),
+        pivot,
+        texture_lock: options.texture_lock,
+        texture_scale_lock,
+        ..Transform::default()
+    };
+    let contact =
+        normal.dot(pivot + transform.translation) + minimum - normal.dot(surface.hit.point);
+    Ok(Plan {
+        method,
+        surface,
+        transform,
+        support_points: points.len(),
+        contact,
+        corner: None,
+    })
+}
+
+fn support_bounds(points: &[SupportPoint]) -> (DVec3, DVec3) {
+    points
+        .iter()
+        .map(|point| point.point + point.helper_offset)
+        .fold(
+            (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+            |(low, high), point| (low.min(point), high.max(point)),
+        )
 }

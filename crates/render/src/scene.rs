@@ -73,6 +73,7 @@ pub struct Batch {
     pub material: MaterialId,
     pub first_index: u32,
     pub index_count: u32,
+    pub rope: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +98,7 @@ pub struct SceneMesh {
     pub leak_lines: Vec<LineVertex>,
     pub wire_lines: Vec<LineVertex>,
     pub tool_wire_lines: Vec<LineVertex>,
+    pub rope_lines: Vec<LineVertex>,
     pub mins: Vec3,
     pub maxs: Vec3,
     pub stats: SceneStats,
@@ -897,10 +899,11 @@ impl SceneMesh {
                 material,
                 first_index: indices.len() as u32,
                 index_count: list.len() as u32,
+                rope: false,
             });
             indices.extend(list);
         }
-        Self {
+        let mut mesh = Self {
             issues: terrain.issues,
             skybox: vmf
                 .world
@@ -915,9 +918,61 @@ impl SceneMesh {
             leak_lines: Vec::new(),
             wire_lines: builder.wire_lines,
             tool_wire_lines: builder.tool_wire_lines,
+            rope_lines: Vec::new(),
             mins,
             maxs,
             stats,
+        };
+        let ropes = crate::ropes::prepare(vmf, include);
+        mesh.add_rope_preview(&ropes, selected);
+        mesh
+    }
+
+    fn add_rope_preview(&mut self, preview: &crate::ropes::Preview, selected: &HashSet<ObjectId>) {
+        let first_index = self.indices.len() as u32;
+        for link in &preview.links {
+            let selected = selected.contains(&ObjectId::Entity(link.source));
+            let color = if selected {
+                SELECTED_TINT
+            } else {
+                [170, 156, 125]
+            };
+            for points in link.triangles() {
+                let normal = (points[0] - points[1])
+                    .cross(points[2] - points[1])
+                    .normalize_or_zero();
+                for point in points {
+                    self.indices.push(self.vertices.len() as u32);
+                    self.vertices.push(Vertex {
+                        position: point.as_vec3().to_array(),
+                        normal: normal.as_vec3().to_array(),
+                        uv: [0.0; 2],
+                        color: [color[0], color[1], color[2], 0],
+                        lightmap: [0.0; 3],
+                        smoothing: 0,
+                    });
+                    self.mins = self.mins.min(point.as_vec3());
+                    self.maxs = self.maxs.max(point.as_vec3());
+                }
+            }
+            if selected {
+                self.rope_lines
+                    .extend(link.points.windows(2).flat_map(|pair| {
+                        pair.iter().map(|point| LineVertex {
+                            position: point.as_vec3().to_array(),
+                            color: SELECTED_EDGE,
+                        })
+                    }));
+            }
+        }
+        let index_count = self.indices.len() as u32 - first_index;
+        if index_count > 0 {
+            self.batches.push(Batch {
+                material: MaterialLibrary::EDITOR,
+                first_index,
+                index_count,
+                rope: true,
+            });
         }
     }
 

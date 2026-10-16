@@ -170,4 +170,122 @@ fn linked_path_window_edits_orders_reviews_and_applies_owned_preview_once() {
     controller.window.invoke_preview();
     assert!(controller.window.get_message().contains("Map changed"));
     assert!(lock(&shared).linked_path()["preview"].is_null());
+
+    controller.window.hide().unwrap();
+    let ids = {
+        let mut session = lock(&shared);
+        let snapshot = session.linked_path_stamp();
+        let state = session
+            .preview_linked_path(
+                Actor::Agent,
+                Request {
+                    classname: "path_track".into(),
+                    prefix: "existing".into(),
+                    points: vec![DVec3::ZERO, DVec3::X * 64.0, DVec3::X * 128.0],
+                    closed: false,
+                },
+                &snapshot,
+            )
+            .unwrap();
+        session
+            .apply_linked_path(Actor::Agent, state["preview"]["token"].as_u64().unwrap())
+            .unwrap();
+        let ids = session
+            .document()
+            .vmf()
+            .entities
+            .iter()
+            .map(|entity| entity.id)
+            .collect::<Vec<_>>();
+        session
+            .set_entity_properties(
+                Actor::Agent,
+                ids[1],
+                &[
+                    ("custom_key".into(), Some("Keep me".into())),
+                    ("spawnflags".into(), Some("1025".into())),
+                ],
+            )
+            .unwrap();
+        session
+            .select(
+                &[map_core::ObjectId::Entity(ids[1])],
+                crate::session::SelectMode::Replace,
+            )
+            .unwrap();
+        ids
+    };
+    let before = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).document().undo_labels().count();
+    controller.show(&lock(&shared)).unwrap();
+    assert!(controller.window.get_can_load());
+    controller.window.invoke_load_selected();
+    assert!(controller.window.get_existing());
+    assert_eq!(controller.window.get_class_index(), 1);
+    assert_eq!(
+        controller.window.get_points().row_data(0).unwrap().name,
+        "existing_001"
+    );
+    controller.window.invoke_add_point();
+    controller.window.invoke_remove_point(0);
+    assert_eq!(controller.window.get_points().row_count(), 3);
+    controller.window.invoke_move_point(2, -1);
+    assert_eq!(
+        controller.window.get_points().row_data(1).unwrap().id,
+        format!("entity:{}", ids[2])
+    );
+    edit_coordinate(&controller.window, 1, "160.5");
+    controller.window.invoke_preview();
+    assert!(
+        controller.window.get_ready(),
+        "{}",
+        controller.window.get_message()
+    );
+    let expected = lock(&shared).render_document().vmf().clone();
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    crate::ui::tests::save_ui_snapshot(controller.window.window(), "linked-path-existing");
+    crate::ui::tests::assert_dialog_button_visible(&controller.window, "Load selected path");
+    controller.window.invoke_apply();
+    assert_eq!(lock(&shared).document().vmf(), &expected);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    assert_eq!(
+        lock(&shared)
+            .document()
+            .entity(ids[1])
+            .unwrap()
+            .properties
+            .get("custom_key"),
+        Some("Keep me")
+    );
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    lock(&shared)
+        .select(
+            &[map_core::ObjectId::Entity(ids[1])],
+            crate::session::SelectMode::Replace,
+        )
+        .unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    controller.window.invoke_load_selected();
+    lock(&shared)
+        .set_entity_properties(
+            Actor::Agent,
+            ids[1],
+            &[("custom_key".into(), Some("New data".into()))],
+        )
+        .unwrap();
+    let changed = lock(&shared).document().vmf().clone();
+    controller.window.invoke_preview();
+    assert!(!controller.window.get_ready());
+    assert_eq!(lock(&shared).document().vmf(), &changed);
+    assert!(controller.window.get_message().contains("changed"));
+    controller.window.invoke_load_selected();
+    controller.window.invoke_preview();
+    assert!(
+        controller.window.get_ready(),
+        "{}",
+        controller.window.get_message()
+    );
+    controller.window.invoke_cancel();
+    assert_eq!(lock(&shared).document().vmf(), &changed);
 }

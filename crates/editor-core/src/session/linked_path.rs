@@ -13,12 +13,25 @@ pub const MAX_PREFIX_BYTES: usize = 96;
 const MAX_NAME_ATTEMPTS: usize = 4096;
 const MAX_REFERENCE_WORK: usize = 4_000_000;
 
+mod existing;
+
 #[derive(Clone, Debug)]
 pub struct Request {
     pub classname: String,
     pub prefix: String,
     pub points: Vec<DVec3>,
     pub closed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExistingNode {
+    pub id: u32,
+    pub origin: DVec3,
+}
+
+#[derive(Clone, Debug)]
+pub struct EditRequest {
+    pub nodes: Vec<ExistingNode>,
 }
 
 #[derive(Default)]
@@ -32,6 +45,7 @@ pub(super) struct Preview {
     token: u64,
     owner: Actor,
     request: Request,
+    existing: Option<Vec<u32>>,
     objects: Vec<ObjectId>,
     generation: u64,
     revision: u64,
@@ -42,9 +56,41 @@ struct Plan {
     classname: String,
     points: Vec<DVec3>,
     properties: Vec<Vec<(String, String)>>,
+    existing: Option<Vec<u32>>,
 }
 
-fn create_nodes(tx: &mut Transaction<'_>, plan: &Plan) -> Result<Vec<ObjectId>, EditError> {
+fn apply_nodes(tx: &mut Transaction<'_>, plan: &Plan) -> Result<Vec<ObjectId>, EditError> {
+    if let Some(ids) = &plan.existing {
+        for ((&id, &origin), properties) in ids.iter().zip(&plan.points).zip(&plan.properties) {
+            let target = properties
+                .iter()
+                .find(|(key, _)| key == "target")
+                .map(|(_, value)| value.clone());
+            let entity = tx
+                .document()
+                .entity(id)
+                .ok_or(EditError::NotFound(ObjectId::Entity(id)))?;
+            let mut changes = Vec::new();
+            if entity.origin() != Some(origin) {
+                changes.push((
+                    "origin".into(),
+                    Some(source_formats::vmf::format_vec3(origin)),
+                ));
+            }
+            if !entity
+                .properties
+                .get("target")
+                .unwrap_or_default()
+                .eq_ignore_ascii_case(target.as_deref().unwrap_or_default())
+            {
+                changes.push(("target".into(), target));
+            }
+            if !changes.is_empty() {
+                map_core::edit::set_properties(tx, id, &changes)?;
+            }
+        }
+        return Ok(ids.iter().map(|&id| ObjectId::Entity(id)).collect());
+    }
     plan.points
         .iter()
         .zip(&plan.properties)
@@ -52,6 +98,24 @@ fn create_nodes(tx: &mut Transaction<'_>, plan: &Plan) -> Result<Vec<ObjectId>, 
             map_core::edit::create_entity(tx, &plan.classname, Some(origin), properties, Vec::new())
         })
         .collect()
+}
+
+fn validate_points(points: &[DVec3]) -> Result<(), String> {
+    if !(MIN_POINTS..=MAX_POINTS).contains(&points.len()) {
+        return Err(format!("Use {MIN_POINTS}–{MAX_POINTS} ordered path points"));
+    }
+    for (index, point) in points.iter().enumerate() {
+        if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT {
+            return Err("Path points must use finite coordinates within ±65536".into());
+        }
+        if points[..index].contains(point) {
+            return Err(
+                "Path points must be distinct; use Closed loop to link the last point to the first"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn object_name(id: ObjectId) -> String {
@@ -86,6 +150,7 @@ impl Session {
             json!({
                 "token":preview.token,"owner":preview.owner.label(),
                 "valid":self.checked_linked_path(preview.token).is_ok(),
+                "existing":preview.existing.is_some(),
                 "classname":preview.request.classname,"prefix":preview.request.prefix,
                 "points":preview.request.points.iter().map(|point|point.to_array()).collect::<Vec<_>>(),
                 "closed":preview.request.closed,"nodes":nodes,
@@ -106,11 +171,7 @@ impl Session {
         if !matches!(request.classname.as_str(), "path_corner" | "path_track") {
             return Err("Choose path_corner or path_track".into());
         }
-        if !(MIN_POINTS..=MAX_POINTS).contains(&request.points.len()) {
-            return Err(format!(
-                "Create a path with {MIN_POINTS}–{MAX_POINTS} ordered points"
-            ));
-        }
+        validate_points(&request.points)?;
         if request.prefix.is_empty()
             || request.prefix.len() > MAX_PREFIX_BYTES
             || !request.prefix.bytes().enumerate().all(|(index, byte)| {
@@ -122,14 +183,6 @@ impl Session {
             return Err(format!(
                 "Name prefix must use 1–{MAX_PREFIX_BYTES} ASCII letters, digits, underscores or dashes and start with a letter or underscore"
             ));
-        }
-        for (index, point) in request.points.iter().enumerate() {
-            if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT {
-                return Err("Path points must use finite coordinates within ±65536".into());
-            }
-            if request.points[..index].contains(point) {
-                return Err("Path points must be distinct; use Closed loop to link the last point to the first".into());
-            }
         }
         let scan = references::scan(&self.document, &self.definitions);
         if scan.len().saturating_mul(request.points.len()) > MAX_REFERENCE_WORK {
@@ -190,7 +243,101 @@ impl Session {
             classname,
             points: request.points.clone(),
             properties,
+            existing: None,
         })
+    }
+
+    pub fn inspect_existing_linked_path(&self, seed: u32) -> Result<Value, String> {
+        let graph = self.existing_linked_path(seed)?;
+        let nodes = graph.nodes.iter().map(|&id| {
+            let entity = self.document.entity(id).unwrap();
+            json!({"id":object_name(ObjectId::Entity(id)),"origin":entity.origin().unwrap().to_array(),
+                "targetname":entity.properties.get("targetname"),"target":entity.properties.get("target")})
+        }).collect::<Vec<_>>();
+        Ok(
+            json!({"snapshot":self.linked_path_stamp(),"existing":true,"classname":graph.classname,
+            "prefix":"","closed":graph.closed,"points":nodes.iter().map(|node|node["origin"].clone()).collect::<Vec<_>>(),"nodes":nodes}),
+        )
+    }
+
+    fn linked_path_edit_plan(&self, request: &EditRequest) -> Result<(Request, Plan), String> {
+        if self.closing {
+            return Err("The editor is closing".into());
+        }
+        self.ensure_partitions_resolved()?;
+        if !(MIN_POINTS..=MAX_POINTS).contains(&request.nodes.len()) {
+            return Err("Edit one complete path with 2–64 nodes".into());
+        }
+        let points = request
+            .nodes
+            .iter()
+            .map(|node| node.origin)
+            .collect::<Vec<_>>();
+        validate_points(&points)?;
+        let graph = self.existing_linked_path(request.nodes[0].id)?;
+        let ids = request.nodes.iter().map(|node| node.id).collect::<Vec<_>>();
+        let members = ids.iter().copied().collect::<BTreeSet<_>>();
+        if members.len() != ids.len() || members != graph.nodes.iter().copied().collect() {
+            return Err("Edit must contain every existing path node exactly once; insertion and removal are unavailable".into());
+        }
+        let mut properties = Vec::with_capacity(ids.len());
+        for (index, &id) in ids.iter().enumerate() {
+            let target = ids
+                .get(index + 1)
+                .or_else(|| graph.closed.then(|| &ids[0]))
+                .map(|&next| {
+                    self.document
+                        .entity(next)
+                        .unwrap()
+                        .properties
+                        .get("targetname")
+                        .unwrap()
+                        .to_owned()
+                });
+            let entity = self.document.entity(id).unwrap();
+            let class = entity.classname().unwrap();
+            if self
+                .definitions
+                .class(class)
+                .is_some_and(|class| class.kind != ClassKind::Point)
+            {
+                return Err("Existing paths require FGD point classes".into());
+            }
+            if entity.origin() != Some(points[index]) {
+                self.validate_property(
+                    class,
+                    "origin",
+                    Some(&source_formats::vmf::format_vec3(points[index])),
+                )?;
+            }
+            if !entity
+                .properties
+                .get("target")
+                .unwrap_or_default()
+                .eq_ignore_ascii_case(target.as_deref().unwrap_or_default())
+            {
+                self.validate_property(class, "target", target.as_deref())?;
+            }
+            properties.push(
+                target
+                    .into_iter()
+                    .map(|target| ("target".into(), target))
+                    .collect(),
+            );
+        }
+        let request = Request {
+            classname: graph.classname,
+            prefix: String::new(),
+            points,
+            closed: graph.closed,
+        };
+        let plan = Plan {
+            classname: request.classname.clone(),
+            points: request.points.clone(),
+            properties,
+            existing: Some(ids),
+        };
+        Ok((request, plan))
     }
 
     fn checked_linked_path(&self, token: u64) -> Result<&Preview, String> {
@@ -225,6 +372,23 @@ impl Session {
         request: Request,
         snapshot: &str,
     ) -> Result<Value, String> {
+        self.check_linked_path_owner(actor, snapshot)?;
+        let plan = self.linked_path_plan(&request)?;
+        self.install_linked_path(actor, request, plan)
+    }
+
+    pub fn preview_existing_linked_path(
+        &mut self,
+        actor: Actor,
+        request: EditRequest,
+        snapshot: &str,
+    ) -> Result<Value, String> {
+        self.check_linked_path_owner(actor, snapshot)?;
+        let (request, plan) = self.linked_path_edit_plan(&request)?;
+        self.install_linked_path(actor, request, plan)
+    }
+
+    fn check_linked_path_owner(&self, actor: Actor, snapshot: &str) -> Result<(), String> {
         if snapshot != self.linked_path_stamp() {
             return Err(
                 "Map, entity definitions or path preview changed; inspect the linked path again"
@@ -242,10 +406,18 @@ impl Session {
                 "Another actor owns this linked path; Review preview before changing it".into(),
             );
         }
-        let plan = self.linked_path_plan(&request)?;
+        Ok(())
+    }
+
+    fn install_linked_path(
+        &mut self,
+        actor: Actor,
+        request: Request,
+        plan: Plan,
+    ) -> Result<Value, String> {
         let mut document = self.document.preview_snapshot();
         let objects = document
-            .edit("preview linked path", |tx| create_nodes(tx, &plan))
+            .edit("preview linked path", |tx| apply_nodes(tx, &plan))
             .map_err(|error| error.to_string())?;
         self.clear_geometry_previews_except(&[]);
         self.cancel_block_preview();
@@ -260,6 +432,7 @@ impl Session {
             token: self.geometry.linked_path.serial,
             owner: actor,
             request,
+            existing: plan.existing,
             objects,
             generation: self.document_generation,
             revision: self.document.revision(),
@@ -287,11 +460,27 @@ impl Session {
                 "Another actor owns this linked path; Review preview before applying it".into(),
             );
         }
-        let plan = self.linked_path_plan(&preview.request)?;
+        let plan = if let Some(ids) = &preview.existing {
+            self.linked_path_edit_plan(&EditRequest {
+                nodes: ids
+                    .iter()
+                    .zip(&preview.request.points)
+                    .map(|(&id, &origin)| ExistingNode { id, origin })
+                    .collect(),
+            })?
+            .1
+        } else {
+            self.linked_path_plan(&preview.request)?
+        };
         let expected = preview.document.vmf().clone();
         let expected_objects = preview.objects.clone();
-        let objects = self.edit(actor, "create linked path", |tx| {
-            let objects = create_nodes(tx, &plan)?;
+        let label = if preview.existing.is_some() {
+            "edit linked path"
+        } else {
+            "create linked path"
+        };
+        let objects = self.edit(actor, label, |tx| {
+            let objects = apply_nodes(tx, &plan)?;
             if objects != expected_objects || tx.document().vmf() != &expected {
                 return Err(EditError::Invalid(
                     "Linked path differs from its preview; preview it again".into(),
@@ -299,6 +488,7 @@ impl Session {
             }
             Ok(objects)
         })?;
+        self.clear_linked_path_preview();
         self.select(&objects, SelectMode::Replace)?;
         Ok(
             json!({"objects":objects.into_iter().map(object_name).collect::<Vec<_>>(),"state":self.linked_path()}),
@@ -325,3 +515,6 @@ impl Session {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+pub(crate) mod existing_tests;

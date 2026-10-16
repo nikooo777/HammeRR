@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) entity_placement: entity_placement::State,
     pub(super) primitives: primitives::State,
     pub(super) repeat: repeat::State,
     pub(super) linked_path: linked_path::State,
@@ -18,10 +19,14 @@ pub(super) struct State {
 
 impl State {
     pub(super) fn document<'a>(&'a self, committed: &'a Document) -> &'a Document {
-        self.primitives
-            .preview
-            .as_ref()
-            .map(|preview| &preview.document)
+        self.entity_placement
+            .document()
+            .or_else(|| {
+                self.primitives
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.repeat
                     .preview
@@ -84,6 +89,7 @@ impl State {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
+    EntityPlacement,
     Paste,
     Repeat,
     LinkedPath,
@@ -100,6 +106,9 @@ pub(super) enum Kind {
 
 impl Session {
     pub(super) fn clear_geometry_previews_except(&mut self, retained: &[Kind]) {
+        if !retained.contains(&Kind::EntityPlacement) {
+            self.clear_entity_placement();
+        }
         if !retained.contains(&Kind::Paste) {
             self.clear_paste_preview();
         }

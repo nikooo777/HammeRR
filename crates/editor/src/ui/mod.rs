@@ -78,6 +78,7 @@ struct Ui {
     sounds: Option<sounds_ui::Controller>,
     particles: Option<particles_ui::Controller>,
     placement: Option<placement_ui::Controller>,
+    entity_placement: Option<entity_placement_ui::Controller>,
     repeat: Option<repeat_ui::Controller>,
     clipboard: Option<clipboard_ui::Controller>,
     object_groups: Option<groups_ui::Controller>,
@@ -102,6 +103,8 @@ struct Ui {
     volume: Option<volume_ui::Controller>,
     compile_status: Option<compile_ui::Controller>,
     saved_views: Option<saved_views_ui::Controller>,
+    history: Option<history_ui::Controller>,
+    measurements: Option<measurements_ui::Controller>,
     material_for_group: bool,
     overlay_material_target: Option<overlay_ui::MaterialTarget>,
     material_for_replace: Option<bool>,
@@ -133,8 +136,36 @@ fn session_of(ui: &SharedUi) -> SharedSession {
     ui.borrow().session.clone()
 }
 
+fn refresh_rope_preview(app: &AppWindow, session: &Session) {
+    app.set_rope_preview(session.view().rope_preview);
+    app.set_rope_preview_status(
+        session.rope_preview_state()["summary"]
+            .as_str()
+            .unwrap()
+            .into(),
+    );
+}
+
+fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
+    app.on_options_changed({
+        let app = app.as_weak();
+        move || {
+            let app = app.unwrap();
+            let mut session = lock(&shared);
+            let mut view = session.view();
+            view.tool_textures = app.get_show_tools();
+            view.sky_preview = app.get_sky_preview();
+            view.rope_preview = app.get_rope_preview();
+            view.leak_path = app.get_show_leak();
+            session.set_view(view);
+            refresh_rope_preview(&app, &session);
+        }
+    });
+}
+
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
+    refresh_rope_preview(app, session);
     app.set_fog_preview_status(
         session.fog_preview_state()["summary"]
             .as_str()
@@ -315,6 +346,7 @@ pub(super) fn run(
         sounds: None,
         particles: None,
         placement: None,
+        entity_placement: None,
         repeat: None,
         clipboard: None,
         object_groups: None,
@@ -339,6 +371,8 @@ pub(super) fn run(
         volume: None,
         compile_status: None,
         saved_views: None,
+        history: None,
+        measurements: None,
         material_for_group: false,
         overlay_material_target: None,
         material_for_replace: None,
@@ -415,6 +449,24 @@ pub(super) fn run(
         let (app, ui) = (app.as_weak(), ui.clone());
         move || save(&app.unwrap(), &ui)
     });
+    app.on_history({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.history.is_none() {
+                match history_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.history = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.history.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
     app.on_saved_views({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || {
@@ -429,6 +481,24 @@ pub(super) fn run(
                 }
             }
             if let Err(error) = ui.saved_views.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_measurements({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.measurements.is_none() {
+                match measurements_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.measurements = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.measurements.as_ref().unwrap().show(&lock(&ui.session)) {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -1639,19 +1709,7 @@ pub(super) fn run(
             }
         }
     });
-    app.on_options_changed({
-        let (app, ui) = (app.as_weak(), ui.clone());
-        move || {
-            let app = app.unwrap();
-            let shared = session_of(&ui);
-            let mut session = lock(&shared);
-            let mut view = session.view();
-            view.tool_textures = app.get_show_tools();
-            view.sky_preview = app.get_sky_preview();
-            view.leak_path = app.get_show_leak();
-            session.set_view(view);
-        }
-    });
+    bind_view_controls(&app, session_of(&ui));
     app.on_key({
         let (app, ui) = (app.as_weak(), ui.clone());
         move |text, down, control, shift| {
@@ -1693,6 +1751,55 @@ pub(super) fn run(
             }
             if button == 0 && !down && ui.pick_release {
                 ui.pick_release = false;
+                return;
+            }
+            let entity_picking =
+                lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
+            if button == 0 && entity_picking {
+                if down {
+                    ui.pick_release = true;
+                    if ui.entity_placement.is_none() {
+                        match entity_placement_ui::Controller::new(&ui.session) {
+                            Ok(controller) => ui.entity_placement = Some(controller),
+                            Err(error) => {
+                                app.set_message(error.to_string().into());
+                                return;
+                            }
+                        }
+                    }
+                    let controller = ui.entity_placement.as_ref().unwrap();
+                    let size = (viewport_size.0.max(1.0), viewport_size.1.max(1.0));
+                    let (origin, direction) = ui.viewport.camera.ray(
+                        2.0 * x / size.0 - 1.0,
+                        1.0 - 2.0 * y / size.1,
+                        size.0 / size.1,
+                    );
+                    let result = {
+                        let mut session = lock(&ui.session);
+                        controller.initialize(&session, "light");
+                        controller.pick_at_ray(
+                            &mut session,
+                            Ray {
+                                origin: origin.as_dvec3(),
+                                direction: direction.as_dvec3(),
+                            },
+                        )
+                    };
+                    match result {
+                        Ok(()) => {
+                            let _ = controller.window.show();
+                            app.set_message(
+                                "Review the entity bounds, then Apply entity or Cancel.".into(),
+                            );
+                        }
+                        Err(error) => {
+                            if !controller.window.get_owned() {
+                                let _ = controller.window.show();
+                            }
+                            app.set_message(error.into());
+                        }
+                    }
+                }
                 return;
             }
             let placement_picking = lock(&ui.session).surface_placement()["picking"] == true;
@@ -2465,6 +2572,7 @@ pub(super) fn run(
                 }
                 if session.view_serial() != ui.seen_view {
                     ui.seen_view = session.view_serial();
+                    refresh_rope_preview(&app, &session);
                     app.set_fog_preview_status(
                         session.fog_preview_state()["summary"]
                             .as_str()
@@ -2750,7 +2858,17 @@ pub(super) fn run(
                 if let Some(controller) = &ui.prefabs {
                     controller.refresh(&lock(&ui.session));
                 }
+                if let Some(controller) = &ui.history
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
                 if let Some(controller) = &ui.saved_views
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.measurements
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));
@@ -2774,7 +2892,16 @@ pub(super) fn run(
                 }
             }
 
-            app.set_surface_picking(lock(&ui.session).surface_placement()["picking"] == true);
+            let entity_picking =
+                lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
+            app.set_surface_picking(
+                lock(&ui.session).surface_placement()["picking"] == true || entity_picking,
+            );
+            if let Some(controller) = &ui.entity_placement
+                && controller.window.window().is_visible()
+            {
+                controller.refresh(&lock(&ui.session));
+            }
             app.set_terrain_triangle_picking(
                 ui.terrain_triangles
                     .as_ref()

@@ -417,6 +417,7 @@ impl Session {
         path: Option<&Path>,
     ) -> Result<CompileRequest, String> {
         self.ensure_partitions_resolved()?;
+        self.ensure_entity_placement_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }

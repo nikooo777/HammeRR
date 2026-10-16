@@ -430,6 +430,7 @@ impl Session {
             || self.geometry.carving.preview.is_some()
             || self.geometry.merging.preview.is_some()
             || self.geometry.clipboard.preview.is_some()
+            || self.entity_placement_preview_id().is_some()
         {
             return None;
         }

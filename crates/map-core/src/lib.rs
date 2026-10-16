@@ -14,6 +14,7 @@ pub mod groups;
 pub mod hollow;
 pub mod layers;
 pub mod light;
+pub mod measurements;
 pub mod merge;
 mod metadata;
 pub mod overlay;

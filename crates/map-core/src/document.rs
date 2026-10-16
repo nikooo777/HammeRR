@@ -69,6 +69,7 @@ struct Change {
 
 #[derive(Debug, Clone)]
 pub struct Step {
+    id: u64,
     pub label: String,
     changes: Vec<Change>,
     world: Option<(Properties, Properties)>,
@@ -78,7 +79,41 @@ pub struct Step {
     visgroups: Option<(VisGroups, VisGroups)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    Added,
+    Modified,
+    Removed,
+}
+
 impl Step {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn object_changes(&self) -> impl Iterator<Item = (ObjectId, ChangeKind)> + '_ {
+        self.changes.iter().map(|change| {
+            let kind = match (&change.before, &change.after) {
+                (None, Some(_)) => ChangeKind::Added,
+                (Some(_), None) => ChangeKind::Removed,
+                _ => ChangeKind::Modified,
+            };
+            (change.id, kind)
+        })
+    }
+
+    pub fn sections(&self) -> impl Iterator<Item = &'static str> {
+        [
+            (self.world.is_some(), "world properties"),
+            (self.extra.is_some(), "map metadata"),
+            (self.cordon.is_some(), "cordon"),
+            (self.groups.is_some(), "groups"),
+            (self.visgroups.is_some(), "visibility groups"),
+        ]
+        .into_iter()
+        .filter_map(|(changed, name)| changed.then_some(name))
+    }
+
     pub fn objects(&self) -> impl Iterator<Item = ObjectId> + '_ {
         self.changes.iter().map(|c| c.id)
     }
@@ -273,6 +308,14 @@ impl Document {
             .iter()
             .find(|e| e.solids.iter().any(|s| s.id == solid_id))
             .map(|e| ObjectId::Entity(e.id))
+    }
+
+    pub fn undo_steps(&self) -> &[Step] {
+        &self.undo
+    }
+
+    pub fn redo_steps(&self) -> &[Step] {
+        &self.redo
     }
 
     pub fn undo_labels(&self) -> impl Iterator<Item = &str> {
@@ -684,6 +727,7 @@ impl Transaction<'_> {
             return;
         }
         doc.undo.push(Step {
+            id: doc.revision + 1,
             label,
             changes,
             world,
@@ -1135,5 +1179,62 @@ mod allocation_tests {
             .unwrap();
         assert_eq!(last, u32::MAX);
         assert!(document.edit("exhausted", |tx| tx.new_side_id()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn history_step_identity_and_summaries_survive_undo_redo_and_branch_replacement() {
+        let mut document = Document::empty();
+        document
+            .edit("add marker and world", |tx| {
+                let id = tx.new_object_id()?;
+                tx.add_entity(Entity::new(id, "info_target"))?;
+                tx.world_properties_mut().set("skyname", "first");
+                Ok(())
+            })
+            .unwrap();
+        let first = &document.undo_steps()[0];
+        let first_id = first.id();
+        assert_eq!(
+            first.object_changes().collect::<Vec<_>>(),
+            [(ObjectId::Entity(2), ChangeKind::Added)]
+        );
+        assert_eq!(first.sections().collect::<Vec<_>>(), ["world properties"]);
+        document
+            .edit("remove marker", |tx| {
+                tx.remove(ObjectId::Entity(2)).map(drop)
+            })
+            .unwrap();
+        let removed_id = document.undo_steps()[1].id();
+        assert_eq!(
+            document.undo_steps()[1]
+                .object_changes()
+                .collect::<Vec<_>>(),
+            [(ObjectId::Entity(2), ChangeKind::Removed)]
+        );
+        document.undo().unwrap();
+        assert_eq!(document.undo_steps()[0].id(), first_id);
+        assert_eq!(document.redo_steps()[0].id(), removed_id);
+        document.redo().unwrap();
+        assert_eq!(document.undo_steps()[1].id(), removed_id);
+        document.undo().unwrap();
+        document
+            .edit("modify marker", |tx| {
+                tx.entity_mut(2)?.properties.set("targetname", "changed");
+                Ok(())
+            })
+            .unwrap();
+        assert!(document.redo_steps().is_empty());
+        assert!(document.undo_steps()[1].id() > removed_id);
+        assert_eq!(
+            document.undo_steps()[1]
+                .object_changes()
+                .collect::<Vec<_>>(),
+            [(ObjectId::Entity(2), ChangeKind::Modified)]
+        );
     }
 }

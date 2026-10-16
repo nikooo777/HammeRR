@@ -284,7 +284,7 @@ These details aren't obvious from the tool list.
 
 ### Linked paths
 
-`get_linked_path` returns the current `snapshot`, owned `preview`, supported
+`get_linked_path` returns the current `snapshot`, `pick_snapshot`, owned `preview`, supported
 `classes` and `limits`. `set_linked_path` uses strict tagged actions:
 `preview` takes `classname`, `prefix`, ordered `points`, optional `closed` and
 the current `snapshot`; `review`, `apply` and `cancel` require `token`.
@@ -310,6 +310,34 @@ keep other values and incoming references, while inserted nodes receive FGD
 defaults. Apply revalidates the complete plan and makes one Undo step. Omitting
 `seed` retains the earlier requirement to provide every original node exactly
 once. Renaming, branching and open/closed conversion are unsupported.
+
+After creating a preview, `begin_pick` takes its owned `token`, a zero-based
+existing `row`, `snapshot` set to the latest `pick_snapshot`, `width`/`height`
+from 1–8192 and an optional temporary `camera` matching `render_view`. It arms
+that row and returns
+a fresh token without changing any position. `pick_ray` takes this token plus
+finite world `origin` and nonzero finite `direction`. `pick_pixel` takes the
+token, continuous viewport `x`/`y` and the captured `width`/`height`; the center
+of pixel `(i,j)` is `(i+0.5,j+0.5)`. The captured camera supplies the ray without
+moving the shared viewport.
+
+Both use the first visible brush, terrain triangle or supported model mesh.
+Current path nodes, helper boxes, hidden surfaces and empty space supply no
+substitute plane. A successful hit changes only the chosen row, retaining IDs,
+names, links and other rows. It finishes the gesture with a fresh preview token
+and `last_pick: {row,target,solid,side,point,normal}`; model hits have null brush
+IDs. `preview.picking` is null or `{row,width,height,valid}`. Misses, duplicate
+positions, invalid rays/pixels and stale source/scene/camera/viewport guards
+preserve the current draft. Apply rejects while picking.
+
+`cancel_pick` accepts the matching owned token, including stale cleanup while
+the draft remains present, and returns a fresh token with rows unchanged.
+Replaced drafts reject old tokens. Numeric edits remain exact and unsnapped;
+picked points do not follow subsequent surface changes. Existing **Pick
+position…** / **Cancel position pick**, **Review preview**, **Apply** and **Cancel**
+use the same Session operations. Apply makes the complete path edit in one Undo
+step; no pick commits map data. Free-space workplanes, offsets and object
+attachment remain unavailable.
 
 ### History, measurements and surface creation
 

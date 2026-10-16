@@ -1,5 +1,118 @@
 use super::*;
 
+#[test]
+fn linked_path_surface_picks_share_exact_owned_rows_and_one_undo_without_graphics() {
+    let mut session = crate::session::linked_path::tests::fixture();
+    let floor = session
+        .create_block(
+            Actor::User,
+            DVec3::new(-128.0, -128.0, -16.0),
+            DVec3::new(128.0, 128.0, 0.0),
+            "dev/test",
+            false,
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let camera = session.camera();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let call = |arguments: Value| {
+        value(server.set_linked_path(Parameters(serde_json::from_value(arguments).unwrap())))
+    };
+    let state = value(server.get_linked_path());
+    let draft = call(
+        json!({"action":"preview","classname":"path_corner","prefix":"surface","points":[[-64,0,16],[64,0,16]],"snapshot":state["snapshot"]}),
+    );
+    let armed = call(
+        json!({"action":"begin_pick","token":draft["preview"]["token"],"row":1,"width":511,"height":511,"camera":{"projection":"top","center":[3.125,-5.25,0],"ortho_height":256},"snapshot":draft["pick_snapshot"]}),
+    );
+    let token = armed["preview"]["token"].as_u64().unwrap();
+    assert_eq!(armed["preview"]["picking"]["row"], 1);
+    let miss: LinkedPathArgs = serde_json::from_value(
+        json!({"action":"pick_ray","token":token,"origin":[1000,1000,1000],"direction":[0,0,1]}),
+    )
+    .unwrap();
+    assert!(
+        server
+            .set_linked_path(Parameters(miss))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
+    assert_eq!(value(server.get_linked_path()), armed);
+    let picked = call(
+        json!({"action":"pick_pixel","token":token,"x":255.5,"y":255.5,"width":511,"height":511}),
+    );
+    assert_eq!(picked["preview"]["nodes"][0], draft["preview"]["nodes"][0]);
+    assert_eq!(
+        picked["preview"]["nodes"][1]["origin"],
+        json!([3.125, -5.25, 0.0])
+    );
+    assert_eq!(
+        picked["preview"]["last_pick"]["target"],
+        crate::identity::id_string(floor)
+    );
+    assert!(picked["preview"]["picking"].is_null());
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+    assert_eq!(lock(&shared).camera(), camera);
+    let old: LinkedPathArgs =
+        serde_json::from_value(json!({"action":"cancel_pick","token":token})).unwrap();
+    assert!(
+        server
+            .set_linked_path(Parameters(old))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
+    let expected = lock(&shared).render_document().vmf().clone();
+    let user = lock(&shared)
+        .review_linked_path(Actor::User, picked["preview"]["token"].as_u64().unwrap())
+        .unwrap();
+    let foreign: LinkedPathArgs = serde_json::from_value(json!({"action":"begin_pick","token":user["preview"]["token"],"row":0,"width":511,"height":511,"snapshot":user["pick_snapshot"]})).unwrap();
+    assert!(
+        server
+            .set_linked_path(Parameters(foreign))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
+    let user_pick = {
+        let mut session = lock(&shared);
+        let snapshot = session.linked_path_pick_stamp();
+        session
+            .begin_linked_path_pick(
+                Actor::User,
+                user["preview"]["token"].as_u64().unwrap(),
+                0,
+                camera,
+                (511, 511),
+                &snapshot,
+            )
+            .unwrap()
+    };
+    let foreign_cancel: LinkedPathArgs = serde_json::from_value(
+        json!({"action":"cancel_pick","token":user_pick["preview"]["token"]}),
+    )
+    .unwrap();
+    assert!(
+        server
+            .set_linked_path(Parameters(foreign_cancel))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
+    assert_eq!(value(server.get_linked_path()), user_pick);
+    let reviewed = call(json!({"action":"review","token":user_pick["preview"]["token"]}));
+    call(json!({"action":"apply","token":reviewed["preview"]["token"]}));
+    assert_eq!(lock(&shared).document().vmf(), &expected);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}
+
 fn value(result: ToolResult) -> Value {
     let result = result.unwrap();
     assert!(!result.is_error.unwrap_or(false));

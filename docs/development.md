@@ -397,8 +397,11 @@ reusing it.
 
 ```sh
 cargo test -p editor-core --features mcp --lib linked_path
+cargo test -p editor-core --features mcp --lib session::linked_path::picking::tests
 cargo test -p editor --bin editor linked_path_window_
+cargo test -p editor --bin editor row_position_pick_updates_owned_preview_before_one_undo_apply
 python3 -B scripts/validate_linked_paths.py --binary target/debug/hammerr-headless --output /tmp/hammerr-linked-paths-check
+python3 -B scripts/validate_linked_path_picking.py --binary target/debug/hammerr-headless --output /tmp/hammerr-linked-path-picking-check
 ```
 
 Checks both path classes and open/closed chains, inherited FGD defaults,
@@ -413,6 +416,24 @@ FGD defaults only on new nodes, outside-reference/I/O removal guards, atomic
 failure and exact Undo/Redo/save-reopen identities. Ambiguous graphs reject and
 unchanged paths add no history. The software callbacks
 capture `linked-path-existing.png` alongside the creation dialog.
+
+The surface-picking companion creates private gameinfo and real static
+MDL/VVD/DX90 VTX geometry; use a fresh output directory and a graphics adapter.
+It accepts `--binary` and required `--output`, without installed game assets or
+a native launch. Analytic floor/wall points, an independently authored displaced
+terrain peak and a model triangle at a known height check exact surface hits.
+Top, Front, Side and perspective center pixels use captured temporary cameras;
+actual moved-marker PNGs must match exact numeric-placement controls. A large
+enabled grid never quantizes row positions. Misses, helper-only targets,
+coincident rows, stale contexts, replaced tokens and cancellation retain owned
+rows or reject replaced work. Existing-node IDs, links and raw custom values
+survive final Review/Apply, one Undo/Redo and save/reopen. Pure picks/renders keep
+full current history, saved source bytes, shared camera/selection and an
+unrelated staged property draft. Intentional map/definition/visibility changes
+are checked separately from that immutable baseline. `results.json` records
+surface receipts, actual PNG hashes/cameras and the source hash; no train
+movement or runtime path behavior is inferred.
+The software callback fixture captures `linked-path-surface-positioning.png`.
 
 ### Generated reflections
 

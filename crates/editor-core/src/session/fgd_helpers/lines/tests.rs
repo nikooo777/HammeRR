@@ -303,6 +303,13 @@ fn authored_nodeid_guides_share_preview_visibility_and_read_only_spatial_identit
         let ObjectId::Entity(target) = ids[1] else {
             panic!()
         };
+        session
+            .set_entity_properties(
+                actor,
+                source,
+                &[("start".into(), None), ("finish".into(), None)],
+            )
+            .unwrap();
         let before = session.document().vmf().clone();
         let history = session.document().undo_labels().count();
         let bounds = session.selection_bounds();

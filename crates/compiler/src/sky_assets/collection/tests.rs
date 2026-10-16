@@ -115,6 +115,8 @@ fn raw_ambiguity_and_hidden_patch_nodes_are_rejected() {
         "Patch { include materials/skybox/base.vmt replace { Proxies {} } }",
         "Patch { include materials/skybox/base.vmt insert { $basetexture skybox/different } }",
         "Sky { $basetexture skybox/shared_ldr",
+        "Sky { $basetexture skybox/shared_ldr $hdrbasetexture skybox/shared_hdr $nofog [$WINDOWS] }",
+        "Sky { $basetexture skybox/shared_ldr $hdrbasetexture skybox/shared_hdr $nofog \"[$WINDOWS]\" }",
         "/* comment */ Sky { $basetexture skybox/shared_ldr }",
     ];
     for source in cases {

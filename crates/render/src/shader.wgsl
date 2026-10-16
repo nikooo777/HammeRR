@@ -8,6 +8,7 @@ struct Globals {
     forward: vec4<f32>,
     right: vec4<f32>,
     up: vec4<f32>,
+    sky_params: vec4<f32>,
 }
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.

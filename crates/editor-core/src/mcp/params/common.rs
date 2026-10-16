@@ -332,11 +332,7 @@ pub(in crate::mcp) fn texture_justification(
 }
 
 pub(in crate::mcp) fn skybox_state(session: &mut Session) -> Value {
-    let Some(skybox) = session.skybox_preview() else {
-        return json!({"name":null,"ready":false,"summary":"Set world skyname to select a 2D sky"});
-    };
-    json!({"name":skybox.name,"ready":skybox.ready(),"summary":skybox.summary(),
-        "faces":skybox.faces.iter().zip(render::sky::SUFFIXES).map(|(face, suffix)| json!({"suffix":suffix,"material":face.material,"issue":face.issue,"size":face.texture.as_ref().map(|texture| [texture.width,texture.height])})).collect::<Vec<_>>()})
+    session.sky_preview_state(session.view(), session.camera())
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

@@ -1884,6 +1884,9 @@ export component AppWindow inherits Window {
     changed has-transform-preview => { if root.has-transform-preview { root.refresh-transform-values(); } }
     in-out property <bool> show-tools: true;
     in-out property <bool> sky-preview: false;
+    in-out property <int> sky-channel: 0;
+    in-out property <string> sky-exposure-ev: "0";
+    in property <string> sky-preview-error;
     in-out property <bool> rope-preview: false;
     in-out property <bool> selection-outlines: true;
     in property <string> rope-preview-status: "Rope preview is off";
@@ -2509,6 +2512,25 @@ export component AppWindow inherits Window {
                         checked <=> root.sky-preview;
                         toggled => { root.options-changed(); }
                     }
+                    if root.sky-preview: VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "Sky channel"; color: #bac2ce; }
+                        ComboBox {
+                            model: ["LDR", "HDR · editor preview"];
+                            current-index <=> root.sky-channel;
+                            selected => { root.options-changed(); }
+                        }
+                        if root.sky-channel == 1: HorizontalLayout {
+                            Text { text: "HDR sky exposure (EV)"; color: #bac2ce; vertical-alignment: center; }
+                            LineEdit {
+                                text <=> root.sky-exposure-ev;
+                                placeholder-text: "−8 to 8";
+                                accepted => { root.options-changed(); }
+                            }
+                        }
+                        if root.sky-channel == 1: Text { text: "Linear HDR · Reinhard · sky only"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    }
+                    if root.sky-preview-error != "": Text { text: root.sky-preview-error; color: #efb56b; wrap: word-wrap; }
                     if root.sky-preview: Text {
                         text: root.sky-preview-status + "\nPerspective · Textured · Tool textures";
                         color: #aeb9c8;

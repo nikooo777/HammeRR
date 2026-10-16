@@ -30,11 +30,13 @@ fn prepared_assets(
     }
     std::fs::write(&destination, b"previous BSP").unwrap();
     std::fs::write(destination.with_extension("lin"), b"previous pointfile").unwrap();
+    let mut vmf = crate::test_assets::room();
+    if packing {
+        write_packed_sky(directory.path());
+        vmf.world.properties.set("skyname", "portable_test");
+    }
     let mut session = Session::new(Ok(game));
-    session.replace_document(
-        Document::new(crate::test_assets::room()),
-        named.then(|| source_path.clone()),
-    );
+    session.replace_document(Document::new(vmf), named.then(|| source_path.clone()));
     let request = session
         .begin_compile(Actor::User, Some(&destination))
         .unwrap();
@@ -52,20 +54,42 @@ fn prepared_assets(
         .then(|| compiler::FileIdentity::capture(&source_path, &control))
         .transpose()
         .unwrap();
-    let output = compiler::Output {
-        bsp: (!leak).then(Bsp::new),
-        report: Default::default(),
-        leak: leak.then(|| compiler::Leak {
-            entity: 1,
-            points: vec![DVec3::ZERO, DVec3::ONE],
-        }),
-        stats: Default::default(),
-        cubemap_assets: None,
-        sky_assets: None,
+    let reservation = compiler::WriteReservation::new(&destination, &control).unwrap();
+    let output = if packing && !leak {
+        let output = compiler::compile_with_options(
+            session.document.vmf(),
+            &session.game,
+            compiler::Options {
+                lighting: session.compilation.options.lighting,
+                pack_sky_assets: true,
+                ..Default::default()
+            },
+        );
+        assert!(output.bsp.is_some(), "{:?}", output.report);
+        assert!(output.sky_assets.is_some());
+        output
+    } else {
+        compiler::Output {
+            bsp: (!leak).then(Bsp::new),
+            report: Default::default(),
+            leak: leak.then(|| compiler::Leak {
+                entity: 1,
+                points: vec![DVec3::ZERO, DVec3::ONE],
+            }),
+            stats: Default::default(),
+            cubemap_assets: None,
+            sky_assets: None,
+        }
     };
     let pending = output
-        .prepare_write_controlled(&destination, &control)
+        .prepare_write_reserved(reservation, &control)
         .unwrap();
+    let sources = compiler::asset_sources::capture_output_asset_source_guard(
+        &output,
+        &session.game,
+        &control,
+    )
+    .unwrap();
     session.compiled = Some(CompiledMap {
         path: destination.clone(),
         snapshot: Snapshot {
@@ -90,7 +114,7 @@ fn prepared_assets(
             pending,
             lease: Some(lease),
             pointfile_lease,
-            sources: None,
+            sources: Some(sources),
             published: false,
             committed: false,
             error: None,
@@ -298,9 +322,8 @@ fn backing_asset_replacement_after_preparation_rejects_publication() {
     assert_eq!(std::fs::read(&result.path).unwrap(), b"previous BSP");
 }
 
-fn packed_fixture(leak: bool, named: bool) -> (tempfile::TempDir, Session, PathBuf) {
-    let (directory, mut game, _) = crate::test_assets::game_process(false);
-    let skybox = directory.path().join("materials/skybox");
+fn write_packed_sky(root: &Path) {
+    let skybox = root.join("materials/skybox");
     std::fs::create_dir_all(&skybox).unwrap();
     for suffix in ["rt", "bk", "lf", "ft", "up", "dn"] {
         std::fs::write(
@@ -322,6 +345,11 @@ fn packed_fixture(leak: bool, named: bool) -> (tempfile::TempDir, Session, PathB
     texture[63..65].copy_from_slice(&1u16.to_le_bytes());
     texture.extend_from_slice(&[20, 60, 180, 255]);
     std::fs::write(skybox.join("portable_shared.vtf"), texture).unwrap();
+}
+
+fn packed_fixture(leak: bool, named: bool) -> (tempfile::TempDir, Session, PathBuf) {
+    let (directory, mut game, _) = crate::test_assets::game_process(false);
+    write_packed_sky(directory.path());
     game.mounts.push(MountedPath {
         ids: vec!["game".into()],
         mount: Mount::Directory(directory.path().to_owned()),
@@ -467,6 +495,24 @@ fn packed_source_replacement_after_worker_preparation_rejects_publication() {
     assert!(!result.published());
     assert!(result.publication_error().is_some());
     assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+}
+
+#[test]
+fn guarded_commit_requires_retained_sky_plan_and_aggregate_source_guard() {
+    for missing in ["plan", "guard"] {
+        let (_directory, mut session, mut result) = prepared_assets(false, true, false, true);
+        if missing == "plan" {
+            result.output.sky_assets = None;
+        } else {
+            result.publication.lock().unwrap().sources = None;
+        }
+        let outcome = Ok(result);
+        session.finish_compile(Actor::User, &outcome);
+        let result = outcome.as_ref().unwrap();
+        assert!(!result.published(), "{missing}");
+        assert!(result.publication_error().is_some(), "{missing}");
+        assert_eq!(std::fs::read(&result.path).unwrap(), b"previous BSP");
+    }
 }
 
 #[test]

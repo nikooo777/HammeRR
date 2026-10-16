@@ -286,6 +286,13 @@ impl Session {
             || self.clip_tool
             || self.spatial.draw_block
             || self.component_picking().is_some()
+            || self.component_drag().is_some()
+            || self.paint_stroke().is_some()
+            || self.transform_drag().is_some()
+            || self.area_preview().is_some()
+            || self.volume_preview().is_some()
+            || self.terrain_move_handles_json()["active"] == true
+            || self.terrain_stroke_json()["active"] == true
         {
             return Err(
                 "Finish the active viewport tool before picking a measurement endpoint".into(),

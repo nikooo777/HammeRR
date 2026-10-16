@@ -15,6 +15,8 @@ pub struct FlatBlockLimits {
 
 /// Parses complete anonymous flat blocks using the existing KeyValues dialect.
 /// Empty or comment-only text yields no blocks; malformed text returns an error.
+/// Unquoted native punctuation, control separators and non-ASCII bytes reject;
+/// bare tokens cannot abut a double quote. Quoted contents remain verbatim.
 pub fn parse_flat_blocks_bounded(
     src: &str,
     limits: FlatBlockLimits,
@@ -78,6 +80,7 @@ fn parse_impl<E>(
                 Token::Open => return Err(fail(offset, ParseErrorKind::NestedBlock)),
                 Token::Eof => return Err(fail(open, ParseErrorKind::UnclosedBlock)),
             };
+            validate_token(src, key, offset).map_err(&syntax)?;
             if pairs >= limits.max_pairs {
                 return Err(fail(offset, ParseErrorKind::PairLimit));
             }
@@ -90,11 +93,38 @@ fn parse_impl<E>(
                     return Err(fail(offset, ParseErrorKind::MissingValue));
                 }
             };
+            validate_token(src, value, value_offset).map_err(&syntax)?;
             block.push((key.to_owned(), value.to_owned()));
             pairs += 1;
         }
         blocks.push(block);
     }
+}
+
+fn validate_token(src: &str, token: &str, offset: usize) -> Result<(), ParseError> {
+    if src.as_bytes()[offset] == b'"' {
+        return Ok(());
+    }
+    if let Some(index) = token.bytes().position(|byte| {
+        !byte.is_ascii()
+            || matches!(byte, b'(' | b')' | b'\'')
+            || byte < b' ' && !byte.is_ascii_whitespace()
+    }) {
+        return Err(ParseError::at(
+            src,
+            offset + index,
+            ParseErrorKind::UnsupportedBareToken,
+        ));
+    }
+    let end = offset + token.len();
+    if src.as_bytes().get(end) == Some(&b'"') {
+        return Err(ParseError::at(
+            src,
+            end,
+            ParseErrorKind::UnsupportedBareToken,
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

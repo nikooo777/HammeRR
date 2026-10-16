@@ -291,3 +291,108 @@ fn bsp_entity_lump_uses_native_nul_boundary_without_mutating_bytes() {
     bsp.lumps[lump::ENTITIES].data = b"{ classname \xff }\0".to_vec();
     assert!(bsp.entities().is_err());
 }
+
+#[test]
+fn bare_native_punctuation_cannot_hide_a_skyname_override() {
+    let source = "{ classname worldspawn skyname test message x()skyname other v()x }";
+    assert_eq!(
+        parse_flat_blocks_bounded(source, limits())
+            .unwrap_err()
+            .kind,
+        ParseErrorKind::UnsupportedBareToken
+    );
+    for token in ["bad(key", "bad)key", "bad'key"] {
+        let source = format!("{{ {token} value }}");
+        assert_eq!(
+            parse_flat_blocks_bounded(&source, limits())
+                .unwrap_err()
+                .kind,
+            ParseErrorKind::UnsupportedBareToken
+        );
+    }
+    let quoted =
+        r#"{ "classname" "worldspawn" "skyname" "test" "message" "x()skyname" "other" "v()x'" }"#;
+    let blocks = parse_flat_blocks_bounded(quoted, limits()).unwrap();
+    assert_eq!(
+        blocks[0],
+        vec![
+            ("classname".into(), "worldspawn".into()),
+            ("skyname".into(), "test".into()),
+            ("message".into(), "x()skyname".into()),
+            ("other".into(), "v()x'".into()),
+        ]
+    );
+}
+
+#[test]
+fn bare_quote_adjacency_rejects_and_quoted_first_adjacency_remains_literal() {
+    for source in [r#"{ a"b" c }"#, r#"{ key va"lue" other }"#] {
+        assert_eq!(
+            parse_flat_blocks_bounded(source, limits())
+                .unwrap_err()
+                .kind,
+            ParseErrorKind::UnsupportedBareToken
+        );
+    }
+    for source in [r#"{ "a"b }"#, r#"{ "a""b" }"#] {
+        assert_eq!(
+            parse_flat_blocks_bounded(source, limits()).unwrap(),
+            vec![vec![("a".into(), "b".into())]]
+        );
+    }
+}
+
+#[test]
+fn unsupported_bare_control_separators_reject_and_quoted_controls_remain_literal() {
+    for byte in 1u8..=31 {
+        let control = char::from(byte);
+        let source = format!(
+            "{{ classname worldspawn skyname test message harmless{control}skyname{control}other }}"
+        );
+        if !byte.is_ascii_whitespace() {
+            assert_eq!(
+                parse_flat_blocks_bounded(&source, limits())
+                    .unwrap_err()
+                    .kind,
+                ParseErrorKind::UnsupportedBareToken
+            );
+            let key = format!("{{ skyname{control}other{control}x ignored }}");
+            assert_eq!(
+                parse_flat_blocks_bounded(&key, limits()).unwrap_err().kind,
+                ParseErrorKind::UnsupportedBareToken
+            );
+        }
+        let quoted = format!("{{ message \"harmless{control}skyname{control}other\" }}");
+        let blocks = parse_flat_blocks_bounded(&quoted, limits()).unwrap();
+        assert_eq!(
+            blocks[0][0].1.as_bytes(),
+            format!("harmless{control}skyname{control}other").as_bytes()
+        );
+    }
+    let source = "{\tclassname worldspawn\u{000c}skyname\rtest\n}";
+    assert_eq!(
+        parse_flat_blocks_bounded(source, limits()).unwrap()[0],
+        vec![
+            ("classname".into(), "worldspawn".into()),
+            ("skyname".into(), "test".into()),
+        ]
+    );
+}
+
+#[test]
+fn bare_non_ascii_rejects_without_changing_quoted_utf8_or_named_keyvalues() {
+    for source in ["{clé value}", "{key café}", "{key skyname\u{00a0}other}"] {
+        assert_eq!(
+            parse_flat_blocks_bounded(source, limits())
+                .unwrap_err()
+                .kind,
+            ParseErrorKind::UnsupportedBareToken
+        );
+    }
+    let source = "{ \"clé()'\" \"café\u{00a0}other\" }";
+    assert_eq!(
+        parse_flat_blocks_bounded(source, limits()).unwrap()[0],
+        vec![("clé()'".into(), "café\u{00a0}other".into())]
+    );
+    assert!(crate::keyvalues::parse("root { clé()' café\u{0001}value }").is_ok());
+}

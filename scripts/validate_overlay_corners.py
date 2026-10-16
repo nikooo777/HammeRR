@@ -38,6 +38,7 @@ def validate(client, output, render=False):
         client.call("new_map", {"discard_changes": True})
         for mins, maxs in ROOM:
             client.call("create_block", {"mins": mins, "maxs": maxs, "material": "dev/dev_measuregeneric01"})
+        client.call("create_entity", {"classname": "info_player_terrorist", "origin": [-192, -176, 8]})
         plate = client.call("create_block", {"mins": [-64.125, -48.375, 64.625], "maxs": [63.875, 47.625, 80.625], "material": "dev/dev_measuregeneric01"})["id"]
         client.call("transform_objects", {"ids": [plate], "rotation": [17.125, -23.375, 8.625], "pivot": [0, 0, 64]})
         brush = detail(client, [plate])[0]
@@ -52,6 +53,7 @@ def validate(client, output, render=False):
         check(initial["selected_corners"]["entity"] == overlay and initial["corners_error"] is None, f"{label}: inspect returns existing local corners and frame")
         before = detail(client, [overlay])[0]
         brushes = client.call("get_map_info")
+        history = client.call("get_history")["undo_count"]
         source_path = output / f"{label}-before.vmf"
         client.call("save_map", {"path": str(source_path)})
         source_bytes = source_path.read_bytes()
@@ -90,7 +92,7 @@ def validate(client, output, render=False):
         info = client.call("get_map_info")
         check(result["operation"] == "corners" and result["updated"] == overlay and "created" not in result, f"{label}: reviewed Apply updates the same entity")
         check(retained(before) == retained(after), f"{label}: raw binding, origin, basis, settings and custom properties are preserved")
-        check(info["point_entities"] == brushes["point_entities"] and info["selection"] == [overlay] and info["undo"][0] == "Edit overlay corners" and len(info["undo"]) == len(brushes["undo"]) + 1, f"{label}: Apply creates one Undo step and no entity")
+        check(info["point_entities"] == brushes["point_entities"] and info["selection"] == [overlay] and info["undo"][0] == "Edit overlay corners" and client.call("get_history")["undo_count"] == history + 1, f"{label}: Apply creates one Undo step and no entity")
         edited = output / f"{label}-edited.bsp"
         client.call("compile_map", {"path": str(edited)})
         old_record = records(baseline.read_bytes(), 45, "<ihH64i22f")[0]

@@ -896,7 +896,15 @@ fn build(
     output.stats.static_props = prop_stats.props;
     output.stats.static_prop_models = prop_stats.models;
     output.stats.static_prop_leaf_refs = prop_stats.leaf_refs;
-    let detail_stats = detail_props::bake(vmf, fs, &mut bsp, &mut output.report, control)?;
+    let detail_stats = detail_props::bake(
+        vmf,
+        fs,
+        &map,
+        &models,
+        &mut bsp,
+        &mut output.report,
+        control,
+    )?;
     if output.report.has_errors() {
         return Ok(());
     }

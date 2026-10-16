@@ -6,7 +6,14 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::mdl::ModelHeader;
 use source_formats::vmf::{Entity, Vmf};
 
-use crate::{Control, Diagnostic, Report, map::MAX_COMPILE_COORD, static_props};
+use crate::{
+    Control, Diagnostic, Report, emit,
+    map::{MAX_COMPILE_COORD, Map},
+    static_props,
+};
+
+mod assets;
+mod scatter;
 
 mod assets;
 
@@ -27,7 +34,7 @@ fn class(entity: &Entity) -> bool {
     })
 }
 
-fn record(entity: &Entity, header: ModelHeader) -> Result<DetailProp, String> {
+fn record(entity: &Entity) -> Result<DetailProp, String> {
     if entity.solids.iter().any(|solid| !solid.hidden) {
         return Err("Detail model props are point entities; remove their brush geometry".into());
     }
@@ -106,9 +113,6 @@ fn record(entity: &Entity, header: ModelHeader) -> Result<DetailProp, String> {
     let angles = static_props::angles(entity)?;
     let origin = origin.as_vec3();
     let angles = angles.as_vec3();
-    let radians = angles.as_dvec3().map(f64::to_radians);
-    let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
-    static_props::bounds(header, origin.as_dvec3(), rotation)?;
     Ok(DetailProp {
         origin: origin.to_array(),
         angles: angles.to_array(),
@@ -116,9 +120,121 @@ fn record(entity: &Entity, header: ModelHeader) -> Result<DetailProp, String> {
     })
 }
 
+struct Builder<'a> {
+    fs: &'a GameFs,
+    nodes: Vec<Node>,
+    planes: Vec<Plane>,
+    leaves: Vec<Leaf>,
+    head: i32,
+    props: DetailProps,
+    models: BTreeMap<String, (u16, ModelHeader)>,
+    validator: assets::ModelValidator,
+    work: usize,
+}
+
+impl<'a> Builder<'a> {
+    fn new(fs: &'a GameFs, bsp: &Bsp) -> Result<Self, String> {
+        Ok(Self {
+            fs,
+            nodes: bsp.records::<Node>().map_err(|error| error.to_string())?,
+            planes: bsp.records::<Plane>().map_err(|error| error.to_string())?,
+            leaves: bsp.records::<Leaf>().map_err(|error| error.to_string())?,
+            head: bsp
+                .records::<Model>()
+                .map_err(|error| error.to_string())?
+                .first()
+                .ok_or("Detail model props require a world model")?
+                .head_node,
+            props: DetailProps::default(),
+            models: BTreeMap::new(),
+            validator: assets::ModelValidator::default(),
+            work: 0,
+        })
+    }
+
+    fn model(&mut self, raw: &str, control: &Control) -> Result<(u16, ModelHeader), String> {
+        let path = asset_relative(raw).map_err(|error| error.to_string())?;
+        if !path.starts_with("models/") || !path.ends_with(".mdl") {
+            return Err("Detail model must name a models/*.mdl asset".into());
+        }
+        if let Some(&entry) = self.models.get(&path) {
+            return Ok(entry);
+        }
+        if self.models.len() >= source_formats::bsp::MAX_DETAIL_PROP_MODELS {
+            return Err("Detail model dictionary exceeds the 1024-model build budget".into());
+        }
+        let name = DetailProps::model_record(&path).map_err(|error| error.to_string())?;
+        let header = self.validator.header(self.fs, &path, control)?;
+        let entry = (self.props.models.len() as u16, header);
+        self.models.insert(path, entry);
+        self.props.models.push(name);
+        Ok(entry)
+    }
+
+    fn add(
+        &mut self,
+        path: &str,
+        mut prop: DetailProp,
+        leaf_point: DVec3,
+        control: &Control,
+    ) -> Result<(), String> {
+        if self.props.props.len() >= MAX_PROPS {
+            return Err("Detail model props exceed the 16,384-object build budget".into());
+        }
+        let (model, header) = self.model(path, control)?;
+        let origin = DVec3::from_array(prop.origin.map(f64::from));
+        let angles = DVec3::from_array(prop.angles.map(f64::from));
+        if !origin.is_finite()
+            || origin.abs().max_element() > MAX_COMPILE_COORD
+            || !angles.is_finite()
+            || !leaf_point.is_finite()
+        {
+            return Err("Detail model transforms must fit finite Source coordinates".into());
+        }
+        let radians = angles.map(f64::to_radians);
+        let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
+        static_props::bounds(header, origin, rotation)?;
+        prop.model = model;
+        let mut cursor = self.head;
+        while cursor >= 0 {
+            control.checkpoint()?;
+            self.work += 1;
+            if self.work > MAX_LEAF_WORK {
+                return Err("Detail-prop leaf traversal exceeds four million steps".into());
+            }
+            let node = self
+                .nodes
+                .get(cursor as usize)
+                .ok_or("Invalid detail-prop BSP node")?;
+            let plane = self
+                .planes
+                .get(node.plane as usize)
+                .ok_or("Invalid detail-prop BSP plane")?;
+            let distance = DVec3::from_array(plane.normal.map(f64::from)).dot(leaf_point)
+                - f64::from(plane.dist);
+            cursor = node.children[usize::from(distance < 0.0)];
+        }
+        let leaf =
+            usize::try_from(-i64::from(cursor) - 1).map_err(|_| "Invalid detail-prop leaf")?;
+        let info = self
+            .leaves
+            .get(leaf)
+            .ok_or("Invalid detail-prop BSP leaf")?;
+        if info.contents & contents::SOLID != 0 || info.cluster < 0 {
+            return Err("Detail model origin must lie in an open visible world leaf".into());
+        }
+        prop.leaf = u16::try_from(leaf)
+            .map_err(|_| "Detail model leaf exceeds the native unsigned short")?;
+        self.props.props.push(prop);
+        Ok(())
+    }
+}
+
 pub(crate) fn bake(
     vmf: &Vmf,
     fs: &GameFs,
+    map: &Map,
+    models: &[emit::Model],
     bsp: &mut Bsp,
     report: &mut Report,
     control: &Control,
@@ -129,25 +245,13 @@ pub(crate) fn bake(
         .filter(|entity| !entity.hidden && class(entity))
         .take(MAX_PROPS + 1)
         .collect::<Vec<_>>();
-    if entities.is_empty() {
+    if entities.is_empty() && !scatter::requested(map, models) {
         return Ok(Stats::default());
     }
     if entities.len() > MAX_PROPS {
         return Err("Detail model props exceed the 16,384-object build budget".into());
     }
-    let nodes = bsp.records::<Node>().map_err(|error| error.to_string())?;
-    let planes = bsp.records::<Plane>().map_err(|error| error.to_string())?;
-    let leaves = bsp.records::<Leaf>().map_err(|error| error.to_string())?;
-    let head = bsp
-        .records::<Model>()
-        .map_err(|error| error.to_string())?
-        .first()
-        .ok_or("Detail model props require a world model")?
-        .head_node;
-    let mut props = DetailProps::default();
-    let mut models = BTreeMap::<String, (u16, ModelHeader)>::new();
-    let mut validator = assets::ModelValidator::default();
-    let mut work = 0;
+    let mut builder = Builder::new(fs, bsp)?;
     for entity in entities {
         control.checkpoint()?;
         let result: Result<(), String> = (|| {
@@ -157,53 +261,14 @@ pub(crate) fn bake(
             {
                 return Err("Explicit prop_detail_sprite compilation is unsupported; use a model-only prop_detail".into());
             }
-            let path = asset_relative(entity.properties.get("model").unwrap_or(""))
-                .map_err(|error| error.to_string())?;
-            if !path.starts_with("models/") || !path.ends_with(".mdl") {
-                return Err("Detail model must name a models/*.mdl asset".into());
-            }
-            if !models.contains_key(&path) {
-                if models.len() >= source_formats::bsp::MAX_DETAIL_PROP_MODELS {
-                    return Err(
-                        "Detail model dictionary exceeds the 1024-model build budget".into(),
-                    );
-                }
-                let name = DetailProps::model_record(&path).map_err(|error| error.to_string())?;
-                let header = validator.header(fs, &path, control)?;
-                models.insert(path.clone(), (props.models.len() as u16, header));
-                props.models.push(name);
-            }
-            let (model, header) = models[&path];
-            let mut prop = record(entity, header)?;
-            prop.model = model;
+            let prop = record(entity)?;
             let point = DVec3::from_array(prop.origin.map(f64::from));
-            let mut cursor = head;
-            while cursor >= 0 {
-                control.checkpoint()?;
-                work += 1;
-                if work > MAX_LEAF_WORK {
-                    return Err("Detail-prop leaf traversal exceeds four million steps".into());
-                }
-                let node = nodes
-                    .get(cursor as usize)
-                    .ok_or("Invalid detail-prop BSP node")?;
-                let plane = planes
-                    .get(node.plane as usize)
-                    .ok_or("Invalid detail-prop BSP plane")?;
-                let distance = DVec3::from_array(plane.normal.map(f64::from)).dot(point)
-                    - f64::from(plane.dist);
-                cursor = node.children[usize::from(distance < 0.0)];
-            }
-            let leaf =
-                usize::try_from(-i64::from(cursor) - 1).map_err(|_| "Invalid detail-prop leaf")?;
-            let info = leaves.get(leaf).ok_or("Invalid detail-prop BSP leaf")?;
-            if info.contents & contents::SOLID != 0 || info.cluster < 0 {
-                return Err("Detail model origin must lie in an open visible world leaf".into());
-            }
-            prop.leaf = u16::try_from(leaf)
-                .map_err(|_| "Detail model leaf exceeds the native unsigned short")?;
-            props.props.push(prop);
-            Ok(())
+            builder.add(
+                entity.properties.get("model").unwrap_or(""),
+                prop,
+                point,
+                control,
+            )
         })();
         if let Err(message) = result {
             control.checkpoint()?;
@@ -214,15 +279,18 @@ pub(crate) fn bake(
             ));
         }
     }
+    scatter::bake(vmf, map, models, &mut builder, report, control)?;
     if report.has_errors() {
         return Ok(Stats::default());
     }
-    props.props.sort_by_key(|prop| prop.leaf);
-    bsp.set_detail_props(&props)
+    builder.props.props.sort_by_key(|prop| prop.leaf);
+    bsp.set_detail_props(&builder.props)
         .map_err(|error| error.to_string())?;
-    report.diagnostics.push(Diagnostic::warning("Explicit detail model props are non-colliding client-only models with unbaked white lighting; material-driven scattering, sprites, detail light styles and baked detail lighting remain unfinished", None, None));
+    if !builder.props.props.is_empty() {
+        report.diagnostics.push(Diagnostic::warning("Detail model props are non-colliding client-only models with unbaked white lighting; sprites, terrain scattering, detail light styles and baked detail lighting remain unfinished", None, None));
+    }
     Ok(Stats {
-        props: props.props.len(),
-        models: props.models.len(),
+        props: builder.props.props.len(),
+        models: builder.props.models.len(),
     })
 }

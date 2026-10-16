@@ -1,9 +1,7 @@
 import argparse
 import json
-import os
 import re
 import struct
-import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -12,7 +10,7 @@ import validate_areaportals as areas
 import validate_native_runtime as runtime
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
-from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 
 OBSERVER = areas.OBSERVER.replace(
     "setpos -160 0 32; setang 0 0 0; r_drawothermodels 0;",
@@ -232,36 +230,22 @@ def main():
     bsp = fixture(args)
     if args.runtime:
         output = args.output / "runtime"
-        output.mkdir(exist_ok=True)
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
-        with (output / "compositor.log").open("w") as log:
-            subprocess.run(
-                [
-                    "cage",
-                    "--",
-                    sys.executable,
-                    "-B",
-                    str(Path(__file__).resolve()),
-                    "--worker",
-                    "--bsp",
-                    str(bsp),
-                    "--output",
-                    str(output),
-                    "--game-dir",
-                    str(args.game_dir),
-                ],
-                cwd=ROOT,
-                env=env,
-                stdout=log,
-                stderr=log,
-                check=True,
-                timeout=55,
-            )
+        runtime.private_compositor(
+            [
+                sys.executable,
+                "-B",
+                str(Path(__file__).resolve()),
+                "--worker",
+                "--bsp",
+                str(bsp),
+                "--output",
+                str(output),
+                "--game-dir",
+                str(args.game_dir),
+            ],
+            output,
+            timeout=55,
+        )
     print(json.dumps({"output": str(args.output), "window_portals": True}))
 
 

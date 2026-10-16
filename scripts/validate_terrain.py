@@ -1,10 +1,8 @@
 import argparse
 import itertools
 import json
-import os
 import re
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
@@ -12,7 +10,7 @@ import validate_native_runtime as runtime
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import FACE_FORMAT, floor_samples, lightmaps
-from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
 
 OBSERVER = runtime.OBSERVER.replace(
@@ -493,20 +491,11 @@ def main():
     finally:
         client.close()
     if args.runtime:
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
         for case in cases:
             if args.runtime_cases and case["name"] not in args.runtime_cases:
                 continue
             output = args.output / case["name"]
-            output.mkdir(exist_ok=True)
             command = [
-                "cage",
-                "--",
                 sys.executable,
                 "-B",
                 str(Path(__file__).resolve()),
@@ -520,16 +509,7 @@ def main():
                 "--flags",
                 str(case["flags"]),
             ]
-            with (output / "compositor.log").open("w") as log:
-                subprocess.run(
-                    command,
-                    cwd=ROOT,
-                    env=env,
-                    stdout=log,
-                    stderr=log,
-                    check=True,
-                    timeout=50,
-                )
+            runtime.private_compositor(command, output, timeout=50)
     print(json.dumps({"output": str(args.output), "cases": len(cases)}))
 
 

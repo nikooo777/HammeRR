@@ -1,9 +1,7 @@
 import argparse
 import json
-import os
 import re
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
@@ -11,7 +9,7 @@ import validate_native_runtime as runtime
 from validate_authored_planes import records
 from validate_compile_jobs import wait_job
 from validate_direct_lighting import FACE_FORMAT, lightmaps
-from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM
 
 
@@ -198,36 +196,22 @@ def main():
     bsp = fixture(args)
     if args.runtime:
         output = args.output / "runtime"
-        output.mkdir(exist_ok=True)
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
-        with (output / "compositor.log").open("w") as log:
-            subprocess.run(
-                [
-                    "cage",
-                    "--",
-                    sys.executable,
-                    "-B",
-                    str(Path(__file__).resolve()),
-                    "--worker",
-                    "--game-dir",
-                    str(args.game_dir),
-                    "--output",
-                    str(output),
-                    "--bsp",
-                    str(bsp),
-                ],
-                cwd=ROOT,
-                env=env,
-                stdout=log,
-                stderr=log,
-                check=True,
-                timeout=50,
-            )
+        runtime.private_compositor(
+            [
+                sys.executable,
+                "-B",
+                str(Path(__file__).resolve()),
+                "--worker",
+                "--game-dir",
+                str(args.game_dir),
+                "--output",
+                str(output),
+                "--bsp",
+                str(bsp),
+            ],
+            output,
+            timeout=50,
+        )
     print(json.dumps({"output": str(args.output), "runtime": args.runtime}))
 
 

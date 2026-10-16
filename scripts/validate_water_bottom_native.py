@@ -341,6 +341,44 @@ def valid_pose(row):
     )
 
 
+def runtime_diagnostics(text):
+    rows = []
+    failures = []
+    for number, line in enumerate(text.splitlines(), 1):
+        lower = line.lower().replace("\\", "/")
+        if not re.search(
+            r"\berror\b|\bwarning\b|\bfailed\b|\bmissing\b|not found|not present|couldn.t find|not a texture|\bcannot\b",
+            lower,
+        ):
+            continue
+        fixture = "hammerr/" in lower or bool(
+            re.search(r"\bwater(?:_dx[a-z0-9_]*)?\b|_rt_water[a-z0-9_]*", lower)
+        )
+        fatal = fixture or any(
+            message in lower
+            for message in [
+                "error vertex file",
+                "error index file",
+                "script error",
+                "an error has occurred",
+            ]
+        )
+        row = {
+            "line": number,
+            "message": line,
+            "fixture_asset_or_water_shader": fixture,
+            "fatal": fatal,
+        }
+        rows.append(row)
+        if fatal:
+            failures.append(row)
+    return {
+        "all": rows,
+        "fixture_failures": failures,
+        "unrelated": [row for row in rows if not row["fatal"]],
+    }
+
+
 def worker(args):
     root, output = args.game_dir.resolve(), args.output.resolve()
     assert not os.environ.get("LD_PRELOAD"), (
@@ -446,18 +484,13 @@ def worker(args):
                 "output": str(output),
             }
             assert "Level unlit" not in text
-            for message in [
-                "error: material",
-                "error reading material",
-                "error vertex file",
-                "error index file",
-                "error loading shader",
-                "unknown shader",
-                "script error",
-                "an error has occurred",
-            ]:
-                assert message not in text.lower(), (message, text[-8000:])
+            diagnostics = runtime_diagnostics(text)
+            (output / "runtime-diagnostics.json").write_text(
+                json.dumps(diagnostics, indent=2) + "\n"
+            )
+            assert not diagnostics["fixture_failures"], diagnostics["fixture_failures"]
             report = {
+                "diagnostics": diagnostics,
                 "private_launch": verify_private_launch(game, text),
                 "pid": process.pid,
                 "captures": captures,

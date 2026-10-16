@@ -20,6 +20,8 @@ mod displacements;
 mod lighting;
 mod overlays;
 pub use overlays::{MAX_OVERLAY_FACES, MAX_OVERLAYS, Overlay, OverlayData, OverlayFade};
+mod pak;
+pub use pak::{PakArchive, PakEntry, PakLimits, replace_bsp_pak, replace_bsp_pak_controlled};
 mod water_overlays;
 pub use water_overlays::{
     MAX_WATER_OVERLAY_FACES, MAX_WATER_OVERLAYS, WaterOverlay, WaterOverlayData,

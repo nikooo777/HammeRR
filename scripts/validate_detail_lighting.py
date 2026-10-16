@@ -291,7 +291,6 @@ def tint_color_measurements(frames):
         require(background and max(background) == 0, f"{kind} detail-disabled background changed under baked tint")
         require(len(mask) > 150, f"{kind} lacks stable visible detail pixels for tint control")
         means = {name: [sum(frame["on"][offset + axis] for offset in mask) / len(mask) for axis in range(3)] for name, frame in frames.items()}
-        white, tinted = means["white"], means["tinted"]
         delta = [[frames["white"]["on"][offset + axis] - frames["tinted"]["on"][offset + axis] for offset in mask] for axis in range(3)]
         require(all(value == 0 for value in delta[0]), f"{kind} tint changed the unattenuated red control")
         require(all(value >= 0 for channel in delta[1:] for value in channel), f"{kind} attenuated channels increased under tint")

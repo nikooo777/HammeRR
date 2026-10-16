@@ -278,7 +278,7 @@ fn dictionary_failures_preserve_existing_output_and_source() {
         "detail { tufts { density -1 group { item { model models/props/test.mdl } } } }",
         "detail { tufts { density 1000000 group { item { model models/props/test.mdl amount 0 } } } }",
         "detail { tufts { density 100000 group { item { model models/props/test.mdl } } } }",
-        "detail { tufts { density 64 group { item { sprite \"0 0 32 32 256\" } } } }",
+        "detail { tufts { density 64 group { item { sprite \"0 0 32 32 256\" detailOrientation 0.5 } } } }",
         "detail { tufts { density 64 group { item { model models/props/test.mdl sprite_shape cross } } } }",
         "detail { tufts { density 64 group { item { model models/props/test.mdl detailOrientation 1 } } } }",
         "detail { tufts { density 64 group { item { model models/props/test.mdl amount inf } } } }",
@@ -799,7 +799,7 @@ fn unused_unsupported_alpha_groups_do_not_reject_flat_or_terrain_endpoint_select
     let empty = compiled(&fixture.source, &fixture.game);
     assert_eq!(empty.stats.detail_props, 0);
     std::fs::write(fixture.directory.path().join("detail.vbsp"),
-        "detail { tufts { density 8192 low { alpha 0 sprite { sprite \"0 0 128 128 512\" } } high { alpha 1 model { model models/props/test.mdl } } } }").unwrap();
+        "detail { tufts { density 8192 low { alpha 0 sprite { sprite \"0 0 128 128 512\" detailOrientation 0.5 } } high { alpha 1 model { model models/props/test.mdl } } } }").unwrap();
     let populated = compiled(&fixture.source, &fixture.game);
     assert_eq!(populated.stats.detail_props, 268);
     let path = fixture.directory.path().join("selected-unsupported.bsp");
@@ -814,9 +814,7 @@ fn unused_unsupported_alpha_groups_do_not_reject_flat_or_terrain_endpoint_select
                 .report
                 .diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic
-                    .message
-                    .contains("models only, without sprites or shapes"))
+                .any(|diagnostic| diagnostic.message.contains("integer"))
     );
     assert!(!rejected.write(&path).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), previous);

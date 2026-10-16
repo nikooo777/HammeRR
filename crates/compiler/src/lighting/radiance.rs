@@ -147,6 +147,16 @@ pub(super) fn build_styled(
     build_with_styles(map, bsp, kind, DVec3::ZERO, true, budget)
 }
 
+pub(super) fn build_styled_sky(
+    map: &Map<'_>,
+    bsp: &Bsp,
+    kind: LightingKind,
+    sky_radiance: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<SurfaceIndex, String> {
+    build_with_styles(map, bsp, kind, sky_radiance, true, budget)
+}
+
 fn build_with_styles(
     map: &Map<'_>,
     bsp: &Bsp,

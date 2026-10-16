@@ -75,7 +75,7 @@ def validate(args):
             client.call("open_map", {"path": str(source)})
             require(detail(client, ids) == authored, "VMF reopen changed authored surfaces")
             bsp, data, result = compile_pair(client, args.output, "material-details", ids)
-            parsed = detail_records(data)
+            parsed = detail_records(data, allow_baked=True)
             require(len(parsed["props"]) == result["stats"]["detail_props"] == 16, parsed)
             require(parsed["models"] == [MODEL] and result["stats"]["detail_prop_models"] == 1, parsed)
             require(result["stats"]["static_props"] == 0, result["stats"])
@@ -94,7 +94,7 @@ def validate(args):
             previous.write_bytes(data)
             for name, text, expected in [
                 ("unknown-type", "detail { other { density 64 group { item { model missing.mdl } } } }", "%detailtype"),
-                ("sprite", dictionary(fields='sprite "0 0 32 32 256"'), "models only"),
+                ("sprite-orientation", dictionary(fields='sprite "0 0 32 32 256" detailOrientation 0.5'), "integer"),
                 ("missing-model", dictionary(fields='model models/hammerr_missing_detail.mdl upright 1 minAngle 0 maxAngle 0'), "not found"),
                 ("lit-model", dictionary(fields='model models/props_junk/wood_crate001a.mdl upright 1 minAngle 0 maxAngle 0'), "unlit"),
                 ("density", dictionary(density="NaN"), "density"),
@@ -179,7 +179,7 @@ def validate_terrain(args):
             client.call("open_map", {"path": str(source)})
             require(detail(client, ids) == authored and client.call("get_terrain_grids", {"faces": faces}) == grids, "VMF reopen changed terrain source")
             bsp, data, result = compile_pair(client, args.output, "terrain-material-details", ids)
-            parsed = detail_records(data)
+            parsed = detail_records(data, allow_baked=True)
             require(result["stats"]["detail_props"] == len(parsed["props"]) == 20 and result["stats"]["detail_prop_models"] == 2, result)
             require(set(parsed["models"]) == {MODEL, TERRAIN_MODEL}, parsed)
             for negative, expected in [(True, MODEL), (False, TERRAIN_MODEL)]:
@@ -200,7 +200,7 @@ def validate_terrain(args):
             ]:
                 dictionary_path.write_text(terrain_dictionary(low, high))
                 _, control, control_result = compile_pair(client, args.output, name, ids)
-                decoded = detail_records(control)
+                decoded = detail_records(control, allow_baked=True)
                 require(len(decoded["props"]) == control_result["stats"]["detail_props"] == expected_count, decoded)
                 require(all(row["model"] == expected_model for row in decoded["props"]), "Empty alpha group fell back to another group")
                 controls[name] = {"stats": control_result["stats"], "records": decoded}
@@ -236,7 +236,7 @@ def main():
         subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),
             "--binary", str(args.binary), "--output", str(native_output),
             "--game-dir", str(args.game_dir), "--runtime", "--runtime-bsp", result["bsp"],
-            "--fixture-game", result["fixture_game"], "--expected-count", str(len(result["records"]["props"])), "--port", str(args.port)],
+            "--fixture-game", result["fixture_game"], "--expected-count", str(len(result["records"]["props"])), "--baked-lighting", "--port", str(args.port)],
             check=True, timeout=150)
         native = json.loads((native_output / "results.json").read_text())
         require(native["native_exercised"] and native["native"]["success"], native)

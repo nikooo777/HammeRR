@@ -70,7 +70,7 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-def detail_records(data):
+def detail_records(data, allow_sprites=False, allow_baked=False, sprite_orientation=2):
     offset, size = struct.unpack_from("<2i", data, 8 + 35 * 16)
     require(0 <= offset <= offset + size <= len(data) and size >= 4, "Invalid game-lump directory")
     count = struct.unpack_from("<i", data, offset)[0]
@@ -93,19 +93,32 @@ def detail_records(data):
     cursor += models * 128
     sprites = struct.unpack_from("<i", data, cursor)[0]
     cursor += 4
-    require(sprites == 0, "Explicit model fixture unexpectedly emitted sprites")
+    require(0 <= sprites <= 4096 and cursor + sprites * 32 + 4 <= end, "Invalid detail sprite dictionary")
+    require(allow_sprites or sprites == 0, "Explicit model fixture unexpectedly emitted sprites")
+    sprite_records = [list(struct.unpack_from("<8f", data, cursor + index * 32)) for index in range(sprites)]
+    cursor += sprites * 32
     count = struct.unpack_from("<i", data, cursor)[0]
     cursor += 4
     require(0 <= count <= 16384 and cursor + count * 52 == end, "Invalid detail prop records")
     props = []
     for index in range(count):
         row = struct.unpack_from("<6fHH4BI12Bf", data, cursor + index * 52)
-        require(row[6] < len(names), "Invalid detail model index")
-        require(row[8:12] == (255, 255, 255, 0), "Detail lighting must be explicit unbaked white")
-        require(row[12:25] == (0,) * 13 and row[25] == 1, "Unexpected styles, sprites, orientation, padding or scale")
-        props.append({"origin": list(row[:3]), "angles": list(row[3:6]), "model": names[row[6]], "leaf": row[7]})
+        require(allow_baked or row[8:12] == (255, 255, 255, 0), "Detail lighting must be explicit unbaked white")
+        record = {"origin": list(row[:3]), "angles": list(row[3:6]), "leaf": row[7]}
+        if allow_baked:
+            record["lighting"] = [*row[8:11], row[11] if row[11] < 128 else row[11] - 256]
+        if row[21] == 0:
+            require(row[6] < len(names), "Invalid detail model index")
+            require(row[12:25] == (0,) * 13 and row[25] == 1, "Unexpected model styles, orientation, padding or scale")
+            record["model"] = names[row[6]]
+        else:
+            require(allow_sprites and row[21] == 1 and row[6] < len(sprite_records), "Invalid detail sprite type or dictionary index")
+            require(row[12:17] == (0,) * 5 and row[17] == sprite_orientation and row[18:21] == (0,) * 3 and row[22:25] == (0,) * 3, "Unexpected sprite styles, sway, shape, orientation or padding")
+            require(0 < row[25] <= 6, "Invalid detail sprite scale")
+            record.update({"kind": 1, "sprite": row[6], "scale": row[25], "orientation": row[17]})
+        props.append(record)
     require([row["leaf"] for row in props] == sorted(row["leaf"] for row in props), "Detail records are not sorted by leaf")
-    return {"models": names, "props": props, "payload_sha256": hashlib.sha256(payload).hexdigest()}
+    return {"models": names, "sprites": sprite_records, "props": props, "payload_sha256": hashlib.sha256(payload).hexdigest()}
 
 
 def snapshot(client, ids):
@@ -168,11 +181,11 @@ def validate(args):
             client.call("open_map", {"path": str(source)})
             require(detail(client, ids) == authored, "VMF reopen changed authored detail entities")
             bsp, data, result = compile_pair(client, args.output, "detail-props", ids)
-            parsed = detail_records(data)
+            parsed = detail_records(data, allow_baked=True)
             require(len(parsed["props"]) == result["stats"]["detail_props"] == 3, parsed)
             require(len(parsed["models"]) == result["stats"]["detail_prop_models"] == 2, parsed)
             require(result["stats"]["static_props"] == 0, "Detail fixture unexpectedly emitted static props")
-            actual = [{key: value for key, value in row.items() if key != "leaf"} for row in parsed["props"]]
+            actual = [{key: row[key] for key in ["origin", "angles", "model"]} for row in parsed["props"]]
             require(sorted(actual, key=lambda row: row["origin"]) == sorted(expected, key=lambda row: row["origin"]), parsed)
             leaves = records(data, 10, "<ihh6h4HhH", expected_version=1)
             require(all(row["leaf"] < len(leaves) and leaves[row["leaf"]][0] & 1 == 0 for row in parsed["props"]), "Detail origins did not map to open BSP leaves")
@@ -230,13 +243,18 @@ def worker(args):
     require(not os.environ.get("LD_PRELOAD"), "Native validation must not inherit LD_PRELOAD")
     require(os.environ.get("WAYLAND_DISPLAY") and os.environ.get("XDG_RUNTIME_DIR") == str(output / "wayland"), "Native view requires its private compositor")
     original = probe.read_bounded(args.bsp, probe.MAX_BSP_BYTES)
-    require(len(detail_records(original)["props"]) == args.expected_count, "Native input has an unexpected detail count")
+    parsed = detail_records(original, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation)
+    require(len(parsed["props"]) == args.expected_count, "Native input has an unexpected detail count")
+    require(sum(row.get("kind") == 1 for row in parsed["props"]) == args.expected_sprites, "Native input has an unexpected sprite count")
     game = runtime.private_game(args.game_dir, output)
     if args.fixture_game is not None:
         shutil.copytree(args.fixture_game / "materials", game / "materials")
     staged = game / "maps/hammerr_detail_props.bsp"
     staged.write_bytes(original)
-    (game / "scripts/vscripts/hammerr_detail_observer.nut").write_text(private_observer(OBSERVER))
+    observer = OBSERVER
+    if args.view == "elevated":
+        observer = observer.replace("0 -192 64", "0 -144 176").replace("10 90 0", "44 90 0").replace("Vector(0, -192, 64)", "Vector(0, -144, 176)")
+    (game / "scripts/vscripts/hammerr_detail_observer.nut").write_text(private_observer(observer))
     cfg = game / "cfg/hammerr_detail_once.cfg"
     probe.write_cfg(cfg, "echo HAMMERR_DETAIL_WAIT\n")
     post_map = "toggle sv_lan 1\ntoggle mat_fullbright 0\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\n"
@@ -250,7 +268,7 @@ def worker(args):
     flags = private_launch_options(args.game_dir, game, hdr_level=0, map_name="hammerr_detail_props", log_name="hammerr-detail.log", controls={"servercfgfile": "hammerr_detail_postmap.cfg", "mat_fullbright": 0})
     native = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
     command, environment = private_readonly_launch(native, output, environment)
-    report = {"success": False, "command": command, "bsp_sha256": probe.digest(original), "exact_compiled_bsp": True, "module_fingerprints": probe.module_fingerprints(args.game_dir), "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False}
+    report = {"success": False, "command": command, "bsp_sha256": probe.digest(original), "exact_compiled_bsp": True, "sprite_orientation": args.sprite_orientation, "view": args.view, "module_fingerprints": probe.module_fingerprints(args.game_dir), "filesystem_isolation": {"external_paths": "read_only", "writable_directory": str(output)}, "desktop_input": False}
     console = game / "hammerr-detail.log"
     process = None
     try:
@@ -290,7 +308,7 @@ def worker(args):
             delta = frame_difference(ppm(output / "details-on.ppm"), ppm(output / "details-off.ppm"))
             require(delta["mean_component_difference"] > 0.5 and delta["changed_fraction"] > 0.002, f"No measurable detail model rendering: {delta}")
             require(staged.read_bytes() == original and args.bsp.read_bytes() == original, "Native validation changed the compiled BSP")
-            report.update({"success": True, "detail_pixels": delta, "unbaked_white_lighting": True, "elapsed_seconds": time.monotonic() - started})
+            report.update({"success": True, "detail_pixels": delta, "unbaked_white_lighting": not args.baked_lighting, "elapsed_seconds": time.monotonic() - started})
     except BaseException as error:
         report["error"] = str(error)
         raise
@@ -321,6 +339,10 @@ def main():
     parser.add_argument("--runtime-bsp", type=Path, help="Render an existing checked detail BSP instead of creating the explicit fixture")
     parser.add_argument("--fixture-game", type=Path, help="Copy this private fixture's materials for an existing BSP")
     parser.add_argument("--expected-count", type=int, default=3)
+    parser.add_argument("--expected-sprites", type=int, default=0)
+    parser.add_argument("--baked-lighting", action="store_true", help="Permit actual compiler-baked detail base colors; the default requires white records")
+    parser.add_argument("--sprite-orientation", type=int, choices=[0, 1, 2], default=2)
+    parser.add_argument("--view", choices=["level", "elevated"], default="level")
     parser.add_argument("--port", type=int, default=27689)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
@@ -330,6 +352,7 @@ def main():
     args.game_dir = args.game_dir.resolve(strict=True)
     require(1024 <= args.port <= 65533, "Invalid native port")
     require(1 <= args.expected_count <= 16384, "Invalid expected detail count")
+    require(0 <= args.expected_sprites <= args.expected_count, "Invalid expected sprite count")
     if args.worker:
         require(args.bsp is not None, "Private worker requires the compiled BSP")
         worker(args)
@@ -337,19 +360,23 @@ def main():
     require(not args.output.exists(), "Use a fresh absent output directory")
     args.output.mkdir(parents=True, mode=0o700)
     if args.runtime_bsp is None:
-        require(args.fixture_game is None, "Fixture materials require --runtime-bsp")
+        require(args.fixture_game is None and args.expected_sprites == 0, "Fixture materials and sprites require --runtime-bsp")
         bsp = validate(args)
+        args.baked_lighting = True
     else:
         require(args.runtime, "--runtime-bsp requires --runtime")
         bsp = args.runtime_bsp.resolve(strict=True)
         data = probe.read_bounded(bsp, probe.MAX_BSP_BYTES)
-        parsed = detail_records(data)
+        parsed = detail_records(data, allow_sprites=args.expected_sprites > 0, allow_baked=args.baked_lighting, sprite_orientation=args.sprite_orientation)
         require(len(parsed["props"]) == args.expected_count, "Existing detail BSP count differs")
+        require(sum(row.get("kind") == 1 for row in parsed["props"]) == args.expected_sprites, "Existing detail BSP sprite count differs")
         report = {"success": True, "native_exercised": False, "records": parsed, "bsp": str(bsp), "bsp_sha256": probe.digest(data), "source_validation": "external BSP; authored source checks are not performed in this mode"}
         (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
     if args.runtime:
         output = args.output / "runtime"
-        command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--bsp", str(bsp), "--port", str(args.port), "--expected-count", str(args.expected_count)]
+        command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--bsp", str(bsp), "--port", str(args.port), "--expected-count", str(args.expected_count), "--expected-sprites", str(args.expected_sprites), "--sprite-orientation", str(args.sprite_orientation), "--view", args.view]
+        if args.baked_lighting:
+            command.append("--baked-lighting")
         if args.fixture_game is not None:
             command += ["--fixture-game", str(args.fixture_game.resolve(strict=True))]
         runtime.private_compositor(command, output, timeout=110)

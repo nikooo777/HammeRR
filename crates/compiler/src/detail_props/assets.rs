@@ -2,10 +2,11 @@ use std::{collections::BTreeSet, io};
 
 use glam::{DQuat, DVec3};
 use source_formats::{
-    gamefs::GameFs,
+    gamefs::{GameFs, asset_relative},
     mdl::{MAX_MODEL_BYTES, ModelHeader},
     model::Model,
-    vmt::{Material, material_path},
+    vmt::{Material, material_path, texture_path},
+    vtf::Vtf,
 };
 
 use crate::{Control, map::MAX_COMPILE_COORD, static_props};
@@ -13,6 +14,8 @@ use crate::{Control, map::MAX_COMPILE_COORD, static_props};
 const MAX_READ_BYTES: usize = 512 * 1024 * 1024;
 const MAX_MATERIAL_BYTES: usize = 1024 * 1024;
 const MAX_MATERIAL_LOOKUPS: usize = 65_536;
+const MAX_ATLAS_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ATLAS_DIMENSION: u32 = 4096;
 
 #[derive(Clone, Copy)]
 pub(super) struct ModelBounds {
@@ -21,6 +24,12 @@ pub(super) struct ModelBounds {
 }
 
 impl ModelBounds {
+    pub(super) fn lighting_center(self) -> DVec3 {
+        (DVec3::from_array(self.header.hull_mins.map(f64::from))
+            + DVec3::from_array(self.header.hull_maxs.map(f64::from)))
+            * 0.5
+    }
+
     pub(super) fn check_transform(&self, origin: DVec3, rotation: DQuat) -> Result<(), String> {
         static_props::bounds(self.header, origin, rotation)?;
         for corner in 0..8 {
@@ -149,5 +158,76 @@ impl ModelValidator {
             header,
             mesh: model.bounds,
         })
+    }
+
+    pub(super) fn sprite_atlas(
+        &mut self,
+        fs: &GameFs,
+        raw: &str,
+        control: &Control,
+    ) -> Result<(), String> {
+        if raw.trim() != raw {
+            return Err(
+                "Detail sprite atlas material path cannot contain surrounding whitespace".into(),
+            );
+        }
+        let path = asset_relative(raw).map_err(|error| error.to_string())?;
+        if path.is_empty() {
+            return Err("Detail sprite atlas must name a mounted material".into());
+        }
+        let material = Material::load_with_reader(&material_path(&path), &mut |path| {
+            self.lookups += 1;
+            if self.lookups > MAX_MATERIAL_LOOKUPS {
+                return Err(io::Error::other(
+                    "Detail assets exceed 65,536 material lookup attempts",
+                ));
+            }
+            self.read(fs, path, MAX_MATERIAL_BYTES, control)
+        })
+        .map_err(|error| format!("Detail sprite atlas {path}: {error}"))?
+        .ok_or_else(|| format!("Detail sprite atlas material {path} was not found"))?;
+        if material.shader != "unlitgeneric"
+            || ["$translucent", "$nocull", "$vertexcolor", "$vertexalpha"]
+                .iter()
+                .any(|flag| !material.compile_flag(flag))
+            || !material.blocks.is_empty()
+            || material.params.iter().any(|(key, _)| {
+                ![
+                    "$basetexture",
+                    "$translucent",
+                    "$nocull",
+                    "$vertexcolor",
+                    "$vertexalpha",
+                    "$surfaceprop",
+                ]
+                .contains(&key.as_str())
+            })
+        {
+            return Err("Detail sprite atlas requires a static UnlitGeneric material with $translucent, $nocull, $vertexcolor and $vertexalpha enabled; material effects and overrides are unsupported".into());
+        }
+        let texture = material
+            .get("$basetexture")
+            .ok_or("Detail sprite atlas material needs $basetexture")?;
+        if texture.is_empty() || texture.trim() != texture {
+            return Err("Detail sprite atlas needs a nonempty $basetexture path without surrounding whitespace".into());
+        }
+        let texture = asset_relative(texture).map_err(|error| error.to_string())?;
+        let texture = texture_path(&texture);
+        let data = self
+            .read(fs, &texture, MAX_ATLAS_BYTES, control)
+            .map_err(|error| format!("Detail sprite atlas texture {texture}: {error}"))?
+            .ok_or_else(|| format!("Detail sprite atlas texture {texture} was not found"))?;
+        let atlas =
+            Vtf::parse(data).map_err(|error| format!("Detail sprite atlas {texture}: {error}"))?;
+        if atlas.width != atlas.height
+            || atlas.width > MAX_ATLAS_DIMENSION
+            || atlas.frames != 1
+            || atlas.faces != 1
+            || atlas.depth != 1
+        {
+            return Err("Detail sprite atlas needs one static square 2D texture no larger than 4096 pixels per side".into());
+        }
+        control.checkpoint()?;
+        Ok(())
     }
 }

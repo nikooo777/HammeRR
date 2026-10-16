@@ -2,16 +2,17 @@
 
 # Material detail scattering
 
-Materials can generate non-colliding client-only detail models on exposed world
-and `func_detail` brush faces and terrain. The compiler writes native model
+Materials can generate non-colliding client-only detail models and plain
+sprites on exposed world and `func_detail` brush faces and terrain.
+The compiler writes native model and sprite
 records into the BSP's version-4 `dprp` game lump. The source map keeps its
 original brushes and properties.
 
-1. Put a model-only detail dictionary in mounted game content. Its outer block
+1. Put a detail dictionary in mounted game content. Its outer block
    contains named detail types; each type has a `density` and one or more groups.
-   Groups contain `alpha` and named model entries. Each entry needs a `model`
-   path. Models must be compiled with `$staticprop` and use supported
-   `UnlitGeneric` materials.
+   Groups contain `alpha` and named entries. Model entries need a `model` path;
+   sprite entries use the atlas fields below. Models must be compiled with
+   `$staticprop` and use supported `UnlitGeneric` materials.
 2. Add `%detailtype` to the ground VMT, naming the dictionary type. Material
    patches resolve through the same mounted content as ordinary materials.
 3. Open **World settings…**, set **Detail.vbsp file** (`detailvbsp`) to that
@@ -19,9 +20,10 @@ original brushes and properties.
    uses `detail.vbsp`.
 4. Paint the material onto the intended exposed faces using the normal material
    controls. Hidden brushes and hidden `func_detail` owners are excluded.
-5. Build the map. **Build details…** reports **Detail props** and **Model assets**
-   together with explicit model detail props. Run the built map to inspect the
-   generated models.
+5. Open **Build settings…**, choose **Build lighting → Direct LDR**, then
+   **Close** and **Compile**. **Build details…** reports **Detail props**,
+   **Model assets** and **Sprite entries** together with explicit model detail
+   props. Click **Run Map** to inspect the generated details.
 
 A minimal dictionary using an installed CS:S detail model is:
 
@@ -79,33 +81,99 @@ final clipped polygon changes that face's deterministic seed. Rebuilding the
 same map and mounted content produces the same records; placements are not
 intended to match Valve VBSP byte for byte.
 
+For an installed CS:S grass sprite, replace the example's model entry with:
+
+```text
+sprite "0 0 128 128 512"
+spritesize "0.5 0 40 45"
+spriterandomscale 0.2
+detailOrientation 2
+upright 1
+```
+
+`sprite` gives atlas X, Y, width, height and logical atlas size. Texture
+coordinates use a half-texel inset in that logical size, independent of the
+actual VTF resolution. CS:S's installed dictionary uses 512 for its 1024-pixel
+atlas. `spritesize` gives horizontal anchor, vertical anchor, world width and
+world height; anchors range from zero to one. The example centers a 40-unit
+wide sprite on its bottom edge and makes it 45 units high. Omitting this field
+uses width 20, height 20 and a centered bottom anchor. `spriterandomscale`
+ranges from zero to one and specifies Gaussian standard deviation around one,
+followed by absolute value. Zero keeps scale one. Sampling uses a bounded,
+deterministic stream and rejects a collapsed native scale.
+
+`detailOrientation` selects how the sprite faces the view:
+
+| Value | Behavior |
+| --- | --- |
+| `0` (default) | Fixed card using its generated Source angles. `upright 1` keeps its up direction vertical; `upright 0` follows the surface normal. |
+| `1` | Full billboard facing the camera, including its elevation. |
+| `2` | Billboard facing the camera while remaining vertical. |
+
+Fixed and full billboards require `spriterandomscale 0` or an omitted random
+scale field. They emit scale one, which remains exact in the native older
+sprite renderer's half precision scale storage. Nonzero random scale rejects
+for these orientations. Vertical billboards retain Gaussian random scaling.
+Fixed cards check their rotated four corners against compile coordinates;
+full billboards check a conservative sphere covering every camera direction.
+
+Sprites share one atlas: **World settings…** → **Detail material file**
+(`detailmaterial`), or installed `detail/detailsprites` when left empty. A custom
+atlas must be mounted game content with a complete static square VTF, at most
+4096 pixels per side and 64 MiB. Its material must use `UnlitGeneric` with
+`$translucent`, `$nocull`, `$vertexcolor` and `$vertexalpha` enabled and a
+`$basetexture`; material effects and overrides reject. The compiler validates
+the real material and texture before emitting a sprite dictionary entry.
+
 The existing MCP operations use the same compiler: paint through `edit_faces`,
-change `detailvbsp` through the world property draft, then call `compile_map` or
+change `detailvbsp` and `detailmaterial` through the world property draft, then call `compile_map` or
 `start_compile`. No separate scatter objects or authoring operation are needed.
+
+**Fullbright** keeps white unbaked detail colors. **Direct LDR** bakes each model
+and sprite's static direct light and spherical ambient from the final filtered
+world/terrain lightmaps and sky. Configured diffuse bounces contribute through
+those maps. **Direct LDR + HDR** leaves the HDR pass's color in the single shared
+detail base-color field, following Valve VRAD's LDR-then-HDR order. The native
+format does not provide separate LDR and HDR base colors. Placement and leaf
+assignment stay unchanged across these lighting modes.
+
+
+![Material-generated vertical billboard sprites in CS:S](images/detail-sprites.png)
 
 ![Material-generated detail models in CS:S](images/material-detail-scattering.png)
 
 ![Foliage generated on displaced terrain using its blend alpha](images/terrain-detail-scattering.png)
 
-Limits: model-only detail types on world and `func_detail` surfaces. Terrain
+Limits: model and plain sprite detail types on world and `func_detail` surfaces. Terrain
 requires a parallelogram base quad, including rectangles and sheared or sloped
-parallelograms; skewed base quads reject. Sprites, procedural shapes, runtime
-brush models, non-normal detail orientation, and fluid surfaces reject. Selected groups must contain supported
-model entries and finite values; an unsupported selected group rejects the
+parallelograms; skewed base quads reject. Shaped sprites, sway, explicit
+`prop_detail_sprite` entities, runtime brush models, non-integer or unsupported sprite orientations
+and fluid surfaces reject. Selected groups must contain supported
+entries and finite values; an unsupported selected group rejects the
 complete build before replacing its previous BSP. Unused groups do not reject
 a build: flat faces can select an empty alpha-one group even when lower groups
-contain sprites, while terrain only accepts a lower group when it is supported.
+contain unsupported entries, while terrain only accepts a lower group when it is supported.
 Dictionaries are limited to 2 MiB, eight levels and 32,768 nodes. Each build
 allows 65,536 sample attempts, 16,384 combined
-explicit/generated instances and 1,024 distinct detail models. Terrain lookup
+explicit/generated instances, 1,024 distinct detail models and 4,096 sprite
+dictionary entries. Models and atlases share a 512 MiB asset-read budget and
+65,536 material lookup attempts. Terrain lookup
 construction and sampling share a four-million-step work limit. Samples use a
 small outward probe inset from face boundaries to choose an open visible BSP
-leaf while the stored model origin stays on its surface. Models keep white
-unbaked lighting; baked detail lighting and light styles remain unfinished.
+leaf while the stored origin stays on its surface.
+
+
+Lighting samples use each model's rotated hull midpoint or each sprite's scaled
+anchor midpoint, with its stored local-up normal. The midpoint must remain in
+open visible world space. A nonzero animated or switchable light contribution
+at a detail receiver rejects the build atomically; unrelated distant, blocked
+or zero-valued styles remain usable. Detail light-style records, named lighting
+origins and authored render tint remain unfinished. Detail objects do not cast
+new baked shadows.
 
 Compile regions scatter only on the retained, clipped exposed surfaces. Region
 clipping changes the count and seed; the source brush stays whole. Generated
-origins stay inside the region and their open leaves, but model geometry can
+origins stay inside the region and their open leaves, but model and sprite geometry can
 extend past the boundary. Explicit `prop_detail` entities still require full-map
 builds. Terrain must stay wholly inside the region, including its complete
 base and displaced grid; crossing terrain rejects rather than being clipped.

@@ -37,6 +37,10 @@ ordinary materials, entity helpers, baked lighting and game settings unchanged.
    a view preference and does not affect LDR pixels. Disable **2D sky preview**
    to return to the ordinary tool surface.
 
+| −2 EV | 0 EV |
+| --- | --- |
+| ![Dimmed mounted HDR sky with unchanged brick geometry](images/hdr-sky-dimmed.png) | ![Mounted HDR sky at zero exposure](images/hdr-sky-preview.png) |
+
 The HDR image policy is explicit: RGBA16F samples are linear; RGBA16 integer RGB
 uses `value / 65535 × 16`. The renderer applies `2^EV`, then per-channel Reinhard
 `x / (1 + x)`, followed by one sRGB target encoding. Texture alpha is ignored and

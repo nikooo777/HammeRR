@@ -14,6 +14,8 @@ from validate_visibility import ROOM
 
 MODEL = "models/props_junk/wood_crate001a.mdl"
 FIXTURE_SCHEMA = 5
+EXPERIMENTAL_SCHEMA = 6
+DISABLE_WAKE_RELEASE = "disable_braces_and_wake_same_crate_before_retry"
 SETTLED_SAMPLE_COUNT = 5
 SETTLED_SECONDS = 0.5
 MOVETYPE_VPHYSICS = 6
@@ -117,7 +119,7 @@ def callback_name(name, output):
     return f"HammeRRContact_{name}_{output}"
 
 
-def observer():
+def observer(release_mode="kill"):
     source = runtime.OBSERVER
     callbacks = [(name, output) for name in DOORS for output in OUTPUTS]
     callbacks.extend((name, "OnBreak") for name in PROPS)
@@ -133,9 +135,19 @@ def observer():
         "setpos -64 -64 32; setang 25 45 0; mat_fullbright",
     ]:
         assert source.count(marker) == 1, marker
+    think = CONTACT_THINK
+    if release_mode == "disable-wake":
+        marker = '            } else if (next == 3) {\n'
+        assert think.count(marker) == 1
+        think = think.replace(
+            marker,
+            marker
+            + '                EntFire("blocked_crate", "Wake");\n'
+            + '                printl("HAMMERR_ROT_WAKE " + elapsed + " " + contact_phase + " blocked_crate");\n',
+        )
     return (
         source.replace("stage <- 0;", "stage <- 0;\n" + CONTACT_GLOBALS + functions)
-        .replace("    return 1.0;\n}", CONTACT_THINK + "\n}")
+        .replace("    return 1.0;\n}", think + "\n}")
         .replace(
             "sv_cheats 1; joystick 0;",
             "sv_cheats 1; joystick 0; bot_quota 0; bot_kick;",
@@ -338,7 +350,7 @@ def fixture(args):
                 "OnTrigger",
                 "release_braces",
                 target=name,
-                input_name="Kill",
+                input_name="Disable" if args.release_mode == "disable-wake" else "Kill",
             )
         connection(client, relay, "OnTrigger", "release_braces")
         client.call(
@@ -373,6 +385,9 @@ def fixture(args):
             "runtime_checked": False,
             "desktop_input": False,
         }
+        if args.release_mode == "disable-wake":
+            report["schema"] = EXPERIMENTAL_SCHEMA
+            report["release"] = DISABLE_WAKE_RELEASE
         (args.output / "compile.json").write_text(json.dumps(report, indent=2) + "\n")
         return report
     finally:
@@ -388,8 +403,10 @@ def distance(a, b):
 
 
 def check(args):
+    experimental = getattr(args, "release_mode", "kill") == "disable-wake"
     text = (args.output / "cstrike/hammerr-runtime.log").read_text(errors="replace")
     samples, events, phases, braces, bounds, states = [], [], [], [], [], []
+    wakes = []
     for line in text.splitlines():
         words = line.strip().split()
         if not words:
@@ -461,6 +478,11 @@ def check(args):
                     "solid": words[5] == "1" if present else None,
                 }
             )
+        elif words[0] == "HAMMERR_ROT_WAKE":
+            assert len(words) == 4, words
+            wakes.append(
+                {"time": float(words[1]), "phase": int(words[2]), "name": words[3]}
+            )
     observations = {
         "samples": samples,
         "events": events,
@@ -469,6 +491,8 @@ def check(args):
         "bounds": bounds,
         "states": states,
     }
+    if experimental:
+        observations["wakes"] = wakes
     (args.output / "observations.json").write_text(
         json.dumps(observations, indent=2) + "\n"
     )
@@ -482,6 +506,9 @@ def check(args):
     assert [(row["time"], row["name"]) for row in states] == [
         (row["time"], row["name"]) for row in samples
     ]
+    if experimental:
+        assert len(wakes) == 1 and wakes[0]["name"] == "blocked_crate"
+        assert wakes[0]["phase"] == 3 and wakes[0]["time"] == phases[2][0], wakes
 
     def rows(name, phase, source=None):
         source = samples if source is None else source
@@ -567,6 +594,13 @@ def check(args):
             if phase < 2:
                 assert all(
                     row["present"] and row["solid"] is True for row in found
+                ), (name, phase)
+            elif experimental:
+                release = output("release_braces", "OnTrigger", 2)[0]["time"]
+                after_disable = [row for row in found if row["time"] >= release + 1]
+                assert len(after_disable) >= 10 and all(
+                    row["present"] and row["solid"] is False
+                    for row in after_disable
                 ), (name, phase)
             else:
                 release = output("release_braces", "OnTrigger", 2)[0]["time"]
@@ -697,6 +731,17 @@ def check(args):
         "private_preservation": True,
         "desktop_input": False,
     }
+    if experimental:
+        report["authored_brace_removal_and_native_absence"] = False
+        report["authored_brace_disable_and_native_presence"] = True
+        report["release_method"] = "Disable plus one Wake before retry Open"
+        report["single_same_crate_wake_queued"] = wakes[0]
+        report["awake_state_observed"] = False
+        report["experimental_limits"] = (
+            "Wake is queued before Open in the same script tick; no impulse, "
+            "teleport or replacement. A pass does not establish a contact-cache "
+            "cause or Disable-only recovery. A failure does not prove a hull defect."
+        )
     (args.output / "rotating-removal-recovery.json").write_text(
         json.dumps(report, indent=2) + "\n"
     )
@@ -716,6 +761,9 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument(
+        "--release-mode", choices=["kill", "disable-wake"], default="kill"
+    )
     parser.add_argument("--reuse-fixture", type=Path)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--bsp", type=Path, help=argparse.SUPPRESS)
@@ -725,7 +773,7 @@ def main():
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.worker:
-        runtime.OBSERVER = observer()
+        runtime.OBSERVER = observer(args.release_mode)
         args.observe_seconds = 48
         runtime.worker(args)
         check(args)
@@ -733,8 +781,16 @@ def main():
     if args.reuse_fixture:
         assert args.runtime, "--reuse-fixture requires --runtime"
         compiled = json.loads(args.reuse_fixture.read_text())
-        assert compiled["schema"] == FIXTURE_SCHEMA
-        assert compiled["release"] == "remove_both_perpendicular_braces_with_kill"
+        expected_schema = (
+            EXPERIMENTAL_SCHEMA if args.release_mode == "disable-wake" else FIXTURE_SCHEMA
+        )
+        expected_release = (
+            DISABLE_WAKE_RELEASE
+            if args.release_mode == "disable-wake"
+            else "remove_both_perpendicular_braces_with_kill"
+        )
+        assert compiled["schema"] == expected_schema
+        assert compiled["release"] == expected_release
         for kind in ["bsp", "source"]:
             assert digest(Path(compiled[kind])) == compiled[f"{kind}_sha256"]
     else:
@@ -756,6 +812,8 @@ def main():
             "--output",
             str(output),
         ]
+        if args.release_mode == "disable-wake":
+            command.extend(["--release-mode", "disable-wake"])
         runtime.private_compositor(command, output, timeout=90)
         report["native"] = json.loads((output / "rotating-removal-recovery.json").read_text())
         report["runtime_checked"] = True

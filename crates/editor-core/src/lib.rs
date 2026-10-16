@@ -1,4 +1,5 @@
 pub mod game;
+pub mod grid_preferences;
 pub mod identity;
 pub mod inspector;
 pub mod interaction;

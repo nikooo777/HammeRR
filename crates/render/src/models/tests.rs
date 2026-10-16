@@ -489,6 +489,36 @@ fn model_scene_uses_material_batches_normals_and_wire_geometry_without_a_helper_
 }
 
 #[test]
+fn selection_outlines_classify_model_brackets_without_replacing_meshes_with_helpers() {
+    let mut entity = Entity::new(7, "prop_static");
+    entity.properties.set("origin", "0 0 32");
+    let instance = Instance::new(&entity, asset()).unwrap();
+    let mut vmf = map_core::Document::empty().vmf().clone();
+    vmf.entities.push(entity);
+    let fs = GameFs {
+        game_dir: Default::default(),
+        base_dir: Default::default(),
+        mounts: Vec::new(),
+    };
+    let mesh = crate::SceneMesh::build_with_models(
+        &vmf,
+        &fs,
+        &mut crate::MaterialLibrary::default(),
+        &std::collections::HashSet::from([ObjectId::Entity(7)]),
+        &Default::default(),
+        &[],
+        &[instance],
+    );
+    assert_eq!(mesh.stats.model_entities, 1);
+    assert_eq!(mesh.vertices.len(), 4);
+    assert_eq!(mesh.indices, [0, 2, 1, 0, 3, 2]);
+    assert_eq!(mesh.lines.len(), 48);
+    assert_eq!(mesh.selection_outline_ranges.len(), 1);
+    assert_eq!(mesh.selection_outline_ranges[0], 0..48);
+    assert!(mesh.guide_line_ranges().is_empty());
+}
+
+#[test]
 fn blank_bodygroups_keep_helpers_and_visible_variants_use_only_their_meshes() {
     use source_formats::model::{BodyGroup, BodyVariant};
     let mut asset = Arc::try_unwrap(asset()).unwrap();

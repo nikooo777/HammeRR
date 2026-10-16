@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn selection_outlines_parameters_share_default_on_view_and_temporary_render_overrides() {
+    assert_eq!(
+        view_state(ViewOptions::default())["selection_outlines"],
+        true
+    );
+    let view: SetViewArgs = serde_json::from_value(json!({"selection_outlines":false})).unwrap();
+    assert_eq!(view.selection_outlines, Some(false));
+    let render: RenderArgs = serde_json::from_value(json!({"selection_outlines":true})).unwrap();
+    assert_eq!(render.selection_outlines, Some(true));
+    let render: RenderArgs = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(render.selection_outlines, None);
+}
+
+#[test]
 fn rope_preview_parameters_share_view_render_and_pixel_pick_overrides() {
     let args: SetViewArgs = serde_json::from_value(json!({"rope_preview":true})).unwrap();
     assert_eq!(args.rope_preview, Some(true));

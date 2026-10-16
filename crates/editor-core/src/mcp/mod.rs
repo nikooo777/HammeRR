@@ -554,6 +554,7 @@ impl EditorServer {
             + Self::files_tools()
             + Self::geometry_tools()
             + Self::groups_tools()
+            + Self::grid_preferences_tools()
             + Self::history_tools()
             + Self::linked_path_tools()
             + Self::materials_tools()

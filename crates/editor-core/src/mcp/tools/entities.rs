@@ -453,7 +453,15 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Load an FGD and its includes, resolving inherited entity definitions. Updates the GUI and MCP class catalog together; existing map data is preserved."
+        description = "Read the loaded FGD catalog status, source files and effective @mapsize declaration with authored values, sorted bounds and file/line provenance. FGD map size is informational and does not set editor or compiler coordinate limits.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_entity_definitions(&self) -> ToolResult {
+        run(|| Ok(definitions_json(&self.session())))
+    }
+
+    #[tool(
+        description = "Load an FGD and its includes, resolving inherited entity definitions. Updates the GUI and MCP class catalog together; existing map data is preserved. Returns catalog status and informational @mapsize metadata."
     )]
     pub(in crate::mcp) async fn load_entity_definitions(
         &self,

@@ -192,6 +192,7 @@ pub(super) fn widget_number(value: f64) -> f32 {
 }
 
 pub(super) fn refresh_entity_window(window: &EntityWindow, session: &Session) {
+    window.set_catalog_status(session.entity_definitions_report().status().into());
     let kind = if window.get_brush_mode() {
         ClassKind::Solid
     } else {

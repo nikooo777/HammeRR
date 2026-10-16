@@ -9,6 +9,7 @@ mod entities;
 mod entity_placement;
 mod files;
 mod geometry;
+mod grid_preferences;
 mod groups;
 mod history;
 mod linked_path;

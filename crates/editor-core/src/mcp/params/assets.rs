@@ -221,3 +221,9 @@ pub struct ChooseParticleArgs {
     pub token: u64,
     pub name: String,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialSourceArgs {
+    pub material: String,
+}

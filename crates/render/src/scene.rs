@@ -12,6 +12,8 @@ use source_formats::vmf::{Color, Entity, Solid, Vmf};
 use crate::helpers::bulb_model;
 use crate::materials::{MaterialId, MaterialLibrary};
 
+#[cfg(test)]
+mod selection_outline_tests;
 mod terrain;
 
 const HELPER_SEGMENTS: usize = 16;
@@ -93,8 +95,9 @@ pub struct SceneMesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub batches: Vec<Batch>,
-    /// Edges of selected objects, as a line list.
+    /// Ordered editor lines; selection ranges exclude diagnostic and tool guides.
     pub lines: Vec<LineVertex>,
+    pub selection_outline_ranges: Vec<std::ops::Range<u32>>,
     pub leak_lines: Vec<LineVertex>,
     pub wire_lines: Vec<LineVertex>,
     pub tool_wire_lines: Vec<LineVertex>,
@@ -141,6 +144,7 @@ struct Builder<'a> {
     /// Indices per material id, concatenated into batches at the end.
     indices: Vec<Vec<u32>>,
     lines: Vec<LineVertex>,
+    selection_outline_ranges: Vec<std::ops::Range<u32>>,
     wire_lines: Vec<LineVertex>,
     tool_wire_lines: Vec<LineVertex>,
     stats: SceneStats,
@@ -180,6 +184,32 @@ impl Builder<'_> {
                 });
             }
         }
+    }
+
+    fn mark_selection_outline(&mut self, start: usize) {
+        let end = self.lines.len() as u32;
+        if end == start as u32 {
+            return;
+        }
+        if let Some(previous) = self.selection_outline_ranges.last_mut()
+            && previous.end == start as u32
+        {
+            previous.end = end;
+        } else {
+            self.selection_outline_ranges.push(start as u32..end);
+        }
+    }
+
+    fn selection_loop(&mut self, points: impl IntoIterator<Item = Vec3>) {
+        let start = self.lines.len();
+        self.push_loop(points);
+        self.mark_selection_outline(start);
+    }
+
+    fn selection_line(&mut self, from: Vec3, to: Vec3, color: [u8; 4]) {
+        let start = self.lines.len();
+        self.helper_line(from, to, color);
+        self.mark_selection_outline(start);
     }
 
     fn add_solid(&mut self, solid: &Solid, selected: bool) {
@@ -227,7 +257,7 @@ impl Builder<'_> {
                     self.add_displacement(material, &mesh, &normals, uv, tint, side);
                     self.push_displacement_wire(&mesh, tool);
                     if selected {
-                        self.push_loop(
+                        self.selection_loop(
                             mesh.outline()
                                 .into_iter()
                                 .map(|i| mesh.positions[i].as_vec3()),
@@ -308,7 +338,7 @@ impl Builder<'_> {
             self.indices[material].extend([first, first + index, first + index + 1]);
         }
         if selected {
-            self.push_loop(points.iter().map(|point| point.as_vec3()));
+            self.selection_loop(points.iter().map(|point| point.as_vec3()));
         }
     }
 
@@ -429,7 +459,7 @@ impl Builder<'_> {
                 first + 3,
             ]);
             if selected {
-                self.push_loop(corners.map(|c| center + (normal + c) * h * 1.05));
+                self.selection_loop(corners.map(|c| center + (normal + c) * h * 1.05));
             }
         }
     }
@@ -495,13 +525,15 @@ impl Builder<'_> {
                 self.helper_triangle([a, c, b], color);
                 self.helper_triangle([a, d, c], color);
                 if selected && segment % 4 == 0 {
-                    self.helper_line(a, d, SELECTED_EDGE);
+                    self.selection_line(a, d, SELECTED_EDGE);
                 }
             }
         }
         if selected {
             for &(radius, height) in profile.iter().filter(|(radius, _)| *radius > 0.0) {
-                self.push_loop((0..HELPER_SEGMENTS).map(|segment| point(radius, height, segment)));
+                self.selection_loop(
+                    (0..HELPER_SEGMENTS).map(|segment| point(radius, height, segment)),
+                );
             }
         }
     }
@@ -552,7 +584,7 @@ impl Builder<'_> {
                         let corner = Vec3::new(x, y, z);
                         let sign = (lo + hi) * 0.5 - corner;
                         for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
-                            self.helper_line(
+                            self.selection_line(
                                 center + corner,
                                 center + corner + axis * sign.dot(axis).signum() * 4.0,
                                 SELECTED_EDGE,
@@ -628,7 +660,7 @@ impl Builder<'_> {
                         let corner = DVec3::new(x, y, z);
                         let sign = (mins + maxs) * 0.5 - corner;
                         for axis in DVec3::AXES {
-                            self.helper_line(
+                            self.selection_line(
                                 corner.as_vec3(),
                                 (corner + axis * sign.dot(axis).signum() * 4.0).as_vec3(),
                                 SELECTED_EDGE,
@@ -836,6 +868,7 @@ impl SceneMesh {
             vertices: Vec::new(),
             indices: Vec::new(),
             lines: Vec::new(),
+            selection_outline_ranges: Vec::new(),
             wire_lines: Vec::new(),
             tool_wire_lines: Vec::new(),
             stats: SceneStats::default(),
@@ -915,6 +948,7 @@ impl SceneMesh {
             indices,
             batches,
             lines: builder.lines,
+            selection_outline_ranges: builder.selection_outline_ranges,
             leak_lines: Vec::new(),
             wire_lines: builder.wire_lines,
             tool_wire_lines: builder.tool_wire_lines,
@@ -984,6 +1018,22 @@ impl SceneMesh {
             }
             summary
         })
+    }
+
+    pub fn guide_line_ranges(&self) -> Vec<std::ops::Range<u32>> {
+        let mut ranges = Vec::new();
+        let mut start = 0;
+        for outline in &self.selection_outline_ranges {
+            if start < outline.start {
+                ranges.push(start..outline.start);
+            }
+            start = outline.end;
+        }
+        let end = self.lines.len() as u32;
+        if start < end {
+            ranges.push(start..end);
+        }
+        ranges
     }
 
     pub fn add_bounds_lines(&mut self, mins: DVec3, maxs: DVec3, color: [u8; 4]) {

@@ -5,6 +5,111 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[test]
+pub(crate) fn selection_outlines_control_shares_default_and_agent_view_without_map_changes() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut state = Session::new(Err("no assets needed".into()));
+    state
+        .create_block(
+            Actor::Agent,
+            DVec3::ZERO,
+            DVec3::splat(64.0),
+            "test/material",
+            false,
+        )
+        .unwrap();
+    let source = state.document().vmf().clone();
+    let history = state.document().undo_labels().count();
+    let selection = state.selected_ids();
+    let shared = Arc::new(Mutex::new(state));
+    let app = AppWindow::new().unwrap();
+    bind_view_controls(&app, shared.clone());
+    refresh_view_controls(&app, &lock(&shared));
+    assert!(app.get_selection_outlines());
+    app.set_selection_outlines(false);
+    app.invoke_options_changed();
+    assert!(!lock(&shared).view().selection_outlines);
+    {
+        let mut session = lock(&shared);
+        let view = session.view();
+        session.set_view(render::ViewOptions {
+            selection_outlines: true,
+            ..view
+        });
+    }
+    refresh_view_controls(&app, &lock(&shared));
+    assert!(app.get_selection_outlines());
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+    assert_eq!(lock(&shared).selected_ids(), selection);
+    app.show().unwrap();
+    app.window().set_size(slint::PhysicalSize::new(1600, 960));
+    save_ui_snapshot(app.window(), "selection-outlines");
+}
+
+#[test]
+pub(crate) fn entity_picker_shows_shared_map_size_provenance_and_clears_on_reload() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("catalog.fgd");
+    std::fs::write(
+        &path,
+        "// Map size preference\n@mapsize(16384, -16384)\n@PointClass = info_target []",
+    )
+    .unwrap();
+    let mut session = Session::new(Err("no assets needed".into()));
+    session.set_definitions(Actor::Agent, Catalog::load(&path).unwrap());
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let window = EntityWindow::new().unwrap();
+    window.set_classname("info_target".into());
+    refresh_entity_window(&window, &session);
+    assert_eq!(
+        window.get_catalog_status().as_str(),
+        session.entity_definitions_report().status()
+    );
+    assert!(window.get_catalog_status().contains("-16384 to 16384"));
+    assert!(
+        window
+            .get_catalog_status()
+            .contains("authored 16384, -16384")
+    );
+    assert!(window.get_catalog_status().contains("catalog.fgd:2"));
+    assert!(window.get_catalog_status().contains("Informational only"));
+    assert!(window.get_definition().contains("info_target (point)"));
+    window.show().unwrap();
+    assert_dialog_button_visible(&window, "Place entity");
+    assert_dialog_button_visible(&window, "Load FGD…");
+    save_ui_snapshot(window.window(), "entity-catalog-mapsize");
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.document().undo_labels().count(), history);
+    session.set_definitions(
+        Actor::User,
+        Catalog::parse("@PointClass = info_target []").unwrap(),
+    );
+    refresh_entity_window(&window, &session);
+    assert!(
+        window
+            .get_catalog_status()
+            .contains("No effective @mapsize")
+    );
+    assert!(!window.get_catalog_status().contains("catalog.fgd"));
+}
+
+#[test]
 pub(crate) fn rope_preview_control_uses_shared_view_and_reports_bad_links_without_map_edits() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {
@@ -30,7 +135,7 @@ pub(crate) fn rope_preview_control_uses_shared_view_and_reports_bad_links_withou
     let shared = Arc::new(Mutex::new(state));
     let app = AppWindow::new().unwrap();
     bind_view_controls(&app, shared.clone());
-    refresh_rope_preview(&app, &lock(&shared));
+    refresh_view_controls(&app, &lock(&shared));
     assert!(!app.get_rope_preview());
     app.set_rope_preview(true);
     app.invoke_options_changed();
@@ -45,7 +150,7 @@ pub(crate) fn rope_preview_control_uses_shared_view_and_reports_bad_links_withou
             ..view
         });
     }
-    refresh_rope_preview(&app, &lock(&shared));
+    refresh_view_controls(&app, &lock(&shared));
     assert!(!app.get_rope_preview());
     assert_eq!(app.get_rope_preview_status(), "Rope preview is off");
     assert_eq!(lock(&shared).document().vmf(), &source);

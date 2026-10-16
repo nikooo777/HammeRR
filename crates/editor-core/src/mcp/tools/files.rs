@@ -67,6 +67,7 @@ impl EditorServer {
             "fog_preview": session.fog_preview_state(),
             "rope_preview": session.rope_preview_state(),
             "spatial": session.spatial(),
+            "grid_defaults": session.grid_preferences_state(),
             "block_preview": bounds_json(session.block_preview()),
             "clipping": clip_state(&session),
             "transform": transform_state(&session),

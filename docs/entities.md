@@ -22,6 +22,20 @@ Reloading definitions preserves existing entity values, custom keys, connections
 
 Limits: FGD inheritance and extension targets match declaration names exactly, including case (`Light` and `light` can be separate classes). An extension whose target is absent is ignored and never creates a class. Extension descriptions are ignored. `base(...)` on `@ExtendClass` is unsupported and reports an error; extend an existing base class or define inheritance on the target class instead. Include and inheritance cycles or excessive nesting reject the load. Other extended directives and helper rendering are not implied by loading their metadata.
 
+## Inspect FGD map size
+
+An FGD's `@mapsize(min, max)` records its authored map-size preference. The loaded catalog retains the authored integer pair, the sorted minimum and maximum, and the declaration's source file and line.
+
+1. Click **Entity…**, then **Load FGD…** and choose the root FGD.
+2. Read **Loaded FGD catalog** below the search field. **FGD map size** shows the bounds, authored values and source location. **No effective @mapsize declaration** means no non-equal pair was loaded.
+3. Reload the root FGD after changing the declaration or an included file.
+
+![Loaded catalog with authored map-size bounds and source location](images/entity-catalog-mapsize.png)
+
+Declarations follow include order. The last non-equal pair wins; equal endpoints leave the previous preference intact. Reversed endpoints are sorted for the displayed bounds. Repeated includes retain the catalog's existing rule: each source file is loaded once. Invalid syntax or values outside signed 32-bit integers reject the load and retain the previous catalog.
+
+This metadata is informational. It does not change editor placement limits, compiler limits, engine limits or existing map coordinates. The agent can read the same report with `get_entity_definitions`; loading and searching definitions also return the metadata.
+
 ## Place on a picked surface
 
 Preview a new point entity against a brush face, terrain sheet or supported model mesh before adding it to the map.

@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, io};
 
+use glam::{DQuat, DVec3};
 use source_formats::{
     gamefs::GameFs,
     mdl::{MAX_MODEL_BYTES, ModelHeader},
@@ -7,11 +8,35 @@ use source_formats::{
     vmt::{Material, material_path},
 };
 
-use crate::Control;
+use crate::{Control, map::MAX_COMPILE_COORD, static_props};
 
 const MAX_READ_BYTES: usize = 512 * 1024 * 1024;
 const MAX_MATERIAL_BYTES: usize = 1024 * 1024;
 const MAX_MATERIAL_LOOKUPS: usize = 65_536;
+
+#[derive(Clone, Copy)]
+pub(super) struct ModelBounds {
+    header: ModelHeader,
+    mesh: [[f32; 3]; 2],
+}
+
+impl ModelBounds {
+    pub(super) fn check_transform(&self, origin: DVec3, rotation: DQuat) -> Result<(), String> {
+        static_props::bounds(self.header, origin, rotation)?;
+        for corner in 0..8 {
+            let local = DVec3::from_array(std::array::from_fn(|axis| {
+                f64::from(self.mesh[usize::from(corner & (1 << axis) != 0)][axis])
+            }));
+            let point = origin + rotation * local;
+            if !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD {
+                return Err(format!(
+                    "Transformed detail model mesh bounds must fit ±{MAX_COMPILE_COORD} units"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Default)]
 pub(super) struct ModelValidator {
@@ -37,12 +62,12 @@ impl ModelValidator {
         Ok(data)
     }
 
-    pub(super) fn header(
+    pub(super) fn bounds(
         &mut self,
         fs: &GameFs,
         path: &str,
         control: &Control,
-    ) -> Result<ModelHeader, String> {
+    ) -> Result<ModelBounds, String> {
         let data = self
             .read(fs, path, MAX_MODEL_BYTES, control)
             .map_err(|error| format!("Detail model {path}: {error}"))?
@@ -120,6 +145,9 @@ impl ModelValidator {
                 return Err(format!("Detail model {path} material {name} was not found"));
             }
         }
-        Ok(header)
+        Ok(ModelBounds {
+            header,
+            mesh: model.bounds,
+        })
     }
 }

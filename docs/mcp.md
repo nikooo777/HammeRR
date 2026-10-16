@@ -100,6 +100,9 @@ To build the map, set the build options once, then compile:
 | --- | --- |
 | Files and inspection | `new_map`, `open_map`, `save_map`, `get_map_info`, `get_map_statistics`, `find_objects`, `get_objects` |
 | Recent maps | `get_recent_maps`, `open_recent_map`, `remove_recent_map`, `clear_recent_maps` |
+| Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
+| Entity definitions | `get_entity_definitions`, `load_entity_definitions`, `search_entity_classes`, `get_entity_class` |
+| Material source | `get_material_source` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
@@ -326,6 +329,41 @@ same override when picking a rendered image. Spans belong to their source
 entity and obey depth, visibility and working-region filtering. This preview
 does not simulate runtime physics or render rope materials. See [Ropes](ropes.md).
 
+### Grid defaults and selection outlines
+
+`get_grid_defaults` reports the current and saved grid triple, factory defaults,
+storage path, readiness/errors and an action snapshot. `set_grid_defaults` takes
+`snapshot` and `action`: `save` persists the current grid, `apply` loads saved
+values into this session, `reload` rereads storage, and `reset` explicitly saves
+factory values without applying them. Only grid size, snapping and visibility
+persist; ordinary `set_spatial_settings` calls stay temporary. Stale storage or
+write failures preserve the current grid and map/history. A completed write with
+failed readback reports `write_committed: true` and an explicit error; inspect
+readiness before continuing. See [Grid defaults](basics.md#grid-and-snapping).
+
+`set_view` and `render_view` accept `selection_outlines` (default true).
+`get_map_info.view` and render metadata report the effective value. Disabling
+outlines retains selection tints, geometry, picking, diagnostic lines and tool
+guides. Temporary render overrides do not change the shared view. See
+[Selection outlines](basics.md#selection-outlines).
+
+### Material source and FGD preferences
+
+`get_material_source {"material":"path/to/material"}` returns raw VMT text,
+the winning directory/VPK origin, bounded Patch includes and resolved shader/
+texture declarations. Read/parse/decode failures appear in `error`; invalid input
+paths reject. The report exposes limits and truncation flags. It never substitutes
+a lower-priority source behind a broken winner and changes no cached texture,
+map, selection, preview or history. See [Material source](material-source.md).
+
+`get_entity_definitions` reports loaded classes, sources, load error and optional
+`map_size: {authored:[first,second], bounds:[minimum,maximum], source, line}`.
+Load/search responses and `get_map_info.definitions` include the same metadata.
+FGD `@mapsize` is informational: reversed endpoints sort, equal endpoints leave
+the previous preference, and the last effective declaration wins in existing
+include order. An absent declaration reports null; coordinate limits do not
+change. See [Entity definitions](entities.md).
+
 ### Generated LDR reflections
 
 `set_compile_settings {"lighting":"direct_ldr","generate_reflections":true}` enables the same **Generate LDR reflections** control as **Build settings…**. Enabling the setting starts no process. Generation with Fullbright or Direct LDR + HDR rejects atomically; turn generation off before choosing either mode, or supply both changes in one update.
@@ -347,7 +385,7 @@ Use `create_entity` with `classname: "prop_detail"` (or imported alias `detail_p
 
 These explicit models are non-colliding and use unbaked white lighting. Only default skin/body, scale 1, normal orientation and default rendering/fade settings are supported; unsupported overrides, named lighting origins, connections, missing assets and solid-leaf origins reject before replacing previous output. Explicit detail entities require full-map builds. Sprite/shape authoring, baked detail lighting and styles remain unavailable. See [Model detail props](model-detail-props.md).
 
-For [material-driven model scattering](material-detail-scattering.md), assign a mounted VMT declaring `%detailtype` through `edit_faces` or the material tools, and set world `detailvbsp` through the shared property draft. Compilation samples exposed planar world/detail faces deterministically, including final region-clipped surfaces, and combines generated and explicit records in the same statistics. The selected highest-alpha dictionary group may be empty; it emits no models and never falls back to another group. Invalid dictionaries, unsupported sprite/shape/terrain/runtime-model forms, missing or vertex-lit assets and exceeded budgets reject before publication. No additional tool or setting is required.
+For [material-driven model scattering](material-detail-scattering.md), assign a mounted VMT declaring `%detailtype` through `edit_faces` or the material tools, and set world `detailvbsp` through the shared property draft. Compilation samples exposed world/detail polygons and parallelogram terrain patches deterministically, including clipped flat regions and wholly retained terrain. Final terrain LOD triangles supply positions, geometric normals and barycentric alpha; adjacent alpha groups are selected probabilistically. Flat faces use the highest group. Selected empty groups emit nothing without substitution; unsupported unused groups do not reject a different selection. Generated and explicit records share statistics, bounds and resource caps. Invalid dictionaries, selected sprite/shape forms, skewed terrain bases, crossing terrain regions, runtime models, missing or vertex-lit assets and exceeded budgets reject before publication. No additional tool or setting is required.
 
 ### HDR build channels
 

@@ -145,6 +145,55 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Inspect a prefab's isolated flat-geometry thumbnail without initializing graphics. Returns actual geometry counts, bounds, point-helper/model counts, cache state and resource limits, or an explicit source/model/instance/geometry error. Uses the same detached Session preparation as Prefabs… → Render thumbnail. Textures and sky assets are not loaded; authored hidden objects are included. Missing/invalid model geometry and func_instance reject instead of silently omitting content. Revalidates exact bounded source bytes, including on cache hits. No map, selection, clipboard, camera, draft or history changes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_prefab_thumbnail(
+        &self,
+        Parameters(args): Parameters<InspectPrefabThumbnailArgs>,
+    ) -> ToolResult {
+        run(|| Ok(self.session().prefab_thumbnail_report(&args.name)))
+    }
+
+    #[tool(
+        description = "Render one library prefab as a 320×240 PNG with the same shared Session operation, isolated scene, framing and lazy recoverable renderer as Prefabs… → Render thumbnail / Refresh thumbnail. Flat shaded real brush, terrain and model geometry plus normal editor point helpers; textures/sky are omitted and authored hidden objects are included. inspect_prefab_thumbnail provides CPU-only diagnostics. Unsupported instances, unavailable models, invalid geometry and source changes return explicit failures without an image. At most eight images are cached; each retrieval checks exact source bytes and content/FGD epochs. refresh:true regenerates pixels. No map, clipboard, selection, camera, draft or history changes.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn render_prefab_thumbnail(
+        &self,
+        Parameters(args): Parameters<RenderPrefabThumbnailArgs>,
+    ) -> ToolResult {
+        let thumbnail = match self
+            .session()
+            .prefab_thumbnail(&args.name, args.refresh.unwrap_or(false))
+        {
+            Ok(thumbnail) => thumbnail,
+            Err(error) => return fail(error),
+        };
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(
+            Cursor::new(&mut bytes),
+            thumbnail.image.width,
+            thumbnail.image.height,
+        );
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let result = encoder
+            .write_header()
+            .and_then(|mut writer| writer.write_image_data(&thumbnail.image.pixels));
+        if let Err(error) = result {
+            return fail(format!("Could not encode prefab thumbnail: {error}"));
+        }
+        Ok(CallToolResult::success(vec![
+            ContentBlock::text(thumbnail.report.to_string()),
+            ContentBlock::image(
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                "image/png",
+            ),
+        ]))
+    }
+
+    #[tool(
         description = "Save committed whole objects as a new named portable VMF prefab with get_prefabs.snapshot. ids defaults to current object selection. Names use1–80 UTF-8 bytes of letters/numbers/spaces/dashes/underscores. Captures the checked clipboard scope, groups/layers, notes and supported references; no map/history/clipboard change. Existing files are never overwritten. UI: Prefabs… → Save selection… → Save prefab."
     )]
     pub(in crate::mcp) fn save_prefab(
@@ -207,3 +256,6 @@ impl EditorServer {
         })
     }
 }
+
+#[cfg(test)]
+mod thumbnail_tests;

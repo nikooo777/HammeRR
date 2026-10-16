@@ -372,6 +372,20 @@ pub struct PrefabsArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct InspectPrefabThumbnailArgs {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenderPrefabThumbnailArgs {
+    pub name: String,
+    /// Rebuild pixels even when the exact source and content settings are cached.
+    pub refresh: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SavePrefabArgs {
     pub name: String,
     pub snapshot: String,

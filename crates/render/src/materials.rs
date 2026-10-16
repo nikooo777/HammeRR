@@ -166,6 +166,19 @@ impl ReloadReport {
 }
 
 impl MaterialLibrary {
+    pub fn flat(names: impl IntoIterator<Item = String>) -> Self {
+        let mut library = Self::default();
+        for name in names {
+            let key = name.to_ascii_lowercase();
+            if !library.by_name.contains_key(&key) {
+                let id = library.materials.len();
+                library.materials.push(MaterialInfo::untextured(&key));
+                library.by_name.insert(key, id);
+            }
+        }
+        library
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }

@@ -59,6 +59,34 @@ fn limits() -> Value {
     json!({"source_bytes":MAX_SOURCE_BYTES,"brushes":MAX_BRUSHES,"sides":MAX_SIDES,"sides_per_brush":MAX_BRUSH_SIDES,"displacement_vertices":MAX_DISPLACEMENT_VERTICES,"model_paths":MAX_MODEL_PATHS,"model_instances":MAX_MODEL_INSTANCES,"vertices":MAX_VERTICES,"indices":MAX_INDICES,"materials":MAX_MATERIALS,"cached_images":MAX_CACHE})
 }
 
+fn geometry_bounds(mesh: &SceneMesh) -> Result<(Vec3, Vec3), String> {
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    for batch in mesh.batches.iter().filter(|batch| !batch.rope) {
+        let start = batch.first_index as usize;
+        let end = start
+            .checked_add(batch.index_count as usize)
+            .ok_or("Prefab thumbnail batch size is invalid")?;
+        let indices = mesh
+            .indices
+            .get(start..end)
+            .ok_or("Prefab thumbnail batch indices are invalid")?;
+        for index in indices {
+            let vertex = mesh
+                .vertices
+                .get(*index as usize)
+                .ok_or("Prefab thumbnail vertex index is invalid")?;
+            let point = Vec3::from_array(vertex.position);
+            if !point.is_finite() {
+                return Err("Prefab thumbnail contains nonfinite rendered geometry".into());
+            }
+            bounds = Some(bounds.map_or((point, point), |(mins, maxs)| {
+                (mins.min(point), maxs.max(point))
+            }));
+        }
+    }
+    bounds.ok_or_else(|| "Prefab thumbnail contains no bounded visible geometry".into())
+}
+
 impl Session {
     fn thumbnail_source(&self, name: &str) -> Result<Source, String> {
         prefabs::name(name)?;
@@ -250,17 +278,15 @@ impl Session {
         if mesh.vertices.len() > MAX_VERTICES || mesh.indices.len() > MAX_INDICES {
             return Err("Prefab thumbnail exceeds 200000 vertices or 600000 indices".into());
         }
-        if mesh.vertices.is_empty() || !mesh.mins.is_finite() || !mesh.maxs.is_finite() {
-            return Err("Prefab thumbnail contains no bounded visible geometry".into());
-        }
+        let (mins, maxs) = geometry_bounds(&mesh)?;
         let camera = Camera::framing(
-            mesh.mins,
-            mesh.maxs,
+            mins,
+            maxs,
             Vec3::new(1.0, 1.0, -0.8),
             45.0,
             WIDTH as f32 / HEIGHT as f32,
         );
-        let report = json!({"name":source.entry.name,"width":WIDTH,"height":HEIGHT,"style":"flat_geometry","textures_loaded":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities - mesh.stats.model_entities,"bounds":[mesh.mins.to_array(),mesh.maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
+        let report = json!({"name":source.entry.name,"width":WIDTH,"height":HEIGHT,"style":"flat_geometry","textures_loaded":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities - mesh.stats.model_entities,"bounds":[mins.to_array(),maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
         Ok(Prepared {
             mesh,
             materials,

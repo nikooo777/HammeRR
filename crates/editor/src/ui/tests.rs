@@ -1843,7 +1843,10 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     assert!(!window.get_ready());
     window.set_extrusion_direction(1);
     window.invoke_edited();
+    assert!(!window.get_ready());
+    window.invoke_preview_edit();
     assert!(window.get_ready());
+    assert_eq!(lock(&shared).render_document().vmf(), &inward);
     window.invoke_apply();
     assert!(window.get_message().contains("convex fragments"));
     assert_eq!(lock(&shared).document().vmf(), &inward);

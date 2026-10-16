@@ -490,6 +490,50 @@ bounds, picking, framing, placement, selection, working regions, source,
 history or camera. No new tool or setting is added; these are editor links,
 without runtime beam, parenting, attachment or I/O simulation.
 
+`get_entity_inspector.helpers.source_projector` reports the independent Source
+projector guide for `env_projectedtexture` with a loaded FGD class; other classes
+or missing definitions return null. Existing `set_entity_properties`,
+`set_entity_color` and `render_view` use the same Session operations as the
+property panel and viewport. No new tool or setting is added. The guide uses
+authored Source Pitch Yaw Roll: zero angles face +X, right is −Y, up is +Z and
+positive pitch points down. Horizontal and vertical FOV are equal; near/far
+distances measure along the forward axis. Displayed transform previews update
+the same eight corners and twelve edges.
+
+The report contains `orientation_policy`, `inputs`, `fov_degrees`, `near_z`,
+`far_z`, `color`, optional fourth-component `intensity`, `origin`, `angles`,
+`corners`, potential `guide_bounds`, intrinsic `state`, `error`, `displayed` and
+`suppression_reason`. Each input reports `property`, `property_type`, `raw`,
+`raw_truncated`, `value_source` (`authored`, `fgd_default` or `missing`) and
+`error`. Inputs cover `origin`, `angles`, `lightfov`, `nearz`, `farz`,
+`lightcolor`, `target`, `parentname` and `cameraspace`. Origin must be authored;
+other values use authored fields before compatible declared FGD defaults.
+The human summary identifies defaults and warns that engine defaults may
+differ. RGB colors the guide; intensity is reported without opacity or exposure
+conversion, and RGB edits preserve an omitted fourth component.
+
+`helper_pitch_scale_evaluated` remains false. `helper_pitch_scales` retains up to
+sixteen FGD `frustum()` declarations, with `argument_count`, `declaration_state`
+(`declared_unevaluated` for five arguments, otherwise `unsupported_helper_form`),
+the fifth argument's `raw`/`raw_truncated`, and `evaluated:false`.
+`omitted_helper_declarations` counts additional declarations. Changing this
+unevaluated argument changes inspection metadata without changing Source guide
+geometry. This feature does not evaluate generic FGD frusta.
+
+`helpers.projector_limits` describes the admission and display caps: at most
+128 displayed projectors in entity-ID order, 256-byte values and helper
+argument previews, 0 < FOV < 180 and 0 < nearz < farz ≤ 65536. All eight corners
+must remain finite and pairwise distinct at native precision, with nonzero
+near/far plane areas and coordinate offsets within ±65536 of the origin.
+Malformed, duplicate, missing or oversized values are not clamped or replaced.
+Nonempty `target`/`parentname`, nonzero `cameraspace` and legacy `angle` are
+unsupported. Display requires a selected visible point source inside the
+working region; loaded models, model helpers and brush sources retain
+precedence. Intrinsic state remains separate from suppression. Guide extents
+never change object bounds, picking, selection, placement, framing or working
+regions, and read/render operations preserve source, history and camera. The
+guide does not preview projected textures, lighting, shadows or runtime state.
+
 ### Portable sky assets
 
 `set_compile_settings {"pack_sky_assets":true}` enables the same **Pack sky assets** checkbox as **Build settings…** through the shared Session operation. It is default-off, independent of baked lighting and usable with `fullbright`; enabling starts no process or asset lookup. `get_compile_settings` returns the boolean and `sky_packing_description`. Active jobs freeze settings, and `get_compile_status.job.settings.pack_sky_assets` retains the captured value. Setting updates preserve VMF, history, camera, selection and drafts. Older recipes/recent-map records default this field to false; built-in recipes keep it disabled.

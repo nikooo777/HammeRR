@@ -790,6 +790,15 @@ python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-h
 
 `--runtime` requires the supported installed engine, running Steam, Cage, grim and the private launch prerequisites above. Each native case uses a fresh private process with `-insecure`, post-map `sv_lan 1`, verified hardware channel and no desktop input/focus change. Before loading the exact published or Run-staged BSP, an independent mounted-source inspection must show all six original custom materials absent. Native image checks compare all six face hues and quadrant orientation for LDR and HDR. `--reflections` additionally captures paired cubemaps and checks both manifests and private Run rebasing. Use `--steam-root` for a nondefault checked Steam root; `--reuse-fixture /path/to/fixture.json` repeats native views from hash-checked saved BSPs without repeating authoring/capture. Inspect `results.json`, `fixture.json` and per-view `runtime.json`; archive consistency alone does not establish native sky display.
 
+The private observer is created by `mapspawn` with `SpawnEntityFromTable` and
+scheduled with `AddThinkToEnt` from one verified `player_spawn` callback with a
+positive userid. The validator checks creation, listener registration, callback
+and scheduling markers in order before the first view; `runtime_observer`
+records these markers, `callback_userids` and their verification fields. The
+post-map configuration applies launch controls; it does not schedule the
+observer. Observer scripts stay outside the BSP, whose published or Run-staged
+bytes are loaded unchanged.
+
 Repeat `--native-case` to select only named native views: `published-ldr`, `published-dual-ldr`, `published-dual-hdr`, `run-dual-hdr` or `run-reflections-hdr`. Omission requests all available views. Selection requires `--runtime`; `run-reflections-hdr` also requires `--reflections` and a fixture containing combined output. The targeted command above selects only that view, while authoring and required reflection capture still run unless `--reuse-fixture` supplies existing hash-checked output. `results.json` records `native_case_scope`, `requested_native_cases`, `executed_native_cases` and `passed_native_cases`; a selected-case result makes no claim about omitted views.
 
 ### Recent maps and build recipes
@@ -1329,6 +1338,32 @@ suppression, invalid atomic property batches and exact source/history/camera
 preservation. `--gameinfo` selects optional mounted content. Use a fresh output
 directory; the script requires a graphics adapter, writes `results.json` and
 paired PNG controls, and launches no game or desktop input.
+
+### Source projector guides
+
+```sh
+cargo test -p map-core --lib entity_helpers::projectors::tests
+cargo test -p editor-core --features mcp --lib fgd_helpers::projectors::tests
+cargo test -p editor --bin editor source_projector_panel_shares_orientation_diagnostics_and_four_component_color
+python3 -B scripts/validate_source_projector_guides.py --binary target/debug/hammerr-headless --output /tmp/hammerr-source-projector-guides-check
+```
+
+Pure and Session fixtures cover Source axes and axial near/far planes, labeled
+FGD defaults, independent RGB/intensity, invalid values without substitution,
+unsupported target/parent/camera-space branches, native corner precision,
+display budgets, visibility and model precedence. FGD `frustum()` pitch-scale
+metadata stays unevaluated and never changes this explicit guide's geometry.
+
+The private stdio fixture uses existing inspector, property, color and render
+calls, comparing actual PNG controls in Top, Front, Side and perspective views.
+It checks FGD-default reporting and reload, pitch-scale metadata-only changes,
+transform-preview cancellation, hidden/unselected/working-region suppression
+and unchanged picks, volume selection, framing, source bytes, Undo count and
+camera. It requires a graphics adapter, accepts optional `--gameinfo`, writes
+`results.json` and paired PNGs to a fresh output directory, and launches no game
+or desktop input. The software panel test reads the shared summary and
+four-component color, and writes `source-projector-guide-inspector.png` when
+`HAMMERR_UI_SNAPSHOTS` names an existing directory.
 
 ### Terrain detail scattering and displayed model bounds
 

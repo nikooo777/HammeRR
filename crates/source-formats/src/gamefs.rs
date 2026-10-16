@@ -190,7 +190,7 @@ fn find_case_insensitive_traced(
 /// Physical sources and lookup dependencies for one asset in the mounted search paths.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AssetSourcePaths {
-    /// Backing regular files and aliases, including higher-priority VPK indexes without this asset.
+    /// Backing files, lookup targets and aliases, including higher-priority VPK indexes.
     pub files: Vec<PathBuf>,
     pub lookup_directories: Vec<PathBuf>,
     pub lookup_symlinks: Vec<PathBuf>,
@@ -244,10 +244,21 @@ impl AssetSourcePaths {
                     };
                     self.symlinks(&target, depth + 1)?;
                 }
-                if existing(&current, current.canonicalize())?.is_none() {
+                let Some(canonical) = existing(&current, current.canonicalize())? else {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "Asset provenance encountered a dangling symlink",
+                    ));
+                };
+                let metadata = fs::metadata(&canonical)?;
+                if metadata.is_file() {
+                    self.files.push(canonical);
+                } else if metadata.is_dir() {
+                    self.lookup_directories.push(canonical);
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Asset provenance requires regular file or directory symlink targets",
                     ));
                 }
             }
@@ -783,6 +794,35 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("dangling symlink")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provenance_watches_non_file_symlink_targets_that_can_become_shadows() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        let target = first.join("target");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir(&second).unwrap();
+        fs::write(second.join("asset.txt"), b"fallback").unwrap();
+        symlink("target", first.join("asset.txt")).unwrap();
+        let game = provenance_game(
+            root.path(),
+            vec![Mount::Directory(first), Mount::Directory(second)],
+        );
+        let before = game.asset_source_paths("asset.txt").unwrap().unwrap();
+        assert!(before.lookup_directories.contains(&target));
+        assert_eq!(game.read("asset.txt").unwrap().unwrap(), b"fallback");
+        fs::remove_dir(&target).unwrap();
+        fs::write(&target, b"shadow").unwrap();
+        assert_eq!(game.read("asset.txt").unwrap().unwrap(), b"shadow");
+        assert_ne!(
+            before,
+            game.asset_source_paths("asset.txt").unwrap().unwrap()
         );
     }
 

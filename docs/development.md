@@ -520,6 +520,7 @@ systemd-run --user --scope -p MemoryMax=24G -p MemorySwapMax=0 \
 | `bump_lighting --runtime` | Shared material/face authoring, native base/directional map order, equal base samples, frozen jobs and exact builds; private flat/tilted normal textures check engine brightness and directional shading. |
 | `native_runtime` | Player spawn and teleport, baked red lightmaps, a physics crate with and without collision bodies. `--fluid` adds a pool and checks that the crate floats. |
 | `brush_runtime` | Sliding and rotating doors, a continuously rotating brush, trigger outputs, pivot-aware model lightmaps, exact shared builds, and unchanged geometry/collision. |
+| `rotating_removal_recovery --runtime` | Partial-angle door obstruction, complete authored brace removal, native absence, same movable crate protected by a damage filter, full reopening/closing, solid-rotor contact and a nonsolid control. Recovery after `Disable` remains unresolved. |
 | `physics_surfaces --runtime` | Shared face materials and rotated mixed-surface hulls, checked native material tables, exact foreground/background builds and unchanged source/history; paired ice/rubber contact on the same incline. |
 | `static_props --runtime` | Static prop collision settings. |
 | `terrain_corners --runtime` | Reciprocal native corner-only records, rotated start indices, mixed powers, exact shared builds, hidden omission and private native loading/contact. |
@@ -833,6 +834,34 @@ with -insecure and sv_lan 1. It checks three stationary samples in five phases,
 vertical contact through Open/Close and changed-speed SetPosition cycles, endpoint
 outputs and the grounded player. Use a fresh output directory; the probe uses no
 desktop input or focus changes.
+
+
+### Rotating contact after brace removal
+
+```sh
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-rotating-removal-check
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-rotating-removal-client --runtime
+```
+
+The default authors two rotating doors, movable crates protected by a damage
+filter, perpendicular restraints, solid/nonsolid rotating-brush controls and
+relay connections through MCP. It checks nine native models, exact
+foreground/background builds and preserved VMF, source, history, selection and
+camera. `--runtime` observes 48 seconds in
+the shared private Cage/read-only launch with `-default`, `-insecure`, pre-map
+and post-map `sv_lan 1`, configuration/Cloud preservation and process cleanup.
+Use a fresh output directory.
+
+The native check requires a partial-angle obstruction and automatic reversal,
+then an authored relay **Kill** of all four restraint entities. It records their
+actual absence, stable entity indices, unchanged prop health and native movement
+types before requiring the same crate to move and both doors to open fully and
+close. Endpoint settling follows native completion outputs. Solid-rotor motion
+must push its crate while the nonsolid control leaves its crate stable.
+`runtime/observations.json` retains state, bounds, events and motion even if an
+assertion fails. This validates recovery after permanent restraint removal;
+contact refresh after **Disable** and broader crushing/blocking behavior remain
+unresolved.
 
 
 ### Brush-model physics surfaces

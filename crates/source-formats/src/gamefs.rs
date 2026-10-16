@@ -114,16 +114,43 @@ fn existing<T>(path: &Path, result: io::Result<T>) -> io::Result<Option<T>> {
 /// Resolves `relative` under `root`, matching each component without regard
 /// to case when the exact path doesn't exist.
 fn find_case_insensitive(root: &Path, relative: &str) -> io::Result<Option<PathBuf>> {
+    find_case_insensitive_traced(root, relative, None)
+}
+
+fn find_case_insensitive_traced(
+    root: &Path,
+    relative: &str,
+    mut trace: Option<&mut AssetSourcePaths>,
+) -> io::Result<Option<PathBuf>> {
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.directory(root)?;
+    }
     let Some(boundary) = existing(root, root.canonicalize())? else {
         return Ok(None);
     };
     let exact = root.join(relative);
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.symlinks(&exact, 0)?;
+    }
     if let Some(canonical) = existing(&exact, exact.canonicalize())? {
+        if let Some(trace) = trace.as_deref_mut() {
+            let mut parent = root.to_path_buf();
+            for part in relative.split('/').filter(|part| !part.is_empty()) {
+                trace.directory(&parent)?;
+                parent.push(part);
+            }
+        }
         return Ok(canonical.starts_with(&boundary).then_some(exact));
     }
     let mut current = root.to_path_buf();
     for part in relative.split('/').filter(|part| !part.is_empty()) {
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.directory(&current)?;
+        }
         let exact = current.join(part);
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.symlinks(&exact, 0)?;
+        }
         current = if existing(&exact, fs::metadata(&exact))?.is_some() {
             exact
         } else {
@@ -147,6 +174,9 @@ fn find_case_insensitive(root: &Path, relative: &str) -> io::Result<Option<PathB
             };
             matched
         };
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.symlinks(&current, 0)?;
+        }
         let Some(canonical) = existing(&current, current.canonicalize())? else {
             return Ok(None);
         };
@@ -155,6 +185,86 @@ fn find_case_insensitive(root: &Path, relative: &str) -> io::Result<Option<PathB
         }
     }
     Ok(Some(current))
+}
+
+/// Physical sources and lookup dependencies for one asset in the mounted search paths.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AssetSourcePaths {
+    /// Backing regular files and aliases, including higher-priority VPK indexes without this asset.
+    pub files: Vec<PathBuf>,
+    pub lookup_directories: Vec<PathBuf>,
+    pub lookup_symlinks: Vec<PathBuf>,
+}
+
+impl AssetSourcePaths {
+    fn file(&mut self, path: &Path) -> io::Result<()> {
+        self.symlinks(path, 0)?;
+        if let Some(parent) = path.parent() {
+            self.directory(parent)?;
+        }
+        self.files.push(std::path::absolute(path)?);
+        self.files.push(path.canonicalize()?);
+        Ok(())
+    }
+
+    fn directory(&mut self, path: &Path) -> io::Result<()> {
+        self.symlinks(path, 0)?;
+        if existing(path, fs::metadata(path))?.is_some_and(|metadata| metadata.is_dir()) {
+            self.lookup_directories.push(std::path::absolute(path)?);
+            self.lookup_directories.push(path.canonicalize()?);
+        }
+        Ok(())
+    }
+
+    fn symlinks(&mut self, path: &Path, depth: usize) -> io::Result<()> {
+        if depth > 40 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Asset provenance exceeds the symlink depth limit",
+            ));
+        }
+        let mut current = PathBuf::new();
+        for component in std::path::absolute(path)?.components() {
+            current.push(component);
+            let Some(metadata) = existing(&current, fs::symlink_metadata(&current))? else {
+                if let Some(parent) = current.parent() {
+                    self.lookup_directories.push(parent.to_path_buf());
+                    self.lookup_directories.push(parent.canonicalize()?);
+                }
+                return Ok(());
+            };
+            if metadata.file_type().is_symlink() {
+                if !self.lookup_symlinks.contains(&current) {
+                    self.lookup_symlinks.push(current.clone());
+                    let target = fs::read_link(&current)?;
+                    let target = if target.is_absolute() {
+                        target
+                    } else {
+                        current.parent().unwrap_or(Path::new("/")).join(target)
+                    };
+                    self.symlinks(&target, depth + 1)?;
+                }
+                if existing(&current, current.canonicalize())?.is_none() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Asset provenance encountered a dangling symlink",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) {
+        for paths in [
+            &mut self.files,
+            &mut self.lookup_directories,
+            &mut self.lookup_symlinks,
+        ] {
+            paths.sort();
+            paths.dedup();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -365,6 +475,51 @@ impl GameFs {
         self.read_from_limited(path, Some("game"), maximum)
     }
 
+    /// Resolve the same `game` asset as [`Self::read`], including higher-priority lookup dependencies.
+    /// Changed VPK indexes and dangling lookup symlinks require a content reload.
+    pub fn asset_source_paths(&self, path: &str) -> io::Result<Option<AssetSourcePaths>> {
+        let path = asset_relative(path)?;
+        if path.is_empty() {
+            return Ok(None);
+        }
+        let mut sources = AssetSourcePaths::default();
+        for mounted in self
+            .mounts
+            .iter()
+            .filter(|mount| mount.ids.iter().any(|id| id == "game"))
+        {
+            let found = match &mounted.mount {
+                Mount::Pak(pak) => {
+                    sources.file(pak.path())?;
+                    if let Some(paths) = pak.asset_source_paths(&path)? {
+                        for file in paths {
+                            sources.file(&file)?;
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Mount::Directory(root) => {
+                    if let Some(file) =
+                        find_case_insensitive_traced(root, &path, Some(&mut sources))?
+                        && fs::metadata(&file)?.is_file()
+                    {
+                        sources.file(&file)?;
+                        true
+                    } else {
+                        false
+                    }
+                }
+            };
+            if found {
+                sources.finish();
+                return Ok(Some(sources));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn read_from_limited(
         &self,
         path: &str,
@@ -477,6 +632,159 @@ fn find_block<'a>(nodes: &'a [Node], path: &[&str]) -> Option<&'a [Node]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn provenance_game(root: &Path, mounts: Vec<Mount>) -> GameFs {
+        GameFs {
+            game_dir: root.into(),
+            base_dir: root.into(),
+            mounts: mounts
+                .into_iter()
+                .map(|mount| MountedPath {
+                    ids: vec!["game".into()],
+                    mount,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn provenance_watches_case_lookup_parents_before_shadow_files_appear() {
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        fs::create_dir_all(first.join("Materials")).unwrap();
+        fs::create_dir_all(second.join("Materials/Nested")).unwrap();
+        let asset = second.join("Materials/Nested/ASSET.vmt");
+        fs::write(&asset, b"second").unwrap();
+        let game = provenance_game(
+            root.path(),
+            vec![
+                Mount::Directory(first.clone()),
+                Mount::Directory(second.clone()),
+            ],
+        );
+        let before = game
+            .asset_source_paths("MATERIALS/nested/asset.VMT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            game.read("materials/nested/asset.vmt").unwrap().unwrap(),
+            b"second"
+        );
+        assert!(before.files.contains(&asset));
+        assert!(before.files.contains(&asset.canonicalize().unwrap()));
+        for directory in [
+            &first,
+            &first.join("Materials"),
+            &second,
+            &second.join("Materials"),
+            &second.join("Materials/Nested"),
+        ] {
+            assert!(
+                before.lookup_directories.contains(directory),
+                "{}",
+                directory.display()
+            );
+        }
+        assert!(before.lookup_symlinks.is_empty());
+        fs::create_dir(first.join("Materials/Nested")).unwrap();
+        let shadow = first.join("Materials/Nested/asset.vmt");
+        fs::write(&shadow, b"first").unwrap();
+        let after = game
+            .asset_source_paths("materials/nested/asset.vmt")
+            .unwrap()
+            .unwrap();
+        assert!(after.files.contains(&shadow));
+        assert!(after.files.contains(&shadow.canonicalize().unwrap()));
+        assert_eq!(
+            game.read("materials/nested/asset.vmt").unwrap().unwrap(),
+            b"first"
+        );
+        assert_ne!(before, after);
+        assert!(game.asset_source_paths("../escape").is_err());
+    }
+
+    #[test]
+    fn provenance_includes_higher_priority_vpk_indexes_with_no_matching_entry() {
+        let root = tempfile::tempdir().unwrap();
+        let index = root.path().join("empty_dir.vpk");
+        let mut bytes = 0x55aa_1234u32.to_le_bytes().to_vec();
+        bytes.extend(1u32.to_le_bytes());
+        bytes.extend(1u32.to_le_bytes());
+        bytes.push(0);
+        fs::write(&index, bytes).unwrap();
+        let directory = root.path().join("directory");
+        fs::create_dir(&directory).unwrap();
+        let asset = directory.join("asset.txt");
+        fs::write(&asset, b"loose").unwrap();
+        let game = provenance_game(
+            root.path(),
+            vec![
+                Mount::Pak(Vpk::open(&index).unwrap()),
+                Mount::Directory(directory),
+            ],
+        );
+        let sources = game.asset_source_paths("asset.txt").unwrap().unwrap();
+        assert!(sources.files.contains(&index));
+        assert!(sources.files.contains(&asset));
+        fs::write(&index, b"replaced index").unwrap();
+        assert!(
+            game.asset_source_paths("asset.txt")
+                .unwrap_err()
+                .to_string()
+                .contains("reload mounted content")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provenance_tracks_case_paths_mount_links_and_internal_link_retargets() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("actual");
+        for directory in ["one", "two"] {
+            fs::create_dir_all(real.join(directory)).unwrap();
+            fs::write(real.join(directory).join("payload.bin"), directory).unwrap();
+            symlink("payload.bin", real.join(directory).join("ASSET.vmt")).unwrap();
+        }
+        let alias = root.path().join("linked");
+        symlink("actual", &alias).unwrap();
+        symlink("one", real.join("Materials")).unwrap();
+        let game = provenance_game(root.path(), vec![Mount::Directory(alias.clone())]);
+        let before = game
+            .asset_source_paths("materials/asset.vmt")
+            .unwrap()
+            .unwrap();
+        assert!(before.files.contains(&alias.join("Materials/ASSET.vmt")));
+        assert!(before.files.contains(&real.join("one/payload.bin")));
+        assert!(
+            before
+                .lookup_symlinks
+                .contains(&alias.join("Materials/ASSET.vmt"))
+        );
+        assert!(before.lookup_symlinks.contains(&alias));
+        assert!(before.lookup_symlinks.contains(&alias.join("Materials")));
+        assert!(before.lookup_directories.contains(&real.join("one")));
+        assert_eq!(game.read("materials/asset.vmt").unwrap().unwrap(), b"one");
+        fs::remove_file(real.join("Materials")).unwrap();
+        symlink("two", real.join("Materials")).unwrap();
+        let after = game
+            .asset_source_paths("materials/asset.vmt")
+            .unwrap()
+            .unwrap();
+        assert!(after.lookup_directories.contains(&real.join("two")));
+        assert_ne!(before, after);
+        assert_eq!(game.read("materials/asset.vmt").unwrap().unwrap(), b"two");
+        fs::remove_file(real.join("Materials")).unwrap();
+        symlink("missing", real.join("Materials")).unwrap();
+        assert!(
+            game.asset_source_paths("materials/asset.vmt")
+                .unwrap_err()
+                .to_string()
+                .contains("dangling symlink")
+        );
+    }
 
     #[test]
     fn filename_gameinfo_resolves_content_from_its_directory() {

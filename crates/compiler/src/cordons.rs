@@ -16,7 +16,7 @@ const MAX_SIDES: usize = 65_536;
 const MAX_SIDES_PER_BRUSH: usize = 128;
 const SHELL_MATERIAL: &str = "tools/toolsblack";
 const BOUNDARY_LIGHTMAP_SCALE: u32 = 256;
-const UNSUPPORTED: &[&str] = &["func_instance", "func_viscluster", "prop_detail_sprite"];
+const UNSUPPORTED: &[&str] = &["func_instance", "func_viscluster"];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RegionSummary {
@@ -233,7 +233,7 @@ pub(super) fn prepare<'a>(
             continue;
         }
         let point = origin(entity)?;
-        if ["prop_detail", "detail_prop"]
+        if ["prop_detail", "detail_prop", "prop_detail_sprite"]
             .iter()
             .any(|name| classname.eq_ignore_ascii_case(name))
         {

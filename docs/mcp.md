@@ -391,7 +391,7 @@ Explicit `prop_detail`/`detail_prop` models may set `lightingorigin` through exi
 
 Use existing `create_entity` and `set_entity_properties` calls with `classname: "prop_detail_sprite"`, an `origin`, and required string properties `position_ul`, `position_lr`, `tex_ul`, `tex_size` and `tex_total_size`. For example, `"-20 45"`, `"20 0"`, `"0 0"`, `"128 128"` and `"512"` respectively make a 40-by-45-unit card from the first logical 128-by-128 atlas rectangle. `position_ul`/`position_lr` are local world-unit corners; `tex_ul`/`tex_size` are logical atlas coordinates and `tex_total_size` supplies the positive scalar atlas size with a half-texel inset. The rectangle must fit that atlas and span at least one logical texel per axis. All fields require finite values.
 
-`detailOrientation` accepts integers 0 (default fixed), 1 (full billboard) or 2 (vertical billboard). `angles` uses the existing Source pitch/yaw/roll path. Native scale is one, and sprites share world `detailmaterial` and the existing checked atlas. No model asset is needed. Origins and complete card bounds must fit ±16384 units; origins must resolve to open visible leaves. Lit sampling also needs an open visible receiver. Named lighting-origin overrides, tint, I/O, parenting, scripts, collision, random scale, procedural shapes, sway and nondefault rendering/fading are unsupported. Explicit sprites require full-map builds; active compile regions reject. Hidden sources are omitted.
+`detailOrientation` accepts integers 0 (default fixed), 1 (full billboard) or 2 (vertical billboard). `angles` uses the existing Source pitch/yaw/roll path. Native scale is one, and sprites share world `detailmaterial` and the existing checked atlas. No model asset is needed. Origins and complete card bounds must fit ±16384 units; origins must resolve to open visible leaves. Lit sampling also needs an open visible receiver. Named lighting-origin overrides, tint, I/O, parenting, scripts, collision, random scale, procedural shapes, sway and nondefault rendering/fading are unsupported. Compile regions select visible sprites by inclusive authored origin, defaulting to world zero when omitted. Outside and hidden sprites are omitted before card/atlas validation; visible malformed or out-of-range origins still reject. Included cards keep their geometry and pass normal bounds, open-leaf and lighting checks, even when they cross the box. A selected boundary point is never moved inward and can fail the normal open-leaf check.
 
 The shared compiler used by `compile_map`, `start_compile` and `run_map` removes these source entities from runtime output, adds native detail records and reports the existing `detail_props` and `detail_prop_sprites` statistics. Bounds, instance/dictionary/asset budgets, lighting modes and style extras are shared with generated sprites. The human workflow uses the custom-class field in **Entity…**, **Place entity** and **Advanced properties → Property key / Value**, with no new tool or setting. See [Explicit detail sprites](detail-sprites.md).
 
@@ -931,10 +931,11 @@ invalid cage geometry returns `suggested_bounds.error`.
 One finite axis-aligned box is supported, at least 16 units per axis and within
 ±16,368. Intersecting world/detail brushes and included brush models stay whole;
 point origins and resolved model pivots determine entity inclusion. Explicit
-`prop_detail`/`detail_prop` models use inclusive authored origins, defaulting to
+`prop_detail`/`detail_prop` models and `prop_detail_sprite` cards use inclusive authored origins, defaulting to
 zero when absent. Outside and hidden models are omitted; retained records pass
 the normal asset, transform, Source-bounds, open-leaf and lighting checks without
 clipping or moving them inward. Visible invalid origins reject before selection.
+Outside and hidden sprites are omitted before per-card and atlas validation.
 References remain unchanged. Fully contained structural world water retains the normal
 native water/physics path. World/detail terrain needs its complete cage and grid
 contained; wholly disjoint combined bounds are omitted. Areaportals/windows and

@@ -51,9 +51,16 @@ bounds must fit within ±16384 units; origins must resolve to open visible BSP
 leaves. Fixed cards use rotated corners; full billboards use a conservative
 sphere. Hidden source entities are omitted. No model asset is required.
 
-Explicit sprites require full-map builds. Disable an active [compile
-region](compile-regions.md#return-to-full-map-builds) before building. Named
-lighting origins, authored tint, entity I/O, parenting, scripts, collision and
+[Compile regions](compile-regions.md) select explicit sprites by their authored
+origin, including points exactly on the box. An omitted origin uses world zero.
+Outside and hidden sprites are omitted before card or atlas validation.
+Visible malformed or out-of-range origins still
+reject before selection. Retained sprites keep their complete geometry, which
+may extend beyond the box, and pass the normal atlas, bounds, open-leaf and
+lighting checks. A selected boundary point may fail the open-leaf check; the
+compiler does not move it inward.
+
+Named lighting origins, authored tint, entity I/O, parenting, scripts, collision and
 nondefault render/fade settings are unsupported. The editor shows the entity
 helper; it does not preview the compiled atlas card.
 

@@ -1140,6 +1140,7 @@ CS:S validators, including `-insecure`, `-default` and pre/post-map `sv_lan 1`.
 ```sh
 cargo test -p compiler --test detail_sprites explicit_sprite
 python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-check
+python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-regions --regions
 python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-native --runtime
 ```
 
@@ -1151,8 +1152,15 @@ exact foreground/background output. Rejected fields must preserve previous
 output, source and history. `--runtime` adds a private installed-engine detail
 ON/OFF observation of the same BSP. Compiler regressions cover all three
 orientations, mixed model/sprite dictionaries and invalid geometry/overrides.
+`--regions` retains fifteen of the 24 authored cards, omits an invalid outside
+sprite before card validation, and checks atomic inside-field and exact-boundary
+open-leaf failures through both build paths. It also checks that undoing the
+region restores full-map bytes. Compiler regressions cover implicit-zero and inclusive origin
+selection, whole crossing cards, hidden omission and retained bounds/lighting
+checks.
 Use a fresh output directory; `--game-dir`, `--fgd` and `--port` override the
-installed paths and private native port. Native launches retain `-insecure`,
+installed paths and private native port. Combining `--regions --runtime` observes
+the region BSP instead of repeating the full-map capture. Native launches retain `-insecure`,
 pre/post-map `sv_lan 1` and the shared preservation/cleanup policy.
 
 ### Detail sprites, shapes and light styles

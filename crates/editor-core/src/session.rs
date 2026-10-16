@@ -2091,6 +2091,7 @@ impl Session {
             mesh.set_leak_path(points);
         }
         self.append_fgd_sphere_guides(&mut mesh);
+        self.append_fgd_line_guides(&mut mesh);
         self.append_context_guides(&mut mesh);
         self.append_measurement_guides(&mut mesh);
         self.append_model_attachment_guide(&mut mesh);

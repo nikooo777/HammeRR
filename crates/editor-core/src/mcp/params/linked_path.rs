@@ -10,6 +10,10 @@ pub enum LinkedPathArgs {
     Edit {
         nodes: Vec<LinkedPathNodeArgs>,
         snapshot: String,
+        #[serde(default)]
+        seed: Option<String>,
+        #[serde(default)]
+        prefix: Option<String>,
     },
     Preview {
         classname: String,
@@ -33,7 +37,8 @@ pub enum LinkedPathArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LinkedPathNodeArgs {
-    pub id: String,
+    #[serde(default)]
+    pub id: Option<String>,
     pub origin: [f64; 3],
 }
 
@@ -55,6 +60,20 @@ mod tests {
             args,
             LinkedPathArgs::Preview { closed: false, .. }
         ));
+        let changed = serde_json::from_value::<LinkedPathArgs>(json!({
+            "action":"edit", "seed":"entity:2", "prefix":"added",
+            "nodes":[{"id":"entity:2","origin":[0,0,0]},{"origin":[64,0,0]}],
+            "snapshot":"current",
+        }))
+        .unwrap();
+        assert!(matches!(
+            changed,
+            LinkedPathArgs::Edit {
+                seed: Some(_),
+                prefix: Some(_),
+                ..
+            }
+        ));
         for key in ["classname", "prefix", "points", "snapshot"] {
             let mut missing = preview.clone();
             missing.as_object_mut().unwrap().remove(key);
@@ -65,6 +84,8 @@ mod tests {
             json!({"action":"edit","nodes":[{"id":"entity:1","origin":[0,0,0]}]}),
             json!({"action":"edit","nodes":[{"id":"entity:1","origin":[0,0]}],"snapshot":"current"}),
             json!({"action":"edit","nodes":[],"closed":true,"snapshot":"current"}),
+            json!({"action":"edit","nodes":[],"seed":1,"snapshot":"current"}),
+            json!({"action":"edit","nodes":[],"prefix":false,"snapshot":"current"}),
             json!({"action":"apply","token":1,"points":[[0,0,0]]}),
             json!({"action":"review"}),
             json!({"action":"cancel","token":"1"}),

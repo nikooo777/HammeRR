@@ -2,9 +2,9 @@
 
 # Linked paths
 
-Create an ordered chain of `path_corner` or `path_track` entities, or reorder
-and reposition an existing chain while retaining its node identities. Review
-the complete chain before applying changes to the map.
+Create an ordered chain of `path_corner` or `path_track` entities, or insert,
+remove, reorder and reposition nodes while retaining existing node identities.
+Review the complete chain before applying changes to the map.
 
 ## Create a path
 
@@ -40,24 +40,30 @@ or validate path behavior in the game.
 
 ## Edit an existing path
 
-Existing-path editing keeps every node's ID, name, class, flags, custom values,
-I/O connections and references from other entities. It changes only the edited
-positions and next-node links. Untouched raw values remain as authored; new FGD
-defaults do not replace existing values.
+Retained nodes keep their IDs, names, class, flags, custom values, I/O
+connections and references from other entities. Only their edited positions
+and next-node links change. Untouched raw values remain as authored; new FGD
+defaults apply only to inserted nodes.
 
 1. Select one existing `path_corner` or `path_track` node. Any node in the chain
    works; an open chain loads from its first node, while a closed loop starts
    at the selected node.
 2. Open **Create linked path…** and click **Load selected path**. The point
-   table shows the complete chain with each node's name and ID. **Class**,
-   **Name prefix** and **Closed loop** are locked to retain its identity and
-   open or closed topology.
+   table shows the complete chain with each node's name and ID. **Class** and
+   **Closed loop** stay locked. **New node prefix** determines names only for
+   inserted nodes; existing names stay unchanged.
 3. Use **Move up** and **Move down** to change node order. Edit **X**, **Y** and
-   **Z** to move that named node. **Add point** and **Remove** are unavailable.
+   **Z** to move that named node. **Add point** appends a new row; move it into
+   the desired position. **Remove** omits a node from the resulting chain.
+   Keep at least one original node and 2–64 resulting points.
 4. Click **Preview**. Inspect the names, positions and next links in the table
-   and the viewport. Changed fields require another **Preview**. Use
-   **Review preview** to load and take ownership of a shared agent draft.
-5. Click **Apply** to update and select the existing nodes in one Undo step,
+   and the viewport. New rows say **new node**; **Will remove** lists the names
+   and IDs that will be deleted. Removal rejects nodes with authored I/O
+   connections or references beyond this chain's ordinary next links; edit
+   those connections/references explicitly first. Changed fields require
+   another **Preview**. Use **Review preview** to load and take ownership of a
+   shared agent draft.
+5. Click **Apply** to update and select the resulting nodes in one Undo step,
    or **Cancel** to leave the map unchanged. **Undo** and **Redo** restore the
    same nodes and their links. Applying an unchanged path adds no history step.
 6. Use **New path** to return the table to creation mode.
@@ -74,5 +80,9 @@ remain unchanged; they do not become new links in the chain.
 
 Changing the map or entity definitions after loading a chain requires
 **Load selected path** again. Invalid requests retain the last valid preview.
-Insertion, removal, renaming, open/closed conversion, train setup and runtime
-movement validation remain outside this workflow.
+Inserted names use the same occupied-name and reference-acquisition guards
+as creation. Removed names are not recycled for new nodes. New nodes receive
+fresh IDs; Undo/Redo restore the exact original/resulting node identities.
+FGD defaults that add a parent or alternate path to a new node are rejected.
+Renaming, open/closed conversion, branching, viewport point input, train setup
+and runtime movement validation remain outside this workflow.

@@ -103,3 +103,49 @@ fn mcp_inspects_and_edits_existing_nodes_through_the_shared_owned_preview() {
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }
+
+#[test]
+fn mcp_changes_path_membership_with_explicit_source_ids_and_deletion_review() {
+    let (session, ids) =
+        crate::session::linked_path::node_changes_tests::fixture("path_track", true);
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let inspected = value(server.set_linked_path(Parameters(LinkedPathArgs::Inspect {
+        id: format!("entity:{}", ids[0]),
+    })));
+    let args = json!({
+        "action":"edit", "seed":inspected["seed"], "prefix":"inserted",
+        "snapshot":inspected["snapshot"],
+        "nodes":[
+            {"id":format!("entity:{}",ids[1]),"origin":[64,0,0]},
+            {"origin":[96,0,0]},
+            {"id":format!("entity:{}",ids[2]),"origin":[128,0,0]},
+        ],
+    });
+    let draft = value(server.set_linked_path(Parameters(serde_json::from_value(args).unwrap())));
+    assert_eq!(
+        draft["preview"]["removed"],
+        json!([{"id":format!("entity:{}",ids[0]),"targetname":"route_001"}])
+    );
+    assert_eq!(
+        draft["preview"]["nodes"][0]["source_id"],
+        format!("entity:{}", ids[1])
+    );
+    assert!(draft["preview"]["nodes"][1]["source_id"].is_null());
+    assert_eq!(draft["preview"]["nodes"][1]["targetname"], "inserted_001");
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    let expected = lock(&shared).render_document().vmf().clone();
+    let reviewed = lock(&shared)
+        .review_linked_path(Actor::User, draft["preview"]["token"].as_u64().unwrap())
+        .unwrap();
+    assert_eq!(reviewed["preview"]["nodes"], draft["preview"]["nodes"]);
+    lock(&shared)
+        .apply_linked_path(Actor::User, reviewed["preview"]["token"].as_u64().unwrap())
+        .unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &expected);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &source);
+}

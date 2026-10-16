@@ -227,11 +227,22 @@ fn linked_path_window_edits_orders_reviews_and_applies_owned_preview_once() {
         "existing_001"
     );
     controller.window.invoke_add_point();
+    assert_eq!(controller.window.get_points().row_count(), 4);
     controller.window.invoke_remove_point(0);
     assert_eq!(controller.window.get_points().row_count(), 3);
+    assert_eq!(controller.form.borrow().existing_seed, Some(ids[1]));
     controller.window.invoke_move_point(2, -1);
+    assert!(
+        controller
+            .window
+            .get_points()
+            .row_data(1)
+            .unwrap()
+            .id
+            .is_empty()
+    );
     assert_eq!(
-        controller.window.get_points().row_data(1).unwrap().id,
+        controller.window.get_points().row_data(2).unwrap().id,
         format!("entity:{}", ids[2])
     );
     edit_coordinate(&controller.window, 1, "160.5");
@@ -242,11 +253,57 @@ fn linked_path_window_edits_orders_reviews_and_applies_owned_preview_once() {
         controller.window.get_message()
     );
     let expected = lock(&shared).render_document().vmf().clone();
+    assert!(
+        controller
+            .window
+            .get_points()
+            .row_data(1)
+            .unwrap()
+            .id
+            .is_empty()
+    );
+    assert_eq!(controller.window.get_removed_nodes().row_count(), 1);
+    assert!(
+        controller
+            .window
+            .get_removed_nodes()
+            .row_data(0)
+            .unwrap()
+            .contains("existing_001")
+    );
+    let reviewed_rows = controller.window.get_points().iter().collect::<Vec<_>>();
+    let mut malformed = lock(&shared).linked_path()["preview"].clone();
+    malformed["nodes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_id");
+    assert!(load_preview(&controller.window, &malformed).is_err());
+    assert_eq!(
+        controller.window.get_points().iter().collect::<Vec<_>>(),
+        reviewed_rows
+    );
+    controller.window.invoke_preview();
+    assert!(
+        controller.window.get_ready(),
+        "{}",
+        controller.window.get_message()
+    );
+    assert_eq!(lock(&shared).render_document().vmf(), &expected);
+    assert!(
+        controller
+            .window
+            .get_points()
+            .row_data(1)
+            .unwrap()
+            .id
+            .is_empty()
+    );
     assert_eq!(lock(&shared).document().vmf(), &before);
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "linked-path-existing");
     crate::ui::tests::assert_dialog_button_visible(&controller.window, "Load selected path");
     controller.window.invoke_apply();
     assert_eq!(lock(&shared).document().vmf(), &expected);
+    assert!(lock(&shared).document().entity(ids[0]).is_none());
     assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
     assert_eq!(
         lock(&shared)

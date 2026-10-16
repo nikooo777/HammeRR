@@ -12,6 +12,7 @@ export component LinkedPathWindow inherits Window {
     in-out property <string> prefix: "path";
     in-out property <bool> closed;
     in-out property <[LinkedPathPoint]> points;
+    in property <[string]> removed-nodes;
     in property <bool> editable: true;
     in property <bool> existing;
     in property <bool> can-load;
@@ -37,7 +38,7 @@ export component LinkedPathWindow inherits Window {
             padding: 20px;
             spacing: 12px;
             Text { text: root.existing ? "Edit linked path" : "Create linked path"; font-size: 24px; font-weight: 600; }
-            Text { text: root.existing ? "Reorder or reposition existing nodes. Names, IDs and other properties stay with each node." : "Place ordered point entities and link each target to the next name."; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: root.existing ? "Add, remove, reorder or reposition nodes. Retained names, IDs and properties stay with each node." : "Place ordered point entities and link each target to the next name."; color: #b6c1cf; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Load selected path"; enabled: root.can-load; clicked => { root.load-selected(); } }
@@ -60,12 +61,12 @@ export component LinkedPathWindow inherits Window {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     spacing: 5px;
-                    Text { text: "Name prefix"; font-weight: 600; }
+                    Text { text: root.existing ? "New node prefix" : "Name prefix"; font-weight: 600; }
                     LineEdit {
-                        enabled: root.editable && !root.existing;
-                        placeholder-text: root.existing ? "Existing names stay unchanged" : "Name prefix";
+                        enabled: root.editable;
+                        placeholder-text: "Name prefix";
                         text <=> root.prefix;
-                        accessible-label: "Name prefix";
+                        accessible-label: root.existing ? "New node prefix" : "Name prefix";
                         edited => { root.edited(); }
                     }
                 }
@@ -128,15 +129,17 @@ export component LinkedPathWindow inherits Window {
                                     }
                                     Button { text: "↑"; accessible-label: "Move up"; width: 36px; enabled: root.editable && index > 0; clicked => { root.move-point(index, -1); } }
                                     Button { text: "↓"; accessible-label: "Move down"; width: 36px; enabled: root.editable && index + 1 < root.points.length; clicked => { root.move-point(index, 1); } }
-                                    Button { text: "Remove"; width: 130px; enabled: root.editable && !root.existing && root.points.length > 2; clicked => { root.remove-point(index); } }
+                                    Button { text: "Remove"; width: 130px; enabled: root.editable && root.points.length > 2; clicked => { root.remove-point(index); } }
                                 }
-                                if root.existing: Text { text: point.name + " · " + point.id; color: #d6deea; font-size: 12px; wrap: word-wrap; }
+                                if root.existing: Text { text: point.id == "" ? (point.name == "" ? "New node · assigned at Preview" : point.name + " · new node") : point.name + " · " + point.id; color: #d6deea; font-size: 12px; wrap: word-wrap; }
                                 if point.link != "": Text { text: point.link; color: #b6c1cf; font-size: 12px; wrap: word-wrap; }
                             }
+                            if root.removed-nodes.length > 0: Text { text: "Will remove · " + root.removed-nodes.length + " nodes"; color: #e6aaa0; font-weight: 600; }
+                            for name in root.removed-nodes: Text { text: name; color: #e6aaa0; wrap: word-wrap; }
                         }
                     }
                     HorizontalLayout {
-                        Button { text: "Add point"; enabled: root.editable && !root.existing && root.points.length < 64; clicked => { root.add-point(); } }
+                        Button { text: "Add point"; enabled: root.editable && root.points.length < 64; clicked => { root.add-point(); } }
                         Rectangle { horizontal-stretch: 1; }
                         Text { text: "2–64 points · ±65536 per axis"; color: #b6c1cf; vertical-alignment: center; }
                     }

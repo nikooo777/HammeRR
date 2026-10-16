@@ -9,7 +9,7 @@ use crate::{
     runtime::{SharedSession, lock},
     session::{
         Actor, Session,
-        linked_path::{EditRequest, ExistingNode, MAX_POINTS, MIN_POINTS, Request},
+        linked_path::{ChangeRequest, EditNode, MAX_POINTS, MIN_POINTS, Request},
     },
 };
 
@@ -21,6 +21,7 @@ struct Form {
     owned_token: Option<u64>,
     dirty: bool,
     existing_snapshot: Option<String>,
+    existing_seed: Option<u32>,
 }
 
 pub struct Controller {
@@ -92,6 +93,21 @@ fn load_preview(window: &LinkedPathWindow, preview: &Value) -> Result<(), String
     let closed = preview["closed"].as_bool().ok_or(invalid)?;
     let points = preview["points"].as_array().ok_or(invalid)?;
     let nodes = preview["nodes"].as_array().ok_or(invalid)?;
+    let existing = preview["existing"] == true;
+    preview_seed(preview)?;
+    let removed = preview["removed"]
+        .as_array()
+        .ok_or(invalid)?
+        .iter()
+        .map(|node| {
+            Ok(format!(
+                "{} · {}",
+                node["targetname"].as_str().ok_or(invalid)?,
+                node["id"].as_str().ok_or(invalid)?
+            )
+            .into())
+        })
+        .collect::<Result<Vec<slint::SharedString>, String>>()?;
     if !(MIN_POINTS..=MAX_POINTS).contains(&points.len()) || nodes.len() != points.len() {
         return Err(invalid.into());
     }
@@ -132,7 +148,23 @@ fn load_preview(window: &LinkedPathWindow, preview: &Value) -> Result<(), String
                 _ => return Err(invalid.into()),
             };
             let mut row = point_row(DVec3::from_array(coordinates), index);
-            row.id = node["id"].as_str().ok_or(invalid)?.into();
+            let id = node["id"].as_str().ok_or(invalid)?;
+            if !matches!(
+                crate::identity::parse_id(id)?,
+                map_core::ObjectId::Entity(_)
+            ) {
+                return Err(invalid.into());
+            }
+            row.id = if existing {
+                match node.get("source_id") {
+                    Some(Value::Null) => "",
+                    Some(Value::String(source)) if source == id => source,
+                    _ => return Err(invalid.into()),
+                }
+            } else {
+                id
+            }
+            .into();
             row.name = name.into();
             row.link = format!("{name} → {target}").into();
             Ok(row)
@@ -143,7 +175,23 @@ fn load_preview(window: &LinkedPathWindow, preview: &Value) -> Result<(), String
     window.set_prefix(prefix.into());
     window.set_closed(closed);
     window.set_points(ModelRc::new(VecModel::from(rows)));
+    window.set_removed_nodes(ModelRc::new(VecModel::from(removed)));
     Ok(())
+}
+
+fn preview_seed(preview: &Value) -> Result<Option<u32>, String> {
+    if preview["existing"] != true {
+        return Ok(None);
+    }
+    let map_core::ObjectId::Entity(id) = crate::identity::parse_id(
+        preview["seed"]
+            .as_str()
+            .ok_or("Existing path preview has no source seed")?,
+    )?
+    else {
+        return Err("Existing path seed requires an entity ID".into());
+    };
+    Ok(Some(id))
 }
 
 fn adopt_preview(
@@ -161,6 +209,7 @@ fn adopt_preview(
         .ok_or("Linked path preview has no token")?;
     form.borrow_mut().owned_token = Some(token);
     load_preview(window, preview)?;
+    form.borrow_mut().existing_seed = preview_seed(preview)?;
     form.borrow_mut().existing_snapshot = state["snapshot"].as_str().map(str::to_owned);
     form.borrow_mut().dirty = false;
     window.set_message("Review the ordered points and links before Apply.".into());
@@ -253,9 +302,10 @@ impl Controller {
                     };
                     let state = session.inspect_existing_linked_path(*id)?;
                     load_preview(&window, &state)?;
+                    form.borrow_mut().existing_seed = preview_seed(&state)?;
                     form.borrow_mut().existing_snapshot = state["snapshot"].as_str().map(str::to_owned);
                     form.borrow_mut().dirty = true;
-                    window.set_message("Names, class and open/closed topology stay fixed. Move rows or edit coordinates, then Preview.".into());
+                    window.set_message("Add, remove or move rows, then Preview. Retained names, class and open/closed topology stay fixed. Referenced nodes and connections cannot be removed.".into());
                     Ok::<_, String>(())
                 })();
                 if let Err(error) = result { window.set_message(error.into()); }
@@ -282,6 +332,8 @@ impl Controller {
                     .collect();
                 set_rows(&window, rows);
                 form.borrow_mut().existing_snapshot = None;
+                form.borrow_mut().existing_seed = None;
+                window.set_removed_nodes(ModelRc::new(VecModel::default()));
                 edited(&window, &lock(&shared), &form);
             }
         });
@@ -293,9 +345,6 @@ impl Controller {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
                 let window = window.unwrap();
-                if window.get_existing() {
-                    return;
-                }
                 let mut rows = window.get_points().iter().collect::<Vec<_>>();
                 if rows.len() >= MAX_POINTS {
                     return;
@@ -326,9 +375,6 @@ impl Controller {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move |index| {
                 let window = window.unwrap();
-                if window.get_existing() {
-                    return;
-                }
                 let mut rows = window.get_points().iter().collect::<Vec<_>>();
                 if rows.len() > MIN_POINTS && index >= 0 && (index as usize) < rows.len() {
                     rows.remove(index as usize);
@@ -371,14 +417,20 @@ impl Controller {
                             .iter()
                             .zip(request.points)
                             .map(|(row, origin)| {
-                                let map_core::ObjectId::Entity(id) =
-                                    crate::identity::parse_id(&row.id)?
-                                else {
-                                    return Err(
-                                        "Existing path row has no entity ID; load it again".into(),
-                                    );
+                                let id = if row.id.is_empty() {
+                                    None
+                                } else {
+                                    let map_core::ObjectId::Entity(id) =
+                                        crate::identity::parse_id(&row.id)?
+                                    else {
+                                        return Err(
+                                            "Existing path row has no entity ID; load it again"
+                                                .into(),
+                                        );
+                                    };
+                                    Some(id)
                                 };
-                                Ok(ExistingNode { id, origin })
+                                Ok(EditNode { id, origin })
                             })
                             .collect::<Result<Vec<_>, String>>()?;
                         let snapshot = form
@@ -386,9 +438,17 @@ impl Controller {
                             .existing_snapshot
                             .clone()
                             .ok_or("Load the existing path again")?;
-                        session.preview_existing_linked_path(
+                        let seed = form
+                            .borrow()
+                            .existing_seed
+                            .ok_or("Load the existing path again")?;
+                        session.preview_linked_path_changes(
                             Actor::User,
-                            EditRequest { nodes },
+                            ChangeRequest {
+                                seed,
+                                nodes,
+                                prefix: request.prefix,
+                            },
                             &snapshot,
                         )
                     } else {
@@ -485,6 +545,8 @@ impl Controller {
                 self.window.set_existing(false);
                 self.window.set_prefix("path".into());
                 self.window.set_closed(false);
+                self.window
+                    .set_removed_nodes(ModelRc::new(VecModel::default()));
                 set_rows(
                     &self.window,
                     vec![point_row(origin, 0), point_row(origin + DVec3::X * step, 1)],

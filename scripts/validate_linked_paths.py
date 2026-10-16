@@ -64,6 +64,79 @@ def snapshot(client, ids):
     }
 
 
+def validate_membership_changes(client, args, check, existing):
+    for classname in ["path_corner", "path_track"]:
+        for closed in [False, True]:
+            label = f"{classname} {'closed' if closed else 'open'} membership"
+            prefix = f"membership_{classname}_{int(closed)}"
+            created = preview(client, classname=classname, prefix=prefix, points=POINTS, closed=closed)["preview"]
+            original_ids = client.call("set_linked_path", {"action": "apply", "token": created["token"]})["objects"]
+            existing.extend(original_ids)
+            names = [node["targetname"] for node in created["nodes"]]
+            client.call("set_entity_properties", {"id": original_ids[1], "set": {"custom_intent": "retain exact identity", "wait": "3.7500", "spawnflags": "1025"}})
+            watcher = client.call("create_entity", {"classname": "info_target", "origin": [0, -256, 0], "properties": {"targetname": prefix + "_watcher", "target": names[0]}})["id"]
+            existing.append(watcher)
+            inspected = client.call("set_linked_path", {"action": "inspect", "id": original_ids[0]})
+            requested = [
+                {"id": original_ids[1], "origin": POINTS[1]},
+                {"origin": [192.125, 32.5, 48.25]},
+                {"id": original_ids[2], "origin": POINTS[2]},
+                {"origin": [256.125, 64.5, 64.25]},
+            ]
+            arguments = {"action": "edit", "seed": inspected["seed"], "prefix": prefix + "_insert", "nodes": requested, "snapshot": inspected["snapshot"]}
+            before = snapshot(client, existing)
+            reject(client, arguments)
+            check(snapshot(client, existing) == before and state(client)["preview"] is None, f"{label}: outside reference blocks head deletion without source/history changes")
+            client.call("set_entity_properties", {"id": watcher, "set": {"target": names[1]}})
+            connection = client.call("begin_connection_edit", {"id": original_ids[2]})
+            client.call("update_connection_draft", {"token": connection["token"], "output": "OnUser1", "target": prefix + "_watcher", "input": "Use", "parameter": "", "delay": "0.25", "times": "-1"})
+            client.call("commit_connection_edit", {"token": connection["token"]})
+            inspected = client.call("set_linked_path", {"action": "inspect", "id": original_ids[0]})
+            arguments["snapshot"] = inspected["snapshot"]
+            before = snapshot(client, existing)
+            draft = client.call("set_linked_path", arguments)
+            planned = draft["preview"]["nodes"]
+            result_ids = [node["id"] for node in planned]
+            added_ids = [node["id"] for node in planned if node["source_id"] is None]
+            check([node["source_id"] for node in planned] == [original_ids[1], None, original_ids[2], None], f"{label}: draft distinguishes retained source IDs and inserted nodes")
+            check(draft["preview"]["seed"] == original_ids[0] and draft["preview"]["removed"] == [{"id": original_ids[0], "targetname": names[0]}], f"{label}: original seed and exact removed head identity remain reviewable")
+            check(len(added_ids) == 2 and not set(added_ids) & set(existing), f"{label}: only inserted nodes receive fresh IDs")
+            check(snapshot(client, existing) == before, f"{label}: membership preview preserves source, selection, camera and history")
+            blocked = {**arguments, "nodes": requested[:-2] + [requested[-1]], "snapshot": draft["snapshot"]}
+            reject(client, blocked)
+            check(state(client) == draft and snapshot(client, existing) == before, f"{label}: deleting a node with connections preserves the reviewed draft")
+            repeat = client.call("set_linked_path", {**arguments, "snapshot": draft["snapshot"]})
+            check(repeat["preview"]["nodes"] == planned, f"{label}: repeated preview preserves exact planned identities")
+            client.call("set_linked_path", {"action": "cancel", "token": repeat["preview"]["token"]})
+            check(snapshot(client, existing) == before, f"{label}: Cancel leaves all committed identities intact")
+            draft = client.call("set_linked_path", {**arguments, "snapshot": state(client)["snapshot"]})["preview"]
+            client.call("set_linked_path", {"action": "apply", "token": draft["token"]})
+            after_ids = [node_id for node_id in existing if node_id != original_ids[0]] + added_ids
+            actual = detail(client, result_ids)
+            retained_before = {node["id"]: node for node in before["objects"] if node["id"] in original_ids[1:]}
+            for node in actual:
+                properties = dict(node["properties"])
+                if node["id"] in retained_before:
+                    original = retained_before[node["id"]]
+                    check({key: value for key, value in properties.items() if key not in ["origin", "target"]} == {key: value for key, value in dict(original["properties"]).items() if key not in ["origin", "target"]} and node["connections"] == original["connections"], f"{label}: retained {node['id']} keeps authored properties and I/O")
+                else:
+                    check(properties["wait"] == "2.5" and "custom_intent" not in properties, f"{label}: inserted {node['id']} receives FGD defaults only")
+            for index, node in enumerate(actual):
+                target = planned[index + 1]["targetname"] if index + 1 < len(planned) else planned[0]["targetname"] if closed else None
+                check(dict(node["properties"]).get("target") == target, f"{label}: result node {index} has repaired internal next link")
+            after = detail(client, after_ids)
+            check(len(client.call("get_map_info")["undo"]) == len(before["undo"]) + 1, f"{label}: membership edit creates one Undo step")
+            client.call("undo")
+            check(detail(client, existing) == before["objects"], f"{label}: Undo restores removed head and original identities, links and I/O")
+            client.call("redo")
+            check(detail(client, after_ids) == after, f"{label}: Redo restores fresh inserted identities and repaired links")
+            existing[:] = after_ids
+            path = args.output / f"{prefix}.vmf"
+            client.call("save_map", {"path": str(path)})
+            client.call("open_map", {"path": str(path)})
+            check(detail(client, existing) == after, f"{label}: membership changes survive save/reopen with exact identities")
+
+
 def validate(args):
     checks, cases = [], []
     fgd = args.output / "linked-paths.fgd"
@@ -197,6 +270,8 @@ def validate(args):
         client.call("save_map", {"path": str(path)})
         client.call("open_map", {"path": str(path)})
         check(detail(client, existing) == after, "Edited existing identities, links and metadata survive save/reopen")
+
+        validate_membership_changes(client, args, check, existing)
 
         bounded = preview(client, classname="path_corner", prefix="_" + "a" * 95, points=[[-65536, 0, 0], [65536, 0, 0]])
         check(bounded["preview"]["valid"], "Inclusive coordinate and prefix bounds accept a two-node path")

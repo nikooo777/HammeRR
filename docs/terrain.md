@@ -149,17 +149,22 @@ Limits: the same movement bounds and mask rules apply as numeric offsets. Handle
 
 ## Paint a material blend
 
-1. Assign a two-texture material through **Browse materials…**, **Use material**, then **Apply**. A single-texture material cannot show the alpha blend.
-2. Select terrain faces, click **Edit terrain…**, then choose **Paint blend**, **Fill blend** or **Invert blend** under **Operation**.
-3. For **Paint blend**, set the brush center, direction, radius and strength. Choose **Blend value · 0 first texture, 255 second texture** with the slider or numeric input. Painting moves toward that value and fades toward the brush edge.
+Paint the transition between two textures and their declared terrain contact properties.
+
+1. Select terrain faces under **Selection → Faces · materials & textures**. Assign a two-texture material through **Browse materials…**, **Use material**, then **Apply**. For two physical surfaces, choose a material declaring `$surfaceprop` and `$surfaceprop2`. A single-texture material cannot show the alpha blend.
+2. Click **Edit terrain…**, then choose **Paint blend**, **Fill blend** or **Invert blend** under **Operation**.
+3. For **Paint blend**, set **Brush center · world coordinates**, **Brush direction**, **Radius · world units** and **Strength · 0 leaves terrain unchanged, 1 applies fully**. Choose **Blend value · 0 first texture, 255 second texture** with the slider or numeric input. Painting moves toward that value and fades toward the brush edge.
 4. **Fill blend** applies the chosen value to every vertex in the selected grids. **Invert blend** swaps weights across the complete grids.
 5. Click **Preview**, then **Apply** or **Cancel**. Geometry, material, mapping and lighting settings stay fixed; **Undo** restores the original blend values.
+6. For physical contact, open **Build settings…**, choose **Physics bodies → CS:S engine physics**, then **Close** and **Compile**.
 
 ![Terrain blend controls](images/terrain-blend-controls.png)
 
 ![Painted grass and dirt on terrain](images/terrain-blending.png)
 
-Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Use **Pick center in viewport…** or exact coordinates for a fixed brush, or **Draw stroke in viewport…** for blend paint. **Sew borders & corners** can also average shared alpha. Secondary blend-material physics remains unfinished; current physics uses the primary material.
+Limits: 1–16 terrain faces, alpha 0–255 and strength 0–1. A material can remap how the alpha affects its textures. Use **Pick center in viewport…** or exact coordinates for a fixed brush, or **Draw stroke in viewport…** for blend paint. **Sew borders & corners** can also average shared alpha.
+
+Engine physics selects one property per emitted collision triangle: `$surfaceprop2` only when its three stored 32-bit (`f32`) alpha values, added in triangle order, sum to more than 382.5. Equality uses `$surfaceprop`; a missing `$surfaceprop2` always retains the primary. Physical properties do not blend continuously. Mixed-resolution borders use compiled LOD triangles. See [Terrain contact surfaces](physics.md#terrain-contact-surfaces) for surface-definition requirements.
 
 ## Sew neighboring terrain
 

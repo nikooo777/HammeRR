@@ -15,3 +15,7 @@ sha2 = "0.10.9"
 regex = "1.13.1"
 libc = "0.2.190"
 libloading = "0.8.9"
+
+[[bin]]
+name = "hammerr-native-runtime"
+path = "src/main.rs"

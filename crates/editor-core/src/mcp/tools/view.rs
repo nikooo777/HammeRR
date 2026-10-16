@@ -3,6 +3,17 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect the exact applied world skyname through the same read-only Session operation as World settings → Inspect applied sky…. Returns six material names, directory/VPK and Patch provenance, authored LDR/HDR references, VTF dimensions/formats, bounded read counts and actionable issues. ldr_ready/hdr_ready describe supported material/VTF structure only; they do not establish editor preview readiness, HDR radiance, actual game channel selection or portable sky packing. No family substitution, document/history/camera/draft changes or native processes. No arguments; refresh by calling again.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_sky_assets(
+        &self,
+        Parameters(_args): Parameters<InspectSkyAssetsArgs>,
+    ) -> ToolResult {
+        ok(json!(self.session().inspect_sky_assets()))
+    }
+
+    #[tool(
         description = "Inspect the shared Rope preview toggle, checked authored move_rope/keyframe_rope NextKey spans, static curve points, Slack/Width, bounded limits and link diagnostics. Enable through set_view.rope_preview or override one render_view. Neutral helper shading; no RopeMaterial fidelity, physics, collision, wind, runtime I/O, parenting or attachment binding. Clicking a span selects its source entity; endpoint helpers, area selection and framing remain available.",
         annotations(read_only_hint = true)
     )]

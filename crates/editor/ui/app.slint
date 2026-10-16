@@ -1,4 +1,5 @@
 export { MaterialSourceWindow } from "material-source.slint";
+export { SkyAssetsWindow } from "sky-assets.slint";
 export { HistoryWindow, HistoryRow } from "history.slint";
 export { GridDefaultsWindow } from "grid-defaults.slint";
 export { WorkingRegionWindow } from "working-region.slint";
@@ -1167,6 +1168,7 @@ export component PropertiesWindow inherits Window {
     in property <string> message;
     in property <bool> can-apply;
     in property <[ManagedFieldRow]> fields;
+    in property <bool> world-settings;
     in-out property <string> filter;
     in-out property <string> custom-key;
     in-out property <string> custom-value;
@@ -1178,6 +1180,7 @@ export component PropertiesWindow inherits Window {
     callback remove(string);
     callback pick-color(string);
     callback pick-material(string);
+    callback inspect-sky-assets();
     callback apply();
     callback cancel();
     forward-focus: dialog-focus;
@@ -1188,6 +1191,10 @@ export component PropertiesWindow inherits Window {
             padding: 20px; spacing: 12px;
             Text { text: root.heading; font-size: 23px; font-weight: 600; }
             Text { text: root.summary; wrap: word-wrap; }
+            if root.world-settings: Button {
+                text: "Inspect applied sky…";
+                clicked => { root.inspect-sky-assets(); }
+            }
             LineEdit { text <=> root.filter; placeholder-text: "Find a property…"; edited => { root.search(); } }
             ListView {
                 for row in root.fields: VerticalLayout {

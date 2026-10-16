@@ -733,6 +733,19 @@ python3 -B scripts/validate_sky_preview.py --binary target/debug/hammerr-headles
 
 CPU tests check six-face loading, VMT patches, dimensions, LDR selection, supported transforms and reported failures. The explicitly ignored GPU tests check cardinal/quadrant orientation, camera translation, depth/occlusion, fallback and unchanged view modes/filters. The MCP script always performs offscreen image checks, temporary and shared view settings, picking, world-setting Undo and save/reopen. Repeat with `--sky sky_day01_09` to cover stock vertical scaling. `--url` uses the preserved-map workflow described above; private headless sessions are the default.
 
+### Sky asset inspection
+
+```sh
+cargo test -p editor-core sky_assets::tests
+cargo test -p editor-core sky_inspection_tool_has_strict_empty_arguments_and_matches_read_only_session_report
+cargo test -p editor sky_assets_ui::tests
+python3 -B scripts/validate_sky_assets.py --binary target/debug/hammerr-headless --output /tmp/hammerr-sky-assets-check
+```
+
+Core tests cover exact family identity, separate LDR/HDR structure, bounded directory/VPK and Patch reads, malformed/missing assets and unsupported declarations without substituting families. The MCP test checks strict empty arguments and exact Session report parity while preserving an unapplied property draft. The private stdio fixture mounts synthetic LDR/HDR VTFs and material/Patch sources, checks directory/VPK provenance, malformed winning assets, compressed HDR diagnostics, missing faces and invalid names, and compares document/history/camera/selection/clipboard/drafts and mounted bytes around every inspection. It starts no renderer, compiler or game process.
+
+The software UI test `world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pending_edits` invokes the actual **Inspect applied sky…**, **Refresh sky assets** and **Close** buttons. It verifies that a staged different skyname and a transform draft survive, that the report uses the applied name, and that both closing and a source repair leave the parent edit intact. `HAMMERR_UI_SNAPSHOTS` writes `sky-assets.png` through the offscreen testing backend.
+
 ### Recent maps and build recipes
 
 ```sh
@@ -743,7 +756,7 @@ python3 -B scripts/validate_recent_maps.py --binary target/debug/hammerr-headles
 python3 -B scripts/validate_build_recipes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-build-recipes-check
 ```
 
-Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible six-field build context, incompatible content, restart and storage repair. Remove/clear preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
+Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible seven-field build context, incompatible content, restart and storage repair. Remove/clear preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
 
 Recipe checks cover immutable presets, bounded custom CRUD/apply, stale revisions, manual-value provenance invalidation, active/cancelling job guards, frozen completed-job names, output freshness, corrupt/oversized storage, conflict detection and atomic failure/retry. The headless script isolates recipe/recovery storage and verifies native compilation plus persistence across restart. Its output directory must not already exist; optional `--gameinfo` chooses a fixture game installation. Rebuild the selected executable before script validation when code changed; Cargo tests alone do not refresh the executable.
 

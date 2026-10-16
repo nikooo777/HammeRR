@@ -35,6 +35,7 @@ mod recovery_ui;
 mod rename_ui;
 mod repeat_ui;
 mod saved_views_ui;
+mod sky_assets_ui;
 mod sounds_ui;
 mod statistics_ui;
 mod surface_group_ui;

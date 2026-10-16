@@ -96,7 +96,7 @@ To build the map, set the build options once, then compile:
 
 ## Tools by task
 
-The shared desktop and private stdio server register 384 tools. `tools/list`
+The shared desktop and private stdio server register 385 tools. `tools/list`
 returns their current schemas and descriptions.
 
 | Task | Tools |
@@ -106,6 +106,7 @@ returns their current schemas and descriptions.
 | Grid defaults | `get_grid_defaults`, `set_grid_defaults` |
 | Entity definitions | `get_entity_definitions`, `load_entity_definitions`, `search_entity_classes`, `get_entity_class` |
 | Material source | `get_material_source` |
+| Sky asset inspection | `inspect_sky_assets` |
 | Selection and history | `select`, `get_selection`, `set_selection_mode`, `undo`, `redo`, `get_history`, `navigate_history` |
 | Measurement guides | `get_measurements`, `set_measurement` |
 | Overlapping objects | `get_object_hit_candidates`, `cycle_object_hit` |
@@ -259,7 +260,7 @@ These details aren't obvious from the tool list.
 
 **Compiling**
 
-- `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`) and `generate_reflections` (boolean, default `false`). Reflection generation requires `direct_ldr`. It changes only the fields you pass, and invalid combinations leave every setting unchanged.
+- `set_compile_settings` takes `lighting` (`fullbright`, `direct_ldr` or `direct_ldr_hdr`), `physics` (`none` or `engine`), `visibility` (`fast` or `detailed`), `sky_quality` (`fast`, `balanced` or `detailed`), `bounces` (whole counts `0`–`4`), `smoothing_angle` (whole degrees `0`–`90`) and `generate_reflections` (boolean, default `false`). Reflection generation requires `direct_ldr` or `direct_ldr_hdr`. It changes only the fields you pass, and invalid combinations leave every setting unchanged.
 - `get_compile_settings.visibility_choices` exposes **Fast (conservative)** and **Detailed (portal clipping)**, shown under **Visibility quality** in Build settings. `visibility` freezes in each job's captured settings and changing it stales prior output. Detailed clips source/pass portal apertures; PAS includes the refined visible rows. Statistics expose `visibility_mode`, `visibility_work`, `visibility_removed_pairs` (directed PVS entries removed from the broad result) and `visibility_workers` for the largest actual worker count across the base and flow stages. Larger jobs parallelize base-facing rows on at most eight available CPUs; Detailed also parallelizes separator flow. Source portals retain their order, and workers share one exact global work budget. Invalid apertures and exceeded work/allocation budgets fail without publishing output. The former `visibility_fallbacks` statistic is removed because clipping is no longer abandoned.
 - `get_compile_settings` returns the current choices, including `sky_choices` with their labels and direction counts (32, 128 and 512). These tools work before the first build, like the toolbar's **Build settings…**. The UI calls `sky_quality` **Sampling quality**; it affects sky ambient, soft sun, model ambient and bounce rays in either lit mode.
 - `get_compile_settings.bounce_choices` exposes **Direct only** (`bounces: 0`, default) and **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces** (`bounces: 1`–`4`), shown under **Indirect light**. It gathers reflected light per source style from immutable previous-pass world/detail/terrain lightmaps into world, terrain and brush-model receivers using 32/128/512 cosine-weighted rays per receiver per pass. Each pass rebuilds receivers from the original direct maps. Model rays check their own geometry before accepting a world hit; unrelated models stay separate. Source albedo must be between zero and one; sky/backfaces do not supply bounce energy. Stats expose actual `bounces`, `bounce_rays`, `bounce_samples` (final-pass receivers with positive indirect light) and `bounce_work`, within the shared lighting budget. Fullbright retains the setting and reports zero bounce work.
@@ -509,7 +510,7 @@ For point/spot/sun lights, HDR selects `_lightHDR`, then `_light`; eight-number 
 
 `hdr.map_data_present` reports nonempty HDR light samples, world lights and ambient samples (native lumps 53/54/55). **Build details…** shows **HDR data ready** or **HDR unavailable: incomplete map data**. Legitimately empty output preserves a valid dual/LDR BSP and names the missing arrays in diagnostics; it receives no dummy emitters or probes. Input, solve, budget and cancellation failures preserve prior output. This flag describes map-data eligibility, not the game's selected channel. CS:S selects the baked LDR or HDR channel according to its HDR setting and hardware support; select that setting before a fresh map load.
 
-HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. Authored mounted HDR sky families retain the native material path; sky-specific HDR asset validation, portable custom sky packing, editor HDR previews, exposure authoring and baked prop lightmaps remain unavailable. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
+HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. Authored mounted HDR sky families retain the native material path; `inspect_sky_assets` separately checks supported material/VTF structure. Automatic sky structure admission checks, HDR sky radiance validation, portable custom sky packing, editor HDR previews, exposure authoring and baked prop lightmaps remain unavailable. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
 
 ### Water material binding
 
@@ -773,6 +774,16 @@ their counts are null when disabled. Full inspection uses
 The human controls are **Working region…** and **Clear working region**.
 This is a display filter, independent of compile regions; see
 [Working region](working-region.md).
+
+### Sky asset inspection
+
+`inspect_sky_assets {}` calls the same read-only Session operation as **World settings… → Inspect applied sky…**. It accepts no overrides or other arguments. `authored_name` identifies the applied world `skyname`; a staged property draft is left untouched and is not inspected. Valid names remain exact; overlong invalid values set `authored_name_truncated`, and `report_truncated` marks bounded text or omitted diagnostics. No name repair, `_hdr` suffix substitution, file writes, asset reload, map/history/camera/clipboard/draft mutation, compile or game launch occurs.
+
+The report returns `readiness_scope`, independent `ldr_ready` / `hdr_ready`, six `faces` for a valid family, top-level `issues`, `assets_read`, `bytes_read` and `limits`. Face order is `rt`, `bk`, `lf`, `ft`, `up`, `dn`. Each face contains `suffix`, exact `material`, winning `source`, `material_sources` for the VMT/Patch dependency chain, resolved `shader` / `shader_truncated`, channel reports `ldr` / `hdr`, and `issues`. A channel contains `ready`, `textures` and `issues`; each texture contains its authored `parameter` and `reference` / `reference_truncated`, resolved `path`, `source`, parsed `size` / `format`, `bytes`, `ready` and `issues`. Unavailable metadata stays null. Directory sources use `{kind:"directory",mount,file}`; VPK sources use `{kind:"vpk",index,files}`. Material-source entries contain `path`, `source` and `bytes`.
+
+Readiness describes supported mounted declarations and complete VTF layout, without establishing editor preview support, HDR pixel radiance, shader rendering or the game's active channel. Recognized shaders are `Sky` and `UnlitGeneric`; HDR additionally requires `Sky` and `$hdrbasetexture` in `Rgba16161616F` or `Rgba16161616`. Compressed HDR parameters, unsupported material effects/parameters, missing or malformed winning assets and unsupported animated/cubemap/volume textures remain explicit diagnostics. A declared texture transform can pass structural inspection while remaining unsupported by the preview. Channels remain independent when only one texture fails.
+
+`limits` exposes `asset_lookups:128`, `total_bytes:67108864`, `material_bytes:1048576`, `texture_axis:4096`, `path_bytes:512`, `issue_characters:1024`, `issues_per_scope:16`, `shader_characters:128` and `hdr_base_formats`. Counts cover distinct successfully read assets and their bytes; repeated references share the inspection's read budget. Family names must be relative, at most 256 bytes and without surrounding whitespace or control characters. Inspection reads current mounted files on each call; it does not remount content, pack custom sky assets or add compiler admission checks. See [Inspect mounted sky assets](sky.md#inspect-mounted-sky-assets).
 
 ### 2D sky preview
 

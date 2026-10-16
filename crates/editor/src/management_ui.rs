@@ -19,12 +19,14 @@ fn token(window: &PropertiesWindow) -> Result<u64, String> {
 
 pub fn refresh_properties(window: &PropertiesWindow, session: &Session) {
     window.set_can_apply(false);
+    window.set_world_settings(false);
     let Some(draft) = session.property_draft() else {
         window.set_fields(ModelRc::default());
         window.set_message("Property edit closed. Reopen properties to start again.".into());
         return;
     };
     window.set_draft_token(draft.token.to_string().into());
+    window.set_world_settings(draft.target == PropertyTarget::World);
     let preview = match session.preview_property_edit() {
         Ok(preview) => preview,
         Err(error) => {
@@ -230,6 +232,7 @@ pub fn bind_properties(
         }
     });
     bind_color(window, shared)?;
+    crate::sky_assets_ui::bind(window, shared.clone());
     bind_material(window, shared)
 }
 

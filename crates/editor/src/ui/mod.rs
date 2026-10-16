@@ -63,6 +63,7 @@ struct Ui {
     context_window: Option<ContextWindow>,
     primitive_window: Option<PrimitiveWindow>,
     polygon: Option<polygon_ui::Controller>,
+    linked_path: Option<linked_path_ui::Controller>,
     seen_primitive: u64,
     seen_context: (u64, u64),
     seen_checks: (u64, u64, u64),
@@ -299,6 +300,7 @@ pub(super) fn run(
         context_window: None,
         primitive_window: None,
         polygon: None,
+        linked_path: None,
         seen_primitive: 0,
         seen_context: (0, 0),
         seen_checks: (0, 0, 0),
@@ -907,6 +909,30 @@ pub(super) fn run(
     app.on_edit_face_textures({
         let (app, ui) = (app.as_weak(), ui.clone());
         move || show_surface_window(&app.unwrap(), &ui)
+    });
+    app.on_create_linked_path({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let shared = session_of(&ui);
+            if ui.borrow().linked_path.is_none() {
+                match linked_path_ui::Controller::new(&shared) {
+                    Ok(controller) => ui.borrow_mut().linked_path = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui
+                .borrow()
+                .linked_path
+                .as_ref()
+                .unwrap()
+                .show(&lock(&shared))
+            {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
     });
     app.on_cubemap_faces({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -2702,6 +2728,11 @@ pub(super) fn run(
                     controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.overlay
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.linked_path
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

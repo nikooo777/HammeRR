@@ -3,6 +3,7 @@ export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
 export { OverlayWindow, OverlayTargetRow } from "overlay.slint";
 export { CubemapFacesWindow, CubemapFaceRow } from "cubemap-faces.slint";
+export { LinkedPathWindow, LinkedPathPoint } from "linked-path.slint";
 export { PasteWindow } from "clipboard.slint";
 export { MergeWindow, MergeRow } from "merge.slint";
 export { CarveWindow, CarveRow } from "carve.slint";
@@ -1978,6 +1979,7 @@ export component AppWindow inherits Window {
     callback design-context();
     callback brush-shapes();
     callback draw-polygon();
+    callback create-linked-path();
     callback brush-components();
     callback hollow-brushes();
     callback carve-brushes();
@@ -2707,6 +2709,7 @@ export component AppWindow inherits Window {
                     }
                     Button { text: "Brush shapes…"; clicked => { root.brush-shapes(); } }
                     Button { text: "Draw polygon…"; clicked => { root.draw-polygon(); } }
+                    Button { text: "Create linked path…"; clicked => { root.create-linked-path(); } }
                     Button { text: "Design context…"; clicked => { root.design-context(); } }
                     Button { text: "Edit selected entity properties…"; clicked => { root.batch-properties(); } }
                     if root.entity-selected: Button {

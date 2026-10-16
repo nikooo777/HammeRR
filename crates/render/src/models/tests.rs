@@ -522,7 +522,7 @@ fn model_scene_uses_material_batches_normals_and_wire_geometry_without_a_helper_
 }
 
 #[test]
-fn fgd_model_guides_add_real_meshes_without_replacing_boxes_or_expanding_scene_bounds() {
+fn fgd_model_guides_replace_filled_boxes_without_expanding_selection_or_scene_bounds() {
     let mut entity = Entity::new(7, "sample");
     entity.properties.set("origin", "0 0 32");
     let guide_asset = asset();
@@ -573,8 +573,8 @@ fn fgd_model_guides_add_real_meshes_without_replacing_boxes_or_expanding_scene_b
     );
     assert_eq!(mesh.stats.model_entities, 0);
     assert_eq!(mesh.stats.fgd_model_helpers, 1);
-    assert_eq!(mesh.vertices.len(), baseline.vertices.len() + 4);
-    assert_eq!(mesh.indices.len(), baseline.indices.len() + 6);
+    assert_eq!(mesh.vertices.len(), 4);
+    assert_eq!(mesh.indices.len(), 6);
     assert_eq!(materials.len(), material_count);
     assert!(
         mesh.batches

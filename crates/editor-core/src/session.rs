@@ -38,6 +38,7 @@ pub mod fog;
 pub mod groups;
 pub mod hollowing;
 pub mod layers;
+pub mod linked_path;
 mod management;
 pub mod material_assets;
 pub mod material_search;

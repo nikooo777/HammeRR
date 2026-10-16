@@ -12,6 +12,8 @@ mod entities;
 pub(super) use entities::*;
 mod geometry;
 pub(super) use geometry::*;
+mod linked_path;
+pub(super) use linked_path::*;
 mod overlay;
 pub(super) use overlay::*;
 mod terrain;

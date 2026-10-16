@@ -8,6 +8,7 @@ use serde::Serialize;
 use super::{Session, models::Models, working_region::Evaluation};
 
 mod lines;
+mod projectors;
 mod spheres;
 
 #[derive(Debug, Serialize)]
@@ -25,6 +26,8 @@ pub struct Report {
     pub sphere_limits: &'static str,
     pub lines: Vec<lines::Report>,
     pub line_limits: &'static str,
+    pub source_projector: Option<projectors::Report>,
+    pub projector_limits: &'static str,
     pub limits: &'static str,
 }
 
@@ -138,6 +141,35 @@ impl Session {
         }
         let spheres = self.inspected_spheres(id);
         let lines = self.inspected_lines(id);
+        let source_projector = self.inspected_projector(id);
+        if let Some(projector) = &source_projector {
+            let state = if projector.displayed {
+                "displayed"
+            } else {
+                projector.suppression_reason.unwrap_or(projector.state)
+            };
+            status += &format!(
+                ". Source projector guide: {state}; authored Source Pitch Yaw Roll, positive pitch down; FGD frustum() pitch_scale is not evaluated"
+            );
+            if !projector.helper_pitch_scales.is_empty() {
+                let scales = projector
+                    .helper_pitch_scales
+                    .iter()
+                    .take(3)
+                    .map(|scale| scale.raw.as_deref().unwrap_or("unsupported helper form"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                status += &format!(" (declared: {scales})");
+            }
+            if let Some(error) = &projector.error {
+                status += &format!(" ({error})");
+            }
+        } else if entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("env_projectedtexture"))
+        {
+            status += ". Source projector guide unavailable: loaded FGD definition required";
+        }
         if !spheres.is_empty() {
             let displayed = spheres.iter().filter(|sphere| sphere.displayed).count();
             let unavailable = spheres
@@ -183,6 +215,8 @@ impl Session {
             sphere_limits: spheres::LIMITS,
             lines,
             line_limits: lines::LIMITS,
+            source_projector,
+            projector_limits: projectors::LIMITS,
             bounds_source,
             invalid_size: appearance.invalid_size,
             world_bounds: bounds.map(|(mins, maxs)| [mins.to_array(), maxs.to_array()]),

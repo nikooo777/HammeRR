@@ -6,6 +6,7 @@ use crate::ObjectId;
 use crate::query::{Hit, Ray};
 
 pub mod lines;
+pub mod projectors;
 pub mod spheres;
 
 pub const MAX_HELPER_EXTENT: f64 = 65_536.0;

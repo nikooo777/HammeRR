@@ -1,13 +1,11 @@
 import argparse
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 import validate_native_runtime as runtime
 from validate_compile_jobs import wait_job
-from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
+from validate_face_lighting import DEFAULT_BINARY, Client, detail
 from validate_visibility import ROOM, bit, visibility
 
 
@@ -168,35 +166,22 @@ def main():
     if args.runtime:
         output = args.output / "runtime"
         output.mkdir(exist_ok=True)
-        env = {
-            **os.environ,
-            "WLR_BACKENDS": "headless",
-            "WLR_HEADLESS_OUTPUTS": "1",
-            "WLR_RENDERER": "pixman",
-        }
-        with (output / "compositor.log").open("w") as log:
-            subprocess.run(
-                [
-                    "cage",
-                    "--",
-                    sys.executable,
-                    "-B",
-                    str(Path(__file__).resolve()),
-                    "--worker",
-                    "--bsp",
-                    str(bsp),
-                    "--output",
-                    str(output),
-                    "--game-dir",
-                    str(args.game_dir),
-                ],
-                cwd=ROOT,
-                env=env,
-                stdout=log,
-                stderr=log,
-                check=True,
-                timeout=55,
-            )
+        runtime.private_compositor(
+            [
+                sys.executable,
+                "-B",
+                str(Path(__file__).resolve()),
+                "--worker",
+                "--bsp",
+                str(bsp),
+                "--output",
+                str(output),
+                "--game-dir",
+                str(args.game_dir),
+            ],
+            output,
+            timeout=55,
+        )
     print(json.dumps({"output": str(args.output), "parallel_visibility": True}))
 
 

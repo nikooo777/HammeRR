@@ -97,7 +97,7 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · LDR reflections {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · reflections {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
@@ -831,7 +831,7 @@ mod tests {
             restarted.build_recipes()["recipes"][2]["description"]
                 .as_str()
                 .unwrap()
-                .contains("LDR reflections on")
+                .contains("reflections on")
         );
         for builtin in ["fast", "final"] {
             restarted

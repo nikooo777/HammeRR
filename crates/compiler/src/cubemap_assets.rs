@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) mod binding;
 mod finalize;
+mod hdr;
+#[cfg(test)]
+mod hdr_tests;
 mod manifest;
 mod material;
 mod sources;
@@ -142,12 +145,16 @@ pub struct CubemapAssetManifest {
     pub namespace: String,
     pub channel: String,
     pub samples: Vec<CubemapSampleAsset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hdr_samples: Vec<CubemapSampleAsset>,
     pub assignments: Vec<CubemapAssignment>,
     pub aliases: Vec<CubemapAliasAsset>,
     pub sources: Vec<CubemapSourceAsset>,
     #[serde(default)]
     pub missing_sources: Vec<String>,
     pub default_texture: Option<CubemapSourceAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hdr_default_texture: Option<CubemapSourceAsset>,
     pub texinfo_bindings: Vec<CubemapTexInfoBinding>,
     pub face_bindings: Vec<CubemapFaceBinding>,
 }

@@ -44,10 +44,25 @@ pub(super) fn sample_texture(namespace: &str, origin: [i32; 3]) -> String {
     )
 }
 
+pub(super) fn hdr_sample_texture(namespace: &str, origin: [i32; 3]) -> String {
+    sample_texture(namespace, origin).replace(".vtf", ".hdr.vtf")
+}
+
 pub(super) fn ensure_default_unmounted(fs: &GameFs, namespace: &str) -> Result<(), String> {
     let path = format!("materials/maps/{namespace}/cubemapdefault.vtf");
+    ensure_unmounted(fs, &path)
+}
+
+pub(super) fn ensure_hdr_default_unmounted(fs: &GameFs, namespace: &str) -> Result<(), String> {
+    ensure_unmounted(
+        fs,
+        &format!("materials/maps/{namespace}/cubemapdefault.hdr.vtf"),
+    )
+}
+
+fn ensure_unmounted(fs: &GameFs, path: &str) -> Result<(), String> {
     if fs
-        .read_limited(&path, 1)
+        .read_limited(path, 1)
         .map_err(|error| format!("Cannot reserve generated default cubemap {path}: {error}"))?
         .is_some()
     {

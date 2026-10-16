@@ -79,7 +79,7 @@ impl LightingMode {
                 "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. Up to four style-preserving diffuse bounces reach world, terrain and brush entities. Prop lightmaps remain unfinished."
             }
             Self::DirectLdrHdr => {
-                "Bakes separate LDR and HDR lightmaps, world lights and model ambient, selecting each channel's authored light inputs. Sampling, diffuse bounces and brush smoothing apply to both channels within one shared work limit. Empty HDR lighting, world-light or ambient data cannot activate native HDR. Runtime HDR depends on the game and hardware; HDR viewport, exposure authoring, HDR cubemaps and prop lightmaps remain unfinished."
+                "Bakes separate LDR and HDR lightmaps, world lights and model ambient, selecting each channel's authored light inputs. Sampling, diffuse bounces and brush smoothing apply to both channels within one shared work limit. Empty HDR lighting, world-light or ambient data cannot activate native HDR. Runtime HDR depends on the game and hardware; Generate reflections captures both LDR and HDR cubemaps when enabled. HDR viewport, exposure authoring and prop lightmaps remain unfinished."
             }
         }
     }
@@ -167,8 +167,10 @@ pub fn bounce_label(count: u8) -> &'static str {
 
 impl Options {
     pub fn validate(self) -> Result<Self, String> {
-        if self.generate_reflections && self.lighting != LightingMode::DirectLdr {
-            return Err("Generate LDR reflections requires Direct LDR lighting".into());
+        if self.generate_reflections && !self.lighting.performs_lighting() {
+            return Err(
+                "Generate reflections requires Direct LDR or Direct LDR + HDR lighting".into(),
+            );
         }
         if self.bounces > MAX_LIGHT_BOUNCES {
             return Err(format!(
@@ -469,6 +471,8 @@ pub struct ReflectionStats {
     pub packed_bytes: usize,
     pub capture_ms: u64,
     pub artifacts: std::path::PathBuf,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub capture_artifacts: Vec<std::path::PathBuf>,
 }
 
 fn serialize_elapsed<S: serde::Serializer>(
@@ -614,7 +618,7 @@ fn build(
 ) -> Result<(), String> {
     options.validate()?;
     if options.generate_reflections && context.is_none() {
-        return Err("Generate LDR reflections requires an explicit output CompileContext".into());
+        return Err("Generate reflections requires an explicit output CompileContext".into());
     }
     if options.generate_reflections {
         cubemap_assets::binding::capture_preflight(vmf)?;
@@ -638,6 +642,7 @@ fn build(
             &mut map,
             context.unwrap(),
             true,
+            options.lighting == LightingMode::DirectLdrHdr,
             control,
         )?)
     } else {

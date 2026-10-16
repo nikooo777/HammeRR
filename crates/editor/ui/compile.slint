@@ -112,7 +112,7 @@ export component CompileWindow inherits Window {
                     lighting-selector := ComboBox { model: root.lighting-modes; enabled: root.lighting-enabled; selected(value) => { root.change-lighting(self.current-index); } }
                 }
                 Text { text: root.lighting-description; wrap: word-wrap; color: #bac2ce; }
-                CheckBox { text: "Generate LDR reflections"; checked: root.generate-reflections; enabled: root.lighting-enabled; toggled => { root.change-reflections(self.checked); } }
+                CheckBox { text: "Generate reflections"; checked: root.generate-reflections; enabled: root.lighting-enabled; toggled => { root.change-reflections(self.checked); } }
                 Text { text: root.reflection-description; wrap: word-wrap; color: #bac2ce; }
                 Text { text: root.capture-summary; wrap: word-wrap; color: #bac2ce; }
                 if !root.capture-editing: HorizontalLayout {

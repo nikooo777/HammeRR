@@ -119,7 +119,8 @@ fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathB
         b"echo HAMMERR_CUBEMAP_WAITING\n",
     )?;
     let profile = format!(
-        "toggle con_logfile hammerr-capture.log\ntoggle sv_cheats 1\ntoggle sv_lan 1\ntoggle mat_hdr_level 0\ntoggle mat_fullbright 0\ntoggle mat_envmapsize 128\ntoggle fps_max 60\ntoggle servercfgfile hammerr_capture_postmap.cfg\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\nhelp mat_envmapsize\necho {PREMAP}\nmap {}\n",
+        "toggle con_logfile hammerr-capture.log\ntoggle sv_cheats 1\ntoggle sv_lan 1\ntoggle mat_hdr_level {}\ntoggle mat_fullbright 0\ntoggle mat_envmapsize 128\ntoggle fps_max 60\ntoggle servercfgfile hammerr_capture_postmap.cfg\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\nhelp mat_envmapsize\necho {PREMAP}\nmap {}\n",
+        request.channel.hdr_level(),
         request.map_name
     );
     guard::reject_writes(&profile, false)?;
@@ -138,10 +139,10 @@ fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathB
     Ok(game)
 }
 
-fn verify_controls(text: &str) -> io::Result<()> {
+fn verify_controls(text: &str, channel: crate::CaptureChannel) -> io::Result<()> {
     for (name, expected) in [
         ("sv_lan", 1.0),
-        ("mat_hdr_level", 0.0),
+        ("mat_hdr_level", f64::from(channel.hdr_level())),
         ("mat_fullbright", 0.0),
         ("mat_envmapsize", 128.0),
     ] {
@@ -160,7 +161,7 @@ fn verify_controls(text: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn verify_markers(text: &str) -> io::Result<()> {
+fn verify_markers(text: &str, channel: crate::CaptureChannel) -> io::Result<()> {
     let mut previous = None;
     for marker in [
         PREMAP,
@@ -183,7 +184,7 @@ fn verify_markers(text: &str) -> io::Result<()> {
             "Native capture repeated or wrote archived configuration",
         ));
     }
-    verify_controls(text)
+    verify_controls(text, channel)
 }
 
 fn verify_native_diagnostics(text: &str) -> io::Result<()> {
@@ -195,6 +196,7 @@ fn verify_native_diagnostics(text: &str) -> io::Result<()> {
         "Can't load bsppack",
         "Cube map buffer size",
         "Host_WriteConfiguration: Wrote",
+        "trying a fall back to a non-HDR version.",
     ] {
         if text.contains(message) {
             return Err(invalid(format!(
@@ -452,7 +454,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 {
                     return Err(invalid("Private controls were not applied before map load"));
                 }
-                verify_controls(&text)?;
+                verify_controls(&text, request.channel)?;
                 viewport(directory, largest)?;
                 for sample in &request.samples {
                     let name = sample
@@ -509,7 +511,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
         }
         let text = util::diagnostic_text(&console, util::MAX_LOG)?;
         verify_native_diagnostics(&text)?;
-        verify_markers(&text)?;
+        verify_markers(&text, request.channel)?;
         for index in 1..=request.samples.len() {
             if !text.contains(&format!(
                 "bounce: 1/1 sample: {index}/{}",
@@ -604,6 +606,7 @@ mod tests {
         fs::write(game_content.join("shared.txt"), b"game content").unwrap();
         let request = WorkerRequest {
             version: 1,
+            channel: crate::CaptureChannel::Ldr,
             nonce: "fixture".into(),
             supervisor: 1,
             supervisor_start: "0".into(),
@@ -659,12 +662,36 @@ mod tests {
         let ordered = format!(
             "{PREMAP}\nHAMMERR_MAPSPAWN\n{READY}\n{BEGIN}\n{RETURNED}\n{DISCONNECTED}\n{controls}"
         );
-        assert!(verify_markers(&ordered).is_ok());
+        assert!(verify_markers(&ordered, crate::CaptureChannel::Ldr).is_ok());
         assert!(
-            verify_markers(&ordered.replace("\"sv_lan\" = \"1\"", "\"sv_lan\" = \"0\"")).is_err()
+            verify_markers(
+                &ordered.replace("\"sv_lan\" = \"1\"", "\"sv_lan\" = \"0\""),
+                crate::CaptureChannel::Ldr
+            )
+            .is_err()
         );
-        assert!(verify_markers(&format!("{BEGIN}\n{ordered}")).is_err());
-        assert!(verify_markers(&ordered.replace(RETURNED, "")).is_err());
+        assert!(
+            verify_markers(&format!("{BEGIN}\n{ordered}"), crate::CaptureChannel::Ldr).is_err()
+        );
+        assert!(
+            verify_markers(&ordered.replace(RETURNED, ""), crate::CaptureChannel::Ldr).is_err()
+        );
+        assert!(verify_markers(&ordered, crate::CaptureChannel::Hdr).is_err());
+        let hdr = ordered.replace("\"mat_hdr_level\" = \"0\"", "\"mat_hdr_level\" = \"2\"");
+        assert!(verify_markers(&hdr, crate::CaptureChannel::Hdr).is_ok());
+        assert!(
+            verify_markers(
+                &format!("{hdr}\n\"mat_hdr_level\" = \"0\"\n"),
+                crate::CaptureChannel::Hdr
+            )
+            .is_err()
+        );
+        assert!(
+            verify_native_diagnostics(
+                "A custom HDR cubemap cannot be found, trying a fall back to a non-HDR version."
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -676,7 +703,7 @@ mod tests {
         fs::write(&path, &bytes).unwrap();
         let text = util::diagnostic_text(&path, util::MAX_LOG).unwrap();
         verify_native_diagnostics(&text).unwrap();
-        verify_markers(&text).unwrap();
+        verify_markers(&text, crate::CaptureChannel::Ldr).unwrap();
         assert!(util::text(&path, util::MAX_LOG).is_err());
         assert!(util::diagnostic_text(&path, bytes.len() - 1).is_err());
         bytes.extend_from_slice(b"Host_Error: Bad string: \xe2\x02'\n");

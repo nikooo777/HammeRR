@@ -8,7 +8,7 @@ use source_formats::vmf::Vmf;
 use super::*;
 use crate::{Control, LightingMode, Options, Output, compile_with_context_controlled};
 
-fn game() -> (tempfile::TempDir, GameFs) {
+pub(super) fn game() -> (tempfile::TempDir, GameFs) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("materials/dev")).unwrap();
     std::fs::create_dir_all(directory.path().join("materials/skybox")).unwrap();
@@ -30,7 +30,7 @@ fn game() -> (tempfile::TempDir, GameFs) {
     (directory, game)
 }
 
-fn source() -> (Vmf, [u32; 2]) {
+pub(super) fn source() -> (Vmf, [u32; 2]) {
     let mut document = Document::new(crate::test_common::room());
     let ids = document
         .edit("reflection fixture", |tx| {
@@ -106,6 +106,7 @@ fn capture_fixture(output: &Output) -> (CubemapAssetManifest, Vec<u8>, CaptureRe
         .set_pak_data(&archive, PakLimits::default())
         .unwrap();
     let receipt = CaptureReceipt {
+        channel: native_runtime::CaptureChannel::Ldr,
         bsp: captured.to_bytes(),
         staged_bsp: staged.clone(),
         artifacts: "/tmp/fake-native-reflection-evidence".into(),
@@ -116,7 +117,7 @@ fn capture_fixture(output: &Output) -> (CubemapAssetManifest, Vec<u8>, CaptureRe
     (private_manifest, staged, receipt)
 }
 
-fn native_black_cube(edge: u16) -> Vec<u8> {
+pub(super) fn native_black_cube(edge: u16) -> Vec<u8> {
     let legacy = manifest::bootstrap_cube(edge).unwrap();
     let mut bytes = legacy[..80].to_vec();
     bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
@@ -235,17 +236,15 @@ fn disabled_context_is_byte_identical_and_pending_cannot_replace_a_file() {
     assert!(pending.write(&destination).is_err());
     assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
     assert_eq!(vmf, source);
-    for mode in [LightingMode::Fullbright, LightingMode::DirectLdrHdr] {
-        assert!(
-            Options {
-                lighting: mode,
-                generate_reflections: true,
-                ..Default::default()
-            }
-            .validate()
-            .is_err()
-        );
-    }
+    assert!(
+        Options {
+            lighting: LightingMode::Fullbright,
+            generate_reflections: true,
+            ..Default::default()
+        }
+        .validate()
+        .is_err()
+    );
 }
 
 #[test]

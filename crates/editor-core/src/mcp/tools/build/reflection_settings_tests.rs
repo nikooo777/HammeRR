@@ -38,15 +38,18 @@ fn reflection_mcp_schema_and_tools_use_atomic_shared_settings() {
         lock(&shared).compile_options().lighting,
         compiler::LightingMode::DirectLdr
     );
-    for lighting in ["fullbright", "direct_ldr_hdr"] {
-        let failed = server
-            .set_compile_settings(Parameters(
-                serde_json::from_value(json!({"lighting":lighting})).unwrap(),
-            ))
-            .unwrap();
-        assert!(failed.is_error.unwrap_or(false));
-        assert_eq!(value(server.get_compile_settings()), enabled);
-    }
+    let failed = server
+        .set_compile_settings(Parameters(
+            serde_json::from_value(json!({"lighting":"fullbright"})).unwrap(),
+        ))
+        .unwrap();
+    assert!(failed.is_error.unwrap_or(false));
+    assert_eq!(value(server.get_compile_settings()), enabled);
+    let hdr = value(server.set_compile_settings(Parameters(
+        serde_json::from_value(json!({"lighting":"direct_ldr_hdr"})).unwrap(),
+    )));
+    assert_eq!(hdr["generate_reflections"], true);
+    assert_eq!(hdr["lighting"], "direct_ldr_hdr");
     let runtime = value(server.get_native_capture_runtime());
     let failed = server
         .set_native_capture_runtime(Parameters(

@@ -649,7 +649,12 @@ impl Controller {
             .unwrap_or_default();
         let reflections = if job["settings"]["generate_reflections"] == true {
             format!(
-                "\nLDR reflection capture: {} / {} samples",
+                "\n{} reflection capture: {} / {} samples",
+                if job["settings"]["lighting"] == "direct_ldr_hdr" {
+                    "LDR + HDR"
+                } else {
+                    "LDR"
+                },
                 job["reflections"]["samples_complete"]
                     .as_u64()
                     .unwrap_or_default(),

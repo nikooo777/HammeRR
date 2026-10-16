@@ -46,7 +46,7 @@ pub(crate) fn bootstrap_cube(edge: u16) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-pub(super) fn validate_cube(bytes: &[u8], edge: u16) -> io::Result<()> {
+pub(super) fn cube(bytes: &[u8], edge: u16) -> io::Result<Vtf> {
     if bytes.len() < 80
         || bytes.len() > MAX_VTF_BYTES
         || !edge.is_power_of_two()
@@ -107,6 +107,28 @@ pub(super) fn validate_cube(bytes: &[u8], edge: u16) -> io::Result<()> {
             "Reflection VTF dimensions, frames, faces, mip chain or metadata do not match its sample",
         ));
     }
+    let mut image_bytes = 0usize;
+    for mip in 0..vtf.mip_count {
+        for face in 0..vtf.faces {
+            image_bytes = image_bytes
+                .checked_add(
+                    vtf.image_data(mip, 0, face)
+                        .map_err(|error| invalid(error.to_string()))?
+                        .len(),
+                )
+                .ok_or_else(|| invalid("Reflection VTF image size overflow"))?;
+        }
+    }
+    if start.checked_add(image_bytes) != Some(bytes.len()) {
+        return Err(invalid(
+            "Reflection VTF image spans do not exactly fill the file",
+        ));
+    }
+    Ok(vtf)
+}
+
+pub(super) fn validate_cube(bytes: &[u8], edge: u16) -> io::Result<()> {
+    let vtf = cube(bytes, edge)?;
     if !matches!(
         vtf.format,
         ImageFormat::Rgba8888
@@ -123,23 +145,6 @@ pub(super) fn validate_cube(bytes: &[u8], edge: u16) -> io::Result<()> {
     ) {
         return Err(invalid(
             "Reflection capture is not a supported LDR pixel format",
-        ));
-    }
-    let mut image_bytes = 0usize;
-    for mip in 0..vtf.mip_count {
-        for face in 0..vtf.faces {
-            image_bytes = image_bytes
-                .checked_add(
-                    vtf.image_data(mip, 0, face)
-                        .map_err(|error| invalid(error.to_string()))?
-                        .len(),
-                )
-                .ok_or_else(|| invalid("Reflection VTF image size overflow"))?;
-        }
-    }
-    if start.checked_add(image_bytes) != Some(bytes.len()) {
-        return Err(invalid(
-            "Reflection VTF image spans do not exactly fill the file",
         ));
     }
     Ok(())
@@ -262,8 +267,14 @@ fn invalid_json(error: serde_json::Error) -> io::Error {
 fn validate_manifest(manifest: &CubemapAssetManifest) -> io::Result<()> {
     CompileContext::new(&manifest.namespace).map_err(invalid)?;
     CompileContext::new(&manifest.logical_namespace).map_err(invalid)?;
-    if manifest.version != 1
-        || manifest.channel != "ldr"
+    let legacy = manifest.version == 1
+        && manifest.channel == "ldr"
+        && manifest.hdr_samples.is_empty()
+        && manifest.hdr_default_texture.is_none();
+    let dual = manifest.version == 2
+        && manifest.channel == "ldr_hdr"
+        && manifest.hdr_samples.len() == manifest.samples.len();
+    if (!legacy && !dual)
         || manifest.samples.is_empty()
         || manifest.samples.len() > MAX_SAMPLES
         || manifest.aliases.len() > MAX_ALIASES
@@ -304,6 +315,23 @@ fn validate_manifest(manifest: &CubemapAssetManifest) -> io::Result<()> {
             return Err(invalid("Verified reflections still contain a bootstrap"));
         }
     }
+    for (sample, hdr_sample) in manifest.samples.iter().zip(&manifest.hdr_samples) {
+        if sample.helper_id != hdr_sample.helper_id
+            || sample.origin != hdr_sample.origin
+            || sample.size_enum != hdr_sample.size_enum
+            || sample.edge != hdr_sample.edge
+            || hdr_sample.texture
+                != super::material::hdr_sample_texture(&manifest.namespace, sample.origin)
+            || !is_hash(&hdr_sample.sha256)
+            || !is_hash(&hdr_sample.bootstrap_sha256)
+            || (manifest.phase == CubemapAssetPhase::Verified
+                && hdr_sample.sha256 == hdr_sample.bootstrap_sha256)
+        {
+            return Err(invalid(
+                "HDR reflection manifest requires complete matching sample pairs with separate capture provenance",
+            ));
+        }
+    }
     let mut aliases = BTreeSet::new();
     for alias in &manifest.aliases {
         let sample = manifest
@@ -331,6 +359,16 @@ fn validate_manifest(manifest: &CubemapAssetManifest) -> io::Result<()> {
             || !is_hash(&asset.sha256)
     }) {
         return Err(invalid("Invalid native default reflection asset"));
+    }
+    if manifest.hdr_default_texture.as_ref().is_some_and(|asset| {
+        asset.path
+            != format!(
+                "materials/maps/{}/cubemapdefault.hdr.vtf",
+                manifest.namespace
+            )
+            || !is_hash(&asset.sha256)
+    }) {
+        return Err(invalid("Invalid native HDR default reflection asset"));
     }
     let mut faces = BTreeSet::new();
     let by_alias: BTreeMap<_, _> = manifest
@@ -569,6 +607,25 @@ pub fn verify_generated_cubemaps(
             .checked_add(data.len())
             .ok_or_else(|| invalid("Reflection byte count overflow"))?;
     }
+    for sample in &manifest.hdr_samples {
+        checkpoint(control)?;
+        let data = entries.get(sample.texture.as_str()).ok_or_else(|| {
+            invalid(format!(
+                "Missing generated HDR reflection sample: {}",
+                sample.texture
+            ))
+        })?;
+        if hash(data) != sample.sha256 {
+            return Err(invalid(format!(
+                "HDR reflection sample hash mismatch: {}",
+                sample.texture
+            )));
+        }
+        super::hdr::validate_sample(data, sample, manifest.phase)?;
+        bytes = bytes
+            .checked_add(data.len())
+            .ok_or_else(|| invalid("Reflection byte count overflow"))?;
+    }
     for alias in &manifest.aliases {
         checkpoint(control)?;
         let path = vmt::material_path(&alias.alias);
@@ -635,7 +692,11 @@ pub fn verify_generated_cubemaps(
             .checked_add(data.len())
             .ok_or_else(|| invalid("Reflection byte count overflow"))?;
     }
-    if let Some(default) = &manifest.default_texture {
+    for default in manifest
+        .default_texture
+        .iter()
+        .chain(&manifest.hdr_default_texture)
+    {
         let data = entries
             .get(default.path.as_str())
             .ok_or_else(|| invalid("Missing registered native default cubemap"))?;
@@ -648,7 +709,11 @@ pub fn verify_generated_cubemaps(
         if !edge.is_power_of_two() || edge > MAX_CUBE_EDGE {
             return Err(invalid("Unsupported native default cubemap edge"));
         }
-        validate_cube(data, edge)?;
+        if default.path.ends_with(".hdr.vtf") {
+            super::hdr::validate_cube(data, edge)?;
+        } else {
+            validate_cube(data, edge)?;
+        }
         bytes = bytes
             .checked_add(data.len())
             .ok_or_else(|| invalid("Reflection byte count overflow"))?;
@@ -701,8 +766,17 @@ pub(super) fn rebase(
     next.namespace = context.namespace().into();
     let mut references = BTreeMap::new();
     let mut alias_references = BTreeMap::new();
-    for (old, sample) in manifest.samples.iter().zip(&mut next.samples) {
-        sample.texture = sample_texture(context.namespace(), sample.origin);
+    for (old, sample) in manifest
+        .samples
+        .iter()
+        .chain(&manifest.hdr_samples)
+        .zip(next.samples.iter_mut().chain(&mut next.hdr_samples))
+    {
+        sample.texture = if old.texture.ends_with(".hdr.vtf") {
+            super::material::hdr_sample_texture(context.namespace(), sample.origin)
+        } else {
+            sample_texture(context.namespace(), sample.origin)
+        };
         references.insert(
             old.texture
                 .strip_prefix("materials/")
@@ -730,7 +804,12 @@ pub(super) fn rebase(
         alias_references.insert(old, alias.alias.clone());
     }
     let mut renamed = BTreeMap::new();
-    for (old, sample) in manifest.samples.iter().zip(&next.samples) {
+    for (old, sample) in manifest
+        .samples
+        .iter()
+        .chain(&manifest.hdr_samples)
+        .zip(next.samples.iter().chain(&next.hdr_samples))
+    {
         renamed.insert(old.texture.clone(), sample.texture.clone());
     }
     for (old, alias) in manifest.aliases.iter().zip(&mut next.aliases) {
@@ -789,15 +868,33 @@ pub(super) fn rebase(
             entry.name = name.clone();
         }
     }
-    if let Some(default) = &manifest.default_texture {
+    for default in manifest
+        .default_texture
+        .iter()
+        .chain(&manifest.hdr_default_texture)
+    {
         for entry in &mut archive.entries {
             if entry.name == default.path {
-                entry.name = format!("materials/maps/{}/cubemapdefault.vtf", next.namespace);
+                let suffix = if default.path.ends_with(".hdr.vtf") {
+                    ".hdr.vtf"
+                } else {
+                    ".vtf"
+                };
+                entry.name = format!("materials/maps/{}/cubemapdefault{suffix}", next.namespace);
             }
         }
     }
-    if let Some(default) = &mut next.default_texture {
-        default.path = format!("materials/maps/{}/cubemapdefault.vtf", next.namespace);
+    for default in next
+        .default_texture
+        .iter_mut()
+        .chain(&mut next.hdr_default_texture)
+    {
+        let suffix = if default.path.ends_with(".hdr.vtf") {
+            ".hdr.vtf"
+        } else {
+            ".vtf"
+        };
+        default.path = format!("materials/maps/{}/cubemapdefault{suffix}", next.namespace);
     }
     persist_manifest(&mut archive, &next)?;
     let mut names = bsp.texdata_strings()?;

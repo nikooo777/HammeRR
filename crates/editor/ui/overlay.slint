@@ -33,6 +33,19 @@ export component OverlayWindow inherits Window {
     in property <bool> refit-mode;
     in property <bool> rebind-mode;
     in property <bool> can-rebind;
+    in property <bool> can-edit-corners;
+    in property <bool> can-preview-corners;
+    in property <bool> corners-mode;
+    in property <string> corner-frame;
+    in-out property <string> corner-0-u;
+    in-out property <string> corner-0-v;
+    in-out property <string> corner-1-u;
+    in-out property <string> corner-1-v;
+    in-out property <string> corner-2-u;
+    in-out property <string> corner-2-v;
+    in-out property <string> corner-3-u;
+    in-out property <string> corner-3-v;
+
     in property <[OverlayTargetRow]> overlay-targets;
     in-out property <string> overlay-search;
     in property <string> overlay-page;
@@ -43,6 +56,9 @@ export component OverlayWindow inherits Window {
     callback overlay-page-change(int);
     callback choose-overlay(string);
     callback rebind();
+    callback edit-corners();
+    callback preview-corners();
+    callback corners-edited();
     callback edited();
     callback browse-material();
     callback fit();
@@ -59,34 +75,37 @@ export component OverlayWindow inherits Window {
         VerticalLayout {
             padding: 20px;
             spacing: 10px;
-            Text { text: root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
+            Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to a face"; font-size: 24px; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: #bac2ce; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 10px;
-                    Text { text: "Existing overlay · rebind to the selected destination face"; font-weight: 600; wrap: word-wrap; }
-                    LineEdit { text <=> root.overlay-search; placeholder-text: "Search overlay names or materials"; accessible-label: "Search existing overlays"; edited => { root.search-overlays(); } }
-                    ListView {
-                        height: root.overlay-targets.length > 0 ? 140px : 0px;
-                        for entry in root.overlay-targets: VerticalLayout {
-                            spacing: 3px; padding-bottom: 6px;
-                            Button { text: entry.label; enabled: entry.eligible; clicked => { root.choose-overlay(entry.entity); } }
-                            Text { text: entry.detail; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                    if !root.corners-mode: VerticalLayout {
+                        spacing: 10px;
+                        Text { text: "Existing overlay · rebind to the selected destination face"; font-weight: 600; wrap: word-wrap; }
+                        LineEdit { text <=> root.overlay-search; placeholder-text: "Search overlay names or materials"; accessible-label: "Search existing overlays"; edited => { root.search-overlays(); } }
+                        ListView {
+                            height: root.overlay-targets.length > 0 ? 140px : 0px;
+                            for entry in root.overlay-targets: VerticalLayout {
+                                spacing: 3px; padding-bottom: 6px;
+                                Button { text: entry.label; enabled: entry.eligible; clicked => { root.choose-overlay(entry.entity); } }
+                                Text { text: entry.detail; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                            }
                         }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button { text: "Previous overlays"; enabled: root.overlay-previous; clicked => { root.overlay-page-change(-1); } }
+                            Text { text: root.overlay-page; vertical-alignment: center; horizontal-stretch: 1; }
+                            Button { text: "Next overlays"; enabled: root.overlay-next; clicked => { root.overlay-page-change(1); } }
+                        }
+                        Text { text: root.rebind-target; wrap: word-wrap; color: #bac2ce; }
                     }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Button { text: "Previous overlays"; enabled: root.overlay-previous; clicked => { root.overlay-page-change(-1); } }
-                        Text { text: root.overlay-page; vertical-alignment: center; horizontal-stretch: 1; }
-                        Button { text: "Next overlays"; enabled: root.overlay-next; clicked => { root.overlay-page-change(1); } }
-                    }
-                    Text { text: root.rebind-target; wrap: word-wrap; color: #bac2ce; }
                     HorizontalLayout {
                         spacing: 16px;
                         VerticalLayout {
                             spacing: 5px;
-                            Text { text: "Source face outline"; font-weight: 600; }
+                            Text { text: root.corners-mode ? "Projection outline" : "Source face outline"; font-weight: 600; }
                             Rectangle {
                                 min-width: 320px; min-height: 180px; background: #1a2430; border-color: #40536a; border-width: 1px; border-radius: 4px;
                                 if root.outline != "": Path {
@@ -114,6 +133,45 @@ export component OverlayWindow inherits Window {
                             Text { text: root.material-detail; wrap: word-wrap; font-size: 12px; color: #bac2ce; }
                         }
                     }
+                    if root.corners-mode: VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "Projection corners · local world units"; font-weight: 600; }
+                        Text { text: "U and V follow the existing projection axes. Keep corners 0–3 in perimeter order. Texture ranges below are separate."; wrap: word-wrap; color: #bac2ce; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Corner 0"; width: 76px; vertical-alignment: center; }
+                            Text { text: "U"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-0-u; input-type: decimal; accessible-label: "Overlay corner 0 U"; edited => { root.corners-edited(); } }
+                            Text { text: "V"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-0-v; input-type: decimal; accessible-label: "Overlay corner 0 V"; edited => { root.corners-edited(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Corner 1"; width: 76px; vertical-alignment: center; }
+                            Text { text: "U"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-1-u; input-type: decimal; accessible-label: "Overlay corner 1 U"; edited => { root.corners-edited(); } }
+                            Text { text: "V"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-1-v; input-type: decimal; accessible-label: "Overlay corner 1 V"; edited => { root.corners-edited(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Corner 2"; width: 76px; vertical-alignment: center; }
+                            Text { text: "U"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-2-u; input-type: decimal; accessible-label: "Overlay corner 2 U"; edited => { root.corners-edited(); } }
+                            Text { text: "V"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-2-v; input-type: decimal; accessible-label: "Overlay corner 2 V"; edited => { root.corners-edited(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Corner 3"; width: 76px; vertical-alignment: center; }
+                            Text { text: "U"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-3-u; input-type: decimal; accessible-label: "Overlay corner 3 U"; edited => { root.corners-edited(); } }
+                            Text { text: "V"; vertical-alignment: center; }
+                            LineEdit { text <=> root.corner-3-v; input-type: decimal; accessible-label: "Overlay corner 3 V"; edited => { root.corners-edited(); } }
+                        }
+                        Text { text: root.corner-frame; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                        Button { text: "Preview corners"; enabled: root.can-preview-corners; clicked => { root.preview-corners(); } }
+                    }
                     Text { text: "Material"; font-weight: 600; }
                     HorizontalLayout {
                         spacing: 10px;
@@ -139,7 +197,7 @@ export component OverlayWindow inherits Window {
                         Text { text: "V end"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.v-end; width: 80px; input-type: decimal; accessible-label: "Overlay V end"; edited => { root.edited(); } }
                     }
-                    Text { text: root.refit-mode ? "Refit and rebind preserve the existing material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                    Text { text: root.refit-mode ? "Existing-overlay edits preserve the material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Fade"; width: 72px; vertical-alignment: center; }
@@ -150,7 +208,7 @@ export component OverlayWindow inherits Window {
                     }
                     Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
                     Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
-                    Text { text: "Cyan lines mark the fitted corners. The viewport does not preview the projected material. Compile and run the map to see the overlay."; wrap: word-wrap; color: #bac2ce; }
+                    Text { text: "Cyan lines mark the projection corners. The viewport does not preview the projected material. Compile and run the map to see the overlay."; wrap: word-wrap; color: #bac2ce; }
                 }
             }
             Text { text: root.message; wrap: word-wrap; color: #f2c487; }
@@ -163,11 +221,12 @@ export component OverlayWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 10px;
+                Button { text: "Edit selected corners"; enabled: root.can-edit-corners; clicked => { root.edit-corners(); } }
                 Button { text: "Refit selected overlay"; enabled: root.can-refit; clicked => { root.refit(); } }
                 Button { text: "Preview rebind"; enabled: root.can-rebind; clicked => { root.rebind(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: root.rebind-mode ? "Apply rebind" : root.refit-mode ? "Apply refit" : "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.corners-mode ? "Apply corners" : root.rebind-mode ? "Apply rebind" : root.refit-mode ? "Apply refit" : "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

@@ -716,3 +716,140 @@ fn overlay_target_choices_search_and_page_without_changing_face_selection_or_hid
     assert!(session.face_mode());
     assert!(session.get_overlay_state()["draft"].is_null());
 }
+
+#[test]
+fn corner_drafts_share_review_atomic_apply_and_exact_undo_without_refitting() {
+    let corners = [
+        [-24.5, -16.25],
+        [-20.0, 24.75],
+        [28.5, 16.5],
+        [32.25, -20.125],
+    ];
+    for actor in [Actor::User, Actor::Agent] {
+        for detail in [false, true] {
+            let (_directory, mut session, source) = fixture(actor, detail);
+            let token = preview(&mut session, actor, source);
+            let result = session.apply_overlay(actor, token).unwrap();
+            let ObjectId::Entity(id) =
+                crate::identity::parse_id(result["created"].as_str().unwrap()).unwrap()
+            else {
+                unreachable!()
+            };
+            let initial = session.get_overlay_state();
+            assert_eq!(initial["selected_corners"]["id"], id);
+            assert!(initial["selected_corners"]["local_corners"].is_array());
+            let before = session.document.vmf().clone();
+            let history = session.document.undo_labels().count();
+            let state = session
+                .preview_overlay_corners(actor, id, corners, &session.overlay_stamp())
+                .unwrap();
+            assert_eq!(state["draft"]["operation"], "corners");
+            assert_eq!(state["draft"]["local_corners"], json!(corners));
+            assert_eq!(
+                state["draft"]["source"],
+                json!({"solid":source.solid,"side":source.side})
+            );
+            assert_eq!(session.document.vmf(), &before);
+            assert_eq!(session.document.undo_labels().count(), history);
+            let token = state["draft"]["token"].as_u64().unwrap();
+            let other = if actor == Actor::User {
+                Actor::Agent
+            } else {
+                Actor::User
+            };
+            assert!(session.apply_overlay(other, token).is_err());
+            assert!(session.cancel_overlay(other, token).is_err());
+            for (entity, positions, stamp) in [
+                (id, [[0.0; 2]; 4], state["snapshot"].as_str().unwrap()),
+                (u32::MAX, corners, state["snapshot"].as_str().unwrap()),
+                (id, corners, initial["snapshot"].as_str().unwrap()),
+            ] {
+                assert!(
+                    session
+                        .preview_overlay_corners(actor, entity, positions, stamp)
+                        .is_err()
+                );
+                assert_eq!(session.get_overlay_state(), state);
+            }
+            let reviewed = session.review_overlay(other, token).unwrap();
+            assert!(session.cancel_overlay(actor, token).is_err());
+            assert!(session.apply_overlay(actor, token).is_err());
+            let expected = overlay::with_corners(&before, id, corners).unwrap().1;
+            let applied = session
+                .apply_overlay(other, reviewed["draft"]["token"].as_u64().unwrap())
+                .unwrap();
+            assert_eq!(applied["operation"], "corners");
+            assert_eq!(applied["updated"], format!("entity:{id}"));
+            assert!(applied.get("created").is_none());
+            assert_eq!(
+                overlay::parse(session.document.entity(id).unwrap()).unwrap(),
+                expected
+            );
+            assert_eq!(session.document.undo_labels().count(), history + 1);
+            assert_eq!(session.selected_ids(), [ObjectId::Entity(id)]);
+            let after = session.document.vmf().clone();
+            session.undo(other).unwrap();
+            assert_eq!(session.document.vmf(), &before);
+            session.redo(other).unwrap();
+            assert_eq!(session.document.vmf(), &after);
+        }
+    }
+}
+
+#[test]
+fn corner_drafts_restore_after_competing_preview_and_cancel_safely_after_source_changes() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (_directory, mut session, source) = fixture(actor, false);
+        let token = preview(&mut session, actor, source);
+        let result = session.apply_overlay(actor, token).unwrap();
+        let ObjectId::Entity(id) =
+            crate::identity::parse_id(result["created"].as_str().unwrap()).unwrap()
+        else {
+            unreachable!()
+        };
+        let state = session
+            .preview_overlay_corners(
+                actor,
+                id,
+                [[-24.0, -16.0], [-20.0, 24.0], [28.0, 16.0], [32.0, -20.0]],
+                &session.overlay_stamp(),
+            )
+            .unwrap();
+        let token = state["draft"]["token"].as_u64().unwrap();
+        session
+            .edit_faces(
+                actor,
+                &[source],
+                map_core::surface::SurfaceEdit {
+                    shift_u: Some(8.0),
+                    ..Default::default()
+                },
+                false,
+                true,
+            )
+            .unwrap();
+        assert_eq!(session.get_overlay_state()["draft"]["valid"], false);
+        assert!(session.apply_overlay(actor, token).is_err());
+        session.cancel_face_preview();
+        assert_eq!(session.get_overlay_state(), state);
+        let owner = session.document.owner_of_solid(source.solid).unwrap();
+        session
+            .edit(actor, "move bound source", |tx| {
+                edit::translate(tx, &[owner], DVec3::Z * 16.0, true)
+            })
+            .unwrap();
+        assert_eq!(session.get_overlay_state()["draft"]["valid"], false);
+        assert!(session.get_overlay_state()["selected_corners"].is_null());
+        assert!(
+            session.get_overlay_state()["corners_error"]
+                .as_str()
+                .unwrap()
+                .contains("Refit selected overlay")
+        );
+        let before = session.document.vmf().clone();
+        assert!(session.apply_overlay(actor, token).is_err());
+        assert!(session.review_overlay(actor, token).is_err());
+        session.cancel_overlay(actor, token).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+    }
+}

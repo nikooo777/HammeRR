@@ -19,6 +19,8 @@ struct Form {
     reviewed: Option<Options>,
     refit: bool,
     rebind: bool,
+    corners: bool,
+    reviewed_corners: Option<[[f64; 2]; 4]>,
     target: Option<u32>,
     choices: Vec<Value>,
     choices_snapshot: String,
@@ -62,6 +64,67 @@ fn fields(window: &OverlayWindow) -> Result<Options, String> {
         fade_min: number(&window.get_fade_min())?,
         fade_max: number(&window.get_fade_max())?,
     })
+}
+
+fn corner_fields(window: &OverlayWindow) -> Result<[[f64; 2]; 4], String> {
+    let fields = [
+        [window.get_corner_0_u(), window.get_corner_0_v()],
+        [window.get_corner_1_u(), window.get_corner_1_v()],
+        [window.get_corner_2_u(), window.get_corner_2_v()],
+        [window.get_corner_3_u(), window.get_corner_3_v()],
+    ];
+    let mut corners = [[0.0; 2]; 4];
+    for (corner, fields) in corners.iter_mut().zip(fields) {
+        for (value, field) in corner.iter_mut().zip(fields) {
+            *value = field
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .ok_or("Enter finite local U/V positions for all four corners")?;
+        }
+    }
+    Ok(corners)
+}
+
+fn load_corners(window: &OverlayWindow, value: &Value) {
+    let text = |index: usize, axis: usize| {
+        value["local_corners"][index][axis]
+            .as_f64()
+            .unwrap_or_default()
+            .to_string()
+            .into()
+    };
+    window.set_corner_0_u(text(0, 0));
+    window.set_corner_0_v(text(0, 1));
+    window.set_corner_1_u(text(1, 0));
+    window.set_corner_1_v(text(1, 1));
+    window.set_corner_2_u(text(2, 0));
+    window.set_corner_2_v(text(2, 1));
+    window.set_corner_3_u(text(3, 0));
+    window.set_corner_3_v(text(3, 1));
+    let vector = |key: &str| {
+        format!(
+            "({:.3}, {:.3}, {:.3})",
+            value[key][0].as_f64().unwrap_or_default(),
+            value[key][1].as_f64().unwrap_or_default(),
+            value[key][2].as_f64().unwrap_or_default()
+        )
+    };
+    window.set_corner_frame(
+        format!(
+            "World origin {} · U {} · V {}",
+            vector("basis_origin"),
+            vector("basis_u"),
+            vector("basis_v")
+        )
+        .into(),
+    );
+}
+
+fn corner_form_matches(window: &OverlayWindow, form: &Form) -> bool {
+    !form.corners
+        || (form.reviewed_corners.is_some() && corner_fields(window).ok() == form.reviewed_corners)
 }
 
 fn load(window: &OverlayWindow, options: &Value) {
@@ -252,6 +315,8 @@ fn choose_overlay(window: &OverlayWindow, session: &Session, form: &RefCell<Form
     state.target = choice["id"].as_u64().and_then(|id| u32::try_from(id).ok());
     state.refit = true;
     state.rebind = true;
+    state.corners = false;
+    state.reviewed_corners = None;
     state.reviewed = None;
     state.serial += 1;
     drop(state);
@@ -309,6 +374,11 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     window.set_can_review(draft["valid"] == true);
     window.set_refit_mode(form.refit);
     window.set_rebind_mode(form.rebind);
+    window.set_corners_mode(form.corners);
+    window.set_can_edit_corners(!state["selected_corners"].is_null() && form.snapshot == snapshot);
+    window.set_can_preview_corners(
+        form.corners && form.target.is_some() && form.snapshot == snapshot,
+    );
     window.set_can_rebind(
         form.rebind && form.target.is_some() && form.source.is_some() && form.snapshot == snapshot,
     );
@@ -319,12 +389,19 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         matches
             && draft["valid"] == true
             && form.reviewed.is_some()
-            && fields(window).ok().as_ref() == form.reviewed.as_ref(),
+            && fields(window).ok().as_ref() == form.reviewed.as_ref()
+            && corner_form_matches(window, &form),
     );
     window.set_draft_label(if draft.is_null() {
         "No overlay draft · Fit / Preview leaves the map unchanged".into()
     } else if draft["valid"] != true {
         "The shared draft is stale · reopen Overlay to preview the current source".into()
+    } else if matches && draft["operation"] == "corners" {
+        format!(
+            "Corner edit {} · Apply corners changes this existing projection",
+            draft["entity"].as_str().unwrap_or("overlay")
+        )
+        .into()
     } else if matches && draft["operation"] == "rebind" {
         format!(
             "Rebind {} · Apply rebind moves this existing overlay to the destination",
@@ -369,6 +446,8 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     });
     let corners = if matches && draft["valid"] == true && form.reviewed.is_some() {
         &draft["corners"]
+    } else if form.corners {
+        &state["selected_corners"]["corners"]
     } else if form.rebind {
         &state["selected_source"]["corners"]
     } else if !state["selected_overlay"].is_null() {
@@ -401,7 +480,17 @@ fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
     form.source = source(&draft["source"]);
     form.token = draft["token"].as_u64();
     form.reviewed = fields(window).ok();
-    form.refit = matches!(draft["operation"].as_str(), Some("refit" | "rebind"));
+    form.refit = matches!(
+        draft["operation"].as_str(),
+        Some("refit" | "rebind" | "corners")
+    );
+    form.corners = draft["operation"] == "corners";
+    form.reviewed_corners = if form.corners {
+        load_corners(window, draft);
+        corner_fields(window).ok()
+    } else {
+        None
+    };
     form.rebind = draft["operation"] == "rebind";
     form.target = draft["entity"]
         .as_str()
@@ -483,6 +572,68 @@ fn preview_refit(window: &OverlayWindow, session: &mut Session, form: &RefCell<F
     refresh(window, session, form);
 }
 
+fn edit_selected_corners(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
+    let state = session.get_overlay_state();
+    if form.borrow().snapshot != state["snapshot"].as_str().unwrap_or_default() {
+        window.set_message(
+            "Map, selection or draft changed. Reopen Overlay or review the current draft.".into(),
+        );
+        return;
+    }
+    let selected = &state["selected_corners"];
+    let Some(id) = selected["id"]
+        .as_u64()
+        .and_then(|id| u32::try_from(id).ok())
+    else {
+        window.set_message(
+            state["corners_error"]
+                .as_str()
+                .unwrap_or("Select one eligible overlay")
+                .into(),
+        );
+        return;
+    };
+    load(window, &selected["options"]);
+    load_corners(window, selected);
+    let mut current = form.borrow_mut();
+    current.corners = true;
+    current.refit = true;
+    current.rebind = false;
+    current.target = Some(id);
+    current.source = source(&selected["source"]);
+    current.reviewed = None;
+    current.reviewed_corners = None;
+    current.serial += 1;
+    drop(current);
+    window.set_message("Edit local U/V world-unit positions in perimeter order, then Preview corners. The source binding and projection frame stay fixed.".into());
+    refresh_material(window, session);
+    refresh(window, session, form);
+}
+
+fn preview_corners(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
+    let result = (|| {
+        let current = form.borrow();
+        if !current.corners {
+            return Err("Choose Edit selected corners first".into());
+        }
+        let id = current
+            .target
+            .ok_or("Select an eligible existing overlay")?;
+        session.preview_overlay_corners(Actor::User, id, corner_fields(window)?, &current.snapshot)
+    })();
+    match result {
+        Ok(state) => {
+            adopt(window, &state, form);
+            window.set_message("Review the cyan projection outline, then Apply corners. The same overlay keeps its binding, frame and settings.".into());
+        }
+        Err(error) => {
+            form.borrow_mut().reviewed_corners = None;
+            window.set_message(error.into());
+        }
+    }
+    refresh(window, session, form);
+}
+
 fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
     let token = form.borrow_mut().token.take();
     let state = session.get_overlay_state();
@@ -534,6 +685,25 @@ impl Controller {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || preview_rebind(&window.unwrap(), &mut lock(&shared), &form)
         });
+        window.on_edit_corners({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || edit_selected_corners(&window.unwrap(), &lock(&shared), &form)
+        });
+        window.on_preview_corners({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || preview_corners(&window.unwrap(), &mut lock(&shared), &form)
+        });
+        window.on_corners_edited({
+            let (window, form) = (window.as_weak(), form.clone());
+            move || {
+                let mut current = form.borrow_mut();
+                current.reviewed_corners = None;
+                current.serial += 1;
+                let window = window.unwrap();
+                window.set_ready(false);
+                window.set_message("Corners changed. Preview corners before applying.".into());
+            }
+        });
         window.on_refit({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || preview_refit(&window.unwrap(), &mut lock(&shared), &form)
@@ -566,7 +736,7 @@ impl Controller {
                 match session.review_overlay(Actor::User, token) {
                     Ok(state) => {
                         adopt(&window, &state, &form);
-                        window.set_message(if state["draft"]["operation"] == "rebind" { "Rebind draft loaded. Apply rebind updates the existing entity to the reviewed destination; Cancel discards this draft." } else if state["draft"]["operation"] == "refit" { "Refit draft loaded. Apply refit updates the existing entity; Cancel discards this reviewed draft." } else { "Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft." }.into());
+                        window.set_message(if state["draft"]["operation"] == "corners" { "Corner draft loaded. Apply corners updates the existing projection; Cancel discards this reviewed draft." } else if state["draft"]["operation"] == "rebind" { "Rebind draft loaded. Apply rebind updates the existing entity to the reviewed destination; Cancel discards this draft." } else if state["draft"]["operation"] == "refit" { "Refit draft loaded. Apply refit updates the existing entity; Cancel discards this reviewed draft." } else { "Current draft loaded. Apply overlay confirms it; Cancel discards this reviewed draft." }.into());
                     }
                     Err(error) => window.set_message(error.into()),
                 }
@@ -584,6 +754,7 @@ impl Controller {
                     form.token.filter(|_| {
                         form.reviewed.is_some()
                             && fields(&window).ok().as_ref() == form.reviewed.as_ref()
+                            && corner_form_matches(&window, &form)
                     })
                 };
                 let Some(token) = token else {
@@ -596,7 +767,7 @@ impl Controller {
                 match session.apply_overlay(Actor::User, token) {
                     Ok(result) => {
                         *form.borrow_mut() = Form::default();
-                        window.set_message(if result["operation"] == "rebind" { "Overlay rebound and selected. Undo restores its previous binding and projection." } else if result["operation"] == "refit" { "Overlay refitted and selected. Undo restores its previous projection." } else { "Overlay created and selected. Undo removes it." }.into());
+                        window.set_message(if result["operation"] == "corners" { "Overlay corners updated. Undo restores the previous projection." } else if result["operation"] == "rebind" { "Overlay rebound and selected. Undo restores its previous binding and projection." } else if result["operation"] == "refit" { "Overlay refitted and selected. Undo restores its previous projection." } else { "Overlay created and selected. Undo removes it." }.into());
                         refresh(&window, &session, &form);
                         let _ = window.hide();
                     }
@@ -632,6 +803,8 @@ impl Controller {
         form.reviewed = None;
         form.refit = false;
         form.rebind = false;
+        form.corners = false;
+        form.reviewed_corners = None;
         form.target = None;
         form.choices_offset = 0;
         form.serial += 1;
@@ -643,7 +816,7 @@ impl Controller {
         refresh_choices(&self.window, session, &self.form);
         load(&self.window, &Value::Null);
         self.window.set_material(material.into());
-        self.window.set_message(if !state["selected_overlay"].is_null() { "Refit selected overlay previews its existing face binding. Apply refit updates the same entity." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
+        self.window.set_message(if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
         refresh_material(&self.window, session);
         refresh(&self.window, session, &self.form);
         self.window.show()
@@ -1211,5 +1384,98 @@ mod tests {
         );
         lock(&shared).undo(Actor::User).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &before_rebind);
+        {
+            let mut session = lock(&shared);
+            session
+                .select(
+                    &[ObjectId::Entity(overlay_id)],
+                    crate::session::SelectMode::Replace,
+                )
+                .unwrap();
+        }
+        let corners = Controller::new(&shared).unwrap();
+        corners.show(&mut lock(&shared), "test/checker").unwrap();
+        corners
+            .window
+            .window()
+            .set_size(slint::PhysicalSize::new(900, 1100));
+        assert!(corners.window.get_can_edit_corners());
+        corners.window.invoke_edit_corners();
+        assert!(corners.window.get_corners_mode());
+        assert!(!corners.window.get_ready());
+        let selected = lock(&shared).get_overlay_state()["selected_corners"].clone();
+        assert_eq!(
+            corner_fields(&corners.window).unwrap(),
+            serde_json::from_value::<[[f64; 2]; 4]>(selected["local_corners"].clone()).unwrap()
+        );
+        corners.window.set_corner_0_u("-24.5".into());
+        corners.window.set_corner_0_v("-16.25".into());
+        corners.window.set_corner_1_u("-20".into());
+        corners.window.set_corner_1_v("24.75".into());
+        corners.window.set_corner_2_u("28.5".into());
+        corners.window.set_corner_2_v("16.5".into());
+        corners.window.set_corner_3_u("32.25".into());
+        corners.window.set_corner_3_v("-20.125".into());
+        corners.window.invoke_corners_edited();
+        let before_corners = lock(&shared).document().vmf().clone();
+        let history_corners = lock(&shared).document().undo_labels().count();
+        corners.window.invoke_preview_corners();
+        assert!(
+            corners.window.get_ready(),
+            "{}",
+            corners.window.get_message()
+        );
+        let draft = lock(&shared).get_overlay_state();
+        assert_eq!(draft["draft"]["operation"], "corners");
+        assert_eq!(lock(&shared).document().vmf(), &before_corners);
+        corners.window.set_corner_0_u("NaN".into());
+        corners.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &before_corners);
+        corners.window.invoke_preview_corners();
+        assert!(!corners.window.get_ready());
+        assert_eq!(lock(&shared).get_overlay_state()["draft"], draft["draft"]);
+        corners.window.invoke_review();
+        assert!(corners.window.get_ready());
+        assert_eq!(corners.window.get_corner_0_u(), "-24.5");
+        for label in ["Edit selected corners", "Apply corners", "Cancel"] {
+            crate::ui::tests::assert_dialog_button_visible(&corners.window, label);
+        }
+        crate::ui::tests::save_ui_snapshot(corners.window.window(), "overlay-corners");
+        corners.window.invoke_apply();
+        assert_eq!(
+            lock(&shared).document().undo_labels().count(),
+            history_corners + 1
+        );
+        assert_eq!(lock(&shared).selected_ids(), [ObjectId::Entity(overlay_id)]);
+        let after_corners = lock(&shared).document().vmf().clone();
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &before_corners);
+        lock(&shared).redo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &after_corners);
+        let foreign = {
+            let mut session = lock(&shared);
+            let snapshot = session.overlay_stamp();
+            session
+                .preview_overlay_corners(
+                    Actor::Agent,
+                    overlay_id,
+                    [[-12.0, -8.0], [-10.0, 12.0], [14.0, 8.0], [16.0, -10.0]],
+                    &snapshot,
+                )
+                .unwrap()["draft"]["token"]
+                .as_u64()
+                .unwrap()
+        };
+        corners.show(&mut lock(&shared), "test/checker").unwrap();
+        corners.window.invoke_apply();
+        corners.window.invoke_cancel();
+        assert_eq!(lock(&shared).get_overlay_state()["draft"]["token"], foreign);
+        corners.show(&mut lock(&shared), "test/checker").unwrap();
+        corners.window.invoke_review();
+        assert!(corners.window.get_corners_mode());
+        assert!(corners.window.get_ready());
+        corners.window.invoke_cancel();
+        assert!(lock(&shared).get_overlay_state()["draft"].is_null());
+        assert_eq!(lock(&shared).document().vmf(), &after_corners);
     }
 }

@@ -38,6 +38,7 @@ struct Draft {
 #[derive(Clone, Copy)]
 enum Operation {
     Create,
+    Corners(u32),
     Refit(u32),
     Rebind { id: u32, previous: FaceId },
 }
@@ -46,6 +47,7 @@ impl Operation {
     fn label(self) -> &'static str {
         match self {
             Self::Create => "create",
+            Self::Corners(_) => "corners",
             Self::Refit(_) => "refit",
             Self::Rebind { .. } => "rebind",
         }
@@ -54,7 +56,7 @@ impl Operation {
     fn entity(self) -> Option<u32> {
         match self {
             Self::Create => None,
-            Self::Refit(id) | Self::Rebind { id, .. } => Some(id),
+            Self::Refit(id) | Self::Corners(id) | Self::Rebind { id, .. } => Some(id),
         }
     }
 }
@@ -103,8 +105,7 @@ impl Session {
         }
         if !std::ptr::eq(self.render_document(), &self.document) {
             return Err(
-                "Apply or cancel the geometry preview before creating, refitting or rebinding an overlay"
-                    .into(),
+                "Apply or cancel the geometry preview before creating or editing an overlay".into(),
             );
         }
         Ok(())
@@ -162,6 +163,23 @@ impl Session {
             ),
             Err(error) => (Value::Null, json!(error)),
         };
+        let (selected_corners, corners_error) = match self.selected_overlay_refit().and_then(
+            |(id, _, _)| {
+                overlay::editable_corners(self.document.vmf(), id)
+                    .map(|(source, definition)| (id, source, definition))
+            },
+        ) {
+            Ok((id, source, definition)) => (
+                json!({
+                    "id":id,"entity":format!("entity:{id}"),"source":{"solid":source.solid,"side":source.side},
+                    "options":options_json(&definition.options),"corners":definition.corners(),
+                    "local_corners":definition.uv_points.map(|point|[point[0],point[1]]),
+                    "basis_origin":definition.basis_origin,"basis_u":definition.basis_u,"basis_v":definition.basis_v,
+                }),
+                Value::Null,
+            ),
+            Err(error) => (Value::Null, json!(error)),
+        };
         let (selected_source, selection_error) = match self.selected_overlay_source() {
             Ok((source, definition)) => (
                 json!({"solid":source.solid,"side":source.side,"corners":definition.corners()}),
@@ -178,6 +196,7 @@ impl Session {
                 "valid":self.checked_overlay(draft.token).is_ok(),
                 "source":{"solid":draft.source.solid,"side":draft.source.side},
                 "options":options_json(&draft.definition.options),
+                "local_corners":draft.definition.uv_points.map(|point|[point[0],point[1]]),
                 "corners":draft.definition.corners(),"bounds":bounds_json(&draft.definition),
                 "basis_origin":draft.definition.basis_origin,"basis_normal":draft.definition.basis_normal,
                 "basis_u":draft.definition.basis_u,"basis_v":draft.definition.basis_v,
@@ -188,7 +207,8 @@ impl Session {
             "revision":self.document.revision(),"selected_source":selected_source,
             "selection_error":selection_error,"draft":draft,
             "selected_overlay":selected_overlay,"refit_error":refit_error,
-            "policy":"Create on one visible world/detail quad, refit one existing overlay to its single bound quad, or explicitly rebind it to a different visible world/detail quad. Refit and rebind preserve the entity ID, authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. Existing bindings must contain one eligible quad; multiside and automatic rebinding are unavailable.",
+            "selected_corners":selected_corners,"corners_error":corners_error,
+            "policy":"Create on one visible world/detail quad, refit one existing overlay to its single bound quad, or explicitly rebind it to a different visible world/detail quad. Refit and rebind preserve the entity ID, authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. Corner editing changes four local U/V positions in the existing projection frame while retaining the source binding, basis and raw settings. Corners must remain convex, native-representable and on the bound face plane. Existing bindings must contain one eligible quad; multiside and automatic rebinding are unavailable.",
         })
     }
 
@@ -218,6 +238,21 @@ impl Session {
         }
         let (source, definition) = overlay::fit_existing(self.document.vmf(), id)?;
         Ok(self.set_overlay_draft(actor, source, definition, Operation::Refit(id)))
+    }
+
+    pub fn preview_overlay_corners(
+        &mut self,
+        actor: Actor,
+        id: u32,
+        corners: [[f64; 2]; 4],
+        snapshot: &str,
+    ) -> Result<Value, String> {
+        self.overlay_context()?;
+        if snapshot != self.overlay_stamp() {
+            return Err("Map, selection or overlay draft changed; inspect overlays again".into());
+        }
+        let (source, definition) = overlay::with_corners(self.document.vmf(), id, corners)?;
+        Ok(self.set_overlay_draft(actor, source, definition, Operation::Corners(id)))
     }
 
     pub fn browse_overlay_targets(
@@ -310,6 +345,7 @@ impl Session {
             actor,
             match operation {
                 Operation::Create => "Preview overlay creation",
+                Operation::Corners(_) => "Preview overlay corners",
                 Operation::Refit(_) => "Preview overlay refit",
                 Operation::Rebind { .. } => "Preview overlay rebind",
             },
@@ -336,7 +372,11 @@ impl Session {
         let source = draft.source;
         let options = draft.definition.options.clone();
         let operation = draft.operation;
+        let corners = draft.definition.uv_points.map(|point| [point[0], point[1]]);
         let id = match operation {
+            Operation::Corners(id) => self.edit(actor, "Edit overlay corners", |tx| {
+                overlay::edit_corners(tx, id, corners)
+            })?,
             Operation::Refit(id) => {
                 self.edit(actor, "Refit overlay", |tx| overlay::refit(tx, id))?
             }

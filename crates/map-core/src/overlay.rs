@@ -384,6 +384,95 @@ pub fn fit_existing(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> 
     Ok((face, definition))
 }
 
+pub fn editable_corners(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), String> {
+    let (face, fitted) = fit_existing(vmf, id)?;
+    let entity = vmf.entities.iter().find(|entity| entity.id == id).unwrap();
+    let existing = parse(entity)?;
+    validate_editable_projection(&existing, &fitted)?;
+    Ok((face, existing))
+}
+
+fn validate_editable_projection(
+    definition: &Definition,
+    source: &Definition,
+) -> Result<(), String> {
+    let normal = DVec3::from_array(source.basis_normal);
+    let origin = DVec3::from_array(source.basis_origin);
+    let native_origin = DVec3::from_array(definition.basis_origin).as_vec3();
+    let native_normal = DVec3::from_array(definition.basis_normal).as_vec3();
+    let native_u = DVec3::from_array(definition.basis_u).as_vec3();
+    let handedness = if DVec3::from_array(definition.basis_normal)
+        .cross(DVec3::from_array(definition.basis_u))
+        .dot(DVec3::from_array(definition.basis_v))
+        < 0.0
+    {
+        -1.0
+    } else {
+        1.0
+    };
+    let native_v = native_normal.cross(native_u) * handedness;
+    let native_points = definition
+        .uv_points
+        .map(|point| native_origin + native_u * point[0] as f32 + native_v * point[1] as f32);
+    if normal.dot(DVec3::from_array(definition.basis_normal)).abs() < 1.0 - BASIS_TOLERANCE
+        || definition
+            .corners()
+            .iter()
+            .any(|point| normal.dot(DVec3::from_array(*point) - origin).abs() > ON_EPSILON)
+        || native_points.iter().any(|point| {
+            normal.dot(point.as_dvec3() - origin).abs() > ON_EPSILON
+                || point.abs().max_element() > SOURCE_COORDINATE_LIMIT as f32
+        })
+    {
+        return Err("Overlay corners must lie on the existing bound face plane, including native float precision; use Refit selected overlay after moving its source".into());
+    }
+    let mut turn = 0.0f64;
+    for index in 0..4 {
+        let [a, b, c] = [index, (index + 1) % 4, (index + 2) % 4].map(|index| native_points[index]);
+        let cross = (b - a).cross(c - b).as_dvec3().dot(normal);
+        if cross.abs() < QUAD_AREA_EPSILON || (turn != 0.0 && cross.signum() != turn.signum()) {
+            return Err(
+                "Overlay corners collapse or lose convexity at native world-coordinate precision"
+                    .into(),
+            );
+        }
+        turn = cross;
+    }
+    Ok(())
+}
+
+pub fn with_corners(
+    vmf: &Vmf,
+    id: u32,
+    corners: [[f64; 2]; 4],
+) -> Result<(FaceId, Definition), String> {
+    let (face, mut definition) = editable_corners(vmf, id)?;
+    for (point, corner) in definition.uv_points.iter_mut().zip(corners) {
+        point[0] = corner[0];
+        point[1] = corner[1];
+    }
+    definition.validate()?;
+    let fitted = fit(vmf, face, definition.options.clone())?;
+    validate_editable_projection(&definition, &fitted)?;
+    Ok((face, definition))
+}
+
+pub fn edit_corners(
+    tx: &mut Transaction<'_>,
+    id: u32,
+    corners: [[f64; 2]; 4],
+) -> Result<ObjectId, EditError> {
+    let (_, definition) =
+        with_corners(tx.document().vmf(), id, corners).map_err(EditError::Invalid)?;
+    let entity = tx.entity_mut(id)?;
+    for (index, point) in definition.uv_points.iter().enumerate() {
+        entity
+            .properties
+            .set(format!("uv{index}"), format_vec3(DVec3::from_array(*point)));
+    }
+    Ok(ObjectId::Entity(id))
+}
+
 pub fn fit_rebind(vmf: &Vmf, id: u32, source: FaceId) -> Result<Definition, String> {
     let (previous, existing) = fit_existing(vmf, id)?;
     if previous == source {

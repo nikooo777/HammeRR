@@ -2,7 +2,7 @@
 
 # Overlays
 
-Overlays project a material onto world surfaces for markings, graffiti and signs without adding brush geometry. Fit a new overlay to one quad face, refit an existing overlay to its bound face, explicitly rebind it to a different face, or compile an `info_overlay` imported from a VMF.
+Overlays project a material onto world surfaces for markings, graffiti and signs without adding brush geometry. Fit a new overlay to one quad face, refit an existing overlay to its bound face, explicitly rebind it to a different face, edit its projection corners, or compile an `info_overlay` imported from a VMF.
 
 ## Create a fitted overlay
 
@@ -39,6 +39,20 @@ Overlays project a material onto world surfaces for markings, graffiti and signs
 ![Choose an existing overlay and preview a different destination face](images/overlay-rebind.png)
 
 **Review current draft** can load an MCP rebind preview and transfers ownership before **Apply rebind**. The destination must differ from the current binding. The existing overlay must already have one visible eligible world/detail quad binding; this bounded operation cannot repair missing, hidden, terrain or multiside bindings. Rebind never follows geometry changes automatically.
+
+## Edit existing projection corners
+
+1. Select one visible `info_overlay` and open **Overlay…**. Its binding must contain one visible world or `func_detail` quad, and its current projection must lie on that face plane.
+2. Click **Edit selected corners**. **Projection corners · local world units** loads the four current corner positions without fitting the face or changing the map.
+3. Edit **Corner 0** through **Corner 3**, using **U** and **V** in the existing projection frame. The world origin and axis readout identifies that frame. Keep the four corners in perimeter order; these world-unit positions are separate from the material’s texture ranges.
+4. Click **Preview corners** and inspect the **Projection outline** and cyan viewport guide. Invalid, crossed, collapsed or out-of-bounds corners preserve the last valid draft and disable Apply.
+5. Click **Apply corners** to update the same entity in one Undo step. The binding, raw basis/origin/settings, connections and other metadata stay intact. **Cancel**, Escape and closing the dialog discard only the preview this dialog owns.
+
+![Numeric local projection corner controls](images/overlay-corners.png)
+
+**Review current draft** loads a corner preview created through MCP and transfers ownership before Apply or Cancel. Changes to a field require **Preview corners** again. Changing the map or selection invalidates the draft; an owned stale draft can still be cancelled. If the source moved away from the projection plane, use **Refit selected overlay** explicitly before editing its corners.
+
+Corners can extend past the bound face perimeter; native rendering clips them to that existing surface. Editing does not bind additional surfaces or change the basis frame. The viewport shows the outline; compile and run the map to inspect its material projection.
 
 ## Build an imported overlay
 
@@ -85,7 +99,7 @@ omitting any referenced surface stops publication of the new BSP.
 ## Limits
 
 - New overlay fitting supports one visible planar world or `func_detail` quad. Terrain, brush models and faces with other corner counts cannot be used for new fitting. Imported overlays retain their broader compile support.
-- Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Corner handles, viewport material projection and automatic refitting after geometry edits are not available yet. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside explicit fitting, refit and rebind operations.
+- Refit supports only one existing bound world or `func_detail` quad. Explicit rebind supports a different visible world/detail quad and requires one eligible existing binding. Numeric corner editing uses the existing single bound quad and projection plane. Viewport corner dragging, material projection and automatic refitting after geometry edits are unavailable. The imported **Overlay Basis** and **Overlay Point** fields remain read-only outside the explicit overlay operations.
 - Targets must be visible, exposed world, detail or terrain faces. Hidden, absent, non-rendering and brush-model targets fail compilation. Hidden overlays are omitted.
 - Budgets: 1,024 regular overlays, 64 source sides and 64 compiled surface references per regular overlay, and 65,536 total source or face bindings. Subdivision can increase the compiled face count; use fewer targets or a larger lightmap scale if it exceeds the budget. These are bounded compiler budgets, not a claim about every engine limit.
 - Imported water transitions have a separate 1,024-record budget, at most 64

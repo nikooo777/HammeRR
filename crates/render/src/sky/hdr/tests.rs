@@ -44,7 +44,9 @@ fn integer_hdr_uses_linear_unorm_times_sixteen_without_srgb_or_eight_bit_clampin
     validate_hdr_texture(&texture).unwrap();
     let bytes = hdr_mip_bytes(&texture, 0).unwrap();
     let values = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| half::f16::from_bits(u16::from_le_bytes([pair[0], pair[1]])).to_f32())
         .collect::<Vec<_>>();
     assert_eq!(values, [0.0, 4.0, 16.0, 1.0]);

@@ -12,9 +12,10 @@ pub fn validate_hdr_texture(texture: &Vtf) -> Result<(), String> {
             for pixel in texture
                 .image_data(mip, 0, 0)
                 .map_err(|error| error.to_string())?
-                .chunks_exact(8)
+                .as_chunks::<8>()
+                .0
             {
-                for (channel, pair) in pixel.chunks_exact(2).enumerate() {
+                for (channel, pair) in pixel.as_chunks::<2>().0.iter().enumerate() {
                     let value =
                         half::f16::from_bits(u16::from_le_bytes([pair[0], pair[1]])).to_f32();
                     if !value.is_finite() || channel < 3 && value < 0.0 {
@@ -36,8 +37,8 @@ pub fn hdr_mip_bytes(texture: &Vtf, mip: u8) -> Result<std::borrow::Cow<'_, [u8]
         ImageFormat::Rgba16161616F => Ok(std::borrow::Cow::Borrowed(bytes)),
         ImageFormat::Rgba16161616 => {
             let mut converted = Vec::with_capacity(bytes.len());
-            for pixel in bytes.chunks_exact(8) {
-                for (channel, pair) in pixel.chunks_exact(2).enumerate() {
+            for pixel in bytes.as_chunks::<8>().0 {
+                for (channel, pair) in pixel.as_chunks::<2>().0.iter().enumerate() {
                     let value = f32::from(u16::from_le_bytes([pair[0], pair[1]])) / 65535.0;
                     let value = if channel < 3 { value * 16.0 } else { value };
                     converted

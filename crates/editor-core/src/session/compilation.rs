@@ -173,6 +173,9 @@ impl CompileRequest {
             }
         }
         self.control.checkpoint()?;
+        if self.options.pack_sky_assets && output.bsp.is_some() && output.sky_assets.is_none() {
+            return Err("Sky packing did not return its retained asset plan".into());
+        }
         let mut sources = None;
         let (pending, published, committed) = if self.options.requires_guarded_publication() {
             if output.bsp.is_none() && output.leak.is_some() {
@@ -538,6 +541,12 @@ impl Session {
             } else {
                 "sky asset packing"
             };
+            if result.options.pack_sky_assets
+                && result.output.bsp.is_some()
+                && result.output.sky_assets.is_none()
+            {
+                return Err("Packed sky output is missing its retained asset plan".into());
+            }
             if self.closing
                 || result.generation != self.document_generation
                 || result.revision != self.document.revision()
@@ -574,9 +583,11 @@ impl Session {
                     if let Some(source) = &result.source {
                         source.verify_metadata()?;
                     }
-                    if let Some(sources) = &publication.sources {
-                        sources.verify_metadata()?;
-                    }
+                    publication
+                        .sources
+                        .as_ref()
+                        .ok_or_else(|| std::io::Error::other("Guarded asset sources missing"))?
+                        .verify_metadata()?;
                     if let Some(stamp) = &result.destination_stamp {
                         stamp.verify_metadata()?;
                     }

@@ -135,6 +135,69 @@ fn numbers(input: &Input, counts: &[usize]) -> Result<Vec<f64>, String> {
     Ok(values)
 }
 
+pub(super) struct Geometry {
+    pub corners: [[f64; 3]; 8],
+    pub bounds: [[f64; 3]; 2],
+}
+
+pub(super) fn square_geometry(
+    origin: DVec3,
+    angles: DVec3,
+    fov: f64,
+    near: f64,
+    far: f64,
+) -> Result<Geometry, String> {
+    let radians = angles.map(|angle| angle.rem_euclid(360.0).to_radians());
+    let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
+    let forward = rotation * DVec3::X;
+    let right = rotation * DVec3::NEG_Y;
+    let up = rotation * DVec3::Z;
+    let tangent = (fov.to_radians() * 0.5).tan();
+    let signs = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+    let corners = std::array::from_fn::<_, 8, _>(|index| {
+        let distance = if index < 4 { near } else { far };
+        let (horizontal, vertical) = signs[index % 4];
+        origin + forward * distance + (right * horizontal + up * vertical) * (distance * tangent)
+    });
+    let native = corners.map(|point| point.as_vec3().as_dvec3());
+    let coincident = native
+        .iter()
+        .enumerate()
+        .any(|(index, point)| native[index + 1..].contains(point));
+    let degenerate_plane = [0, 4].into_iter().any(|start| {
+        let [a, b, c, d] = std::array::from_fn::<_, 4, _>(|index| native[start + index]);
+        [(b - a).cross(c - a), (c - a).cross(d - a)]
+            .into_iter()
+            .any(|area| !area.is_finite() || area.length_squared() == 0.0)
+    });
+    if corners.iter().any(|point| {
+        !point.is_finite()
+            || !point.as_vec3().is_finite()
+            || (*point - origin).abs().max_element() > MAX_HELPER_EXTENT
+    }) || coincident
+        || degenerate_plane
+    {
+        return Err(format!(
+            "Source projector needs eight finite distinct corners and nonzero plane areas at native precision, with coordinate offsets within ±{MAX_HELPER_EXTENT} units of the origin"
+        ));
+    }
+    Ok(Geometry {
+        corners: corners.map(|point| point.to_array()),
+        bounds: [
+            corners
+                .iter()
+                .copied()
+                .fold(DVec3::splat(f64::INFINITY), DVec3::min)
+                .to_array(),
+            corners
+                .iter()
+                .copied()
+                .fold(DVec3::splat(f64::NEG_INFINITY), DVec3::max)
+                .to_array(),
+        ],
+    })
+}
+
 pub fn resolve(class: &Class, entity: &Entity) -> Projector {
     let helpers = class
         .helpers
@@ -233,42 +296,7 @@ pub fn resolve(class: &Class, entity: &Entity) -> Projector {
         {
             return Err("Source projector guide RGB must be integers 0–255 and optional intensity nonnegative; sentinel colors are not substituted".into());
         }
-        let radians = angles.map(|angle| angle.rem_euclid(360.0).to_radians());
-        let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
-        let forward = rotation * DVec3::X;
-        let right = rotation * DVec3::NEG_Y;
-        let up = rotation * DVec3::Z;
-        let tangent = (fov.to_radians() * 0.5).tan();
-        let signs = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
-        let corners = std::array::from_fn::<_, 8, _>(|index| {
-            let distance = if index < 4 { near } else { far };
-            let (horizontal, vertical) = signs[index % 4];
-            origin
-                + forward * distance
-                + (right * horizontal + up * vertical) * (distance * tangent)
-        });
-        let native = corners.map(|point| point.as_vec3().as_dvec3());
-        let coincident = native
-            .iter()
-            .enumerate()
-            .any(|(index, point)| native[index + 1..].contains(point));
-        let degenerate_plane = [0, 4].into_iter().any(|start| {
-            let [a, b, c, d] = std::array::from_fn::<_, 4, _>(|index| native[start + index]);
-            [(b - a).cross(c - a), (c - a).cross(d - a)]
-                .into_iter()
-                .any(|area| !area.is_finite() || area.length_squared() == 0.0)
-        });
-        if corners.iter().any(|point| {
-            !point.is_finite()
-                || !point.as_vec3().is_finite()
-                || (*point - origin).abs().max_element() > MAX_HELPER_EXTENT
-        }) || coincident
-            || degenerate_plane
-        {
-            return Err(format!(
-                "Source projector needs eight finite distinct corners and nonzero plane areas at native precision, with coordinate offsets within ±{MAX_HELPER_EXTENT} units of the origin"
-            ));
-        }
+        let geometry = square_geometry(origin, angles, fov, near, far)?;
         result.origin = Some(origin.to_array());
         result.angles = Some(angles.to_array());
         result.fov_degrees = Some(fov);
@@ -276,19 +304,8 @@ pub fn resolve(class: &Class, entity: &Entity) -> Projector {
         result.far_z = Some(far);
         result.color = Some([color[0] as u8, color[1] as u8, color[2] as u8]);
         result.intensity = color.get(3).copied();
-        result.guide_bounds = Some([
-            corners
-                .iter()
-                .copied()
-                .fold(DVec3::splat(f64::INFINITY), DVec3::min)
-                .to_array(),
-            corners
-                .iter()
-                .copied()
-                .fold(DVec3::splat(f64::NEG_INFINITY), DVec3::max)
-                .to_array(),
-        ]);
-        result.corners = Some(corners.map(|point| point.to_array()));
+        result.guide_bounds = Some(geometry.bounds);
+        result.corners = Some(geometry.corners);
         Ok(())
     };
     match check(&mut result) {

@@ -3104,6 +3104,8 @@ pub(super) fn run(
 pub(crate) mod tests;
 
 #[cfg(test)]
+mod frustum_tests;
+#[cfg(test)]
 mod projector_tests;
 
 #[cfg(test)]

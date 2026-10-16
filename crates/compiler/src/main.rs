@@ -3,12 +3,12 @@ use std::process::ExitCode;
 
 use compiler::{
     CompileContext, Control, FileIdentity, Level, LightingMode, Options, OutputLease, PhysicsMode,
-    compile_with_context_controlled, finalize_reflections,
+    WriteReservation, compile_with_context_controlled, finalize_reflections,
 };
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -21,6 +21,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--generate-reflections") => options.generate_reflections = true,
+            Some("--pack-sky-assets") => options.pack_sky_assets = true,
             Some("--reflection-engine-root") => {
                 reflection_engine = Some(PathBuf::from(args.next().ok_or(USAGE)?))
             }
@@ -81,17 +82,21 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     }
     options.validate()?;
     let lease = options
-        .generate_reflections
+        .requires_guarded_publication()
         .then(|| OutputLease::acquire(&path, control))
         .transpose()?;
     let source_identity = options
-        .generate_reflections
+        .requires_guarded_publication()
         .then(|| FileIdentity::capture(&map, control))
         .transpose()?;
     let path = lease
         .as_ref()
         .map(|lease| lease.path().to_path_buf())
         .unwrap_or(path);
+    let reservation = options
+        .requires_guarded_publication()
+        .then(|| WriteReservation::new(&path, control))
+        .transpose()?;
     let source_path = source_identity
         .as_ref()
         .map(FileIdentity::path)
@@ -106,7 +111,8 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         .then(|| CompileContext::from_output(&path))
         .transpose()?;
     let mut output = compile_with_context_controlled(&vmf, &fs, options, context.as_ref(), control);
-    if let Some(context) = &context
+    if options.generate_reflections
+        && let Some(context) = &context
         && output.bsp.is_some()
         && !output.report.has_errors()
     {
@@ -138,25 +144,18 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(identity) = &source_identity {
             identity.verify(control)?;
         }
-        let prepared = output.prepare_write_controlled(&path, control)?;
+        let prepared = output.prepare_write_reserved(reservation.unwrap(), control)?;
         let pointfile = (output.bsp.is_none() && output.leak.is_some())
             .then(|| OutputLease::acquire(&path.with_extension("lin"), control))
             .transpose()?;
-        let assets = output
-            .cubemap_assets
-            .as_ref()
-            .map(|manifest| {
-                compiler::cubemap_assets::capture_reflection_source_guard(manifest, &fs, control)
-            })
-            .transpose()?;
+        let assets =
+            compiler::asset_sources::capture_output_asset_source_guard(&output, &fs, control)?;
         lease.verify(control)?;
         let validate = || {
             if let Some(identity) = &source_identity {
                 identity.verify_metadata()?;
             }
-            if let Some(assets) = &assets {
-                assets.verify_metadata()?;
-            }
+            assets.verify_metadata()?;
             Ok(())
         };
         match prepared {
@@ -197,6 +196,12 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         "Occluders: {} · polygons: {} · vertex references: {}",
         stats.occluders, stats.occluder_polygons, stats.occluder_vertex_refs
     );
+    if let Some(sky) = &stats.sky_assets {
+        println!(
+            "Packed sky {}: {} · {} asset files · {} asset bytes",
+            sky.family, sky.channels, sky.files, sky.asset_bytes
+        );
+    }
     println!(
         "Visibility {}: workers {} · {} cluster pairs removed · {} work units",
         stats.visibility_mode.label(),

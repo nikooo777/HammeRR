@@ -47,6 +47,7 @@ pub use cubemap_assets::{
 };
 pub use portals::Leak;
 pub use publication::{FileIdentity, FileStamp, OutputLease};
+pub use sky_assets::{SkyAssetManifest, SkyAssetPlan, read_packed_sky, verify_packed_sky};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -149,6 +150,7 @@ pub struct Options {
     pub bounces: u8,
     pub smoothing_angle: u8,
     pub generate_reflections: bool,
+    pub pack_sky_assets: bool,
 }
 
 pub const MAX_LIGHT_BOUNCES: u8 = 4;
@@ -168,6 +170,10 @@ pub fn bounce_label(count: u8) -> &'static str {
 }
 
 impl Options {
+    pub const fn requires_guarded_publication(self) -> bool {
+        self.generate_reflections || self.pack_sky_assets
+    }
+
     pub fn validate(self) -> Result<Self, String> {
         if self.generate_reflections && !self.lighting.performs_lighting() {
             return Err(
@@ -461,6 +467,8 @@ pub struct Stats {
     pub physics_surface_properties: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reflections: Option<ReflectionStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sky_assets: Option<PackedSkyStats>,
     #[serde(rename = "elapsed_ms", serialize_with = "serialize_elapsed")]
     pub elapsed: Duration,
 }
@@ -477,6 +485,14 @@ pub struct ReflectionStats {
     pub capture_artifacts: Vec<std::path::PathBuf>,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct PackedSkyStats {
+    pub family: String,
+    pub channels: &'static str,
+    pub files: usize,
+    pub asset_bytes: usize,
+}
+
 fn serialize_elapsed<S: serde::Serializer>(
     elapsed: &Duration,
     serializer: S,
@@ -491,6 +507,7 @@ pub struct Output {
     pub leak: Option<Leak>,
     pub stats: Stats,
     pub cubemap_assets: Option<CubemapAssetManifest>,
+    pub sky_assets: Option<SkyAssetPlan>,
 }
 
 #[derive(Debug)]
@@ -498,6 +515,32 @@ pub struct PreparedWrite {
     temporary: tempfile::NamedTempFile,
     destination: std::path::PathBuf,
     success: bool,
+}
+
+#[derive(Debug)]
+pub struct WriteReservation {
+    temporary: tempfile::NamedTempFile,
+    destination: std::path::PathBuf,
+}
+
+impl WriteReservation {
+    pub fn new(path: &Path, control: &Control) -> io::Result<Self> {
+        control.checkpoint().map_err(io::Error::other)?;
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let parent = std::fs::canonicalize(parent)?;
+        let destination = parent.join(
+            path.file_name()
+                .ok_or_else(|| io::Error::other("Build destination has no file name"))?,
+        );
+        let temporary = tempfile::NamedTempFile::new_in(parent)?;
+        Ok(Self {
+            temporary,
+            destination,
+        })
+    }
 }
 
 impl PreparedWrite {
@@ -549,6 +592,23 @@ impl Output {
         control: &Control,
     ) -> io::Result<Option<PreparedWrite>> {
         control.checkpoint().map_err(io::Error::other)?;
+        if self.bsp.is_none()
+            && self.leak.is_none()
+            && self.cubemap_assets.is_none()
+            && self.sky_assets.is_none()
+        {
+            return Ok(None);
+        }
+        self.prepare_write_reserved(WriteReservation::new(path, control)?, control)
+    }
+
+    pub fn prepare_write_reserved(
+        &self,
+        reservation: WriteReservation,
+        control: &Control,
+    ) -> io::Result<Option<PreparedWrite>> {
+        control.checkpoint().map_err(io::Error::other)?;
+        let path = &reservation.destination;
         if self
             .cubemap_assets
             .as_ref()
@@ -576,6 +636,18 @@ impl Output {
                 ));
             }
         }
+        if let Some(plan) = &self.sky_assets {
+            let bsp = self
+                .bsp
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Packed sky output has no BSP"))?;
+            if self.report.has_errors() {
+                return Err(io::Error::other(
+                    "Packed sky build diagnostics contain errors",
+                ));
+            }
+            verify_packed_sky(bsp, &plan.manifest(), control)?;
+        }
         if self.bsp.is_none() && self.leak.is_none() {
             return Ok(None);
         }
@@ -592,11 +664,7 @@ impl Output {
         } else {
             return Ok(None);
         };
-        let parent = destination
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        let mut temporary = reservation.temporary;
         for chunk in bytes.chunks(64 * 1024) {
             control.checkpoint().map_err(io::Error::other)?;
             temporary.write_all(chunk)?;
@@ -1033,6 +1101,30 @@ fn build(
             .map_err(|error| error.to_string())?;
         output.cubemap_assets = Some(plan.manifest);
     }
+    if options.pack_sky_assets {
+        let archive = bsp
+            .pak_data_controlled(bsp::PakLimits::default(), &mut || {
+                control.checkpoint().map_err(io::Error::other)
+            })
+            .map_err(|error| error.to_string())?;
+        let plan = sky_assets::collect_sky_asset_plan(
+            vmf,
+            fs,
+            &archive,
+            bsp::PakLimits::default(),
+            control,
+        )
+        .map_err(|error| error.to_string())?;
+        plan.attach(&mut bsp, control)
+            .map_err(|error| error.to_string())?;
+        output.stats.sky_assets = Some(PackedSkyStats {
+            family: plan.family().into(),
+            channels: if plan.has_hdr() { "ldr_hdr" } else { "ldr" },
+            files: plan.entries().len(),
+            asset_bytes: plan.asset_bytes(),
+        });
+        output.sky_assets = Some(plan);
+    }
     output.stats.nodes = bsp.records::<bsp::Node>().map_err(|e| e.to_string())?.len();
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
     output.stats.faces = bsp.records::<bsp::Face>().map_err(|e| e.to_string())?.len();
@@ -1076,6 +1168,7 @@ pub fn compile_with_context_controlled(
         leak: None,
         stats: Stats::default(),
         cubemap_assets: None,
+        sky_assets: None,
     };
     output.stats.lighting_mode = options.lighting;
     output.stats.physics_mode = options.physics;

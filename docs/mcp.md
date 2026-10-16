@@ -775,7 +775,7 @@ For point/spot/sun lights, HDR selects `_lightHDR`, then `_light`; eight-number 
 
 `hdr.map_data_present` reports nonempty HDR light samples, world lights and ambient samples (native lumps 53/54/55). **Build details…** shows **HDR data ready** or **HDR unavailable: incomplete map data**. Legitimately empty output preserves a valid dual/LDR BSP and names the missing arrays in diagnostics; it receives no dummy emitters or probes. Input, solve, budget and cancellation failures preserve prior output. This flag describes map-data eligibility, not the game's selected channel. CS:S selects the baked LDR or HDR channel according to its HDR setting and hardware support; select that setting before a fresh map load.
 
-HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. Authored HDR sky families retain the native material path; `pack_sky_assets` admits and embeds supported complete material/VTF dependencies. HDR sky radiance validation, editor HDR previews, exposure authoring and baked prop lightmaps remain unavailable. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
+HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. Authored HDR sky families retain the native material path; `pack_sky_assets` admits and embeds supported complete material/VTF dependencies. Native sky shader/exposure parity and baked prop lightmaps remain unavailable; explicit editor HDR sky preview uses the separate preview policy below. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
 
 ### Water material binding
 
@@ -1055,13 +1055,78 @@ Readiness describes supported mounted declarations and complete VTF layout, with
 
 ### 2D sky preview
 
-`set_view` accepts `sky_preview: true` to show the world's `skyname` through authored sky surfaces. `render_view` accepts the same temporary override without changing the shared view. The default is false. Preview requires perspective Textured mode, `tool_textures: true` and six supported mounted LDR sky faces.
+`set_view` accepts `sky_preview:true`, optional `sky_channel:"ldr"|"hdr"` and
+`sky_exposure_ev`. Defaults remain preview off, LDR and 0 EV. Exposure must be
+finite within −8…8 and affects only HDR sky pixels. Omitted fields retain shared
+values; invalid settings reject atomically. `render_view` accepts the same
+temporary overrides without changing shared view, camera, source or history.
+These controls use the same Session operations as
+**Sky channel → HDR · editor preview** and **HDR sky exposure (EV)** in the editor.
+Preview requires perspective Textured
+mode, `tool_textures:true` and six supported faces for the requested channel.
 
-`get_map_info.skybox` and `render_view` image metadata report `name`, `ready`, `summary` and per-face `suffix`, `material`, `issue` and `size`. An empty `skyname` returns `name: null` and `ready: false`. Missing or unsupported faces leave the ordinary tool surfaces visible. Axis-aligned VMT scale/translation and unequal face dimensions are supported, within 4096 pixels per axis and 64 MiB per texture file.
+`get_map_info.view` and render metadata's `view` include both settings.
+`get_map_info.skybox` and render metadata's `skybox` report `name`,
+`name_truncated`, `ready`, `summary`, `requested_channel`, configured
+`exposure_ev`, `tonemap`, `color_policy`,
+`eligible` and `suppression_reason`. `ready` describes all six assets; `eligible`
+adds view/camera/filter eligibility and does not prove visible sky pixels.
+Suppression is `disabled`, `unsupported_view`, `tool_textures_hidden` or
+`unavailable`, otherwise null. Faces report `suffix`, `material`, `issue`, actual
+selected-channel `size` and `format`; HDR also reports the canonical VTF
+`texture` path, material `source` and `texture_source` with directory/VPK
+provenance. Empty `skyname` returns `name:null` and `ready:false`.
+`name_truncated:true` marks an overlong HDR family's bounded display prefix;
+clipped text is never used for asset lookup or cache identity.
 
-Preview controls leave VMF and Undo unchanged; author `skyname` through `begin_property_edit` with `world: true`. Pass its token to `update_property_edit` with `changes: [{"action":"set","key":"skyname","value":"sky_dust_hdr"}]`, then to `commit_property_edit`. This is the same undoable **World settings…** edit. CS:S uses the exact authored family; it does not append `_hdr` automatically. A stock HDR family's LDR fallback can make this preview ready without validating its HDR textures or establishing the game's selected channel. Compilation preserves the name; enable `pack_sky_assets` explicitly to embed the supported original custom sky dependencies. See [Compiled HDR skies](sky.md#compiled-hdr-skies).
+LDR retains its existing sRGB sampling and target encoding; exposure is inactive
+and `tonemap` is `none`. Explicit HDR requires six direct static `Sky` materials
+with `$hdrbasetexture` in VTF format 24 (`Rgba16161616F`) or 25
+(`Rgba16161616`), one frame, face and depth layer. Complete bounded VMT syntax,
+unique supported scalar parameters and a supported axis-aligned texture
+transform are required. Patch, compressed HDR, proxies, unknown/nested
+parameters and unavailable faces reject the whole HDR family, retaining tool
+surfaces without LDR or another-family substitution.
 
-Sky surfaces retain depth, picking and visibility filtering. Planar, flat, wireframe and diagnostic views retain their usual behavior. 3D sky-camera transforms, HDR rendering, fog, exposure and animated materials are outside this preview; see [2D sky preview](sky.md).
+HDR half-float RGB is linear, finite and nonnegative; every half component in
+every mip must be finite. UNORM RGB becomes `channel / 65535 × 16`. Texture
+alpha is ignored and sky output is opaque. The renderer applies `2^EV`,
+per-channel Reinhard `x/(1+x)`, then one sRGB target encoding;
+`tonemap:"reinhard_per_channel"` and `color_policy` state this editor policy.
+It applies to sky only, without changing foreground surfaces, native hardware
+mode, build lighting, fog, material tint or game exposure adaptation.
+
+HDR source budgets are 128 lookups, 64 MiB aggregate, 1 MiB per VMT, 16 MiB per
+VTF and 4096 pixels per axis. Family names cap at 256 bytes and dependency
+references at 512 bytes; surrounding whitespace, traversal and control
+characters reject. Overlong families, duplicate world `skyname` keys and
+unavailable game content return before reads or cache writes, preserving the
+previous valid family cache.
+Unique textures are shared within one cached HDR
+family. Encoded data and GPU texture bytes each cap at 64 MiB per set;
+replacement can briefly retain old and new GPU sets. Temporary CPU source/parse
+copies cap at 128 MiB plus one 16 MiB conversion buffer. Successful and failed
+HDR loads are retained for the cached family; `reload_material_assets` clears
+them. LDR retains its 4096-axis and 64-MiB-per-texture limits.
+Axis-aligned scale/translation and unequal face sizes work in both channels.
+HDR metadata's `limits` object exposes `asset_lookups`, `total_bytes`,
+`material_bytes`, `texture_bytes`, `texture_axis`, `cached_families`,
+`gpu_bytes_per_set` and the `exposure_ev` range; it is absent for LDR.
+
+Preview controls leave VMF and Undo unchanged; author `skyname` through
+`begin_property_edit` with `world:true`, then `update_property_edit` with
+`changes:[{"action":"set","key":"skyname","value":"sky_dust_hdr"}]` and
+`commit_property_edit` using its token. This is the same **World settings…**
+edit. HDR resolves that exact authored family without appending `_hdr`.
+LDR readiness alone does not validate a family's HDR assets or select the
+game's channel. Compilation preserves the name; explicit `pack_sky_assets`
+embeds supported original dependencies independently of editor preview settings.
+See [Compiled HDR skies](sky.md#compiled-hdr-skies).
+
+Sky surfaces retain depth, picking and visibility filtering. Planar, flat,
+wireframe and diagnostic views retain their usual behavior. 3D sky-camera
+transforms, sky fog, animation and native HDR rendering parity remain outside
+this preview; see [2D sky preview](sky.md).
 
 ### Fog preview
 
@@ -1363,8 +1428,9 @@ records and ambiguous disabled-only sets return inspection errors.
 ### Reload material assets
 
 Call `reload_material_assets` without arguments after changing VMT/VTF files in
-mounted content. It reloads cached display materials and sky faces, rescans the
-material catalog, re-resolves cached model material paths and refreshes
+mounted content. It reloads cached display materials and LDR sky faces, clears
+the HDR family cache, rescans the material catalog, re-resolves cached model
+material paths and refreshes
 desktop/offscreen textures and thumbnails. Decoded model geometry stays shared;
 preferred paths appearing or disappearing are resolved from the existing mounts.
 The icon admission cache, including failures, is cleared for the next inspection

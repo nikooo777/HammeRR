@@ -8,6 +8,8 @@ use source_formats::vmf::{Entity, Vmf};
 
 use crate::{Control, Diagnostic, Report, map::MAX_COMPILE_COORD, static_props};
 
+mod assets;
+
 const MAX_PROPS: usize = 16_384;
 const MAX_LEAF_WORK: usize = 4_000_000;
 
@@ -33,6 +35,23 @@ fn record(entity: &Entity, header: ModelHeader) -> Result<DetailProp, String> {
         return Err(
             "Detail model props are client-only and cannot carry entity I/O connections".into(),
         );
+    }
+    for key in [
+        "parentname",
+        "globalname",
+        "target",
+        "vscripts",
+        "thinkfunction",
+    ] {
+        if entity
+            .properties
+            .get(key)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(format!(
+                "Detail model props are client-only and cannot honor {key}; remove the runtime behavior"
+            ));
+        }
     }
     for (key, default) in [
         ("skin", 0.0),
@@ -127,6 +146,7 @@ pub(crate) fn bake(
         .head_node;
     let mut props = DetailProps::default();
     let mut models = BTreeMap::<String, (u16, ModelHeader)>::new();
+    let mut validator = assets::ModelValidator::default();
     let mut work = 0;
     for entity in entities {
         control.checkpoint()?;
@@ -149,17 +169,7 @@ pub(crate) fn bake(
                     );
                 }
                 let name = DetailProps::model_record(&path).map_err(|error| error.to_string())?;
-                let data = fs
-                    .read_limited(&path, source_formats::mdl::MAX_MODEL_BYTES)
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| format!("Detail model {path} was not found"))?;
-                let header =
-                    ModelHeader::parse(&data).map_err(|error| format!("{path}: {error}"))?;
-                if !header.is_static_prop() {
-                    return Err(format!(
-                        "Detail model {path} was not built with $staticprop"
-                    ));
-                }
+                let header = validator.header(fs, &path, control)?;
                 models.insert(path.clone(), (props.models.len() as u16, header));
                 props.models.push(name);
             }

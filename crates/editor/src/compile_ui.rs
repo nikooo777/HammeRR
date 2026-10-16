@@ -680,6 +680,16 @@ impl Controller {
                 )
             })
             .unwrap_or_default();
+        let details = result["stats"]["detail_props"]
+            .as_u64()
+            .filter(|&count| count > 0)
+            .map(|count| {
+                let models = result["stats"]["detail_prop_models"]
+                    .as_u64()
+                    .unwrap_or_default();
+                format!("\nDetail props: {count} · Model assets: {models} · Unbaked white lighting · No collision")
+            })
+            .unwrap_or_default();
         let visibility = result["stats"]["clusters"]
             .as_u64()
             .map(|count| {
@@ -924,7 +934,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{reflections}{props}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{samples}{reflections}{props}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{styles}{hdr}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

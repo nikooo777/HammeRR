@@ -270,6 +270,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | ![Model browser and bodygroup preview](docs/images/bodygroup-model-browser.png) |
 | Browse models, skins and named bodygroups with reference poses and dynamic-model tints. |
 
+| Model detail props |
+| --- |
+| ![Decorative detail models in Counter-Strike: Source](docs/images/detail-props.png) |
+| Place decorative models and compile them into native detail records without collision. |
+
+[Model detail props →](docs/model-detail-props.md)
+
 | Sound exploration |
 | --- |
 | ![Sound browser and audition controls](docs/images/sound-browser.png) |

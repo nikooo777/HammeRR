@@ -81,10 +81,7 @@ fn records<T: Pod>(data: &mut &[u8], maximum: usize) -> io::Result<Vec<T>> {
         .split_at_checked(bytes)
         .ok_or_else(|| invalid("truncated detail-prop records"))?;
     *data = remaining;
-    Ok(raw
-        .chunks_exact(size_of::<T>())
-        .map(bytemuck::pod_read_unaligned)
-        .collect())
+    Ok(bytemuck::pod_collect_to_vec(raw))
 }
 
 fn append<T: Pod>(data: &mut Vec<u8>, records: &[T]) {

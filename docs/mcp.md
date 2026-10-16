@@ -154,6 +154,10 @@ To build the map, set the build options once, then compile:
 
 These details aren't obvious from the tool list.
 
+**Extended entity definitions**
+
+`load_entity_definitions` resolves includes and inheritance, then applies ordered `@ExtendClass` declarations to existing classes. `get_entity_class`, inspector controls and connection suggestions share the resulting catalog. Existing stored values, custom keys, connections and map history remain intact; a failed load retains the previous definitions. See [Entity definitions](entities.md#load-extended-entity-definitions) for replacement rules and unsupported directives.
+
 **Overlapping objects**
 
 - `get_object_hit_candidates` and `cycle_object_hit` accept world-space `origin` and nonzero `direction`; distances are in world units even for non-unit directions. Use Objects mode and finish conflicting tools or geometry previews first.
@@ -295,6 +299,12 @@ The default engine installation is the mounted game's base directory only when i
 Existing `compile_map`, `start_compile` and `run_map` perform the shared compile/capture/verify/publication job. `get_compile_status.job.settings.generate_reflections` and `job.native_runtime` retain its start configuration; `job.reflections.samples_complete` and `job.reflections.samples_total` report capture progress. Cancellation waits for owned-process cleanup and the preservation audit. Failed, cancelled or stale capture preserves the prior published BSP and launch state without adding map Undo.
 
 Generation supports one LDR capture bounce, 1–32 distinct integer sample positions and cube edges up to 128 pixels; size `0` uses 128 pixels. HDR capture and editor reflection preview are unavailable. The native helper, private compositor dependencies, supported assets and running Steam client must pass preflight. See [Generated LDR reflections](reflections.md) for controls and capture limits, and [Cubemap faces](cubemap-faces.md) for binding authoring.
+
+### Explicit model detail props
+
+Use `create_entity` with `classname: "prop_detail"` (or imported alias `detail_prop`), an `origin` and `properties.model` naming a mounted static-prop `models/…mdl` asset whose materials use `UnlitGeneric`. Vertex-lit models reject because the engine substitutes an error model for them. Existing `set_entity_properties`, model choices and transforms edit the same source entities as the inspector. `compile_map`, `start_compile` and `run_map` consume visible detail entities into checked native detail records; hidden entities are omitted. Results expose `stats.detail_props` and `stats.detail_prop_models`, also shown in **Build details…**.
+
+These models are non-colliding and use unbaked white lighting. Only default skin/body, scale 1, normal orientation and default rendering/fade settings are supported; unsupported overrides, named lighting origins, connections, missing assets and solid-leaf origins reject before replacing previous output. Full-map builds are required. Material-driven scattering, sprite/shape authoring, baked detail lighting and styles remain unavailable. See [Model detail props](model-detail-props.md).
 
 ### HDR build channels
 

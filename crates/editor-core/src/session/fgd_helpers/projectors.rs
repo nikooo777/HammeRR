@@ -10,7 +10,9 @@ use source_formats::fgd::ClassKind;
 use super::super::{Session, working_region::Evaluation};
 
 pub(super) const MAX_DISPLAYED_PROJECTORS: usize = 128;
-pub(super) const LIMITS: &str = "Independent Source projector guide for selected visible env_projectedtexture point entities with loaded FGD definitions. Authored values precede labeled FGD defaults. Square horizontal/vertical FOV; near/far distances lie along the forward axis. Eight corners and twelve edges; at most 128 displayed projectors in entity-ID order. Values and helper pitch-scale previews cap at 256 bytes; at most 16 helper declarations are reported. Requires 0 < FOV < 180 and 0 < nearz < farz <= 65536, with finite distinct native corners and each coordinate offset within ±65536 units of the origin; invalid values are never clamped or replaced. Target, parentname, legacy angle and nonzero cameraspace branches are unavailable. RGB colors the guide; optional intensity is reported without exposure/opacity conversion. FGD frustum() and its pitch_scale are not evaluated. This guide does not preview projected textures, shadows, illumination or runtime state, and does not affect bounds, picking, selection, placement, framing or working regions. Loaded models, model helpers, brush sources and existing light/rope helpers retain precedence.";
+const MAX_SUMMARY_FIELDS: usize = 4;
+const MAX_SUMMARY_CHARS: usize = 24;
+pub(super) const LIMITS: &str = "Independent Source projector guide for selected visible env_projectedtexture point entities with loaded FGD definitions. Authored values precede labeled FGD defaults. Square horizontal/vertical FOV; near/far distances lie along the forward axis. Eight corners and twelve edges; at most 128 displayed projectors in entity-ID order. Values and helper pitch-scale previews cap at 256 bytes; at most 16 helper declarations are reported. Requires 0 < FOV < 180 and 0 < nearz < farz <= 65536, with eight pairwise distinct native corners, nonzero near/far plane areas and each coordinate offset within ±65536 units of the origin; invalid values are never clamped or replaced. Target, parentname, legacy angle and nonzero cameraspace branches are unavailable. RGB colors the guide; optional intensity is reported without exposure/opacity conversion. FGD frustum() and its pitch_scale are not evaluated. This guide does not preview projected textures, shadows, illumination or runtime state, and does not affect bounds, picking, selection, placement, framing or working regions. Loaded models, model helpers, brush sources and existing light/rope helpers retain precedence.";
 
 #[derive(Debug, Serialize)]
 pub struct Input {
@@ -56,6 +58,36 @@ pub struct Report {
 }
 
 impl Report {
+    pub(super) fn default_summary(&self) -> Option<String> {
+        let defaults = self
+            .inputs
+            .iter()
+            .filter(|input| input.value_source == "fgd_default")
+            .collect::<Vec<_>>();
+        if defaults.is_empty() {
+            return None;
+        }
+        let mut fields = defaults
+            .iter()
+            .take(MAX_SUMMARY_FIELDS)
+            .map(|input| {
+                let raw = input.raw.as_deref().unwrap_or_default();
+                let mut preview = raw.chars().take(MAX_SUMMARY_CHARS).collect::<String>();
+                if raw.chars().nth(MAX_SUMMARY_CHARS).is_some() {
+                    preview.push('…');
+                }
+                format!("{}={preview}", input.property)
+            })
+            .collect::<Vec<_>>();
+        if defaults.len() > MAX_SUMMARY_FIELDS {
+            fields.push(format!("+{} more", defaults.len() - MAX_SUMMARY_FIELDS));
+        }
+        Some(format!(
+            "FGD defaults: {}; engine defaults may differ",
+            fields.join(", ")
+        ))
+    }
+
     fn new(projector: Projector, reason: Option<&'static str>) -> Self {
         Self {
             orientation_policy: projectors::ORIENTATION_POLICY,

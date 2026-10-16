@@ -205,3 +205,40 @@ fn source_projector_requires_authored_origin_compatible_definitions_and_exact_cl
     entity.properties.set("classname", "light_spot");
     assert_eq!(resolve(class, &entity).state, "unsupported");
 }
+
+#[test]
+fn source_projector_rejects_native_opposite_corner_collapse_and_keeps_tiny_nonzero_planes() {
+    let catalog = Catalog::parse(FGD).unwrap();
+    let class = catalog.class("env_projectedtexture").unwrap();
+    let mut entity = Entity::new(1, "env_projectedtexture");
+    for (key, value) in [
+        ("origin", "65536 1 0"),
+        ("angles", "90 0 45"),
+        ("nearz", "0.001"),
+        ("farz", "1"),
+    ] {
+        entity.properties.set(key, value);
+    }
+    let collapsed = resolve(class, &entity);
+    assert_eq!(collapsed.state, "invalid");
+    assert!(collapsed.corners.is_none());
+    assert!(
+        collapsed
+            .error
+            .unwrap()
+            .contains("eight finite distinct corners")
+    );
+    entity.properties.set("nearz", "0.1");
+    assert_eq!(resolve(class, &entity).state, "ready");
+    for (key, value) in [
+        ("origin", "0 0 0"),
+        ("angles", "0 0 0"),
+        ("nearz", "1e-30"),
+        ("farz", "2e-30"),
+    ] {
+        entity.properties.set(key, value);
+    }
+    let tiny = resolve(class, &entity);
+    assert_eq!(tiny.state, "ready");
+    assert_eq!(tiny.lines().len(), 12);
+}

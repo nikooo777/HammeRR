@@ -149,7 +149,7 @@ impl Session {
                 projector.suppression_reason.unwrap_or(projector.state)
             };
             status += &format!(
-                ". Source projector guide: {state}; authored Source Pitch Yaw Roll, positive pitch down; FGD frustum() pitch_scale is not evaluated"
+                ". Source projector guide: {state}; Source Pitch Yaw Roll, positive pitch down; FGD frustum() pitch_scale is not evaluated"
             );
             if !projector.helper_pitch_scales.is_empty() {
                 let scales = projector
@@ -160,6 +160,9 @@ impl Session {
                     .collect::<Vec<_>>()
                     .join(", ");
                 status += &format!(" (declared: {scales})");
+            }
+            if let Some(defaults) = projector.default_summary() {
+                status += &format!(". {defaults}");
             }
             if let Some(error) = &projector.error {
                 status += &format!(" ({error})");

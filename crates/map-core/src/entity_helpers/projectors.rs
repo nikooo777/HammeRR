@@ -247,16 +247,26 @@ pub fn resolve(class: &Class, entity: &Entity) -> Projector {
                 + forward * distance
                 + (right * horizontal + up * vertical) * (distance * tangent)
         });
+        let native = corners.map(|point| point.as_vec3().as_dvec3());
+        let coincident = native
+            .iter()
+            .enumerate()
+            .any(|(index, point)| native[index + 1..].contains(point));
+        let degenerate_plane = [0, 4].into_iter().any(|start| {
+            let [a, b, c, d] = std::array::from_fn::<_, 4, _>(|index| native[start + index]);
+            [(b - a).cross(c - a), (c - a).cross(d - a)]
+                .into_iter()
+                .any(|area| !area.is_finite() || area.length_squared() == 0.0)
+        });
         if corners.iter().any(|point| {
             !point.is_finite()
                 || !point.as_vec3().is_finite()
                 || (*point - origin).abs().max_element() > MAX_HELPER_EXTENT
-        }) || EDGES
-            .iter()
-            .any(|[a, b]| corners[*a].as_vec3() == corners[*b].as_vec3())
+        }) || coincident
+            || degenerate_plane
         {
             return Err(format!(
-                "Source projector corners must be finite and distinct at native precision, with coordinate offsets within ±{MAX_HELPER_EXTENT} units of the origin"
+                "Source projector needs eight finite distinct corners and nonzero plane areas at native precision, with coordinate offsets within ±{MAX_HELPER_EXTENT} units of the origin"
             ));
         }
         result.origin = Some(origin.to_array());

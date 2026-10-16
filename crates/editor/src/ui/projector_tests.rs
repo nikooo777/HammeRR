@@ -43,6 +43,7 @@ cameraspace(integer) : "Camera Space" : 0
     let source = session.document().vmf().clone();
     let history = session.document().undo_labels().count();
     let app = AppWindow::new().unwrap();
+    app.set_advanced_properties(true);
     refresh_panel(&app, &mut session);
     assert_eq!(
         app.get_entity_helper_status().as_str(),
@@ -70,9 +71,33 @@ cameraspace(integer) : "Camera Space" : 0
     assert_eq!(color.intensity.as_str(), "200.5");
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.document().undo_labels().count(), history);
+    session
+        .set_entity_properties(Actor::Agent, id, &[("lightfov".into(), None)])
+        .unwrap();
+    let default_source = session.document().vmf().clone();
+    let default_history = session.document().undo_labels().count();
+    refresh_panel(&app, &mut session);
+    assert!(app.get_advanced_properties());
+    assert!(
+        app.get_entity_helper_status()
+            .contains("FGD defaults: lightfov=90; engine defaults may differ")
+    );
+    assert!(
+        session
+            .document()
+            .entity(id)
+            .unwrap()
+            .properties
+            .get("lightfov")
+            .is_none()
+    );
+    assert_eq!(session.document().vmf(), &default_source);
+    assert_eq!(session.document().undo_labels().count(), default_history);
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 960));
     super::tests::save_ui_snapshot(app.window(), "source-projector-guide-inspector");
+    session.undo(Actor::Agent).unwrap();
+    refresh_panel(&app, &mut session);
     session
         .set_entity_properties(
             Actor::Agent,

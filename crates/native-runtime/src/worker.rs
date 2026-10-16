@@ -248,7 +248,7 @@ fn loader_budget(directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn modules(directory: &Path, root: &Path) -> io::Result<()> {
+fn modules(directory: &Path, root: &Path, native_pid: u32) -> io::Result<()> {
     let mut found = BTreeSet::new();
     let mut count = 0;
     let mut bytes = 0;
@@ -256,7 +256,7 @@ fn modules(directory: &Path, root: &Path) -> io::Result<()> {
         .map_err(io::Error::other)?;
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
-        if !entry.file_name().to_string_lossy().starts_with("loader.") {
+        if entry.file_name() != format!("loader.{native_pid}").as_str() {
             continue;
         }
         count += 1;
@@ -331,7 +331,9 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
     let port = port_socket.local_addr()?.port();
     drop(port_socket);
     let log = File::create(directory.join("launcher.log"))?;
-    let mut command = Command::new(root.join("cstrike_linux64"));
+    let executable = root.join("cstrike_linux64").canonicalize()?;
+    let mut isolated = crate::isolation::Launch::new(directory, &executable)?;
+    let command = &mut isolated.command;
     command
         .current_dir(&root)
         .args(["-game"])
@@ -367,7 +369,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
         .stderr(log);
     util::json_write(
         &directory.join("command.json"),
-        &json!({"program":command.get_program().to_string_lossy(),"args":command.get_args().map(|arg|arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),"cwd":root,"native_default_sample_size":128,"desktop_input":false}),
+        &json!({"program":command.get_program().to_string_lossy(),"args":command.get_args().map(|arg|arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),"native_program":executable,"cwd":root,"native_default_sample_size":128,"desktop_input":false,"filesystem_isolation":{"external_paths":"read_only","writable_capture_directory":directory}}),
     )?;
     guard::ensure_no_client(&root)?;
     if cancelled(directory, request) {
@@ -376,12 +378,13 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
             "Native capture caller exited or cancelled before launch",
         ));
     }
-    let mut child = command.spawn()?;
+    let mut child = isolated.spawn()?;
     let started = Instant::now();
     let console = game.join("hammerr-capture.log");
     let mut armed = false;
     let mut disarmed = false;
     let mut current = 0;
+    let mut native = None;
     let progress = Regex::new(r"bounce: 1/1 sample: (\d+)/(\d+)").map_err(io::Error::other)?;
     let result = (|| {
         loop {
@@ -390,6 +393,12 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                     io::ErrorKind::Interrupted,
                     "Native capture cancelled or parent exited",
                 ));
+            }
+            if native.is_none()
+                && let Some(identity) = isolated.identity(&child, &executable)?
+            {
+                util::json_write(&directory.join("native-process.json"), &identity)?;
+                native = Some(identity);
             }
             let text = if console.exists() {
                 util::text(&console, util::MAX_LOG)?
@@ -424,6 +433,11 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 .max()
                 .unwrap_or(128);
             if !armed && text.contains(READY) {
+                if native.is_none() {
+                    return Err(invalid(
+                        "Native capture did not establish its isolated host process identity",
+                    ));
+                }
                 if text
                     .find(PREMAP)
                     .zip(text.find("HAMMERR_MAPSPAWN"))
@@ -471,7 +485,10 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
             )?;
             if let Some(status) = child.try_wait()? {
                 if !status.success() {
-                    return Err(invalid(format!("Native client exited with {status}")));
+                    return Err(invalid(format!(
+                        "Isolated native client exited with {status}; inspect {}",
+                        directory.join("launcher.log").display()
+                    )));
                 }
                 break;
             }
@@ -493,7 +510,9 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 return Err(invalid("Native capture did not report every sample"));
             }
         }
-        modules(directory, &root)?;
+        let native =
+            native.ok_or_else(|| invalid("Native capture has no isolated process receipt"))?;
+        modules(directory, &root, native.pid)?;
         stop_client_group(&mut child)?;
         let captured = game.join("maps").join(format!("{}.bsp", request.map_name));
         if fs::metadata(&captured)?.len() > util::MAX_BSP as u64 {

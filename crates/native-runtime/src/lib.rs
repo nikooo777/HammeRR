@@ -50,6 +50,7 @@ pub trait CaptureObserver {
 
 mod adapter;
 mod guard;
+mod isolation;
 mod process;
 mod util;
 mod vdf;

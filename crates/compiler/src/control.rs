@@ -20,6 +20,9 @@ pub enum Stage {
     StaticProps,
     Lighting,
     Physics,
+    PrepareReflections,
+    CaptureReflections,
+    VerifyReflections,
     Writing,
 }
 
@@ -42,6 +45,9 @@ impl Stage {
             Self::StaticProps => "static_props",
             Self::Lighting => "direct_lighting",
             Self::Physics => "physics_collision",
+            Self::PrepareReflections => "prepare_reflections",
+            Self::CaptureReflections => "capture_reflections",
+            Self::VerifyReflections => "verify_reflections",
             Self::Writing => "writing",
         }
     }
@@ -64,6 +70,9 @@ impl Stage {
             Self::StaticProps => "Placing static props",
             Self::Lighting => "Baking static point lights",
             Self::Physics => "Building physics bodies",
+            Self::PrepareReflections => "Preparing reflection bindings",
+            Self::CaptureReflections => "Capturing reflections",
+            Self::VerifyReflections => "Verifying packed reflections",
             Self::Writing => "Writing compiled map",
         }
     }

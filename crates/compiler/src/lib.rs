@@ -3,6 +3,7 @@
 mod areas;
 pub mod control;
 mod cordons;
+pub mod cubemap_assets;
 mod emit;
 pub mod faces;
 mod hints;
@@ -35,6 +36,7 @@ use source_formats::vmf::Vmf;
 pub use control::{Control, Stage};
 pub use cordons::RegionSummary;
 pub use portals::Leak;
+pub use cubemap_assets::{CompileContext, CubemapAssetManifest, CubemapAssetPhase};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -136,6 +138,7 @@ pub struct Options {
     pub visibility: VisibilityMode,
     pub bounces: u8,
     pub smoothing_angle: u8,
+    pub generate_reflections: bool,
 }
 
 pub const MAX_LIGHT_BOUNCES: u8 = 4;
@@ -156,6 +159,9 @@ pub fn bounce_label(count: u8) -> &'static str {
 
 impl Options {
     pub fn validate(self) -> Result<Self, String> {
+        if self.generate_reflections && self.lighting != LightingMode::DirectLdr {
+            return Err("Generate LDR reflections requires Direct LDR lighting".into());
+        }
         if self.bounces > MAX_LIGHT_BOUNCES {
             return Err(format!(
                 "Light bounces must be between 0 and {MAX_LIGHT_BOUNCES}"
@@ -455,6 +461,25 @@ pub struct Output {
     pub report: Report,
     pub leak: Option<Leak>,
     pub stats: Stats,
+    pub cubemap_assets: Option<CubemapAssetManifest>,
+}
+
+#[derive(Debug)]
+pub struct PreparedWrite {
+    temporary: tempfile::NamedTempFile,
+    destination: std::path::PathBuf,
+    success: bool,
+}
+
+impl PreparedWrite {
+    pub fn commit(self, control: &Control) -> io::Result<bool> {
+        control.publish(|| {
+            self.temporary
+                .persist(&self.destination)
+                .map(|_| self.success)
+                .map_err(|error| error.error)
+        })
+    }
 }
 
 impl Output {
@@ -463,9 +488,23 @@ impl Output {
     }
 
     pub fn write_controlled(&self, path: &Path, control: &Control) -> io::Result<bool> {
+        match self.prepare_write_controlled(path, control)? {
+            Some(prepared) => prepared.commit(control),
+            None => Ok(false),
+        }
+    }
+
+    pub fn prepare_write_controlled(
+        &self,
+        path: &Path,
+        control: &Control,
+    ) -> io::Result<Option<PreparedWrite>> {
         control.checkpoint().map_err(io::Error::other)?;
+        if self.cubemap_assets.as_ref().is_some_and(|assets| assets.phase != CubemapAssetPhase::Verified) {
+            return Err(io::Error::other("Reflection assets are pending native capture; no BSP can be published"));
+        }
         if self.bsp.is_none() && self.leak.is_none() {
-            return Ok(false);
+            return Ok(None);
         }
         control.advance(Stage::Writing).map_err(io::Error::other)?;
         let (destination, bytes, success) = if let Some(bsp) = &self.bsp {
@@ -478,7 +517,7 @@ impl Output {
                 .collect();
             (path.with_extension("lin"), text.into_bytes(), false)
         } else {
-            return Ok(false);
+            return Ok(None);
         };
         let parent = destination
             .parent()
@@ -490,13 +529,7 @@ impl Output {
             temporary.write_all(chunk)?;
         }
         temporary.as_file().sync_all()?;
-        control.publish(|| {
-            temporary
-                .persist(&destination)
-                .map(|_| ())
-                .map_err(|error| error.error)
-        })?;
-        Ok(success)
+        Ok(Some(PreparedWrite { temporary, destination, success }))
     }
 }
 
@@ -505,9 +538,16 @@ fn build(
     fs: &GameFs,
     output: &mut Output,
     options: Options,
+    context: Option<&CompileContext>,
     control: &Control,
 ) -> Result<(), String> {
     options.validate()?;
+    if options.generate_reflections && context.is_none() {
+        return Err("Generate LDR reflections requires an explicit output CompileContext".into());
+    }
+    if options.generate_reflections {
+        return Err("Reflection asset preparation is not available in this API-only revision".into());
+    }
     control.advance(Stage::Loading)?;
     let prepared = cordons::prepare(vmf, fs, &mut output.report, control)?;
     output.stats.compile_region = prepared.region;
@@ -899,17 +939,28 @@ pub fn compile_with_options_controlled(
     options: Options,
     control: &Control,
 ) -> Output {
+    compile_with_context_controlled(vmf, fs, options, None, control)
+}
+
+pub fn compile_with_context_controlled(
+    vmf: &Vmf,
+    fs: &GameFs,
+    options: Options,
+    context: Option<&CompileContext>,
+    control: &Control,
+) -> Output {
     let start = Instant::now();
     let mut output = Output {
         bsp: None,
         report: Report::default(),
         leak: None,
         stats: Stats::default(),
+        cubemap_assets: None,
     };
     output.stats.lighting_mode = options.lighting;
     output.stats.physics_mode = options.physics;
     output.stats.visibility_mode = options.visibility;
-    if let Err(message) = build(vmf, fs, &mut output, options, control) {
+    if let Err(message) = build(vmf, fs, &mut output, options, context, control) {
         output
             .report
             .diagnostics

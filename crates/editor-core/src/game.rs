@@ -163,6 +163,11 @@ fn tail(path: &Path, lines: usize) -> Result<(String, bool), String> {
     Ok((all[start..].join("\n"), offset > 0 || start > 0))
 }
 
+pub fn stage_map_bytes(bytes: &[u8], map: &str) -> Result<Vec<u8>, String> {
+    compiler::rebase_generated_cubemaps(bytes, map, &compiler::Control::default())
+        .map_err(|e| e.to_string())
+}
+
 impl Run {
     pub fn launch(install: &Install, bsp: &Path) -> Result<Self, String> {
         let bytes = std::fs::read(bsp).map_err(|e| format!("{}: {e}", bsp.display()))?;
@@ -170,14 +175,15 @@ impl Run {
         let maps = install.game.join("maps");
         std::fs::create_dir_all(&maps).map_err(|e| e.to_string())?;
         let mut map_file = temporary(&maps, "hammerr_", ".bsp")?;
-        map_file.write_all(&bytes).map_err(|e| e.to_string())?;
-        map_file.flush().map_err(|e| e.to_string())?;
         let map = map_file
             .path()
             .file_stem()
             .and_then(|s| s.to_str())
             .ok_or("invalid temporary map filename")?
             .to_owned();
+        let bytes = stage_map_bytes(&bytes, &map)?;
+        map_file.write_all(&bytes).map_err(|e| e.to_string())?;
+        map_file.flush().map_err(|e| e.to_string())?;
         let console = Arc::new(temporary(&install.game, "hammerr_console_", ".log")?);
         let launcher = Arc::new(temporary(
             &std::env::temp_dir(),

@@ -25,6 +25,7 @@ impl Session {
     }
 
     pub fn reload_material_assets(&mut self, actor: Actor) -> Report {
+        self.content_epoch = self.content_epoch.wrapping_add(1);
         let models = self.models.borrow_mut().reload_materials(&self.game);
         let mut result = self
             .materials

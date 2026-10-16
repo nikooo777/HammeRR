@@ -52,11 +52,14 @@ pub(crate) fn finish_compile_worker(
     let launch_request = {
         let mut state = lock(session);
         state.finish_compile(actor, result);
-        if play
-            && result
-                .as_ref()
-                .is_ok_and(|result| result.output.bsp.is_some())
+        if let Some(error) = result
+            .as_ref()
+            .ok()
+            .and_then(|result| result.publication_error())
         {
+            return Err(error);
+        }
+        if play && result.as_ref().is_ok_and(|result| result.published()) {
             match state.begin_launch(actor) {
                 Ok(request) => Some(request),
                 Err(error) => {

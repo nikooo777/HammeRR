@@ -233,6 +233,37 @@ fn rejects_unsafe_non_utf8_duplicate_and_special_names() {
 }
 
 #[test]
+fn rejects_layout_dependent_native_preload_metadata() {
+    let limits = PakLimits::default();
+    for name in ["__preload_section.pre", "__PRELOAD_SECTION.PRE"] {
+        let bytes = legacy_zip(&[stored(
+            name,
+            b"offsets and remap indexes depend on ZIP layout",
+        )]);
+        let error = PakArchive::parse(&bytes, limits).unwrap_err();
+        assert!(error.to_string().contains("native preload metadata"));
+        let archive = PakArchive {
+            entries: vec![PakEntry {
+                name: name.into(),
+                data: vec![],
+            }],
+        };
+        assert!(
+            archive
+                .to_bytes(limits)
+                .unwrap_err()
+                .to_string()
+                .contains("native preload metadata")
+        );
+        let mut bsp = Bsp::new();
+        bsp.lumps[lump::PAKFILE].data = bytes;
+        assert!(replace_bsp_pak(&bsp.to_bytes(), &PakArchive::default(), limits).is_err());
+    }
+    let ordinary = legacy_zip(&[stored("ordinary/__preload_section.pre", b"opaque asset")]);
+    assert!(PakArchive::parse(&ordinary, limits).is_ok());
+}
+
+#[test]
 fn rejects_bad_offsets_flags_zip64_headers_crc_and_truncation() {
     let limits = PakLimits::default();
     let original = legacy_zip(&[stored("asset", b"hello")]);

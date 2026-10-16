@@ -292,16 +292,74 @@ def tint_color_measurements(frames):
         require(len(mask) > 150, f"{kind} lacks stable visible detail pixels for tint control")
         means = {name: [sum(frame["on"][offset + axis] for offset in mask) / len(mask) for axis in range(3)] for name, frame in frames.items()}
         white, tinted = means["white"], means["tinted"]
-        require(tinted[1] < white[1] * 0.85 and tinted[0] / max(white[0], 1) > tinted[1] / max(white[1], 1) + 0.1, f"{kind} did not show predicted linear red-preserving tint: {means}")
-        measurements[kind] = {"stable_detail_pixels": len(mask), "foreground_rgb": means, "background_max_difference": max(background)}
+        delta = [[frames["white"]["on"][offset + axis] - frames["tinted"]["on"][offset + axis] for offset in mask] for axis in range(3)]
+        require(all(value == 0 for value in delta[0]), f"{kind} tint changed the unattenuated red control")
+        require(all(value >= 0 for channel in delta[1:] for value in channel), f"{kind} attenuated channels increased under tint")
+        reductions = [sum(value >= 3 for value in channel) for channel in delta[1:]]
+        require(all(count > 150 for count in reductions), f"{kind} lacks actual green/blue tint reductions: {reductions}")
+        measurements[kind] = {"stable_detail_pixels": len(mask), "foreground_rgb": means, "background_max_difference": max(background), "red_max_difference": max(map(abs, delta[0])), "green_blue_decreased_pixels": reductions, "green_blue_max_increase": max(0, -min(min(channel) for channel in delta[1:])), "oracle": "Exact unattenuated red and monotone per-pixel green/blue attenuation; common alpha-background terms cancel"}
     return measurements
 
 
-def native_tint(args, report):
+
+def checked_tint_capture(args, control, output, style):
+    from validate_hdr_lighting import read_probe
+    from validate_hdr_reflections import verify_hardware
+
+    result = json.loads(probe.read_bounded(output / "results.json", 4 * 1024**2))
+    native = result["native"]
+    data = probe.read_bounded(Path(control["bsp"]), probe.MAX_BSP_BYTES)
+    require(result["success"] and result["native_exercised"] and native["success"], "Existing native capture did not complete successfully")
+    require(probe.digest(data) == control["bsp_sha256"] == result["bsp_sha256"] == native["bsp_sha256"], "Existing tint capture BSP identity changed")
+    require(native == json.loads(probe.read_bounded(output / "runtime/runtime.json", 4 * 1024**2)), "Existing worker and parent native receipts differ")
+    rows = detail_records(data, allow_sprites=True, allow_baked=True, sprite_orientation=control["orientation"], allow_styles=control["styled"])
+    require(rows == result["records"] and len(rows["props"]) == control["count"] and sum(row.get("kind") == 1 for row in rows["props"]) == control["sprites"], "Existing capture record structure differs")
+    require(all(row.get("light_style_count", 0) == int(control["styled"]) for row in rows["props"]), "Existing capture sprite precision/style path differs")
+    require(native["exact_compiled_bsp"] and native["sprite_orientation"] == control["orientation"] and native["hdr_level"] == control["hdr_level"] and native["view"] == "level" and native["detail_style_state"] == style, "Existing native capture controls differ")
+    require("-insecure" in native["command"] and "-default" in native["command"] and native["desktop_input"] is False and native["filesystem_isolation"] == {"external_paths": "read_only", "writable_directory": str(output / "runtime")}, "Existing native capture isolation differs")
+    require(native["module_fingerprints"] == probe.module_fingerprints(args.game_dir), "Native game modules changed since the capture")
+    controls = native["private_launch"]["controls"]
+    require(controls["sv_lan"] == 1 and controls["mat_fullbright"] == 0 and controls["mat_hdr_level"] == control["hdr_level"], "Existing native launch settings differ")
+    hardware = verify_hardware(read_probe(output / "runtime/hardware.jsonl"), control["hdr_level"])
+    require(hardware is not None and hardware == native["hardware"], "Existing native hardware evidence differs")
+    for name in ["worker", "compositor"]:
+        audit = json.loads(probe.read_bounded(output / f"runtime/private-preservation-{name}.json", 4 * 1024**2))
+        require(audit["success"] and not audit["errors"], "Existing native preservation audit failed")
+    cleanup = json.loads(probe.read_bounded(output / "runtime/private-cleanup.json", 1024**2))
+    require(cleanup == {"worker_result": 0, "worker_failure": None, "cleanup_failures": [], "remaining_live_processes": []}, "Existing native ownership cleanup failed")
+    require(probe.digest(probe.read_bounded(output / "runtime/cstrike/maps/hammerr_detail_props.bsp", probe.MAX_BSP_BYTES)) == control["bsp_sha256"], "Existing staged native BSP changed")
+    return result
+
+
+def tint_resume_inputs(args, report):
+    require(report["success"] and report["tint"] == TINT and all(report[key] for key in ["source_history_preserved", "foreground_background_exact", "saved_reopened"]), "Tint source validation receipt is incomplete")
+    require(len(report["checks"]) == 7 and all(all(check.values()) for check in report["checks"].values()), "Tint identity/color/style source checks failed")
+    paths = [*args.output.glob("*.vmf"), *args.output.glob("*.bsp"), *Path(report["fixture_game"]).joinpath("materials").rglob("*"), args.probe_library]
+    require((args.output / "detail-tint.vmf").is_file() and (args.output / "detail-tint-authored.vmf").is_file(), "Tint saved source fixtures are missing")
+    paths.extend(path for directory in args.output.glob("native-*") for path in directory.rglob("*") if path.is_file() and path.suffix in [".ppm", ".png", ".json", ".jsonl"])
+    guarded = {str(path): probe.digest(path.read_bytes()) for path in paths if path.is_file()}
+    if args.frozen_captures is not None:
+        frozen = json.loads(probe.read_bounded(args.frozen_captures, 1024**2))
+        require(frozen, "Frozen native capture hashes are empty")
+        for name, digest in frozen.items():
+            relative = Path(name)
+            require(not relative.is_absolute() and ".." not in relative.parts, "Frozen capture path must stay inside the tint directory")
+            path = args.output / relative
+            require(path.is_file() and probe.digest(path.read_bytes()) == digest, f"Frozen native capture changed: {name}")
+            guarded[str(path)] = digest
+    return guarded
+
+def native_tint(args, report, resume=False, analyze_only=False):
     captures = {}
     frames = {}
+    reused = []
+    missing = []
+    guarded = tint_resume_inputs(args, report) if resume else {}
     choices = [("fast-direct_ldr", None), ("slow-direct_ldr", None), ("styled-direct_ldr", "on"), ("styled-direct_ldr", "off"), ("styled-direct_ldr_hdr", "on")]
     for suite, style in choices:
+        if analyze_only and any(not (args.output / f"native-{suite}-{style or 'static'}-{color}").exists() for color in ["white", "tinted"]):
+            missing.extend(f"{suite}-{style or 'static'}-{color}" for color in ["white", "tinted"])
+            continue
         pair = {}
         for color in ["white", "tinted"]:
             control = report["controls"][f"{suite}-{color}"]
@@ -310,9 +368,12 @@ def native_tint(args, report):
             command = [sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")), "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--runtime", "--runtime-bsp", control["bsp"], "--fixture-game", report["fixture_game"], "--expected-count", str(control["count"]), "--expected-sprites", str(control["sprites"]), "--sprite-orientation", str(control["orientation"]), "--baked-lighting", "--hdr-level", str(control["hdr_level"]), "--probe-library", str(args.probe_library), "--port", str(args.port)]
             if style is not None:
                 command += ["--allow-detail-styles", "--detail-style-state", style]
-            subprocess.run(command, check=True, timeout=150)
-            result = json.loads((output / "results.json").read_text())
-            require(result["native_exercised"] and result["native"]["success"] and result["bsp_sha256"] == control["bsp_sha256"], result)
+            if resume and output.exists():
+                reused.append(name)
+            else:
+                require(not analyze_only, "Analysis-only tint validation cannot launch a native process")
+                subprocess.run(command, check=True, timeout=150)
+            result = checked_tint_capture(args, control, output, style)
             pair[color] = {"on": ppm(output / "runtime/details-on.ppm"), "off": ppm(output / "runtime/details-off.ppm")}
             captures[name] = result["native"]
         measurements = tint_color_measurements(pair)
@@ -325,10 +386,21 @@ def native_tint(args, report):
         mask = [offset for offset in offsets if all(max(abs(a - b) for a, b in zip(pair[color]["on"][offset:offset + 3], pair[color]["off"][offset:offset + 3], strict=True)) > 12 for pair in [on, off] for color in ["white", "tinted"])]
         require(len(mask) > 150, f"{kind} lacks stable style-switching tint pixels")
         means = {state: {color: sum(sum(pair[color]["on"][offset:offset + 3]) for offset in mask) / len(mask) for color in ["white", "tinted"]} for state, pair in [("on", on), ("off", off)]}
-        require(all(means["on"][color] > means["off"][color] * 1.15 + 3 for color in ["white", "tinted"]), f"Tinted detail styles did not switch: {means}")
+        responses = {}
+        for color in ["white", "tinted"]:
+            delta = [[on[color]["on"][offset + axis] - off[color]["on"][offset + axis] for offset in mask] for axis in range(3)]
+            require(all(value >= 0 for channel in delta for value in channel), f"{kind} styled light decreased foreground lighting")
+            responses[color] = sum(value >= 3 for value in delta[0])
+            require(responses[color] > 150, f"{kind} lacks actual named-light response on unattenuated red: {responses}")
         background = [abs(on[color]["off"][offset + axis] - off[color]["off"][offset + axis]) for color in ["white", "tinted"] for offset in offsets for axis in range(3)]
         require(background and max(background) == 0, "Tinted style controls changed the detail-disabled region background")
-        switching[kind] = {"stable_detail_pixels": len(mask), "foreground_channel_sum": means}
+        switching[kind] = {"stable_detail_pixels": len(mask), "foreground_channel_sum": means, "red_style_response_pixels": responses}
+    require(all(Path(path).is_file() and probe.digest(Path(path).read_bytes()) == digest for path, digest in guarded.items()), "Tint resume changed source fixtures or previously verified capture evidence")
+    receipt = {"reused_captures": reused, "missing_captures": missing, "guarded_inputs": guarded, "captures": captures, "actual_style_switching": switching, "analysis_only": analyze_only, "success": True}
+    if analyze_only:
+        (args.output / "tint-native-analysis.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        return
+    report["native_resume"] = receipt
     report.update({"native_exercised": True, "native_tint": captures, "actual_style_switching": switching})
     (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
 
@@ -340,20 +412,27 @@ def main():
     parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--tint", action="store_true", help="Validate explicit linear baked-lighting tint, identity bytes and native fast/slow/style/HDR controls")
+    parser.add_argument("--resume-tint", action="store_true", help="Reuse checked completed tint captures and launch only missing native views")
+    parser.add_argument("--analyze-only", action="store_true", help="With --resume-tint, verify existing captures without launching native views")
+    parser.add_argument("--frozen-captures", type=Path, help="Optional existing relative-path SHA256 manifest for immutable completed captures")
     parser.add_argument("--probe-library", type=Path, default=Path(__file__).resolve().parent.parent / "target/debug/hammerr_hdr_probe.so")
     parser.add_argument("--port", type=int, default=27719)
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
     args.game_dir = args.game_dir.resolve(strict=True)
     args.output = args.output.resolve()
-    require(not args.output.exists(), "Use a fresh absent output directory")
+    require(not args.analyze_only or args.resume_tint and args.tint and args.runtime, "Analysis-only requires --tint --runtime --resume-tint")
+    require(args.frozen_captures is None or args.resume_tint, "Frozen capture hashes require --resume-tint")
+    require(not args.resume_tint or args.tint and args.runtime, "Tint resume requires --tint --runtime")
+    require(args.output.is_dir() if args.resume_tint else not args.output.exists(), "Use an existing tint directory for resume or a fresh absent output directory")
     require(1024 <= args.port <= 65530, "Invalid native port")
-    args.output.mkdir(parents=True, mode=0o700)
+    if not args.resume_tint:
+        args.output.mkdir(parents=True, mode=0o700)
     if args.tint and args.runtime:
         args.probe_library = args.probe_library.resolve(strict=True)
-    result = validate_tint(args) if args.tint else validate(args)
+    result = json.loads((args.output / "results.json").read_text()) if args.resume_tint else validate_tint(args) if args.tint else validate(args)
     if args.runtime:
-        native_tint(args, result) if args.tint else native_colors(args, result)
+        native_tint(args, result, resume=args.resume_tint, analyze_only=args.analyze_only) if args.tint else native_colors(args, result)
     print(json.dumps({"success": True, "results": str(args.output / "results.json"), "native_exercised": result["native_exercised"]}))
 
 

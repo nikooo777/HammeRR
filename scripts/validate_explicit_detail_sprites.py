@@ -115,6 +115,8 @@ def validate_controls(client, args, ids, sprites, source, saved, data, expected)
         ("slow-underflow", {"detailOrientation": "0", "scale": "0.00000001"}, "half precision"),
         ("slow-saturation", {"detailOrientation": "0", "scale": "65505", "position_ul": "-0.0001 0.0001", "position_lr": "0.0001 -0.0001"}, "half precision"),
         ("sway-underflow", {"scale": "0.00000001", "sway": "0.003921568627"}, "half precision"),
+        ("fast-width-overflow", {"scale": "1e-38", "position_ul": "-3e38 45", "position_lr": "3e38 0"}, "geometry"),
+        ("fast-height-overflow", {"scale": "1e-38", "position_ul": "-20 3e38", "position_lr": "20 -3e38"}, "geometry"),
         ("shape-orientation", {"sprite_shape": "tri"}, "detailOrientation"),
         ("ignored-cross-angle", {"detailOrientation": "0", "sprite_shape": "cross", "shape_angle": "1"}, "ignores"),
         ("fractional-tri-angle", {"detailOrientation": "0", "sprite_shape": "tri", "shape_angle": "0.5"}, "integer"),

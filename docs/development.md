@@ -1373,6 +1373,20 @@ The supplied existing `hdr_runtime_probe.c` observer must be built first; no new
 native observer is introduced. Gamma conversion means screen pixels are not
 expected to equal the authored linear bytes.
 
+The native tint comparison requires unchanged red, monotone green/blue
+attenuation and at least 150 detail pixels per attenuated channel with a
+three-code reduction. Matching detail-disabled backgrounds cancel the shared
+alpha-compositing term; ratios of blended foreground means are unsuitable for
+dim translucent cards. Style switching uses the unattenuated red channel.
+
+After an interrupted native tint run, add `--resume-tint` to verify completed
+capture receipts and launch only missing views. Add `--analyze-only` to inspect
+existing captures without launching the game; missing views remain explicitly
+unvalidated. `--frozen-captures` accepts an existing JSON mapping of paths
+relative to the output directory to SHA-256 digests. Resume verifies these
+files, source/control BSPs, hardware samples, launch settings, preservation and
+cleanup before reusing results, and checks existing evidence remains unchanged.
+
 `validate_detail_light_styles` checks named-light extras, unchanged placement,
 sorted matching LDR/HDR style layouts, authored channel colors, Fullbright
 without style arrays, strict reader opt-ins and source/history preservation.

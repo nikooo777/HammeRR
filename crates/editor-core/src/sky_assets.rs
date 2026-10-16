@@ -120,15 +120,9 @@ impl From<&AssetOrigin> for SkyAssetSource {
 
 impl Session {
     pub fn inspect_sky_assets(&self) -> SkyAssetsReport {
-        let names = self
-            .document()
-            .vmf()
-            .world
-            .properties
-            .get_all("skyname")
-            .collect::<Vec<_>>();
-        let mut report = inspect(self.game(), names.first().copied());
-        if names.len() > 1 {
+        let mut names = self.document().vmf().world.properties.get_all("skyname");
+        let mut report = inspect(self.game(), names.next());
+        if names.next().is_some() {
             report.issues.push(
                 "World has duplicate skyname keys; resolve them before relying on this report"
                     .into(),

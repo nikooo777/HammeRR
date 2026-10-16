@@ -5,6 +5,8 @@ use source_formats::vmf::Entity;
 use crate::ObjectId;
 use crate::query::{Hit, Ray};
 
+pub mod spheres;
+
 pub const MAX_HELPER_EXTENT: f64 = 65_536.0;
 
 #[derive(Debug, Clone, Default)]
@@ -59,7 +61,10 @@ impl Appearance {
         result.unsupported = class
             .helpers
             .iter()
-            .filter(|helper| !["size", "color"].contains(&helper.name.as_str()))
+            .filter(|helper| {
+                !["size", "color"].contains(&helper.name.as_str())
+                    && !spheres::supported(class, helper)
+            })
             .map(|helper| helper.name.clone())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()

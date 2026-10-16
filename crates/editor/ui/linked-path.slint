@@ -1,0 +1,145 @@
+import {Button, CheckBox, ComboBox, LineEdit, ScrollView} from "std-widgets.slint";
+
+export struct LinkedPathPoint { label: string, x: string, y: string, z: string, link: string }
+
+export component LinkedPathWindow inherits Window {
+    title: "Create linked path - HammeRR";
+    preferred-width: 840px;
+    preferred-height: 700px;
+    min-width: 760px;
+    min-height: 600px;
+    in-out property <int> class-index;
+    in-out property <string> prefix: "path";
+    in-out property <bool> closed;
+    in-out property <[LinkedPathPoint]> points;
+    in property <bool> editable: true;
+    in property <bool> can-preview;
+    in property <bool> can-review;
+    in property <bool> ready;
+    in property <string> preview-status;
+    in property <string> message;
+    callback edited();
+    callback add-point();
+    callback remove-point(int);
+    callback move-point(int, int);
+    callback preview();
+    callback review();
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: "Create linked path"; font-size: 24px; font-weight: 600; }
+            Text { text: "Place ordered point entities and link each target to the next name."; color: #b6c1cf; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 14px;
+                VerticalLayout {
+                    spacing: 5px;
+                    Text { text: "Class"; font-weight: 600; }
+                    ComboBox {
+                        enabled: root.editable;
+                        model: ["path_corner", "path_track"];
+                        current-index <=> root.class-index;
+                        accessible-label: "Class";
+                        selected => { root.edited(); }
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 5px;
+                    Text { text: "Name prefix"; font-weight: 600; }
+                    LineEdit {
+                        enabled: root.editable;
+                        text <=> root.prefix;
+                        accessible-label: "Name prefix";
+                        edited => { root.edited(); }
+                    }
+                }
+                CheckBox {
+                    enabled: root.editable;
+                    text: "Closed loop";
+                    checked <=> root.closed;
+                    toggled => { root.edited(); }
+                }
+            }
+            Rectangle {
+                background: #191f28;
+                border-radius: 6px;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        Text { text: "Points · " + root.points.length + " / 64"; font-weight: 600; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "World coordinates · units"; color: #b6c1cf; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { width: 28px; text: "#"; color: #b6c1cf; }
+                        Text { horizontal-stretch: 1; text: "X"; color: #d59090; }
+                        Text { horizontal-stretch: 1; text: "Y"; color: #9fc796; }
+                        Text { horizontal-stretch: 1; text: "Z"; color: #90b1e0; }
+                        Rectangle { width: 214px; }
+                    }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        min-height: 200px;
+                        VerticalLayout {
+                            spacing: 8px;
+                            for point[index] in root.points: VerticalLayout {
+                                spacing: 3px;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Text { text: point.label; width: 28px; vertical-alignment: center; }
+                                    LineEdit {
+                                        enabled: root.editable;
+                                        horizontal-stretch: 1; min-width: 70px;
+                                        text <=> point.x; input-type: decimal;
+                                        accessible-label: "Point " + point.label + " X";
+                                        edited => { root.edited(); }
+                                    }
+                                    LineEdit {
+                                        enabled: root.editable;
+                                        horizontal-stretch: 1; min-width: 70px;
+                                        text <=> point.y; input-type: decimal;
+                                        accessible-label: "Point " + point.label + " Y";
+                                        edited => { root.edited(); }
+                                    }
+                                    LineEdit {
+                                        enabled: root.editable;
+                                        horizontal-stretch: 1; min-width: 70px;
+                                        text <=> point.z; input-type: decimal;
+                                        accessible-label: "Point " + point.label + " Z";
+                                        edited => { root.edited(); }
+                                    }
+                                    Button { text: "↑"; accessible-label: "Move up"; width: 36px; enabled: root.editable && index > 0; clicked => { root.move-point(index, -1); } }
+                                    Button { text: "↓"; accessible-label: "Move down"; width: 36px; enabled: root.editable && index + 1 < root.points.length; clicked => { root.move-point(index, 1); } }
+                                    Button { text: "Remove"; width: 130px; enabled: root.editable && root.points.length > 2; clicked => { root.remove-point(index); } }
+                                }
+                                if point.link != "": Text { text: point.link; color: #b6c1cf; font-size: 12px; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        Button { text: "Add point"; enabled: root.editable && root.points.length < 64; clicked => { root.add-point(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "2–64 points · ±65536 per axis"; color: #b6c1cf; vertical-alignment: center; }
+                    }
+                }
+            }
+            Text { text: root.preview-status; wrap: word-wrap; min-height: 36px; }
+            Text { text: root.message; color: #b6c1cf; wrap: word-wrap; min-height: 36px; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                if root.can-review: Button { text: "Review preview"; clicked => { root.review(); } }
+                Button { text: "Preview"; enabled: root.can-preview; clicked => { root.preview(); } }
+                Button { text: "Apply"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

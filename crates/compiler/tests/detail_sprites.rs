@@ -287,16 +287,30 @@ fn static_shapes_reuse_sprite_dictionary_and_preserve_native_parameter_bytes() {
 }
 
 #[test]
-fn generated_shape_sway_encodes_native_bytes_without_changing_sampling_or_zero_output() {
+fn generated_sprite_sway_encodes_native_bytes_without_changing_sampling_or_zero_output() {
     let mut fixture = fixture();
     let source = fixture.source.write(&Default::default());
     let fixed = SPRITE.replace("detailOrientation 2", "detailOrientation 0");
-    for shape in ["cross", "tri"] {
-        let entry = format!("{fixed} sprite_shape {shape} spriterandomscale 0.2");
+    for entry in [
+        format!("{fixed} sprite_shape cross spriterandomscale 0.2"),
+        format!("{fixed} sprite_shape tri spriterandomscale 0.2"),
+        format!("{fixed} spriterandomscale 0.2"),
+        format!(
+            "{} spriterandomscale 0.2",
+            SPRITE.replace("detailOrientation 2", "detailOrientation 1")
+        ),
+        format!("{SPRITE} spriterandomscale 0.2"),
+    ] {
         dictionary(&fixture, 64, &entry);
         let baseline = compiled(&fixture);
         let expected = baseline.detail_props().unwrap().unwrap();
-        for (sway, encoded) in [("0", 0), ("0.003921568627", 1), ("0.5", 127), ("1", 255)] {
+        for (sway, encoded) in [
+            ("0", 0),
+            ("1e-100", 0),
+            ("0.003921568627", 1),
+            ("0.5", 127),
+            ("1", 255),
+        ] {
             dictionary(&fixture, 64, &format!("{entry} sway {sway}"));
             let bsp = compiled(&fixture);
             let bytes = bsp.to_bytes();
@@ -328,14 +342,8 @@ fn generated_shape_sway_encodes_native_bytes_without_changing_sampling_or_zero_o
             rejected(&fixture, "sway");
         }
     }
-    for entry in [
-        format!("{fixed} sway 0.1"),
-        format!("{fixed} sway 1e-100"),
-        "model models/props/test.mdl sway 0.1".into(),
-    ] {
-        dictionary(&fixture, 64, &entry);
-        rejected(&fixture, "sway");
-    }
+    dictionary(&fixture, 64, "model models/props/test.mdl sway 0.1");
+    rejected(&fixture, "sway");
     assert_eq!(fixture.source.write(&Default::default()), source);
     dictionary(&fixture, 64, SPRITE);
     assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
@@ -767,7 +775,7 @@ fn unsupported_sprite_parameters_and_camera_facing_overflow_reject_atomically() 
     for extra in [
         "spriterandomscale NaN",
         "spriterandomscale 1.1",
-        "sway 1",
+        "sway 1.1",
         "spriteshape 1",
         "shape_angle 20",
         "model models/props/test.mdl",

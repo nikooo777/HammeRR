@@ -71,7 +71,7 @@ def validate(args):
             for name, (fields, kind, angle, size) in choices.items():
                 dictionary_path.write_text(dictionary(f"{FIELDS} {fields}"))
                 bsp, data, result = compile_pair(client, args.output, name, ids)
-                parsed = detail_records(data, allow_sprites=True, allow_baked=True, sprite_orientation=0, allow_shapes=True, allow_shape_sway=args.sway)
+                parsed = detail_records(data, allow_sprites=True, allow_baked=True, sprite_orientation=0, allow_shapes=True, allow_sway=args.sway)
                 require(len(parsed["props"]) == result["stats"]["detail_props"] == len(plain["props"]), "Shape changed sample count")
                 require(parsed["models"] == [] and parsed["sprites"] == plain["sprites"] and len(parsed["sprites"]) == 1, "Shape changed sprite dictionary identity")
                 sway = 127 if name == "cross-half" else 255 if name == "tri-full" else 0
@@ -141,7 +141,7 @@ def native_capture(args, result, name, variant, default_avoidance=False):
             "--expected-sprites", str(variant["count"]), "--sprite-orientation", "0", "--allow-shapes", "--baked-lighting",
             "--view", "elevated", "--port", str(args.port)]
     if args.sway:
-        command += ["--shape-sway-amplitude", "8"]
+        command += ["--sway-amplitude", "8"]
     if default_avoidance:
         command.append("--default-shape-avoidance")
     subprocess.run(command, check=True, timeout=150)

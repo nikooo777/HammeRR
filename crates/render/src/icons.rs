@@ -19,7 +19,7 @@ pub const MAX_INSTANCES: usize = 256;
 pub const MAX_AXIS: u32 = 512;
 pub const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 pub const MAX_TEXTURE_BYTES: usize = 4 * 1024 * 1024;
-pub const LIMITS: &str = "Literal one-argument iconsprite only; direct Sprite material with vp_parallel and centered spriteorigin. Static single-frame, single-face, depth-one LDR VTF, at most 512 pixels per axis. Material 64 KiB, texture 4 MiB, 64 cached success/failure entries and 32 MiB encoded bytes per material generation, 256 visible icons. Independent editor image: 32 Source-unit long axis with texture aspect ratio, live camera right/up, unlit RGBA alpha, no fog. Native Sprite render modes, animation, sprite(), env_sprite, models, specialized lights and ropes are not evaluated. Original box bounds, picking and framing remain unchanged. Reload Materials clears cached admission and failures.";
+pub const LIMITS: &str = "Literal one-argument iconsprite only; direct Sprite material with vp_parallel and centered spriteorigin. Static single-frame, single-face, depth-one LDR VTF, at most 512 pixels per axis. Material 64 KiB, texture 4 MiB, 64 cached success/failure entries and 32 MiB encoded bytes per material generation, 256 visible icons. Independent editor image: 32 Source-unit long axis with texture aspect ratio, live camera right/up, unlit RGBA alpha, no fog. Native Sprite render modes, animation, sprite(), env_sprite, models, specialized lights and ropes are not evaluated. Original box bounds, picking and framing remain unchanged. Reload material assets clears cached admission and failures.";
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize)]
@@ -138,7 +138,7 @@ impl Library {
                 report: Report::failure(
                     name,
                     "unavailable",
-                    "Icon asset cache limit reached; Reload Materials to clear it",
+                    "Icon asset cache limit reached; use Reload material assets to clear it",
                 ),
                 material: None,
             });

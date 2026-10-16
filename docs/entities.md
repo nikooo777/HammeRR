@@ -111,8 +111,11 @@ It remains visible when the entity is unselected.
 4. Pick, frame or use **Working region…** with the entity. These operations keep
    using its ordinary FGD box, including asymmetric offsets; image pixels outside
    that box do not become pickable.
-5. Use **Reload Materials** after replacing an icon asset. Admission failures are
+5. Open **Browse materials…**, then use **Reload material assets** after replacing
+   an icon asset. Admission failures are
    cached too; reloading clears them before the next inspection or render.
+
+![Mounted icons for ambient_generic, info_target and logic_relay](images/fgd-icons.png)
 
 Missing or rejected assets retain an editable box marker and an explicit error,
 with an amber unselected marker. Hidden, excluded, invalid-size, model, sprite,

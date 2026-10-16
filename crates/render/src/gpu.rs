@@ -210,6 +210,7 @@ pub struct ViewOptions {
     pub tool_textures: bool,
     pub sky_preview: bool,
     pub rope_preview: bool,
+    pub selection_outlines: bool,
     pub fog: Option<crate::fog::Fog>,
     pub leak_path: bool,
     pub grid_visible: bool,
@@ -231,6 +232,7 @@ impl Default for ViewOptions {
             tool_textures: true,
             sky_preview: false,
             rope_preview: false,
+            selection_outlines: true,
             fog: None,
             leak_path: true,
             grid_visible: true,
@@ -262,6 +264,7 @@ pub struct GpuScene {
     opaque: Vec<DrawBatch>,
     translucent: Vec<DrawBatch>,
     lines: Option<(wgpu::Buffer, u32)>,
+    guide_line_ranges: Vec<std::ops::Range<u32>>,
     leak_lines: Option<(wgpu::Buffer, u32)>,
     wire_lines: Option<(wgpu::Buffer, u32)>,
     tool_wire_lines: Option<(wgpu::Buffer, u32)>,
@@ -633,6 +636,7 @@ impl Renderer {
             opaque,
             translucent,
             lines,
+            guide_line_ranges: mesh.guide_line_ranges(),
             leak_lines,
             wire_lines,
             tool_wire_lines,
@@ -950,9 +954,16 @@ impl Renderer {
             if let Some((lines, count)) = &scene.lines {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_vertex_buffer(0, lines.slice(..));
-                pass.draw(0..*count, 0..1);
+                if options.selection_outlines {
+                    pass.draw(0..*count, 0..1);
+                } else {
+                    for range in &scene.guide_line_ranges {
+                        pass.draw(range.clone(), 0..1);
+                    }
+                }
             }
             if options.rope_preview
+                && options.selection_outlines
                 && let Some((lines, count)) = &scene.rope_lines
             {
                 pass.set_pipeline(&self.line_pipeline);

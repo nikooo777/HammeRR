@@ -3,7 +3,7 @@ mod common;
 mod detail_model;
 
 use glam::DVec3;
-use map_core::{Document, compile_region};
+use map_core::{Document, Plane, compile_region};
 use source_formats::bsp::{self, Bsp, Leaf};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::vmf::{Entity, Vmf};
@@ -284,4 +284,143 @@ fn incomplete_or_malformed_model_companions_preserve_previous_output() {
         assert_eq!(std::fs::read(&destination).unwrap(), b"previous valid BSP");
         assert_eq!(source.write(&Default::default()), before);
     }
+}
+
+#[test]
+fn actual_mesh_bounds_reject_undersized_headers_after_translation_and_rotation() {
+    let (directory, game) = game();
+    let mdl_path = directory.path().join("models/props/test.mdl");
+    let vvd_path = directory.path().join("models/props/test.vvd");
+    let vtx_path = directory.path().join("models/props/test.dx90.vtx");
+    let mdl = std::fs::read(mdl_path).unwrap();
+    let vtx = std::fs::read(vtx_path).unwrap();
+    let original = std::fs::read(&vvd_path).unwrap();
+    let destination = directory.path().join("previous.bsp");
+    assert_eq!(
+        source_formats::mdl::ModelHeader::parse(&mdl)
+            .unwrap()
+            .render_maxs[0],
+        1.0
+    );
+    for (mesh_x, origin, angles) in [
+        (20_000.0_f32, "0 0 16", "0 0 0"),
+        (-20_000.0, "0 0 16", "0 0 0"),
+        (16_384.0, "16 0 16", "0 0 0"),
+        (16_384.0, "0 16 16", "0 90 0"),
+    ] {
+        let mut source = common::room();
+        let index = add(&mut source, "prop_detail", origin);
+        source.entities[index].properties.set("angles", angles);
+        let id = source.entities[index].id;
+        let before = source.write(&Default::default());
+        let baseline = compiler::compile(&source, &game).bsp.unwrap().to_bytes();
+        std::fs::write(&destination, &baseline).unwrap();
+        let mut vvd = original.clone();
+        vvd[128..132].copy_from_slice(&mesh_x.to_le_bytes());
+        let model = source_formats::model::Model::parse(&mdl, &vvd, &vtx).unwrap();
+        assert!(model.bounds[0][0].abs().max(model.bounds[1][0].abs()) >= mesh_x.abs());
+        std::fs::write(&vvd_path, vvd).unwrap();
+        for output in [
+            compiler::compile(&source, &game),
+            compiler::compile_controlled(&source, &game, &compiler::Control::default()),
+        ] {
+            assert!(output.bsp.is_none());
+            assert!(
+                output.report.diagnostics.iter().any(|entry| {
+                    entry.object.as_deref() == Some(&format!("entity:{id}"))
+                        && entry
+                            .message
+                            .contains("Transformed detail model mesh bounds")
+                }),
+                "{:?}",
+                output.report
+            );
+            assert!(!output.write(&destination).unwrap());
+            assert_eq!(std::fs::read(&destination).unwrap(), baseline);
+            assert_eq!(source.write(&Default::default()), before);
+        }
+        std::fs::write(&vvd_path, &original).unwrap();
+        assert_eq!(
+            compiler::compile(&source, &game).bsp.unwrap().to_bytes(),
+            baseline
+        );
+    }
+}
+
+#[test]
+fn valid_transformed_mesh_bounds_preserve_native_bytes_at_the_coordinate_limit() {
+    let (directory, game) = game();
+    let path = directory.path().join("models/props/test.vvd");
+    let original = std::fs::read(&path).unwrap();
+    for (mesh_x, angles) in [
+        (16_384.0_f32, "0 0 0"),
+        (-16_384.0, "0 0 0"),
+        (20_000.0, "0 45 0"),
+    ] {
+        let mut source = common::room();
+        let index = add(&mut source, "prop_detail", "0 0 16");
+        source.entities[index].properties.set("angles", angles);
+        let baseline = compiler::compile(&source, &game).bsp.unwrap().to_bytes();
+        let mut vvd = original.clone();
+        vvd[128..132].copy_from_slice(&mesh_x.to_le_bytes());
+        std::fs::write(&path, vvd).unwrap();
+        let output = compiler::compile(&source, &game);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.detail_props, 1);
+        assert_eq!(output.bsp.unwrap().to_bytes(), baseline);
+        std::fs::write(&path, &original).unwrap();
+    }
+}
+
+#[test]
+fn material_generated_props_share_actual_mesh_bounds_validation() {
+    let (directory, game) = game();
+    std::fs::create_dir_all(directory.path().join("materials/test")).unwrap();
+    std::fs::write(
+        directory.path().join("materials/test/scatter.vmt"),
+        "UnlitGeneric { %detailtype tufts }",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("detail.vbsp"),
+        "detail { tufts { density 64 group { alpha 1 item { model models/props/test.mdl upright 1 } } } }").unwrap();
+    let mut source = common::room();
+    let floor = source.world.solids[0]
+        .sides
+        .iter_mut()
+        .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+        .unwrap();
+    floor.material = "test/scatter".into();
+    let id = source.world.solids[0].id;
+    let before = source.write(&Default::default());
+    let output = compiler::compile(&source, &game);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert!(output.stats.detail_props > 0);
+    let baseline = output.bsp.unwrap().to_bytes();
+    let destination = directory.path().join("previous.bsp");
+    std::fs::write(&destination, &baseline).unwrap();
+    let path = directory.path().join("models/props/test.vvd");
+    let original = std::fs::read(&path).unwrap();
+    let mut vvd = original.clone();
+    vvd[128..132].copy_from_slice(&65_536.0_f32.to_le_bytes());
+    std::fs::write(&path, vvd).unwrap();
+    let output = compiler::compile(&source, &game);
+    assert!(output.bsp.is_none());
+    assert!(
+        output.report.diagnostics.iter().any(|entry| {
+            entry.object.as_deref() == Some(&format!("solid:{id}"))
+                && entry
+                    .message
+                    .contains("Transformed detail model mesh bounds")
+        }),
+        "{:?}",
+        output.report
+    );
+    assert!(!output.write(&destination).unwrap());
+    assert_eq!(std::fs::read(&destination).unwrap(), baseline);
+    assert_eq!(source.write(&Default::default()), before);
+    std::fs::write(path, original).unwrap();
+    assert_eq!(
+        compiler::compile(&source, &game).bsp.unwrap().to_bytes(),
+        baseline
+    );
 }

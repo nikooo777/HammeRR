@@ -1070,3 +1070,47 @@ shared and temporary view options, actual offscreen pixels and pixel picks,
 depth occlusion, hidden/region-filtered endpoints and source/history preservation.
 These editor checks launch no game and send no desktop input. Use fresh private
 output directories for scripts.
+
+### Grid defaults, selection outlines and material sources
+
+```sh
+cargo test -p source-formats -p render -p editor-core --features editor-core/mcp --lib -- map_size source_reads_ material_source grid_preferences grid_defaults selection_outlines --test-threads=1
+cargo test -p source-formats --test fgd map_size
+cargo test -p editor --bin editor grid_defaults_window_saves_applies_retries_and_resets_through_shared_session_callbacks
+cargo test -p editor --bin editor selection_outlines_control_shares_default_and_agent_view_without_map_changes
+cargo test -p editor --bin editor material_source_ui::tests
+cargo test -p editor --bin editor entity_picker_shows_shared_map_size_provenance_and_clears_on_reload
+python3 -B scripts/validate_grid_defaults.py --binary target/debug/hammerr-headless --output /tmp/hammerr-grid-defaults-check
+python3 -B scripts/validate_selection_outlines.py --binary target/debug/hammerr-headless --output /tmp/hammerr-selection-outlines-check
+python3 -B scripts/validate_material_source.py --binary target/debug/hammerr-headless --output /tmp/hammerr-material-source-check
+```
+
+Grid checks use isolated state directories and process restarts, exact stored
+bytes, outside replacements/corruption, retry/reset, failed writes and unchanged
+map/history. Outline checks preserve default line bytes/order and compare actual
+MCP pixels, picks and retained diagnostic/tool guides; `--model` adds a mounted
+model case after verifying it displays. Source checks exercise real directory/VPK
+priority, dangling winners, changed indexes, bounded reads/Patch includes and
+unchanged active previews. FGD checks cover include precedence, authored/sorted
+map-size provenance, failed reload retention and independent coordinate limits.
+Set `HAMMERR_UI_SNAPSHOTS` to an existing directory for `grid-defaults.png`,
+`grid-defaults-error.png`, `selection-outlines.png`, `material-source.png` and
+`entity-catalog-mapsize.png`. Scripts require fresh output directories and never
+launch a game or send desktop input.
+
+### Terrain detail scattering and displayed model bounds
+
+```sh
+cargo test -p compiler --test detail_props --test material_details
+cargo test -p compiler --lib detail_props
+python3 -B scripts/validate_material_details.py --binary target/debug/hammerr-headless --output /tmp/hammerr-terrain-details-check --terrain --runtime
+```
+
+Checks final LOD triangles, displaced heights/normals, barycentric alpha groups,
+empty and selected unsupported groups, parallelogram bases, whole-region terrain,
+shared sample/work caps and unchanged source grids. Displayed model geometry must
+fit the compile bounds even when its MDL header understates the mesh. The private
+native terrain mode compares detail ON/OFF foliage in the exact MCP-built BSP;
+existing flat artifacts can be compared byte-for-byte after compiler changes.
+Runtime isolation, preservation and cleanup use the same policy as other private
+CS:S validators, including `-insecure`, `-default` and pre/post-map `sv_lan 1`.

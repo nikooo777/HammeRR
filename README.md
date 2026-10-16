@@ -130,6 +130,13 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 [Materials and textures →](docs/textures.md)
 
+| Material source |
+| --- |
+| ![Mounted VMT source, Patch includes and resolved declarations](docs/images/material-source.png) |
+| Inspect a material's original text, mounted origin and resolved Patch declarations. |
+
+[Material source →](docs/material-source.md)
+
 ### Select and view
 
 | Paint selection | Volume selection |
@@ -145,7 +152,12 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Viewport modes | Saved camera views |
 | --- | --- |
 | ![Wireframe view with a light helper](docs/images/wireframe-view.png) | ![Named camera views](docs/images/saved-views.png) |
-| Textured, flat, wireframe, lightmap density and smoothing groups, in every projection. | Name camera positions and jump back to them. They are saved in the map. |
+| Choose a viewport mode and show or hide selection outlines in every projection. | Name camera positions and jump back to them. They are saved in the map. |
+
+| Grid defaults |
+| --- |
+| ![Saved grid size, snapping and visibility controls](docs/images/grid-defaults.png) |
+| Save your startup grid while keeping temporary grid changes independent. |
 
 | Working region | Fog preview |
 | --- | --- |
@@ -294,8 +306,8 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Material detail scattering |
 | --- |
-| ![Material-generated foliage in Counter-Strike: Source](docs/images/material-detail-scattering.png) |
-| Generate decorative models from ground materials when building. |
+| ![Material-generated foliage on displaced terrain in Counter-Strike: Source](docs/images/terrain-detail-scattering.png) |
+| Generate decorative models from brush and terrain materials, using terrain blend alpha. |
 
 [Material detail scattering →](docs/material-detail-scattering.md)
 

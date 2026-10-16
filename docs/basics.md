@@ -50,6 +50,19 @@ Framing fits the viewport's width and height and keeps the camera's direction an
 
 **Grid** sets the spacing, from 0.125 to 4096 units. **Snap** and **Show grid** are independent. Values typed into numeric fields are always exact; they are never snapped.
 
+Save your preferred startup grid separately from temporary changes:
+
+1. Set **Grid**, **Snap** and **Show grid** in the toolbar.
+2. Open **Grid defaults…** in the inspector's **Viewport** section.
+3. Review **Current session**, then choose **Save current as defaults**. Future startups use these three values.
+4. Use **Apply saved defaults** to restore them in the current session. **Reload defaults** retries reading storage without changing the current grid.
+
+**Reset saved defaults** explicitly saves the factory values: 16 units, snapping on and grid visible. It leaves the current grid alone until **Apply saved defaults**. Workplane elevation, brush depth, preview toggles and active tools are never persisted. These actions leave the map and Undo history unchanged. Temporary toolbar or MCP grid changes never save automatically.
+
+![Grid defaults with current and saved grid settings](images/grid-defaults.png)
+
+Malformed, unsupported or unwritable preferences show **Grid defaults… · needs attention**. The dialog displays the storage path and error; **Save current as defaults** and **Apply saved defaults** stay unavailable until a successful **Reload defaults** or explicit **Reset saved defaults**. Changed storage rejects stale actions and requires another inspection. Failed saves preserve the existing file; symlinks and nonregular files are rejected. Files are limited to 4096 bytes and use the same grid range as the toolbar. Independent processes do not lock the preferences file; an external write between the final check and atomic replacement can still race.
+
 To align an existing selection, enable **Transform selection** and click **Preview snap to grid**. The helper **Anchor: selection bounds minimum** identifies the corner being aligned. Review the anchor and offset, then **Apply transform** or **Cancel**. The selection moves rigidly by one offset; see [Snap selection to grid](brushes.md#snap-selection-to-grid).
 
 ## Viewport modes
@@ -71,6 +84,20 @@ Uncheck **Tool textures** in the toolbar to hide brushes that use tool materials
 | Flat shading | Wireframe |
 | --- | --- |
 | ![Untextured geometry and a light helper](images/flat-view.png) | ![Brush edges and the same light helper](images/wireframe-view.png) |
+
+## Selection outlines
+
+Choose whether selected objects and faces show edge lines and model corner brackets.
+
+1. Select an object or face in the viewport.
+2. Under **VIEWPORT**, clear **Selection outlines** to hide selected brush and terrain boundaries, point/light marker outlines, model brackets and selected rope centerlines. It starts enabled.
+3. Check **Selection outlines** to restore those lines. Selected surface colors, selection IDs, picking, framing and map history stay unchanged in either state.
+
+![Selection outlines toggle beside the shared viewport controls](images/selection-outlines.png)
+
+MCP uses the same shared Session view: `set_view` accepts `selection_outlines`, and `get_map_info.view.selection_outlines` reports it. `render_view` accepts a temporary override and reports the effective setting without changing the shared view. Pixel and ray picks use the same object surfaces with either setting.
+
+The toggle leaves light direction/cone guides, terrain diagnostics, measurement/context guides, attachment guides, active tool handles, wireframe geometry and leak paths visible. It controls outline presentation; model, sprite and entity-helper visibility remain separate work. These view settings are session-local.
 
 ## Saved camera views
 

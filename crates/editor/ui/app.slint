@@ -1,4 +1,6 @@
+export { MaterialSourceWindow } from "material-source.slint";
 export { HistoryWindow, HistoryRow } from "history.slint";
+export { GridDefaultsWindow } from "grid-defaults.slint";
 export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
@@ -372,6 +374,7 @@ export component EntityWindow inherits Window {
     in property <bool> brush-mode;
     in property <[EntityClassRow]> classes;
     in property <string> definition;
+    in property <string> catalog-status;
     in property <string> message;
     in-out property <string> filter;
     in-out property <string> classname;
@@ -404,6 +407,7 @@ export component EntityWindow inherits Window {
                 }
                 Button { text: "Load FGD…"; clicked => { root.load-fgd(); } }
             }
+            Text { text: root.catalog-status; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 12px;
                 vertical-stretch: 1;
@@ -611,6 +615,7 @@ export component MaterialWindow inherits Window {
     callback use-material();
     callback toggle-favorite();
     callback reload-material-assets();
+    callback inspect-source();
     callback cancel();
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
@@ -676,6 +681,7 @@ export component MaterialWindow inherits Window {
                         if !root.available: Text { text: "No texture preview"; horizontal-alignment: center; vertical-alignment: center; color: #aab0bb; }
                     }
                     Text { text: root.detail; wrap: word-wrap; }
+                    Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
                     Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
                     favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: 11px; }
                     Rectangle { vertical-stretch: 1; }
@@ -1872,6 +1878,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show-tools: true;
     in-out property <bool> sky-preview: false;
     in-out property <bool> rope-preview: false;
+    in-out property <bool> selection-outlines: true;
     in property <string> rope-preview-status: "Rope preview is off";
     in property <string> fog-preview-status: "Fog preview is off";
     callback fog-preview();
@@ -1916,6 +1923,8 @@ export component AppWindow inherits Window {
     callback frame-selection();
     callback saved-views();
     callback measurements();
+    callback grid-defaults();
+    in property <bool> grid-defaults-error;
     callback start-clip();
     callback clip-points-action(int);
     callback preview-clip-plane();
@@ -2474,10 +2483,16 @@ export component AppWindow inherits Window {
                     SectionTitle {
                         text: "VIEWPORT";
                     }
+                    Button { text: root.grid-defaults-error ? "Grid defaults… · needs attention" : "Grid defaults…"; clicked => { root.grid-defaults(); } }
                     ComboBox {
                         model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
                         current-index <=> root.surface-view;
                         selected => { root.surface-view-changed(); }
+                    }
+                    CheckBox {
+                        text: "Selection outlines";
+                        checked <=> root.selection-outlines;
+                        toggled => { root.options-changed(); }
                     }
                     CheckBox {
                         text: "2D sky preview";

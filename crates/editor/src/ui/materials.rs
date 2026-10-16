@@ -648,6 +648,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             move || refresh_material_window(&window.unwrap(), &mut lock(&session_of(&ui)))
         });
         bind_material_reload(&window, session_of(ui));
+        material_source_ui::bind(&window, session_of(ui));
         window.on_use_material({
             let (window, app, ui) = (window.as_weak(), app.as_weak(), ui.clone());
             move || {

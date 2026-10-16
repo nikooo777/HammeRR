@@ -342,7 +342,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect or change shared grid, snapping, workplane elevation, brush depth and the planar drawing tool. Changes are validated atomically; omitted values are preserved."
+        description = "Inspect or change shared grid, snapping, workplane elevation, brush depth and the planar drawing tool for this session. Changes are validated atomically; omitted values are preserved. Changes never persist automatically; use get_grid_defaults / set_grid_defaults to explicitly save startup grid size, snapping and grid visibility."
     )]
     pub(in crate::mcp) fn set_spatial_settings(
         &self,

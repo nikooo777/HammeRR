@@ -99,9 +99,7 @@ pub(in crate::mcp) fn class_json(class: &Class) -> Value {
 }
 
 pub(in crate::mcp) fn definitions_json(session: &Session) -> Value {
-    json!({"classes": session.definitions().classes().count(),
-        "sources": session.definitions().sources.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-        "error": session.definitions_error()})
+    json!(session.entity_definitions_report())
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

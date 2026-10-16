@@ -105,6 +105,7 @@ struct Ui {
     saved_views: Option<saved_views_ui::Controller>,
     history: Option<history_ui::Controller>,
     measurements: Option<measurements_ui::Controller>,
+    grid_defaults: Option<grid_defaults_ui::Controller>,
     material_for_group: bool,
     overlay_material_target: Option<overlay_ui::MaterialTarget>,
     material_for_replace: Option<bool>,
@@ -136,7 +137,8 @@ fn session_of(ui: &SharedUi) -> SharedSession {
     ui.borrow().session.clone()
 }
 
-fn refresh_rope_preview(app: &AppWindow, session: &Session) {
+fn refresh_view_controls(app: &AppWindow, session: &Session) {
+    app.set_selection_outlines(session.view().selection_outlines);
     app.set_rope_preview(session.view().rope_preview);
     app.set_rope_preview_status(
         session.rope_preview_state()["summary"]
@@ -156,16 +158,17 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
             view.tool_textures = app.get_show_tools();
             view.sky_preview = app.get_sky_preview();
             view.rope_preview = app.get_rope_preview();
+            view.selection_outlines = app.get_selection_outlines();
             view.leak_path = app.get_show_leak();
             session.set_view(view);
-            refresh_rope_preview(&app, &session);
+            refresh_view_controls(&app, &session);
         }
     });
 }
 
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
-    refresh_rope_preview(app, session);
+    refresh_view_controls(app, session);
     app.set_fog_preview_status(
         session.fog_preview_state()["summary"]
             .as_str()
@@ -373,6 +376,7 @@ pub(super) fn run(
         saved_views: None,
         history: None,
         measurements: None,
+        grid_defaults: None,
         material_for_group: false,
         overlay_material_target: None,
         material_for_replace: None,
@@ -499,6 +503,24 @@ pub(super) fn run(
                 }
             }
             if let Err(error) = ui.measurements.as_ref().unwrap().show(&lock(&ui.session)) {
+                app.unwrap().set_message(error.to_string().into());
+            }
+        }
+    });
+    app.on_grid_defaults({
+        let (app, ui) = (app.as_weak(), ui.clone());
+        move || {
+            let mut ui = ui.borrow_mut();
+            if ui.grid_defaults.is_none() {
+                match grid_defaults_ui::Controller::new(&ui.session) {
+                    Ok(controller) => ui.grid_defaults = Some(controller),
+                    Err(error) => {
+                        app.unwrap().set_message(error.to_string().into());
+                        return;
+                    }
+                }
+            }
+            if let Err(error) = ui.grid_defaults.as_ref().unwrap().show(&lock(&ui.session)) {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -2572,7 +2594,7 @@ pub(super) fn run(
                 }
                 if session.view_serial() != ui.seen_view {
                     ui.seen_view = session.view_serial();
-                    refresh_rope_preview(&app, &session);
+                    refresh_view_controls(&app, &session);
                     app.set_fog_preview_status(
                         session.fog_preview_state()["summary"]
                             .as_str()
@@ -2869,6 +2891,11 @@ pub(super) fn run(
                     controller.refresh(&lock(&ui.session));
                 }
                 if let Some(controller) = &ui.measurements
+                    && controller.window.window().is_visible()
+                {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.grid_defaults
                     && controller.window.window().is_visible()
                 {
                     controller.refresh(&lock(&ui.session));

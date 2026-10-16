@@ -86,6 +86,7 @@ impl Session {
         self.configure_prefabs(directory.clone());
         self.configure_build_recipes(directory.clone());
         self.configure_material_favorites(directory.clone());
+        self.configure_grid_preferences(directory.clone());
         self.configure_recent_maps(crate::recent_maps::directory(directory.clone()));
         let store = match directory {
             Ok(directory) => Store { directory },

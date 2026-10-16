@@ -3,6 +3,50 @@ use std::path::PathBuf;
 use source_formats::fgd::{Catalog, ClassKind};
 
 #[test]
+fn map_size_uses_include_order_and_reports_the_winning_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root.fgd");
+    let base = directory.path().join("base.fgd");
+    let nested = directory.path().join("nested.fgd");
+    std::fs::write(
+        &base,
+        "@mapsize(-8192, 8192)\n@include \"nested.fgd\"\n@mapsize(0, 0)",
+    )
+    .unwrap();
+    std::fs::write(&nested, "// Nested declaration\n@mapsize(4096, -4096)").unwrap();
+    std::fs::write(
+        &root,
+        "@mapsize(-1, 1)\n@include \"base.fgd\"\n@PointClass = point []",
+    )
+    .unwrap();
+    let catalog = Catalog::load(&root).unwrap();
+    let size = catalog.map_size.unwrap();
+    assert_eq!(size.authored, [4096, -4096]);
+    assert_eq!(size.bounds, [-4096, 4096]);
+    assert_eq!(size.source, Some(nested.canonicalize().unwrap()));
+    assert_eq!(size.line, 2);
+    assert_eq!(
+        catalog.sources,
+        [
+            nested.canonicalize().unwrap(),
+            base.canonicalize().unwrap(),
+            root.canonicalize().unwrap(),
+        ]
+    );
+    std::fs::write(
+        &root,
+        "@include \"base.fgd\"\n@mapsize(-16384, 16384)\n@include \"base.fgd\"",
+    )
+    .unwrap();
+    let catalog = Catalog::load(&root).unwrap();
+    let size = catalog.map_size.unwrap();
+    assert_eq!(size.authored, [-16384, 16384]);
+    assert_eq!(size.source, Some(root.canonicalize().unwrap()));
+    assert_eq!(size.line, 2);
+    assert_eq!(catalog.sources.len(), 3);
+}
+
+#[test]
 fn installed_css_entities_include_lights_and_inherited_properties() {
     let path = std::env::var_os("CSS_FGD").map(PathBuf::from).or_else(|| {
         std::env::var_os("HOME").map(|home| {

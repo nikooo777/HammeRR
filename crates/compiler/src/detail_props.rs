@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use glam::{DQuat, DVec3, EulerRot};
 use source_formats::bsp::{Bsp, DetailProp, DetailProps, Leaf, Model, Node, Plane, contents};
 use source_formats::gamefs::{GameFs, asset_relative};
-use source_formats::mdl::ModelHeader;
 use source_formats::vmf::{Entity, Vmf};
 
 use crate::{
@@ -125,7 +124,7 @@ struct Builder<'a> {
     leaves: Vec<Leaf>,
     head: i32,
     props: DetailProps,
-    models: BTreeMap<String, (u16, ModelHeader)>,
+    models: BTreeMap<String, (u16, assets::ModelBounds)>,
     validator: assets::ModelValidator,
     work: usize,
 }
@@ -150,7 +149,11 @@ impl<'a> Builder<'a> {
         })
     }
 
-    fn model(&mut self, raw: &str, control: &Control) -> Result<(u16, ModelHeader), String> {
+    fn model(
+        &mut self,
+        raw: &str,
+        control: &Control,
+    ) -> Result<(u16, assets::ModelBounds), String> {
         let path = asset_relative(raw).map_err(|error| error.to_string())?;
         if !path.starts_with("models/") || !path.ends_with(".mdl") {
             return Err("Detail model must name a models/*.mdl asset".into());
@@ -162,8 +165,8 @@ impl<'a> Builder<'a> {
             return Err("Detail model dictionary exceeds the 1024-model build budget".into());
         }
         let name = DetailProps::model_record(&path).map_err(|error| error.to_string())?;
-        let header = self.validator.header(self.fs, &path, control)?;
-        let entry = (self.props.models.len() as u16, header);
+        let bounds = self.validator.bounds(self.fs, &path, control)?;
+        let entry = (self.props.models.len() as u16, bounds);
         self.models.insert(path, entry);
         self.props.models.push(name);
         Ok(entry)
@@ -179,7 +182,7 @@ impl<'a> Builder<'a> {
         if self.props.props.len() >= MAX_PROPS {
             return Err("Detail model props exceed the 16,384-object build budget".into());
         }
-        let (model, header) = self.model(path, control)?;
+        let (model, bounds) = self.model(path, control)?;
         let origin = DVec3::from_array(prop.origin.map(f64::from));
         let angles = DVec3::from_array(prop.angles.map(f64::from));
         if !origin.is_finite()
@@ -191,7 +194,7 @@ impl<'a> Builder<'a> {
         }
         let radians = angles.map(f64::to_radians);
         let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
-        static_props::bounds(header, origin, rotation)?;
+        bounds.check_transform(origin, rotation)?;
         prop.model = model;
         let mut cursor = self.head;
         while cursor >= 0 {
@@ -285,7 +288,7 @@ pub(crate) fn bake(
         builder.props.props.sort_by_key(|prop| prop.leaf);
         bsp.set_detail_props(&builder.props)
             .map_err(|error| error.to_string())?;
-        report.diagnostics.push(Diagnostic::warning("Detail model props are non-colliding client-only models with unbaked white lighting; sprites, terrain scattering, detail light styles and baked detail lighting remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Detail model props are non-colliding client-only models with unbaked white lighting; sprites, detail light styles and baked detail lighting remain unfinished", None, None));
     }
     Ok(Stats {
         props: builder.props.props.len(),

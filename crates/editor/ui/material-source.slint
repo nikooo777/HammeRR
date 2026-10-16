@@ -1,0 +1,47 @@
+import { Button, TextEdit } from "std-widgets.slint";
+
+export component MaterialSourceWindow inherits Window {
+    title: "Material source - HammeRR";
+    preferred-width: 900px;
+    preferred-height: 820px;
+    min-width: 650px;
+    min-height: 650px;
+    in property <string> material;
+    in property <string> provenance;
+    in property <string> resolved;
+    in property <string> status;
+    in property <string> source;
+    callback refresh-source();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+    }
+    VerticalLayout {
+        padding: 18px;
+        spacing: 10px;
+        Text { text: "Material source"; font-size: 24px; font-weight: 600; }
+        Text { text: root.material; wrap: word-wrap; }
+        Text { text: "Mounted source and Patch includes"; font-weight: 600; }
+        TextEdit { text: root.provenance; read-only: true; wrap: word-wrap; height: 145px; accessible-label: "Material source provenance"; }
+        TextEdit { text: root.resolved; read-only: true; wrap: word-wrap; height: 100px; accessible-label: "Resolved material declarations"; }
+        Text { text: root.status; wrap: word-wrap; color: #bac2ce; }
+        Text { text: "Selected VMT source"; font-weight: 600; }
+        TextEdit { text: root.source; read-only: true; font-family: "monospace"; wrap: word-wrap; vertical-stretch: 1; accessible-label: "Raw VMT source"; }
+        Text {
+            text: "Read-only inspection of current mounted files. Shader and texture names are declarations; availability and rendering are not checked. Existing material previews refresh through Reload material assets.";
+            wrap: word-wrap;
+            color: #bac2ce;
+            font-size: 12px;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Refresh source"; clicked => { root.refresh-source(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Close"; clicked => { root.close-dialog(); } }
+        }
+    }
+}

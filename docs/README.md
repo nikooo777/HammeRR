@@ -27,6 +27,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Vertices, edges and faces](components.md) | Moving, scaling, rotating, welding, splitting and roof ridges |
 | [Flat partitions](partitions.md) | Dividing a face into pieces to raise, extrude or restyle them |
 | [Materials and textures](textures.md) | Material browser, texture editing, sampling, wrapping, painting, replacement, face lighting |
+| [Material source](material-source.md) | Mounted VMT origins, raw source, Patch includes and resolved declarations |
 | [Working region](working-region.md) | Temporary whole-object display bounds and visibility reasons |
 | [Fog preview](fog.md) | Choosing an authored static fog controller for perspective Textured views |
 | [2D sky preview](sky.md) | Previewing the selected mounted sky through authored sky surfaces |

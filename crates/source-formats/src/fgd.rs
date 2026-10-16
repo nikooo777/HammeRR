@@ -146,10 +146,19 @@ impl Class {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MapSize {
+    pub authored: [i32; 2],
+    pub bounds: [i32; 2],
+    pub source: Option<PathBuf>,
+    pub line: usize,
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct Catalog {
     classes: BTreeMap<String, Class>,
     pub sources: Vec<PathBuf>,
+    pub map_size: Option<MapSize>,
 }
 
 impl Catalog {
@@ -161,7 +170,7 @@ impl Catalog {
                 Declaration::Include(_) => {
                     return Err("use Catalog::load to resolve FGD includes".into());
                 }
-                declaration => raw.insert(declaration),
+                declaration => raw.insert(declaration, None),
             }
         }
         Self::resolve(raw, Vec::new())
@@ -179,7 +188,11 @@ impl Catalog {
         for name in raw.classes.keys() {
             resolve(name, &raw, &mut classes, &mut Vec::new())?;
         }
-        Ok(Self { classes, sources })
+        Ok(Self {
+            classes,
+            sources,
+            map_size: raw.map_size,
+        })
     }
 
     pub fn classes(&self) -> impl Iterator<Item = &Class> {
@@ -198,10 +211,11 @@ impl Catalog {
 struct RawCatalog {
     classes: BTreeMap<String, Class>,
     extensions: BTreeMap<String, Vec<Class>>,
+    map_size: Option<MapSize>,
 }
 
 impl RawCatalog {
-    fn insert(&mut self, declaration: Declaration) {
+    fn insert(&mut self, declaration: Declaration, source: Option<&Path>) {
         match declaration {
             Declaration::Class(class) => {
                 self.classes.insert(class.name.clone(), class);
@@ -211,6 +225,12 @@ impl RawCatalog {
                     .entry(class.name.clone())
                     .or_default()
                     .push(class);
+            }
+            Declaration::MapSize(mut size) => {
+                if size.authored[0] != size.authored[1] {
+                    size.source = source.map(Path::to_path_buf);
+                    self.map_size = Some(size);
+                }
             }
             Declaration::Include(_) => unreachable!(),
         }
@@ -252,7 +272,7 @@ fn load(
                 sources,
                 active,
             )?,
-            declaration => raw.insert(declaration),
+            declaration => raw.insert(declaration, Some(&path)),
         }
     }
     active.pop();
@@ -351,6 +371,7 @@ enum Declaration {
     Include(String),
     Class(Class),
     Extend(Class),
+    MapSize(MapSize),
 }
 
 struct Token {
@@ -471,16 +492,19 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&self, message: &str) -> String {
+        format!("line {}: {message}", self.line(self.index))
+    }
+
+    fn line(&self, index: usize) -> usize {
         let offset = self
             .tokens
-            .get(self.index)
+            .get(index)
             .map_or(self.source.len(), |token| token.offset);
-        let line = self.source[..offset]
+        self.source[..offset]
             .bytes()
             .filter(|b| *b == b'\n')
             .count()
-            + 1;
-        format!("line {line}: {message}")
+            + 1
     }
 
     fn atom(&mut self) -> Result<String, String> {
@@ -524,6 +548,20 @@ impl<'a> Parser<'a> {
             self.index += 1;
             match directive.as_str() {
                 "@include" => declarations.push(Declaration::Include(self.text()?)),
+                "@mapsize" => {
+                    let line = self.line(self.index - 1);
+                    self.expect("(")?;
+                    let first = self.map_coordinate()?;
+                    self.expect(",")?;
+                    let second = self.map_coordinate()?;
+                    self.expect(")")?;
+                    declarations.push(Declaration::MapSize(MapSize {
+                        authored: [first, second],
+                        bounds: [first.min(second), first.max(second)],
+                        source: None,
+                        line,
+                    }));
+                }
                 "@extendclass" => {
                     let class = self.class(ClassKind::Base)?;
                     if !class.bases.is_empty() {
@@ -565,6 +603,23 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(declarations)
+    }
+
+    fn map_coordinate(&mut self) -> Result<i32, String> {
+        let token = self
+            .tokens
+            .get(self.index)
+            .ok_or_else(|| self.error("expected a signed 32-bit @mapsize integer"))?;
+        let digits = token.text.strip_prefix('-').unwrap_or(&token.text);
+        if token.quoted || digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(self.error("expected a signed 32-bit @mapsize integer"));
+        }
+        let coordinate = token
+            .text
+            .parse()
+            .map_err(|_| self.error("@mapsize integer exceeds signed 32-bit range"))?;
+        self.index += 1;
+        Ok(coordinate)
     }
 
     fn class(&mut self, kind: ClassKind) -> Result<Class, String> {
@@ -709,6 +764,47 @@ mod tests {
             output OnReady(void) : "Ready"
         ]
     "#;
+
+    #[test]
+    fn map_size_keeps_authored_order_and_ignores_equal_endpoints() {
+        let catalog =
+            Catalog::parse("@mapsize(-8192, 8192)\n@MapSize(16384, -16384)\n@mapsize(7, 7)")
+                .unwrap();
+        assert_eq!(
+            catalog.map_size,
+            Some(MapSize {
+                authored: [16384, -16384],
+                bounds: [-16384, 16384],
+                source: None,
+                line: 2,
+            })
+        );
+        assert!(Catalog::parse("@mapsize(7, 7)").unwrap().map_size.is_none());
+        assert!(Catalog::parse(DEFINITIONS).unwrap().map_size.is_none());
+        assert_eq!(
+            Catalog::parse("@mapsize(-2147483648, 2147483647)")
+                .unwrap()
+                .map_size
+                .unwrap()
+                .bounds,
+            [i32::MIN, i32::MAX]
+        );
+        for source in [
+            "@mapsize(1)",
+            "@mapsize(1 2)",
+            "@mapsize(1, 2, 3)",
+            "@mapsize(1, 2",
+            "@mapsize(\"1\", 2)",
+            "@mapsize(+1, 2)",
+            "@mapsize(1.5, 2)",
+            "@mapsize(1e2, 200)",
+            "@mapsize(-, 2)",
+            "@mapsize(-2147483649, 0)",
+            "@mapsize(0, 2147483648)",
+        ] {
+            assert!(Catalog::parse(source).is_err(), "{source}");
+        }
+    }
 
     #[test]
     fn inheritance_defaults_flags_helpers_and_io() {

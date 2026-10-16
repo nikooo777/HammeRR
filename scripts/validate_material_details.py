@@ -13,6 +13,7 @@ from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref
 from validate_visibility import ROOM
 
 MODEL = "models/props/de_inferno/bushgreensmall.mdl"
+TERRAIN_MODEL = "models/props/de_train/bush.mdl"
 MATERIAL = "hammerr_material_details/ground"
 TEXTURE = "dev/dev_measuregeneric01"
 DICTIONARY = "scripts/hammerr_material_details.vbsp"
@@ -122,6 +123,98 @@ def validate(args):
         client.close()
 
 
+def terrain_dictionary(low=True, high=True):
+    entries = []
+    for name, alpha, model, enabled in [("low", 0, MODEL, low), ("high", 1, TERRAIN_MODEL, high)]:
+        entry = f'item {{ model "{model}" upright 1 }}' if enabled else ""
+        entries.append(f'{name} {{ alpha {alpha} {entry} }}')
+    return 'detail { hammerr_tufts { density 512 ' + ' '.join(entries) + ' } }\n'
+
+
+def validate_terrain(args):
+    game = runtime.private_game(args.game_dir, args.output / "source-game")
+    material = game / f"materials/{MATERIAL}.vmt"
+    material.parent.mkdir(parents=True)
+    shader = f'WorldVertexTransition {{ $basetexture "{TEXTURE}" $basetexture2 "{TEXTURE}"'
+    material.write_text(shader + ' }\n')
+    dictionary_path = game / DICTIONARY
+    dictionary_path.write_text(terrain_dictionary())
+    client = Client(None, args.binary, args.output, game / "gameinfo.txt")
+    try:
+        with stopped_on_exit(client):
+            client.call("load_entity_definitions", {"path": str(args.fgd)})
+            ids = [client.call("create_block", {"mins": low, "maxs": high, "material": TEXTURE})["id"] for low, high in ROOM]
+            faces = []
+            for index, (low, high) in enumerate([([-160, 16, 0], [-16, 160, 24]), ([16, 16, 0], [160, 160, 24])]):
+                parent = client.call("create_block", {"mins": low, "maxs": high, "material": TEXTURE})["id"]
+                ids.append(parent)
+                shape = detail(client, [parent])[0]
+                target = face_ref(shape, next(face for face in shape["faces"] if face["normal"] == [0, 0, 1]))
+                faces.append(target)
+                client.call("edit_faces", {"faces": [target], "material": MATERIAL})
+                client.call("create_terrain", {"faces": [target], "power": index + 2, "start_corner": index * 2})
+                draft = client.call("preview_terrain_blend", {"faces": [target], "mode": "fill", "value": index * 255})
+                client.call("commit_face_preview", {"token": draft["state"]["preview_token"]})
+                if index:
+                    draft = client.call("preview_terrain_sculpt", {"faces": [target], "mode": "raise", "center": [88, 88, 24], "radius": 8192, "amount": 8})
+                    client.call("commit_face_preview", {"token": draft["state"]["preview_token"]})
+            for classname, origin, properties in [
+                ("info_player_terrorist", [-192, -176, 8], {}),
+                ("info_player_counterterrorist", [192, 176, 8], {}),
+                ("light", [0, 0, 180], {"_light": "255 255 255 180", "_constant_attn": "1", "_linear_attn": "0", "_quadratic_attn": "0"}),
+                ("logic_script", [0, -176, 64], {"targetname": "hammerr_detail_observer", "vscripts": "hammerr_detail_observer.nut", "thinkfunction": "HammeRRThink"}),
+            ]:
+                ids.append(client.call("create_entity", {"classname": classname, "origin": origin, "properties": properties})["id"])
+            set_world(client, "detailvbsp", DICTIONARY)
+            client.call("set_compile_settings", {"lighting": "direct_ldr", "physics": "none", "bounces": 0})
+            source = args.output / "terrain-material-details.vmf"
+            client.call("save_map", {"path": str(source)})
+            _, empty, empty_result = compile_pair(client, args.output, "empty-terrain", ids)
+            require(empty_result["stats"]["displacements"] == 2 and not detail_records(empty)["props"], empty_result)
+            material.write_text(shader + ' %detailtype hammerr_tufts }\n')
+            client.call("reload_material_assets")
+            authored = detail(client, ids)
+            grids = client.call("get_terrain_grids", {"faces": faces})
+            saved = source.read_bytes()
+            client.call("open_map", {"path": str(source)})
+            require(detail(client, ids) == authored and client.call("get_terrain_grids", {"faces": faces}) == grids, "VMF reopen changed terrain source")
+            bsp, data, result = compile_pair(client, args.output, "terrain-material-details", ids)
+            parsed = detail_records(data)
+            require(result["stats"]["detail_props"] == len(parsed["props"]) == 20 and result["stats"]["detail_prop_models"] == 2, result)
+            require(set(parsed["models"]) == {MODEL, TERRAIN_MODEL}, parsed)
+            for negative, expected in [(True, MODEL), (False, TERRAIN_MODEL)]:
+                props = [row for row in parsed["props"] if (row["origin"][0] < 0) == negative]
+                require(len(props) == 10 and all(row["model"] == expected for row in props), parsed)
+                require(all(16 <= row["origin"][1] <= 160 for row in props), "Generated terrain props escaped the patch")
+                require(all(row["origin"][2] == 24 if negative else 31 < row["origin"][2] <= 32.01 for row in props), "Generated terrain props do not follow displaced height")
+            leaves = records(data, 10, "<ihh6h4HhH", expected_version=1)
+            require(all(leaves[row["leaf"]][0] & 1 == 0 and leaves[row["leaf"]][1] >= 0 for row in parsed["props"]), "Terrain detail leaves are not open and visible")
+            for index, (before, after) in enumerate(zip(probe.bsp_lumps(empty), probe.bsp_lumps(data), strict=True)):
+                if index != 35:
+                    require(before == after, f"Terrain scattering changed unrelated lump {index}")
+            controls = {}
+            for name, low, high, expected_count, expected_model in [
+                ("empty-low", False, True, 10, TERRAIN_MODEL),
+                ("empty-high", True, False, 10, MODEL),
+                ("empty-both", False, False, 0, None),
+            ]:
+                dictionary_path.write_text(terrain_dictionary(low, high))
+                _, control, control_result = compile_pair(client, args.output, name, ids)
+                decoded = detail_records(control)
+                require(len(decoded["props"]) == control_result["stats"]["detail_props"] == expected_count, decoded)
+                require(all(row["model"] == expected_model for row in decoded["props"]), "Empty alpha group fell back to another group")
+                controls[name] = {"stats": control_result["stats"], "records": decoded}
+            dictionary_path.write_text(terrain_dictionary())
+            _, repeated, _ = compile_pair(client, args.output, "terrain-material-details-repeated", ids)
+            require(repeated == data, "Terrain dictionary restore changed deterministic BSP bytes")
+            require(detail(client, ids) == authored and client.call("get_terrain_grids", {"faces": faces}) == grids and source.read_bytes() == saved, "Terrain compilation changed source grids or VMF")
+            report = {"success": True, "terrain": True, "stats": result["stats"], "records": parsed, "empty_controls": controls, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "empty_control_geometry_exact": True, "native_exercised": False, "fixture_game": str(game), "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
+            (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
+            return report
+    finally:
+        client.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
@@ -129,6 +222,7 @@ def main():
     parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--terrain", action="store_true")
     parser.add_argument("--port", type=int, default=27699)
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
@@ -136,13 +230,13 @@ def main():
     args.output = args.output.resolve()
     require(not args.output.exists(), "Use a fresh absent output directory")
     args.output.mkdir(parents=True, mode=0o700)
-    result = validate(args)
+    result = validate_terrain(args) if args.terrain else validate(args)
     if args.runtime:
         native_output = args.output / "native"
         subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),
             "--binary", str(args.binary), "--output", str(native_output),
             "--game-dir", str(args.game_dir), "--runtime", "--runtime-bsp", result["bsp"],
-            "--fixture-game", result["fixture_game"], "--expected-count", "16", "--port", str(args.port)],
+            "--fixture-game", result["fixture_game"], "--expected-count", str(len(result["records"]["props"])), "--port", str(args.port)],
             check=True, timeout=150)
         native = json.loads((native_output / "results.json").read_text())
         require(native["native_exercised"] and native["native"]["success"], native)

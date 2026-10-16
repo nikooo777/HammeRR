@@ -1,0 +1,50 @@
+import {Button} from "std-widgets.slint";
+
+export component GridDefaultsWindow inherits Window {
+    title: "Grid defaults - HammeRR";
+    preferred-width: 690px;
+    preferred-height: 660px;
+    min-width: 620px;
+    min-height: 620px;
+    in property <string> current;
+    in property <string> defaults;
+    in property <string> storage;
+    in property <string> status;
+    in property <string> message;
+    in property <bool> ready;
+    callback save();
+    callback apply();
+    callback reload();
+    callback reset();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: "Grid defaults"; font-size: 24px; font-weight: 600; }
+            Text { text: "Save only the grid size, snapping and grid visibility you want at startup."; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: root.current; wrap: word-wrap; font-size: 17px; }
+            Text { text: root.defaults; wrap: word-wrap; font-size: 17px; }
+            Text { text: root.storage; wrap: word-wrap; color: #b6c1cf; }
+            Text { text: root.status; wrap: word-wrap; color: #e3c597; }
+            Text { text: "Temporary grid changes stay in this session until Save current as defaults. Workplanes, brush depth, preview toggles and active tools are not saved."; wrap: word-wrap; color: #b6c1cf; }
+            Rectangle { vertical-stretch: 1; }
+            Text { text: root.message; wrap: word-wrap; min-height: 34px; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Reload defaults"; clicked => { root.reload(); } }
+                Button { text: "Reset saved defaults"; clicked => { root.reset(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply saved defaults"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: "Save current as defaults"; enabled: root.ready; clicked => { root.save(); } }
+            }
+        }
+    }
+}

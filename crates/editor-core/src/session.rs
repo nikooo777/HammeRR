@@ -33,9 +33,11 @@ pub mod component_picking;
 pub mod components;
 pub mod context;
 pub mod cubemap_bindings;
+pub mod definitions;
 pub mod entity_placement;
 mod favorites;
 pub mod fog;
+pub mod grid_preferences;
 pub mod groups;
 pub mod history;
 pub mod hollowing;
@@ -44,6 +46,7 @@ pub mod linked_path;
 mod management;
 pub mod material_assets;
 pub mod material_search;
+pub mod material_source;
 pub mod measurements;
 pub mod merging;
 mod model_attachments;
@@ -87,6 +90,8 @@ mod manipulation;
 mod preview_tests;
 mod previews;
 mod rename_view;
+#[cfg(test)]
+mod selection_outline_tests;
 pub use manipulation::{
     AreaPreview, GridSnap, Pointer, TransformDrag, TransformPreview, TransformTool,
 };
@@ -219,6 +224,7 @@ pub struct Session {
     view: ViewOptions,
     fog_preview: fog::Selection,
     spatial: spatial::Settings,
+    grid_preferences: grid_preferences::State,
     saved_cameras: [Option<Camera>; 4],
     block_preview: Option<(DVec3, DVec3)>,
     brush_epoch: u64,
@@ -338,6 +344,7 @@ impl Session {
             view: ViewOptions::default(),
             fog_preview: fog::Selection::default(),
             spatial: spatial::Settings::default(),
+            grid_preferences: grid_preferences::State::default(),
             saved_cameras: [None; 4],
             block_preview: None,
             brush_epoch: 0,

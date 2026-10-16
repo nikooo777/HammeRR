@@ -65,26 +65,7 @@ impl Mount {
             Self::Pak(vpk) => vpk.read_limited(path, maximum),
             Self::Directory(root) => match find_case_insensitive(root, path)? {
                 Some(file) if fs::metadata(&file)?.is_file() => {
-                    let file = fs::File::open(file)?;
-                    let size = file.metadata()?.len();
-                    if size > maximum as u64 {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "asset exceeds the caller's byte read limit",
-                        ));
-                    }
-                    let mut data = Vec::new();
-                    data.try_reserve_exact(size as usize)
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                    file.take(maximum.saturating_add(1) as u64)
-                        .read_to_end(&mut data)?;
-                    if data.len() > maximum {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "asset grew beyond its byte read limit",
-                        ));
-                    }
-                    Ok(Some(data))
+                    read_file_limited(&file, maximum).map(Some)
                 }
                 Some(_) => Ok(None),
                 None => Ok(None),
@@ -98,6 +79,41 @@ impl Mount {
             Self::Pak(vpk) => vpk.path(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssetOrigin {
+    Directory { mount: PathBuf, file: PathBuf },
+    Vpk { index: PathBuf, files: Vec<PathBuf> },
+}
+
+#[derive(Debug)]
+pub struct MountedAsset {
+    pub data: Vec<u8>,
+    pub origin: AssetOrigin,
+}
+
+fn read_file_limited(path: &Path, maximum: usize) -> io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > maximum as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "asset exceeds the caller's byte read limit",
+        ));
+    }
+    let mut data = Vec::new();
+    data.try_reserve_exact(size as usize)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    file.take(maximum.saturating_add(1) as u64)
+        .read_to_end(&mut data)?;
+    if data.len() > maximum {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "asset grew beyond its byte read limit",
+        ));
+    }
+    Ok(data)
 }
 
 fn existing<T>(path: &Path, result: io::Result<T>) -> io::Result<Option<T>> {
@@ -484,6 +500,53 @@ impl GameFs {
 
     pub fn read_limited(&self, path: &str, maximum: usize) -> io::Result<Option<Vec<u8>>> {
         self.read_from_limited(path, Some("game"), maximum)
+    }
+
+    pub fn read_asset_limited(
+        &self,
+        path: &str,
+        maximum: usize,
+    ) -> io::Result<Option<MountedAsset>> {
+        let path = asset_relative(path)?;
+        if path.is_empty() {
+            return Ok(None);
+        }
+        for mounted in self
+            .mounts
+            .iter()
+            .filter(|mount| mount.ids.iter().any(|id| id == "game"))
+        {
+            let asset = match &mounted.mount {
+                Mount::Directory(root) => match find_case_insensitive_traced(
+                    root,
+                    &path,
+                    Some(&mut AssetSourcePaths::default()),
+                )? {
+                    Some(file) if fs::metadata(&file)?.is_file() => Some(MountedAsset {
+                        data: read_file_limited(&file, maximum)?,
+                        origin: AssetOrigin::Directory {
+                            mount: root.clone(),
+                            file,
+                        },
+                    }),
+                    _ => None,
+                },
+                Mount::Pak(pak) => match pak.asset_source_paths(&path)? {
+                    Some(files) => pak.read_limited(&path, maximum)?.map(|data| MountedAsset {
+                        data,
+                        origin: AssetOrigin::Vpk {
+                            index: pak.path().to_owned(),
+                            files,
+                        },
+                    }),
+                    None => None,
+                },
+            };
+            if asset.is_some() {
+                return Ok(asset);
+            }
+        }
+        Ok(None)
     }
 
     /// Resolve the same `game` asset as [`Self::read`], including higher-priority lookup dependencies.
@@ -940,6 +1003,88 @@ mod tests {
         symlink("absent", root.path().join("absent")).unwrap();
         let error = GameFs::from_gameinfo(&gameinfo).unwrap_err().to_string();
         assert!(error.contains("absent"), "{error}");
+    }
+
+    #[test]
+    fn source_reads_report_the_exact_directory_winner_and_preserve_byte_limits() {
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        fs::create_dir_all(first.join("Materials")).unwrap();
+        fs::create_dir_all(second.join("materials")).unwrap();
+        let asset = first.join("Materials/TEST.vmt");
+        fs::write(&asset, b"first").unwrap();
+        fs::write(second.join("materials/test.vmt"), b"low").unwrap();
+        let game = provenance_game(
+            root.path(),
+            vec![Mount::Directory(first.clone()), Mount::Directory(second)],
+        );
+        let source = game
+            .read_asset_limited("MATERIALS/TEST.VMT", 5)
+            .unwrap()
+            .unwrap();
+        assert_eq!(source.data, b"first");
+        assert_eq!(
+            source.origin,
+            AssetOrigin::Directory {
+                mount: first,
+                file: asset
+            }
+        );
+        assert!(game.read_asset_limited("materials/test.vmt", 4).is_err());
+        assert!(
+            game.read_asset_limited("materials/missing.vmt", 5)
+                .unwrap()
+                .is_none()
+        );
+        assert!(game.read_asset_limited("../outside", 5).is_err());
+    }
+
+    #[test]
+    fn source_reads_report_vpk_storage_and_reject_changed_indexes() {
+        let root = tempfile::tempdir().unwrap();
+        let index = root.path().join("source_dir.vpk");
+        let payload = b"UnlitGeneric {}";
+        let mut tree = b"vmt\0materials\0test\0".to_vec();
+        tree.extend(0u32.to_le_bytes());
+        tree.extend(0u16.to_le_bytes());
+        tree.extend(0x7fffu16.to_le_bytes());
+        tree.extend(0u32.to_le_bytes());
+        tree.extend((payload.len() as u32).to_le_bytes());
+        tree.extend(0xffffu16.to_le_bytes());
+        tree.extend(b"\0\0\0");
+        let mut bytes = 0x55aa_1234u32.to_le_bytes().to_vec();
+        bytes.extend(1u32.to_le_bytes());
+        bytes.extend((tree.len() as u32).to_le_bytes());
+        bytes.extend(tree);
+        bytes.extend(payload);
+        fs::write(&index, bytes).unwrap();
+        let game = provenance_game(root.path(), vec![Mount::Pak(Vpk::open(&index).unwrap())]);
+        let source = game
+            .read_asset_limited("materials/test.vmt", payload.len())
+            .unwrap()
+            .unwrap();
+        assert_eq!(source.data, payload);
+        let AssetOrigin::Vpk {
+            index: mounted,
+            files,
+        } = source.origin
+        else {
+            panic!("expected VPK source")
+        };
+        assert_eq!(mounted, index);
+        assert!(files.contains(&index));
+        assert!(
+            game.read_asset_limited("materials/test.vmt", payload.len() - 1)
+                .is_err()
+        );
+        fs::write(&index, b"changed index").unwrap();
+        assert!(
+            game.read_asset_limited("materials/test.vmt", payload.len())
+                .unwrap_err()
+                .to_string()
+                .contains("reload mounted content")
+        );
     }
 
     #[test]

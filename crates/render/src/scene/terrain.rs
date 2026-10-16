@@ -285,6 +285,9 @@ mod tests {
                 SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
             assert_eq!(mesh.issues.len(), 1, "{case}");
             assert_eq!(mesh.issues[0].face, face);
+            assert!(mesh.selection_outline_ranges.is_empty());
+            assert_eq!(mesh.guide_line_ranges().len(), 1);
+            assert_eq!(mesh.guide_line_ranges()[0], 0..mesh.lines.len() as u32);
             assert_eq!(mesh.stats.displacements, 1);
             if case == "smooth" {
                 assert!(mesh.lines.iter().any(|line| line.position[2] == 48.0));

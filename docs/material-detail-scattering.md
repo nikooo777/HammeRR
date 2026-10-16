@@ -3,9 +3,9 @@
 # Material detail scattering
 
 Materials can generate non-colliding client-only detail models on exposed world
-and `func_detail` brush faces. The compiler writes native model records into the
-BSP's version-4 `dprp` game lump. The source map keeps its original brushes and
-properties.
+and `func_detail` brush faces and terrain. The compiler writes native model
+records into the BSP's version-4 `dprp` game lump. The source map keeps its
+original brushes and properties.
 
 1. Put a model-only detail dictionary in mounted game content. Its outer block
    contains named detail types; each type has a `density` and one or more groups.
@@ -48,11 +48,28 @@ detail
 ```
 
 The corresponding VMT declares `%detailtype shrubs`. `density` gives sample
-attempts per million square units. The compiler takes the integer number of
-samples separately for each triangle of each final clipped face. Small faces
+attempts per million square units. For ordinary brush faces, the compiler takes
+the integer number of samples separately for each triangle of each final
+clipped face. Small faces
 can therefore generate no models. `amount` values above a combined total of
 one are normalized; a smaller total leaves empty samples. Flat brush faces use
 alpha one and select the group with the highest supported alpha.
+
+Terrain takes its sample count from the whole base quad, so increasing grid
+resolution does not remove samples. Samples spread uniformly over the base
+grid, then follow its final compiled triangles, including LOD snapping.
+Position and blend alpha interpolate from the native triangle vertices;
+orientation follows its geometric normal. Neighboring dictionary alpha groups
+are chosen probabilistically: an alpha halfway between two groups gives each
+group half the samples on average. An empty selected group emits no model.
+
+Remove the example's zero-degree angle limits to include sculpted slopes.
+To control terrain distribution, paint the material onto a terrain face, open
+**Edit terrain…**, and choose **Paint blend** or **Fill blend** under
+**Operation**. **Blend value · 0 first texture, 255 second texture** also maps
+to dictionary alpha 0–1. Click **Preview**, then **Apply**, and rebuild to see
+the new distribution. The existing `preview_terrain_blend` and
+`commit_face_preview` MCP calls provide the same edits.
 
 `upright 1` keeps models vertical with a random yaw. With `upright 0`, models
 follow the face normal. `minAngle` and `maxAngle` are degrees from world up:
@@ -68,26 +85,35 @@ change `detailvbsp` through the world property draft, then call `compile_map` or
 
 ![Material-generated detail models in CS:S](images/material-detail-scattering.png)
 
-Limits: model-only detail types on planar world and `func_detail` surfaces;
-terrain, sprites, procedural shapes, runtime brush models, non-normal detail
-orientation, and fluid surfaces reject. Referenced types must contain supported
-model groups and finite values. Dictionaries are limited to 2 MiB, eight levels
-and 32,768 nodes. Each build allows 65,536 sample attempts, 16,384 combined
-explicit/generated instances and 1,024 distinct detail models. Samples use a
+![Foliage generated on displaced terrain using its blend alpha](images/terrain-detail-scattering.png)
+
+Limits: model-only detail types on world and `func_detail` surfaces. Terrain
+requires a parallelogram base quad, including rectangles and sheared or sloped
+parallelograms; skewed base quads reject. Sprites, procedural shapes, runtime
+brush models, non-normal detail orientation, and fluid surfaces reject. Selected groups must contain supported
+model entries and finite values; an unsupported selected group rejects the
+complete build before replacing its previous BSP. Unused groups do not reject
+a build: flat faces can select an empty alpha-one group even when lower groups
+contain sprites, while terrain only accepts a lower group when it is supported.
+Dictionaries are limited to 2 MiB, eight levels and 32,768 nodes. Each build
+allows 65,536 sample attempts, 16,384 combined
+explicit/generated instances and 1,024 distinct detail models. Terrain lookup
+construction and sampling share a four-million-step work limit. Samples use a
 small outward probe inset from face boundaries to choose an open visible BSP
 leaf while the stored model origin stays on its surface. Models keep white
-unbaked lighting; baked detail
-lighting and light styles remain unfinished.
+unbaked lighting; baked detail lighting and light styles remain unfinished.
 
 Compile regions scatter only on the retained, clipped exposed surfaces. Region
 clipping changes the count and seed; the source brush stays whole. Generated
 origins stay inside the region and their open leaves, but model geometry can
 extend past the boundary. Explicit `prop_detail` entities still require full-map
-builds.
+builds. Terrain must stay wholly inside the region, including its complete
+base and displaced grid; crossing terrain rejects rather than being clipped.
 
 Groups may be empty, including the alpha-zero groups in installed model detail
-types. An empty selected group emits no models and produces an informational
-diagnostic; it never falls back to a different group.
+types. Flat faces selecting an empty group emit no models and produce an
+informational diagnostic. Terrain samples selecting an empty group are
+skipped. Neither path falls back to a different group.
 
 **Detail material file** (`detailmaterial`) selects the runtime sprite atlas;
 it does not select the model dictionary. Maps without exposed `%detailtype`

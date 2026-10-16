@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{DMat3, DQuat, DVec3, EulerRot};
 use source_formats::bsp::{DetailProp, contents};
@@ -9,9 +9,12 @@ use source_formats::vmf::Vmf;
 use super::Builder;
 use crate::{Control, Diagnostic, Report, emit, faces::Face, map::Map};
 
+mod terrain;
+
 const MAX_DICTIONARY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DICTIONARY_NODES: usize = 32_768;
 const MAX_SAMPLES: usize = 65_536;
+const MAX_TERRAIN_WORK: usize = 4_000_000;
 const DENSITY_AREA: f64 = 1_000_000.0;
 const LEAF_BIAS: f64 = 0.03125;
 
@@ -23,9 +26,79 @@ struct Model {
     upright: bool,
 }
 
+struct Group {
+    alpha: f64,
+    models: Vec<Model>,
+    error: Option<String>,
+}
+
+impl Group {
+    fn models(&self) -> Result<&[Model], String> {
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+        Ok(&self.models)
+    }
+}
+
 struct Definition {
     density: f64,
-    models: Vec<Model>,
+    groups: Vec<Group>,
+}
+
+impl Definition {
+    fn flat_models(&self) -> Result<&[Model], String> {
+        self.groups
+            .last()
+            .expect("validated detail groups")
+            .models()
+    }
+
+    fn selected_models(&self, alpha: f64, random: &mut Random) -> Result<&[Model], String> {
+        let upper = self
+            .groups
+            .partition_point(|group| group.alpha <= alpha)
+            .max(1);
+        let start = (upper - 1).min(self.groups.len() - 1);
+        let end = (start + 1).min(self.groups.len() - 1);
+        if start == end {
+            return self.groups[start].models();
+        }
+        let chance = (alpha - self.groups[start].alpha)
+            / (self.groups[end].alpha - self.groups[start].alpha);
+        let selected = if random.unit() > chance { start } else { end };
+        self.groups[selected].models()
+    }
+}
+
+#[derive(Default)]
+struct Budget {
+    samples: usize,
+    terrain_work: usize,
+}
+
+impl Budget {
+    fn samples(&mut self, count: f64) -> Result<usize, String> {
+        if !count.is_finite() || count > MAX_SAMPLES.saturating_sub(self.samples) as f64 {
+            return Err("Material detail scattering exceeds its 65,536-sample build budget".into());
+        }
+        self.samples += count as usize;
+        Ok(count as usize)
+    }
+
+    fn terrain_work(&mut self, count: usize, control: &Control) -> Result<(), String> {
+        control.checkpoint()?;
+        self.terrain_work = self
+            .terrain_work
+            .checked_add(count)
+            .filter(|&work| work <= MAX_TERRAIN_WORK)
+            .ok_or("Terrain detail scattering exceeds its four-million-step lookup budget")?;
+        Ok(())
+    }
+}
+
+fn selected_model(models: &[Model], choice: f64) -> Option<&Model> {
+    models.get(models.partition_point(|model| model.amount <= choice))
 }
 
 fn value<'a>(nodes: &'a [Node], key: &str) -> Result<Option<&'a str>, String> {
@@ -114,15 +187,23 @@ fn definition(nodes: &[Node]) -> Result<Definition, String> {
         };
         let alpha = number(children, "alpha", 1.0, 0.0, 1.0)?;
         let mut models = Vec::new();
+        let mut error = None;
         let mut total = 0.0;
         for entry in children {
             if let Some(fields) = entry.children() {
-                let mut parsed = model(fields)?;
-                total += parsed.amount;
-                parsed.amount = total;
-                models.push(parsed);
+                match model(fields) {
+                    Ok(mut parsed) => {
+                        total += parsed.amount;
+                        parsed.amount = total;
+                        models.push(parsed);
+                    }
+                    Err(message) => {
+                        error.get_or_insert(message);
+                    }
+                }
             } else if !entry.key.eq_ignore_ascii_case("alpha") {
-                return Err(format!("Unsupported detail group field {}", entry.key));
+                error
+                    .get_or_insert_with(|| format!("Unsupported detail group field {}", entry.key));
             }
         }
         if total > 1.0 {
@@ -130,16 +211,20 @@ fn definition(nodes: &[Node]) -> Result<Definition, String> {
                 model.amount /= total;
             }
         }
-        if groups.iter().any(|(existing, _)| *existing == alpha) {
-            return Err("Detail dictionary group alpha values must be distinct".into());
-        }
-        groups.push((alpha, models));
+        groups.push(Group {
+            alpha,
+            models,
+            error,
+        });
     }
-    groups.sort_by(|left, right| left.0.total_cmp(&right.0));
-    let (_, models) = groups
-        .pop()
-        .ok_or("Detail type must contain a model group")?;
-    Ok(Definition { density, models })
+    groups.sort_by(|left, right| left.alpha.total_cmp(&right.alpha));
+    if groups.is_empty() {
+        return Err("Detail type must contain a model group".into());
+    }
+    if groups.windows(2).any(|pair| pair[0].alpha == pair[1].alpha) {
+        return Err("Detail dictionary group alpha values must be distinct".into());
+    }
+    Ok(Definition { density, groups })
 }
 
 fn detail_type<'a>(map: &'a Map, face: &Face) -> Option<&'a str> {
@@ -196,16 +281,46 @@ fn angles(normal: DVec3, upright: bool, yaw: f64) -> [f32; 3] {
     [pitch, yaw, roll].map(|value| value.to_degrees() as f32)
 }
 
+fn place(
+    model: &Model,
+    point: DVec3,
+    normal: DVec3,
+    center: DVec3,
+    builder: &mut Builder,
+    random: &mut Random,
+    control: &Control,
+) -> Result<(), String> {
+    if normal.z < model.max_cos {
+        return Ok(());
+    }
+    if normal.z < model.min_cos
+        && random.unit() > (normal.z - model.max_cos) / (model.min_cos - model.max_cos)
+    {
+        return Ok(());
+    }
+    let origin = point.as_vec3();
+    let prop = DetailProp {
+        origin: origin.to_array(),
+        angles: angles(normal, model.upright, random.unit() * 360.0),
+        ..Default::default()
+    };
+    let inward = center - origin.as_dvec3();
+    let leaf_point = origin.as_dvec3()
+        + normal * LEAF_BIAS
+        + inward * (LEAF_BIAS / inward.length().max(LEAF_BIAS));
+    builder.add(&model.path, prop, leaf_point, control)
+}
+
 fn emit_face(
     map: &Map,
     face: &Face,
     definition: &Definition,
     builder: &mut Builder,
-    samples: &mut usize,
+    budget: &mut Budget,
     control: &Control,
 ) -> Result<(), String> {
-    if face.displacement.is_some() {
-        return Err("Material detail scattering on terrain is unsupported; use a flat world or func_detail face".into());
+    if let Some(index) = face.displacement {
+        return terrain::emit(map, face, index, definition, builder, budget, control);
     }
     let material = map
         .materials
@@ -215,7 +330,8 @@ fn emit_face(
             "Material detail scattering requires a solid world or func_detail surface".into(),
         );
     }
-    if definition.models.is_empty() {
+    let models = definition.flat_models()?;
+    if models.is_empty() {
         return Ok(());
     }
     let mut random = Random::face(face)?;
@@ -236,11 +352,8 @@ fn emit_face(
         let e2 = triangle[1] - first;
         let area = e1.cross(e2).length() * 0.5;
         let count = (area * definition.density / DENSITY_AREA).floor();
-        if !count.is_finite() || count > MAX_SAMPLES.saturating_sub(*samples) as f64 {
-            return Err("Material detail scattering exceeds its 65,536-sample build budget".into());
-        }
-        *samples += count as usize;
-        for _ in 0..count as usize {
+        let count = budget.samples(count)?;
+        for _ in 0..count {
             control.checkpoint()?;
             let mut u = random.unit();
             let mut v = random.unit();
@@ -249,28 +362,18 @@ fn emit_face(
                 v = 1.0 - v;
             }
             let choice = random.unit();
-            let Some(model) = definition.models.iter().find(|model| choice < model.amount) else {
+            let Some(model) = selected_model(models, choice) else {
                 continue;
             };
-            if normal.z < model.max_cos {
-                continue;
-            }
-            if normal.z < model.min_cos
-                && random.unit() > (normal.z - model.max_cos) / (model.min_cos - model.max_cos)
-            {
-                continue;
-            }
-            let origin = (first + u * e1 + v * e2).as_vec3();
-            let prop = DetailProp {
-                origin: origin.to_array(),
-                angles: angles(normal, model.upright, random.unit() * 360.0),
-                ..Default::default()
-            };
-            let inward = face.winding.center() - origin.as_dvec3();
-            let leaf_point = origin.as_dvec3()
-                + normal * LEAF_BIAS
-                + inward * (LEAF_BIAS / inward.length().max(LEAF_BIAS));
-            builder.add(&model.path, prop, leaf_point, control)?;
+            place(
+                model,
+                first + u * e1 + v * e2,
+                normal,
+                face.winding.center(),
+                builder,
+                &mut random,
+                control,
+            )?;
         }
     }
     Ok(())
@@ -330,7 +433,8 @@ pub(super) fn bake(
         }
     };
     let mut definitions = BTreeMap::new();
-    let mut samples = 0;
+    let mut budget = Budget::default();
+    let mut empty_reported = BTreeSet::new();
     for model in models {
         for face in &model.faces {
             control.checkpoint()?;
@@ -355,23 +459,20 @@ pub(super) fn bake(
                         .children()
                         .ok_or("Detail type requires a block")?;
                     let parsed = definition(fields)?;
-                    if parsed.models.is_empty() {
-                        report.diagnostics.push(Diagnostic::info(
-                            format!("Material %detailtype {name} selects an empty group for flat-face alpha 1; this type emits no detail models"),
-                            None,
-                            None,
-                        ));
-                    }
                     definitions.insert(name.to_owned(), parsed);
                 }
-                emit_face(
-                    map,
-                    face,
-                    &definitions[name],
-                    builder,
-                    &mut samples,
-                    control,
-                )
+                let definition = &definitions[name];
+                if face.displacement.is_none()
+                    && definition
+                        .flat_models()
+                        .is_ok_and(|models| models.is_empty())
+                    && empty_reported.insert(name.to_owned())
+                {
+                    report.diagnostics.push(Diagnostic::info(
+                        format!("Material %detailtype {name} selects an empty group for flat-face alpha 1; this type emits no detail models on flat faces"),
+                        None, None));
+                }
+                emit_face(map, face, &definitions[name], builder, &mut budget, control)
             })();
             if let Err(message) = result {
                 control.checkpoint()?;

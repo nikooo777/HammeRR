@@ -3,6 +3,19 @@ use super::super::*;
 #[tool_router(router = materials_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Read the selected material's mounted VMT source and winning directory/file or VPK index/storage paths. Shares Browse materials → Source… in the editor. Returns up to 64 KiB of raw UTF-8 source with explicit truncation, up to nine source/include lookups, resolved Patch shader declaration and twelve recognized texture parameter values. Names are declarations, not proof that shaders or texture assets exist or render successfully. Missing, malformed, unreadable, invalid-UTF-8 and oversized files produce explicit report.error; no lower-priority read fallback or preview/cache mutation. Each VMT is limited to 1 MiB, aggregate reads to 4 MiB, paths to 512 bytes, nesting to 64 and nodes to 4096. VPK provenance requires the mounted index to remain current. Does not edit the map, selection, history, camera or active drafts.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_material_source(
+        &self,
+        Parameters(args): Parameters<MaterialSourceArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let report = self.session().inspect_material_source(&args.material)?;
+            serde_json::to_value(report).map_err(|error| error.to_string())
+        })
+    }
+    #[tool(
         description = "Reload cached VMT/VTF display assets and sky faces, rescan the material catalog, and re-resolve cached model material paths from existing mounts without replacing decoded geometry. Retains material IDs, source/history/camera and active geometry previews; refreshes desktop/offscreen textures. Returns reloaded, models_refreshed, models_changed, and unavailable-preview failures (first 100) with total failed count. Model path errors replace stale bindings and appear in inspect_entity_model.material_error. Unavailable images replace stale textures; valid untextured/tool materials may have no display texture. Viewport snapshots may require renewed review. Does not remount archives, watch files or reload particle definitions. UI: Browse materials… → Reload material assets."
     )]
     pub(in crate::mcp) fn reload_material_assets(&self) -> ToolResult {
@@ -660,5 +673,40 @@ impl EditorServer {
             ));
         }
         Ok(CallToolResult::success(content))
+    }
+}
+
+#[cfg(test)]
+mod material_source_tests {
+    use super::*;
+
+    #[test]
+    fn material_source_tool_returns_shared_read_only_report_and_strict_arguments() {
+        let (root, game) = crate::test_assets::game();
+        let path = root.path().join("materials/test/checker.vmt");
+        let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
+        let server = EditorServer::new(shared.clone(), None);
+        let before = lock(&shared).history_snapshot();
+        let result = server
+            .get_material_source(Parameters(MaterialSourceArgs {
+                material: "test/checker".into(),
+            }))
+            .unwrap();
+        assert!(!result.is_error.unwrap_or(false));
+        let report: Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(report["resolved"]["shader"], "lightmappedgeneric");
+        assert_eq!(report["files"][0]["origin"]["file"].as_str(), path.to_str());
+        assert_eq!(lock(&shared).history_snapshot(), before);
+        assert!(server.offscreen.lock().unwrap().renderer.is_none());
+        for value in [
+            json!({}),
+            json!({"material":1}),
+            json!({"material":"test/checker","extra":true}),
+        ] {
+            assert!(serde_json::from_value::<MaterialSourceArgs>(value).is_err());
+        }
+        let schema = schemars::schema_for!(MaterialSourceArgs);
+        assert_eq!(schema.get("additionalProperties"), Some(&json!(false)));
     }
 }

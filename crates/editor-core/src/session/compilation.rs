@@ -1,10 +1,13 @@
 use super::*;
 use serde_json::{Value, json};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 mod recipes;
 #[cfg(test)]
 mod reflection_settings_tests;
+#[cfg(test)]
+mod reflection_transaction_tests;
 
 #[derive(Default)]
 pub struct State {
@@ -18,7 +21,10 @@ struct Job {
     token: u64,
     control: compiler::Control,
     path: PathBuf,
+    source_path: Option<PathBuf>,
     snapshot: Snapshot,
+    content_epoch: u64,
+    native_runtime: Option<Value>,
     region: Value,
     options: compiler::Options,
     recipe: Option<recipes::Identity>,
@@ -29,6 +35,7 @@ struct Job {
 }
 
 pub struct CompileRequest {
+    token: u64,
     control: compiler::Control,
     vmf: Vmf,
     game: Arc<GameFs>,
@@ -36,14 +43,53 @@ pub struct CompileRequest {
     generation: u64,
     revision: u64,
     options: compiler::Options,
+    content_epoch: u64,
+    context: Option<compiler::CompileContext>,
+    environment: Option<native_runtime::CaptureEnvironment>,
+    source_path: Option<PathBuf>,
+    source_stamp: Option<compiler::FileStamp>,
+    destination_stamp: Option<compiler::FileStamp>,
 }
 
 pub struct CompileResult {
+    token: u64,
     pub output: compiler::Output,
     pub path: PathBuf,
     generation: u64,
     revision: u64,
     options: compiler::Options,
+    content_epoch: u64,
+    source: Option<compiler::FileIdentity>,
+    destination_stamp: Option<compiler::FileStamp>,
+    control: compiler::Control,
+    publication: Mutex<Publication>,
+}
+
+struct Publication {
+    pending: Option<compiler::PreparedWrite>,
+    lease: Option<compiler::OutputLease>,
+    pointfile_lease: Option<compiler::OutputLease>,
+    sources: Option<compiler::cubemap_assets::ReflectionSourceGuard>,
+    published: bool,
+    committed: bool,
+    error: Option<String>,
+}
+
+impl CompileResult {
+    pub(crate) fn published(&self) -> bool {
+        self.publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .published
+    }
+
+    pub(crate) fn publication_error(&self) -> Option<String> {
+        self.publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .error
+            .clone()
+    }
 }
 
 impl CompileRequest {
@@ -53,22 +99,126 @@ impl CompileRequest {
     }
 
     fn run_inner(self) -> Result<CompileResult, String> {
-        let output = compiler::compile_with_options_controlled(
+        self.control.checkpoint()?;
+        let mut lease = None;
+        let mut source = None;
+        let mut pointfile_lease = None;
+        if self.options.generate_reflections {
+            native_runtime::preflight_vmf(&self.vmf).map_err(|e| e.to_string())?;
+            if let Some(stamp) = &self.source_stamp {
+                stamp.verify_metadata().map_err(|e| e.to_string())?;
+            }
+            if let Some(path) = &self.source_path {
+                source = Some(
+                    compiler::FileIdentity::capture(path, &self.control)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
+            if let (Some(stamp), Some(identity)) = (&self.source_stamp, &source) {
+                stamp.verify_identity(identity).map_err(|e| e.to_string())?;
+            }
+            let stamp = self
+                .destination_stamp
+                .as_ref()
+                .ok_or("Reflection destination snapshot missing")?;
+            stamp.verify_metadata().map_err(|e| e.to_string())?;
+            lease = Some(
+                compiler::OutputLease::acquire(&self.path, &self.control)
+                    .map_err(|e| e.to_string())?,
+            );
+            stamp
+                .verify_lease(lease.as_ref().ok_or("Reflection output lease missing")?)
+                .map_err(|e| e.to_string())?;
+        }
+        let path = lease
+            .as_ref()
+            .map(|lease| lease.path().to_owned())
+            .unwrap_or_else(|| self.path.clone());
+        let mut output = compiler::compile_with_context_controlled(
             &self.vmf,
             &self.game,
             self.options,
+            self.context.as_ref(),
             &self.control,
         );
         self.control.checkpoint()?;
-        output
-            .write_controlled(&self.path, &self.control)
-            .map_err(|e| format!("{}: {e}", self.path.display()))?;
+        if self.options.generate_reflections && output.bsp.is_some() {
+            output = compiler::finalize_reflections(
+                output,
+                self.context
+                    .as_ref()
+                    .ok_or("Reflection compile context missing")?,
+                &self.game,
+                self.environment
+                    .as_ref()
+                    .ok_or("Native capture environment missing")?,
+                &self.control,
+            )
+            .map_err(|e| e.to_string())?;
+            if output.cubemap_assets.as_ref().is_none_or(|manifest| {
+                manifest.phase != compiler::CubemapAssetPhase::Verified
+                    || manifest.samples.is_empty()
+            }) {
+                return Err("Reflection finalizer did not return verified captured samples".into());
+            }
+        }
+        self.control.checkpoint()?;
+        let mut sources = None;
+        let (pending, published, committed) = if self.options.generate_reflections {
+            if output.bsp.is_none() && output.leak.is_some() {
+                pointfile_lease = Some(
+                    compiler::OutputLease::acquire(&path.with_extension("lin"), &self.control)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
+            let pending = output
+                .prepare_write_controlled(&path, &self.control)
+                .map_err(|e| e.to_string())?;
+            if let Some(manifest) = &output.cubemap_assets {
+                sources = Some(
+                    compiler::cubemap_assets::capture_reflection_source_guard(
+                        manifest,
+                        &self.game,
+                        &self.control,
+                    )
+                    .map_err(|e| e.to_string())?,
+                );
+            }
+            if let Some(source) = &source {
+                source.verify(&self.control).map_err(|e| e.to_string())?;
+            }
+            lease
+                .as_ref()
+                .ok_or("Reflection destination lease missing")?
+                .verify(&self.control)
+                .map_err(|e| e.to_string())?;
+            (pending, false, false)
+        } else {
+            output
+                .write_controlled(&self.path, &self.control)
+                .map_err(|e| format!("{}: {e}", self.path.display()))?;
+            (None, output.bsp.is_some(), true)
+        };
         Ok(CompileResult {
+            token: self.token,
             output,
-            path: self.path,
+            path,
             generation: self.generation,
             revision: self.revision,
             options: self.options,
+            content_epoch: self.content_epoch,
+            source,
+            destination_stamp: self.destination_stamp,
+            control: self.control,
+            publication: Mutex::new(Publication {
+                pending,
+                lease,
+                pointfile_lease,
+                sources,
+                published,
+                committed,
+                error: None,
+            }),
         })
     }
 }
@@ -80,8 +230,10 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
 fn result_json(result: &CompileResult) -> Value {
     let output = &result.output;
     json!({
-        "success":output.bsp.is_some(),
-        "bsp":output.bsp.as_ref().map(|_|result.path.display().to_string()),
+        "success":result.published(),
+        "published":result.published(),
+        "error":result.publication_error(),
+        "bsp":result.published().then(||result.path.display().to_string()),
         "diagnostic_count":output.report.diagnostics.len(),
         "diagnostics":output.report.diagnostics.iter().take(100).map(|diagnostic|json!({
             "level":match diagnostic.level { compiler::Level::Info=>"info",compiler::Level::Warning=>"warning",compiler::Level::Error=>"error" },
@@ -104,6 +256,30 @@ pub struct BuildSettingsUpdate<'a> {
 }
 
 impl Session {
+    pub fn binding_output_namespace(&self) -> Result<Option<String>, String> {
+        let path = self
+            .compilation
+            .job
+            .as_ref()
+            .filter(|job| {
+                job.snapshot.generation == self.document_generation && job.source_path == self.path
+            })
+            .map(|job| job.path.clone())
+            .or_else(|| self.path.as_ref().map(|path| path.with_extension("bsp")));
+        path.as_ref()
+            .map(|path| {
+                compiler::CompileContext::from_output(path)
+                    .map(|context| context.namespace().to_owned())
+            })
+            .transpose()
+    }
+
+    pub fn reflection_output_namespace(&self) -> Result<String, String> {
+        self.binding_output_namespace()?.ok_or(
+            "Save the map or compile to a named output before inspecting reflection aliases".into(),
+        )
+    }
+
     pub fn compile_options(&self) -> compiler::Options {
         self.compilation.options
     }
@@ -267,11 +443,37 @@ impl Session {
             return Err(error.clone());
         }
         let control = compiler::Control::default();
+        let generating = self.compilation.options.generate_reflections;
+        let (context, environment, source_stamp, destination_stamp) = if generating {
+            if self.game_running() {
+                return Err("Close CS:S before capturing reflections".into());
+            }
+            let context = compiler::CompileContext::from_output(&path)?;
+            let environment = self.capture_environment()?;
+            let source_stamp = self
+                .path
+                .as_ref()
+                .map(|path| compiler::FileStamp::capture(path).map_err(|e| e.to_string()))
+                .transpose()?;
+            let destination_stamp =
+                compiler::FileStamp::capture(&path).map_err(|e| e.to_string())?;
+            (
+                Some(context),
+                Some(environment),
+                source_stamp,
+                Some(destination_stamp),
+            )
+        } else {
+            (None, None, None, None)
+        };
         self.compilation.serial += 1;
         self.compilation.job = Some(Job {
             token: self.compilation.serial,
             control: control.clone(),
             path: path.clone(),
+            source_path:self.path.clone(),
+            content_epoch:self.content_epoch,
+            native_runtime:environment.as_ref().map(|environment|serde_json::json!({"engine_root":environment.engine_root,"steam_root":environment.steam_root})),
             snapshot: Snapshot {
                 generation: self.document_generation,
                 revision: self.document.revision(),
@@ -285,6 +487,7 @@ impl Session {
             result: None,
         });
         let request = CompileRequest {
+            token: self.compilation.serial,
             control,
             vmf: self.document.vmf().clone(),
             game: self.game.clone(),
@@ -292,20 +495,103 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             options: self.compilation.options,
+            content_epoch: self.content_epoch,
+            context,
+            environment,
+            source_path: self.path.clone(),
+            source_stamp,
+            destination_stamp,
         };
         self.compiling = true;
         self.log(actor, "compiling map");
         Ok(request)
     }
 
+    fn commit_reflection_output(&self, result: &CompileResult) -> Result<(), String> {
+        let mut publication = result
+            .publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if publication.committed || publication.pending.is_none() {
+            return Ok(());
+        }
+        let outcome = (|| {
+            if self.closing
+                || result.generation != self.document_generation
+                || result.revision != self.document.revision()
+                || result.options != self.compilation.options
+                || result.content_epoch != self.content_epoch
+            {
+                return Err("Map, content, runtime or build settings changed during reflection capture; previous output preserved".into());
+            }
+            if self
+                .compilation
+                .job
+                .as_ref()
+                .is_none_or(|job| job.token != result.token)
+            {
+                return Err("Reflection compile job was replaced".into());
+            }
+            result.control.checkpoint()?;
+            let pending = publication
+                .pending
+                .take()
+                .ok_or("Prepared reflection output missing")?;
+            let lease = publication
+                .pointfile_lease
+                .as_ref()
+                .or(publication.lease.as_ref())
+                .ok_or("Reflection destination lease missing")?;
+            let success = pending
+                .commit_checked_with(lease, &result.control, || {
+                    if let Some(source) = &result.source {
+                        source.verify_metadata()?;
+                    }
+                    if let Some(sources) = &publication.sources {
+                        sources.verify_metadata()?;
+                    }
+                    if let Some(stamp) = &result.destination_stamp {
+                        stamp.verify_metadata()?;
+                    }
+                    Ok(())
+                })
+                .map_err(|e| e.to_string())?;
+            publication.published = success;
+            publication.committed = true;
+            Ok(())
+        })();
+        publication.lease = None;
+        publication.pointfile_lease = None;
+        publication.sources = None;
+        if let Err(error) = &outcome {
+            publication.pending = None;
+            publication.error = Some(error.clone());
+        }
+        outcome
+    }
+
     pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {
+        if let Ok(result) = result {
+            if self
+                .compilation
+                .job
+                .as_ref()
+                .is_none_or(|job| job.token != result.token)
+            {
+                self.log(actor, "Discarded completion from a replaced compile job");
+                return;
+            }
+            if result.options.generate_reflections {
+                let _ = self.commit_reflection_output(result);
+            }
+        }
         self.compiling = false;
         if let Some(job) = &mut self.compilation.job {
             job.control.finish();
             job.finished = Some(job.started.elapsed());
             job.status = if job.control.cancelled() {
                 "cancelled"
-            } else if result.as_ref().is_ok_and(|r| r.output.bsp.is_some()) {
+            } else if result.as_ref().is_ok_and(CompileResult::published) {
                 "completed"
             } else {
                 "failed"
@@ -320,7 +606,7 @@ impl Session {
                 generation: result.generation,
                 revision: result.revision,
             };
-            if self.current_snapshot(&snapshot) {
+            if self.current_snapshot(&snapshot) && result.publication_error().is_none() {
                 self.reset_pointfile();
                 self.leak = result
                     .output
@@ -329,11 +615,12 @@ impl Session {
                     .map(|leak| (snapshot.clone(), leak));
                 self.refresh_scene();
             }
-            if result.output.bsp.is_some() {
+            if result.published() {
                 self.compiled = Some(CompiledMap {
                     path: result.path.clone(),
                     snapshot,
                     options: result.options,
+                    content_epoch: result.content_epoch,
                 });
             }
         }
@@ -348,6 +635,10 @@ impl Session {
                 "Compilation cancelled; previous output preserved".into()
             }
             Err(message) => format!("compile failed: {message}"),
+            Ok(result) if result.publication_error().is_some() => format!(
+                "compile failed: {}",
+                result.publication_error().unwrap_or_default()
+            ),
             Ok(result) if result.output.bsp.is_none() => {
                 let message = result
                     .output
@@ -395,8 +686,8 @@ impl Session {
                 "stage":progress.stage.name(),"stage_label":progress.stage.label(),"cancellable":job.status=="running" && progress.cancellable && !progress.cancel_requested,
                 "elapsed_ms":job.finished.unwrap_or_else(||job.started.elapsed()).as_millis(),
                 "path":job.path.display().to_string(),"generation":job.snapshot.generation,"revision":job.snapshot.revision,
-                "compile_region":job.region,"recipe":job.recipe,"settings":{"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
-                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options,"result":job.result})
+                "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
+                "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.options.generate_reflections && job.content_epoch != self.content_epoch),"result":job.result})
         });
         let launch = match self.launch_readiness() {
             Ok(path) => json!({"ready":true,"bsp":path.display().to_string(),"reason":null}),

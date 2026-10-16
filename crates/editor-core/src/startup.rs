@@ -10,6 +10,8 @@ const USAGE: &str = "\
 usage: editor | hammerr-headless [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port <port> | --no-mcp] [--headless]
 
   --game       gameinfo.txt to load content from (default: Counter-Strike: Source via Steam)
+  --engine-root native CS:S installation for reflection capture (default: configured game root)
+  --steam-root  Steam client configuration root (default: unique validated client)
   --fgd        entity definition file (default: installed CS:S SDK FGD)
   --mcp-port   port for the MCP server at http://127.0.0.1:<port>/mcp (default 7377)
   --no-mcp     don't start the MCP server
@@ -26,7 +28,7 @@ impl Drop for ShutdownGuard {
         loop {
             let busy = {
                 let session = lock(&self.0);
-                session.launching() || session.recovery_busy()
+                session.launching() || session.recovery_busy() || session.compiling()
             };
             if !busy {
                 break;
@@ -40,6 +42,8 @@ pub struct Args {
     pub map: Option<PathBuf>,
     pub gameinfo: Option<PathBuf>,
     pub fgd: Option<PathBuf>,
+    pub engine_root: Option<PathBuf>,
+    pub steam_root: Option<PathBuf>,
     pub mcp_port: Option<u16>,
     pub headless: bool,
 }
@@ -51,6 +55,8 @@ impl Args {
             map: None,
             gameinfo: None,
             fgd: None,
+            engine_root: None,
+            steam_root: None,
             mcp_port: Some(DEFAULT_MCP_PORT),
             headless: false,
         };
@@ -58,6 +64,10 @@ impl Args {
             match arg.to_str() {
                 Some("--game") => parsed.gameinfo = Some(args.next().ok_or(USAGE)?.into()),
                 Some("--fgd") => parsed.fgd = Some(args.next().ok_or(USAGE)?.into()),
+                Some("--engine-root") => {
+                    parsed.engine_root = Some(args.next().ok_or(USAGE)?.into())
+                }
+                Some("--steam-root") => parsed.steam_root = Some(args.next().ok_or(USAGE)?.into()),
                 Some("--mcp-port") => {
                     let port = args
                         .next()
@@ -94,6 +104,13 @@ pub struct Application {
 impl Application {
     pub fn open(args: &Args) -> Result<Self, String> {
         let session = Arc::new(Mutex::new(Session::new(mount_game(args.gameinfo.clone()))));
+        if args.engine_root.is_some() || args.steam_root.is_some() {
+            lock(&session).configure_native_capture_runtime(
+                Actor::System,
+                args.engine_root.as_deref(),
+                args.steam_root.as_deref(),
+            )?;
+        }
         lock(&session).configure_recovery(recovery::default_directory());
         let worker = recovery::Worker::start(&session)?;
         let shutdown = ShutdownGuard(session.clone());

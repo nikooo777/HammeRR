@@ -181,6 +181,7 @@ impl Session {
     }
 
     pub fn refresh_model_assets(&mut self, actor: Actor) -> bool {
+        self.content_epoch = self.content_epoch.wrapping_add(1);
         let snap_preview_cancelled = self
             .transform_preview()
             .is_some_and(|preview| preview.grid_snap.is_some());

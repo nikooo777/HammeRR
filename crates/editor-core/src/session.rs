@@ -32,6 +32,7 @@ pub mod component_drag;
 pub mod component_picking;
 pub mod components;
 pub mod context;
+pub mod cubemap_bindings;
 mod favorites;
 pub mod fog;
 pub mod groups;
@@ -44,6 +45,7 @@ pub mod merging;
 mod model_attachments;
 pub mod model_browser;
 pub mod models;
+mod native_capture;
 pub mod object_picking;
 pub mod overlay;
 pub mod paint;
@@ -113,6 +115,7 @@ struct CompiledMap {
     path: PathBuf,
     snapshot: Snapshot,
     options: compiler::Options,
+    content_epoch: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +152,7 @@ pub enum SelectMode {
 pub struct Session {
     compile_region: compile_region::State,
     overlay: overlay::State,
+    cubemap_bindings: cubemap_bindings::State,
     geometry: previews::State,
     groups: groups::State,
     layers: layers::State,
@@ -221,6 +225,8 @@ pub struct Session {
     document_generation: u64,
     compiling: bool,
     compilation: compilation::State,
+    native_capture: native_capture::State,
+    content_epoch: u64,
     launching: bool,
     compiled: Option<CompiledMap>,
     leak: Option<(Snapshot, compiler::Leak)>,
@@ -260,6 +266,7 @@ impl Session {
             geometry: previews::State::default(),
             compile_region: compile_region::State::default(),
             overlay: overlay::State::default(),
+            cubemap_bindings: cubemap_bindings::State::default(),
             groups: groups::State::default(),
             layers: layers::State::default(),
             prefabs: prefabs::State::default(),
@@ -332,6 +339,8 @@ impl Session {
             document_generation: 0,
             compiling: false,
             compilation: compilation::State::default(),
+            native_capture: native_capture::State::default(),
+            content_epoch: 0,
             launching: false,
             compiled: None,
             leak: None,
@@ -354,6 +363,10 @@ impl Session {
 
     pub fn definitions(&self) -> &Catalog {
         &self.definitions
+    }
+
+    pub fn build_content_epoch(&self) -> u64 {
+        self.content_epoch
     }
 
     pub fn document_generation(&self) -> u64 {
@@ -1092,6 +1105,7 @@ impl Session {
 
     fn changed(&mut self) {
         self.overlay.context_changed();
+        self.cubemap_bindings.context_changed();
         self.refresh_scene();
     }
 
@@ -1125,6 +1139,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.native_capture.invalidate();
         self.groups.draft = None;
         self.layers.clear_document_draft();
         self.surface_sample = None;
@@ -1698,6 +1713,9 @@ impl Session {
             return Err(
                 "the map changed since compilation; compile it again before launching".into(),
             );
+        }
+        if compiled.options.generate_reflections && compiled.content_epoch != self.content_epoch {
+            return Err("Content or native runtime changed since reflection capture; compile again before launching".into());
         }
         if compiled.options != self.compile_options() {
             return Err("Build settings changed since compilation; compile again or restore the previous settings before launching".into());

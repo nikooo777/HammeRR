@@ -259,12 +259,19 @@ fn mcp_measurement_surface_actions_share_tokens_exact_coordinates_and_pixel_view
     );
     assert_eq!(
         cancelled["draft"]["measurement"],
+        reviewed["draft"]["measurement"]
+    );
+    assert_eq!(
+        lock(&shared).measurement_state()["draft"]["measurement"],
         state["draft"]["measurement"]
     );
     action(
         &server,
         json!({"action":"apply","token":cancelled["draft"]["token"]}),
     );
+    let saved = lock(&shared).measurements().unwrap().measurements[0].clone();
+    assert_eq!(saved.start, DVec3::new(3.125, -5.25, 0.0));
+    assert_eq!(saved.end, DVec3::new(30.123456789012, 12.987654321012, 0.0));
     assert_eq!(lock(&shared).document().undo_labels().count(), 2);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
     for invalid in [

@@ -8,7 +8,7 @@ const MODES: [LightingMode; 3] = [
     LightingMode::DirectLdrHdr,
 ];
 
-fn atlas(fixture: &mut Fixture) {
+pub(super) fn atlas(fixture: &mut Fixture) {
     std::fs::write(fixture.directory.path().join("materials/test/atlas.vmt"), "UnlitGeneric { $basetexture test/atlas $translucent 1 $nocull 1 $vertexcolor 1 $vertexalpha 1 }").unwrap();
     let mut texture = vec![255; 80 + 16 * 16 * 4];
     texture[..80].fill(0);

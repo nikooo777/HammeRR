@@ -1,8 +1,13 @@
 use glam::DVec3;
 use source_formats::bsp::RgbExp32;
-use source_formats::vmf::Entity;
+use source_formats::vmf::{Entity, Vmf};
 
 const KEY: &str = "_detail_lighting_tint";
+pub const GENERATED_DETAIL_LIGHTING_TINT_KEY: &str = "_generated_detail_lighting_tint";
+
+pub fn validate_generated_detail_lighting_tint(raw: Option<&str>) -> Result<(), String> {
+    Tint::parse_key(raw, GENERATED_DETAIL_LIGHTING_TINT_KEY).map(|_| ())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Tint([u8; 3]);
@@ -14,6 +19,20 @@ impl Default for Tint {
 }
 
 impl Tint {
+    pub(crate) fn from_world(vmf: &Vmf) -> Result<Self, String> {
+        let mut values = vmf
+            .world
+            .properties
+            .get_all(GENERATED_DETAIL_LIGHTING_TINT_KEY);
+        let raw = values.next();
+        if values.next().is_some() {
+            return Err(format!(
+                "World repeats {GENERATED_DETAIL_LIGHTING_TINT_KEY}"
+            ));
+        }
+        Self::parse_key(raw, GENERATED_DETAIL_LIGHTING_TINT_KEY)
+    }
+
     pub(crate) fn from_entity(entity: &Entity) -> Result<Self, String> {
         let mut values = entity.properties.get_all(KEY);
         let raw = values.next();
@@ -24,11 +43,15 @@ impl Tint {
     }
 
     fn parse(raw: Option<&str>) -> Result<Self, String> {
+        Self::parse_key(raw, KEY)
+    }
+
+    fn parse_key(raw: Option<&str>, key: &str) -> Result<Self, String> {
         let Some(raw) = raw else {
             return Ok(Self::default());
         };
         let invalid = || {
-            "Detail _detail_lighting_tint needs exactly three integer linear RGB channels from 0 to 255".to_owned()
+            format!("Detail {key} needs exactly three integer linear RGB channels from 0 to 255")
         };
         let mut values = raw.split_whitespace();
         let mut color = [0; 3];

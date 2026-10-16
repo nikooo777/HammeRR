@@ -1,6 +1,8 @@
 mod common;
 #[path = "common/detail_model.rs"]
 mod detail_model;
+#[path = "detail_lighting/generated_tint.rs"]
+mod generated_tint;
 #[path = "detail_lighting/tint.rs"]
 mod tint;
 

@@ -19,6 +19,7 @@ mod tint;
 
 pub(crate) use sprites::check_native_transform as check_native_sprite_transform;
 pub(crate) use tint::Tint;
+pub use tint::{GENERATED_DETAIL_LIGHTING_TINT_KEY, validate_generated_detail_lighting_tint};
 
 const MAX_PROPS: usize = 16_384;
 const MAX_LEAF_WORK: usize = 4_000_000;
@@ -326,6 +327,17 @@ pub(crate) fn bake(
     report: &mut Report,
     control: &Control,
 ) -> Result<Stats, String> {
+    let generated_tint = match Tint::from_world(vmf) {
+        Ok(tint) => tint,
+        Err(message) => {
+            report.diagnostics.push(Diagnostic::error(
+                message,
+                Some(format!("entity:{}", vmf.world.id)),
+                None,
+            ));
+            return Ok(Stats::default());
+        }
+    };
     let entities = vmf
         .entities
         .iter()
@@ -396,7 +408,15 @@ pub(crate) fn bake(
             ));
         }
     }
-    scatter::bake(vmf, map, models, &mut builder, report, control)?;
+    scatter::bake(
+        vmf,
+        map,
+        models,
+        &mut builder,
+        generated_tint,
+        report,
+        control,
+    )?;
     if report.has_errors() {
         return Ok(Stats::default());
     }
@@ -412,7 +432,7 @@ pub(crate) fn bake(
     if !builder.props.props.is_empty() {
         bsp.set_detail_props(&builder.props)
             .map_err(|error| error.to_string())?;
-        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and cross/tri shapes; Fullbright uses unbaked white lighting unless an explicit baked lighting tint is set, while lit builds bake direct, ambient and style colors; bounds cover rest geometry, while shape sway and avoidance depend on client settings", None, None));
+        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and cross/tri shapes; Fullbright uses unbaked white lighting unless a baked lighting tint is set, while lit builds bake direct, ambient and style colors; bounds cover rest geometry, while shape sway and avoidance depend on client settings", None, None));
     }
     let mut model_centers = vec![DVec3::ZERO; builder.props.models.len()];
     for &(index, bounds) in builder.models.values() {

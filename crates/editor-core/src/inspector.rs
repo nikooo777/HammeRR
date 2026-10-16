@@ -94,6 +94,7 @@ fn label(key: &str, property: Option<&Property>) -> String {
         "_cone" => "Outer cone angle".into(),
         "_inner_cone" => "Inner cone angle".into(),
         "_detail_lighting_tint" => "Baked lighting tint · linear RGB".into(),
+        "_generated_detail_lighting_tint" => "Generated detail lighting tint · linear RGB".into(),
         "style" => "Light pattern".into(),
         "spawnflags" => "Options".into(),
         _ => property
@@ -111,7 +112,11 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
                 .iter()
                 .any(|name| class.eq_ignore_ascii_case(name))
         });
-    let kind = if detail_tint {
+    let generated_detail_tint = lower == compiler::GENERATED_DETAIL_LIGHTING_TINT_KEY
+        && entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
+    let kind = if detail_tint || generated_detail_tint {
         "string"
     } else {
         property.map_or_else(
@@ -164,6 +169,9 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
     };
     if detail_tint {
         result.description = "Three integer linear RGB channels from 0 to 255 attenuate compiled detail lighting. White keeps its original intensity; 128 approximately halves a linear channel. Compiler Fullbright starts from tinted white. Dynamic lights and the client's mat_fullbright override keep their engine behavior.".into();
+    }
+    if generated_detail_tint {
+        result.description = "Three integer linear RGB channels from 0 to 255 attenuate baked lighting on all generated detail models, cards and shapes. White preserves their lighting; 128 approximately halves a linear channel. Explicit detail entities keep their own tint. Compiler Fullbright starts from tinted white; dynamic lights and the client's mat_fullbright override keep their engine behavior. This map-wide control does not edit dictionary entries.".into();
     }
     match kind {
         "choices" => {
@@ -339,6 +347,35 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
 mod tests {
     use super::*;
     use source_formats::fgd::Catalog;
+
+    #[test]
+    fn generated_detail_tint_inspector_keeps_linear_world_values_as_text() {
+        let key = compiler::GENERATED_DETAIL_LIGHTING_TINT_KEY;
+        let catalog = Catalog::parse(&format!(
+            "@SolidClass = worldspawn [ {key}(color255) : \"Tint\" ]"
+        ))
+        .unwrap();
+        for class in [None, catalog.class("worldspawn")] {
+            for value in ["128 64 0", "malformed"] {
+                let mut world = Entity::new(1, "worldspawn");
+                world.properties.set(key.to_ascii_uppercase(), value);
+                let before = world.clone();
+                let inspected = inspect(&world, class);
+                let field = inspected
+                    .properties
+                    .iter()
+                    .find(|field| field.key.eq_ignore_ascii_case(key))
+                    .unwrap();
+                assert_eq!(field.label, "Generated detail lighting tint · linear RGB");
+                assert_eq!(field.control, Control::Text);
+                assert_eq!(field.kind, "string");
+                assert_eq!(field.value, value);
+                assert!(field.color.is_none() && field.intensity.is_none());
+                assert!(field.description.contains("map-wide"));
+                assert_eq!(world, before);
+            }
+        }
+    }
 
     #[test]
     fn common_controls_and_advanced_data_preserve_stored_values() {

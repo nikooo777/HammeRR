@@ -940,6 +940,11 @@ impl Session {
         if key.trim().is_empty() {
             return Err("property name must not be empty".into());
         }
+        if classname.eq_ignore_ascii_case("worldspawn")
+            && key.eq_ignore_ascii_case(compiler::GENERATED_DETAIL_LIGHTING_TINT_KEY)
+        {
+            compiler::validate_generated_detail_lighting_tint(value)?;
+        }
         if let Some(property) = self
             .definitions
             .class(classname)

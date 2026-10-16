@@ -45,6 +45,9 @@ pub use cubemap_assets::{
     finalize_reflections, inspect_cubemap_bindings, read_generated_cubemaps,
     rebase_generated_cubemaps, verify_generated_cubemaps,
 };
+pub use detail_props::{
+    GENERATED_DETAIL_LIGHTING_TINT_KEY, validate_generated_detail_lighting_tint,
+};
 pub use portals::Leak;
 pub use publication::{FileIdentity, FileStamp, OutputLease};
 pub use sky_assets::{SkyAssetManifest, SkyAssetPlan, read_packed_sky, verify_packed_sky};

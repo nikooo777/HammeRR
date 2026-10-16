@@ -206,6 +206,10 @@ The **VIEWPORT** section has two default-on controls for literal FGD resources.
 4. Use **Reload material assets** for changed icon files or **Reload models** for
    changed model files. Visibility toggles preserve cached successes and failures.
 
+| Entity model guides on | Entity model guides off |
+| --- | --- |
+| ![Mounted player, camera and constraint guides](images/fgd-model-guides.png) | ![The same entities retain ordinary boxes when guides are off](images/entity-resource-guides-hidden.png) |
+
 These session view settings preserve source, history, selection, spatial bounds
 and pending reviews, model choices and placement tokens. Authored model entities,
 lights, ropes, overlays and line/sphere/projector guides remain independent.
@@ -354,6 +358,8 @@ independent Source projector guide.
 4. Use the viewport or `render_view` in top, front, side or perspective.
    Deselect, hide or exclude the ordinary point box with **Working region…**
    to suppress its guide.
+
+![A selected property-bound frustum with evaluated pitch scale](images/fgd-frustum-guide.png)
 
 The independent Source guide keeps precedence on `env_projectedtexture`. When
 all eight corners and RGB match its displayed geometry, the FGD report says

@@ -188,15 +188,15 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Colored guides between imported authored node IDs](docs/images/fgd-node-lines.png) | ![Particle definitions and effect-name choices](docs/images/particle-browser.png) |
 | Show colored links between unique named points or imported node IDs. | Search active particle systems, inspect their definitions and choose effects for entities. |
 
-| Source projector guides | Entity icons |
+| Projector and frustum guides | Entity icons |
 | --- | --- |
-| ![Selected projector with its square near and far planes](docs/images/source-projector-guide.png) | ![Mounted sound, target and relay entity icons](docs/images/fgd-icons.png) |
-| Show projector direction, field of view and near/far distances. | Show mounted entity images that follow the viewport camera. |
+| ![Property-bound FGD frustum with square near and far planes](docs/images/fgd-frustum-guide.png) | ![Mounted sound, target and relay entity icons](docs/images/fgd-icons.png) |
+| Inspect projector and class-defined fields of view with exact near and far planes. | Show mounted entity images that follow the viewport camera. |
 
-| Entity model guides |
-| --- |
-| ![Player-start, camera and constraint resource models](docs/images/fgd-model-guides.png) |
-| Show mounted class models with flat shading while retaining their ordinary selection boxes. |
+| Entity model guides | Guide visibility |
+| --- | --- |
+| ![Player-start, camera and constraint resource models](docs/images/fgd-model-guides.png) | ![The same entities with their resource guides hidden and ordinary boxes retained](docs/images/entity-resource-guides-hidden.png) |
+| Show mounted class models with flat shading while retaining their ordinary selection boxes. | Hide editor images and model guides while keeping their boxes selectable. |
 
 | Connections | Safe renaming |
 | --- | --- |

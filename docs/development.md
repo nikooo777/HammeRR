@@ -1418,6 +1418,41 @@ starting the viewport renderer or authoring properties. Set
 `HAMMERR_UI_SNAPSHOTS` to an existing directory for
 `fgd-icon-sprite-inspector.png`.
 
+### Literal FGD model guides
+
+```sh
+cargo test -p render --lib fgd_model_guides
+cargo test -p editor-core --features mcp --lib fgd_helpers::models::tests
+cargo test -p editor-core --features mcp --lib literal_model_guide_failures_are_shared_with_the_inspector_before_graphics_startup
+cargo test -p editor --bin editor literal_model_guide_panel_reports_real_asset_and_failure_without_authoring
+python3 -B scripts/validate_fgd_model_helpers.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-model-helpers-check
+```
+
+Fixtures cover literal declaration admission, suppression precedence, bounded
+failed lookups, shared geometry/cache reload, flat editor rendering without
+guide texture prefetch, and unchanged helper boxes and spatial operations.
+The MCP failure fixture stays headless before rendering. Installed-mesh Session
+and software-panel checks require mounted CS:S content; unavailable installations
+skip those fixtures. The panel test invokes the actual shared **Reload models**
+callback and writes `literal-fgd-model-guide-inspector.png` when
+`HAMMERR_UI_SNAPSHOTS` names an existing directory.
+
+The private stdio validator requires mounted
+`models/props_junk/wood_crate001a.mdl`; optional `--gameinfo` selects other
+mounts. Use a fresh output directory and a graphics adapter. It independently
+inspects the model, then compares actual flat mesh pixels in Top, Front, Side
+and perspective views against exact no-guide controls. It checks
+studio/studioprop parity, selected/unselected display, previews, hidden/region
+suppression, errors, definition/model reload and ordinary bounds, picking,
+volume selection, framing and contextual contact through guide-only space.
+Read/render checks retain source, camera, Undo and an unrelated model-choice
+draft. Loaded catalog paths and canonical model names are checked; winning
+MDL/VVD/VTX mount receipts are not exposed. `results.json` records inspection,
+pixel measurements, image/camera receipts, placement evidence and a saved-source
+hash. Outputs include `model-helper-perspective.png`,
+`model-helper-top.png`, `model-helper-front.png`, `model-helper-side.png` and
+paired controls. The script launches no game or desktop input.
+
 ### Terrain detail scattering and displayed model bounds
 
 ```sh

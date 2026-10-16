@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import os
+import struct
 from pathlib import Path
 from unittest.mock import patch
 
@@ -136,6 +137,10 @@ def validate(client, output):
             check(close(normal, [0, -1, 0]), "Wall hit reports its actual outward normal")
         if target == model:
             check(picked["preview"]["last_pick"]["solid"] is None and picked["preview"]["last_pick"]["side"] is None, "Model triangle provenance never invents brush IDs")
+            armed = arm()
+            reject("pick_ray", token=token(), origin=[128, -64, 32], direction=[0, 0, 1])
+            check(state() == armed, "A below-plane model backface miss preserves the exact armed row")
+            action("cancel_pick", token=token())
         receipts[label] = picked["preview"]["last_pick"]
     cameras = {
         "top": ({"projection": "top", "center": [35.125, -128.25, 0], "ortho_height": 256}, [35.125, -128.25, 0], floor),
@@ -232,6 +237,12 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     game = output / "game"
     fixture(game)
+    vtx = game / "models/props/test.dx90.vtx"
+    data = bytearray(vtx.read_bytes())
+    assert struct.unpack_from("<I", data, 146)[0] == 3
+    assert struct.unpack_from("<3H", data, 134) == (0, 1, 2)
+    struct.pack_into("<3H", data, 134, 0, 2, 1)
+    vtx.write_bytes(data)
     with patch.dict(os.environ, {"HAMMERR_RECENT_MAPS_DIR": str(output / "recent"), "HAMMERR_BUILD_RECIPES": str(output / "recipes.json")}):
         client = Client(None, args.binary.resolve(), output, game / "gameinfo.txt")
     try:

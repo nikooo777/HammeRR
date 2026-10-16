@@ -10,6 +10,7 @@ use crate::map::MAX_COMPILE_COORD;
 
 pub(super) const KIND: u8 = 1;
 const VERTICAL: u8 = 2;
+pub(super) const MIN_NATIVE_SCALE: f32 = f32::from_bits(103 << 23);
 pub(super) const MAX_SPRITES: usize = 4096;
 
 pub(super) struct Definition {
@@ -49,11 +50,8 @@ impl Definition {
             return Err("Detail sprite sway is unsupported".into());
         }
         let shape = Shape::parse(nodes)?;
-        if shape.is_some() && (orientation != 0 || random_scale != 0.0) {
-            return Err("Detail sprite shapes require detailOrientation=0 and unit scale".into());
-        }
-        if orientation != VERTICAL && random_scale != 0.0 {
-            return Err("Fixed and full billboard sprites require spriterandomscale=0 (unit scale); the native older sprite path quantizes scale to half precision".into());
+        if shape.is_some() && orientation != 0 {
+            return Err("Detail sprite shapes require detailOrientation=0".into());
         }
         let raw = value(nodes, "sprite")?.ok_or("Detail sprite requires atlas coordinates")?;
         let [x, y, width, height, total] = vector::<5>(raw, "sprite")?;
@@ -91,7 +89,7 @@ impl Definition {
             texture_lower_right: [(x + width - 0.5) / total, (y + height - 0.5) / total],
         };
         if let Some(shape) = shape {
-            shape.check_bounds(record, DVec3::ZERO, DVec3::ZERO)?;
+            shape.check_bounds(record, DVec3::ZERO, DVec3::ZERO, 1.0)?;
         } else {
             check_bounds(record, DVec3::ZERO, DVec3::ZERO, orientation, 1.0)?;
         }
@@ -128,8 +126,9 @@ pub(super) fn check_bounds(
     if !angles.is_finite() || orientation > VERTICAL {
         return Err("Detail sprite orientation and angles are invalid".into());
     }
-    if orientation != VERTICAL && scale != 1.0 {
-        return Err("Fixed and full billboard sprites require unit native scale".into());
+    if orientation != VERTICAL {
+        check_native_scale(scale)?;
+        check_origin(origin)?;
     }
     check_orientation_bounds(sprite, origin, angles, orientation, scale)
 }
@@ -139,16 +138,30 @@ pub(super) fn check_prop_bounds(sprite: DetailSprite, prop: &DetailProp) -> Resu
     let angles = DVec3::from_array(prop.angles.map(f64::from));
     match prop.kind {
         KIND => check_bounds(sprite, origin, angles, prop.orientation, prop.scale),
-        2 | 3 if prop.orientation == 0 && prop.scale == 1.0 && prop.sway == 0 => Shape {
+        2 | 3 if prop.orientation == 0 && prop.sway == 0 => Shape {
             kind: prop.kind,
             angle: prop.shape_angle,
             size: prop.shape_size,
         }
-        .check_bounds(sprite, origin, angles),
-        _ => {
-            Err("Detail sprite shape requires fixed orientation and unit scale without sway".into())
-        }
+        .check_bounds(sprite, origin, angles, prop.scale),
+        _ => Err("Detail sprite shape requires fixed orientation without sway".into()),
     }
+}
+
+pub(super) fn check_native_scale(scale: f32) -> Result<(), String> {
+    if !scale.is_finite() || scale < MIN_NATIVE_SCALE {
+        return Err("Detail sprite scale collapses in native half precision below 2^-24".into());
+    }
+    Ok(())
+}
+
+pub(super) fn check_origin(origin: DVec3) -> Result<(), String> {
+    if !origin.is_finite() || origin.abs().max_element() > MAX_COMPILE_COORD {
+        return Err(format!(
+            "Detail sprite origin must fit ±{MAX_COMPILE_COORD} units"
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn check_geometry(sprite: DetailSprite, scale: f32) -> Result<(), String> {
@@ -252,9 +265,30 @@ mod tests {
         assert!(check_bounds(sprite, origin, DVec3::new(90.0, 0.0, 0.0), 0, 1.0).is_err());
         assert!(check_bounds(sprite, origin, DVec3::ZERO, 1, 1.0).is_err());
         assert!(check_bounds(sprite, DVec3::ZERO, DVec3::ZERO, 1, 1.0).is_ok());
-        for scale in [f32::MIN_POSITIVE, 0.5, 1.001] {
+        for scale in [f32::MIN_POSITIVE, MIN_NATIVE_SCALE * 0.5] {
             assert!(check_bounds(sprite, DVec3::ZERO, DVec3::ZERO, 0, scale).is_err());
             assert!(check_bounds(sprite, DVec3::ZERO, DVec3::ZERO, 1, scale).is_err());
         }
+        for orientation in [0, 1] {
+            let near_top = DVec3::Z * (MAX_COMPILE_COORD - 20.0);
+            assert!(check_bounds(sprite, near_top, DVec3::ZERO, orientation, 1.0).is_ok());
+            assert!(check_bounds(sprite, near_top, DVec3::ZERO, orientation, 2.0).is_err());
+        }
+        for scale in [MIN_NATIVE_SCALE, 0.5, 1.001, 6.0] {
+            assert!(check_bounds(sprite, DVec3::ZERO, DVec3::ZERO, 0, scale).is_ok());
+            assert!(check_bounds(sprite, DVec3::ZERO, DVec3::ZERO, 1, scale).is_ok());
+        }
+        assert!(check_bounds(sprite, DVec3::ZERO, DVec3::ZERO, 2, f32::MIN_POSITIVE).is_ok());
+        assert!(check_bounds(sprite, origin, DVec3::new(0.0, 90.0, 0.0), 0, 0.5).is_ok());
+        assert!(
+            check_bounds(
+                sprite,
+                DVec3::X * (MAX_COMPILE_COORD + 1.0),
+                DVec3::ZERO,
+                0,
+                0.5
+            )
+            .is_err()
+        );
     }
 }

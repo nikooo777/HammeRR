@@ -25,6 +25,7 @@ pub(crate) struct Stats {
     pub models: usize,
     pub sprites: usize,
     pub model_centers: Vec<DVec3>,
+    pub lighting_origins: Vec<Option<DVec3>>,
 }
 
 fn class(entity: &Entity) -> bool {
@@ -94,13 +95,6 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
             "Tinted detail model props are unsupported; rendercolor must be 255 255 255".into(),
         );
     }
-    if entity
-        .properties
-        .get("lightingorigin")
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return Err("Detail model props do not support named lighting origins yet".into());
-    }
     let origin = if entity.properties.get("origin").is_some() {
         entity
             .origin()
@@ -121,6 +115,11 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
     })
 }
 
+struct Pending {
+    prop: DetailProp,
+    lighting_origin: Option<DVec3>,
+}
+
 struct Builder<'a> {
     fs: &'a GameFs,
     nodes: Vec<Node>,
@@ -128,6 +127,7 @@ struct Builder<'a> {
     leaves: Vec<Leaf>,
     head: i32,
     props: DetailProps,
+    pending: Vec<Pending>,
     models: BTreeMap<String, (u16, assets::ModelBounds)>,
     sprites: BTreeMap<[u32; 8], u16>,
     sprite_material: String,
@@ -150,6 +150,7 @@ impl<'a> Builder<'a> {
                 .ok_or("Detail model props require a world model")?
                 .head_node,
             props: DetailProps::default(),
+            pending: Vec::new(),
             models: BTreeMap::new(),
             sprites: BTreeMap::new(),
             sprite_material: vmf
@@ -193,9 +194,10 @@ impl<'a> Builder<'a> {
         path: &str,
         mut prop: DetailProp,
         leaf_point: DVec3,
+        lighting_origin: Option<DVec3>,
         control: &Control,
     ) -> Result<(), String> {
-        if self.props.props.len() >= MAX_PROPS {
+        if self.pending.len() >= MAX_PROPS {
             return Err("Detail model props exceed the 16,384-object build budget".into());
         }
         let (model, bounds) = self.model(path, control)?;
@@ -212,7 +214,7 @@ impl<'a> Builder<'a> {
         let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
         bounds.check_transform(origin, rotation)?;
         prop.model = model;
-        self.add_record(prop, leaf_point, control)
+        self.add_record(prop, leaf_point, lighting_origin, control)
     }
 
     fn add_sprite(
@@ -241,16 +243,17 @@ impl<'a> Builder<'a> {
             index
         };
         prop.model = index;
-        self.add_record(prop, leaf_point, control)
+        self.add_record(prop, leaf_point, None, control)
     }
 
     fn add_record(
         &mut self,
         mut prop: DetailProp,
         leaf_point: DVec3,
+        lighting_origin: Option<DVec3>,
         control: &Control,
     ) -> Result<(), String> {
-        if self.props.props.len() >= MAX_PROPS {
+        if self.pending.len() >= MAX_PROPS {
             return Err("Detail model props exceed the 16,384-object build budget".into());
         }
         if !leaf_point.is_finite()
@@ -292,7 +295,10 @@ impl<'a> Builder<'a> {
         }
         prop.leaf = u16::try_from(leaf)
             .map_err(|_| "Detail model leaf exceeds the native unsigned short")?;
-        self.props.props.push(prop);
+        self.pending.push(Pending {
+            prop,
+            lighting_origin,
+        });
         Ok(())
     }
 }
@@ -319,6 +325,14 @@ pub(crate) fn bake(
         return Err("Detail model props exceed the 16,384-object build budget".into());
     }
     let mut builder = Builder::new(fs, bsp, vmf)?;
+    let lighting = crate::lighting_origins::Origins::new(
+        vmf,
+        entities
+            .iter()
+            .copied()
+            .filter_map(|entity| entity.properties.get("lightingorigin")),
+        control,
+    )?;
     for entity in entities {
         control.checkpoint()?;
         let result: Result<(), String> = (|| {
@@ -329,11 +343,18 @@ pub(crate) fn bake(
                 return Err("Explicit prop_detail_sprite compilation is unsupported; use a model-only prop_detail".into());
             }
             let prop = record(entity)?;
+            let lighting_origin = lighting.resolve(
+                entity
+                    .properties
+                    .get("lightingorigin")
+                    .filter(|name| !name.trim().is_empty()),
+            )?;
             let point = DVec3::from_array(prop.origin.map(f64::from));
             builder.add(
                 entity.properties.get("model").unwrap_or(""),
                 prop,
                 point,
+                lighting_origin,
                 control,
             )
         })();
@@ -350,8 +371,14 @@ pub(crate) fn bake(
     if report.has_errors() {
         return Ok(Stats::default());
     }
+    builder.pending.sort_by_key(|entry| entry.prop.leaf);
+    let mut lighting_origins = Vec::with_capacity(builder.pending.len());
+    for entry in builder.pending {
+        control.checkpoint()?;
+        builder.props.props.push(entry.prop);
+        lighting_origins.push(entry.lighting_origin);
+    }
     if !builder.props.props.is_empty() {
-        builder.props.props.sort_by_key(|prop| prop.leaf);
         bsp.set_detail_props(&builder.props)
             .map_err(|error| error.to_string())?;
         report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and static cross/tri shapes; Fullbright uses unbaked white lighting, while lit builds bake direct, ambient and style colors; authored sway is unsupported", None, None));
@@ -366,5 +393,6 @@ pub(crate) fn bake(
         models: builder.props.models.len(),
         sprites: builder.props.sprites.len(),
         model_centers,
+        lighting_origins,
     })
 }

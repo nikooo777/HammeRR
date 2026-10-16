@@ -110,12 +110,12 @@ deterministic stream and rejects a collapsed native scale.
 | `1` | Full billboard facing the camera, including its elevation. |
 | `2` | Billboard facing the camera while remaining vertical. |
 
-Fixed and full billboards require `spriterandomscale 0` or an omitted random
-scale field. They emit scale one, which remains exact in the native older
-sprite renderer's half precision scale storage. Nonzero random scale rejects
-for these orientations. Vertical billboards retain Gaussian random scaling.
-Fixed cards check their rotated four corners against compile coordinates;
-full billboards check a conservative sphere covering every camera direction.
+All three orientations accept the same Gaussian random scaling. Fixed and full
+billboards use an older native path that truncates positive scale to half
+precision; raw scales below 2⁻²⁴ reject before publication. The compiler retains
+the emitted float scale for SDK lighting and checks its full extent: rotated
+corners for fixed cards and a conservative sphere for full billboards. Native
+half truncation can make the rendered card slightly smaller.
 
 Static procedural shapes reuse the same atlas rectangle and size:
 
@@ -139,9 +139,11 @@ angle and size, since the client ignores those parameters. Cross geometry
 centers its horizontal branches regardless of the horizontal anchor; vertical
 anchors still apply.
 
-Shapes require fixed `detailOrientation 0`, unit scale and omitted or zero
-`sway`. Their checked bounds cover every static quad using the stored angles
-and decoded shape parameters. The compiler does not author sway or player
+Shapes require fixed `detailOrientation 0` and omitted or zero `sway`. They
+accept the same `spriterandomscale` distribution, with raw scales below 2⁻²⁴
+rejected for the native half-precision path. Their checked bounds cover every
+static quad using the raw scale, stored angles and decoded shape parameters.
+The compiler does not author sway or player
 avoidance controls. Client-wide avoidance settings can move native shape
 vertices at runtime; those movements are outside these static bounds.
 
@@ -203,13 +205,16 @@ The engine's current light-style pattern controls their runtime brightness.
 Each receiver supports styles 1–63 with up to 63 extras. The LDR and HDR arrays
 use one shared per-object style list, with zero entries where only the other
 channel contributes. Their combined limit is 65,536 records; exceeding it
-rejects the complete build before replacing the previous BSP. Tiny styled
-sprites whose scale would become zero in the native half-float renderer also
-reject. Colors must remain finite when all authored style patterns reach their
+rejects the complete build before replacing the previous BSP. Styled vertical
+billboards also reject raw scales below 2⁻²⁴ for their native half-float path;
+unstyled vertical billboards retain the existing positive-float scale rules.
+Colors must remain finite when all authored style patterns reach their
 maximum `z` brightness. Fullbright and maps without extra contributions emit no
 style arrays.
-Named lighting origins and authored render tint remain unfinished. Detail
-objects do not cast new baked shadows.
+[Explicit model detail props](model-detail-props.md#choose-a-lighting-origin)
+can sample at a named `info_lighting` helper. Generated models, sprites and
+shapes keep their existing sample points. Authored render tint remains
+unfinished. Detail objects do not cast new baked shadows.
 
 Explicit model detail props are selected for a compile region by their authored
 origin, including the box boundary; an absent origin means world zero. Outside

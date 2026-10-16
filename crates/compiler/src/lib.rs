@@ -9,6 +9,7 @@ mod emit;
 pub mod faces;
 mod hints;
 pub mod lighting;
+mod lighting_origins;
 pub mod map;
 pub mod materials;
 mod overlays;
@@ -928,6 +929,7 @@ fn build(
                 smoothing_sources: &emission.smoothing_sources,
                 model_entities: &emission.model_entities,
                 detail_model_centers: &detail_stats.model_centers,
+                detail_lighting_origins: &detail_stats.lighting_origins,
             },
         )?;
         if output.report.has_errors() {

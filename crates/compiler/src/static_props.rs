@@ -170,7 +170,7 @@ impl Space {
 fn record(
     entity: &Entity,
     header: ModelHeader,
-    lighting: &BTreeMap<&str, Vec<&Entity>>,
+    lighting: &crate::lighting_origins::Origins<'_>,
 ) -> Result<StaticProp, String> {
     if entity.solids.iter().any(|solid| !solid.hidden) {
         return Err("prop_static is a point entity; remove its brush geometry".into());
@@ -243,22 +243,7 @@ fn record(
     {
         return Err("Tinted static props are not supported by the current static-prop output; use prop_dynamic for model tint".into());
     }
-    if let Some(name) = entity
-        .properties
-        .get("lightingorigin")
-        .filter(|name| !name.is_empty())
-    {
-        let matches = lighting
-            .get(name)
-            .ok_or("lightingorigin must name one visible info_lighting")?;
-        if matches.len() != 1 {
-            return Err("lightingorigin resolves to multiple info_lighting helpers".into());
-        }
-        let helper = matches[0];
-        let point = helper
-            .origin()
-            .filter(|point| point.is_finite() && point.abs().max_element() <= MAX_COMPILE_COORD)
-            .ok_or("lighting origin is invalid")?;
+    if let Some(point) = lighting.resolve(entity.properties.get("lightingorigin"))? {
         prop.flags |= 2;
         prop.lighting_origin = point.to_array().map(|v| v as f32);
     }
@@ -296,18 +281,14 @@ pub(crate) fn bake(
     if entities.is_empty() {
         return Ok(Stats::default());
     }
-    let mut lighting = BTreeMap::<&str, Vec<&Entity>>::new();
-    for helper in vmf.entities.iter().filter(|entity| {
-        !entity.hidden
-            && entity
-                .classname()
-                .is_some_and(|class| class.eq_ignore_ascii_case("info_lighting"))
-    }) {
-        control.checkpoint()?;
-        if let Some(name) = helper.properties.get("targetname") {
-            lighting.entry(name).or_default().push(helper);
-        }
-    }
+    let lighting = crate::lighting_origins::Origins::new(
+        vmf,
+        entities
+            .iter()
+            .copied()
+            .filter_map(|entity| entity.properties.get("lightingorigin")),
+        control,
+    )?;
     let mut space = Space::new(bsp)?;
     for entity in entities {
         control.checkpoint()?;

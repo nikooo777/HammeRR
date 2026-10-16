@@ -124,8 +124,8 @@ fn retained_detail_errors_preserve_prior_output_and_source_without_region_fallba
         (
             "0 0 32",
             "lightingorigin",
-            "outside_helper",
-            "lighting origins",
+            "missing_helper",
+            "one visible info_lighting",
         ),
         ("0 0 32", "parentname", "runtime_parent", "parentname"),
         ("128 0 32", "angles", "0 0 0", "open visible world leaf"),
@@ -198,6 +198,53 @@ fn retained_detail_errors_preserve_prior_output_and_source_without_region_fallba
     let path = directory.path().join("previous.bsp");
     assert!(!output.write(&path).unwrap());
     assert_eq!(std::fs::read(path).unwrap(), b"previous BSP");
+    assert_eq!(source, before);
+}
+
+#[test]
+fn regions_retain_named_helpers_but_lit_detail_receivers_must_remain_open() {
+    let (directory, game, mut source) = fixture();
+    let prop = add(&mut source, "prop_detail", "0 0 32");
+    source.entities[prop]
+        .properties
+        .set("lightingorigin", "outside_helper");
+    let helper = add(&mut source, "info_lighting", "400 0 64");
+    source.entities[helper]
+        .properties
+        .set("targetname", "outside_helper");
+    let before = source.clone();
+    let fullbright = compiler::compile(&source, &game);
+    assert!(!fullbright.report.has_errors(), "{:?}", fullbright.report);
+    assert!(
+        fullbright
+            .stats
+            .compile_region
+            .unwrap()
+            .included
+            .contains(&format!("entity:{}", source.entities[helper].id))
+    );
+    let previous = fullbright.bsp.unwrap().to_bytes();
+    let path = directory.path().join("previous.bsp");
+    std::fs::write(&path, &previous).unwrap();
+    let lit = compiler::compile_with_options(
+        &source,
+        &game,
+        compiler::Options {
+            lighting: compiler::LightingMode::DirectLdr,
+            bounces: 0,
+            ..Default::default()
+        },
+    );
+    assert!(lit.report.has_errors());
+    assert!(
+        lit.report.diagnostics.iter().any(|item| item
+            .message
+            .contains("Named detail lighting origin must lie in open visible world space")),
+        "{:?}",
+        lit.report
+    );
+    assert!(!lit.write(&path).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), previous);
     assert_eq!(source, before);
 }
 

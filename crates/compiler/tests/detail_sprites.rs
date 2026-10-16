@@ -203,18 +203,6 @@ fn fixed_and_full_billboards_preserve_sampling_dictionary_and_native_records() {
             assert_eq!(&prop, expected);
         }
         assert_eq!(compiled(&fixture).to_bytes(), compiled(&fixture).to_bytes());
-        dictionary(
-            &fixture,
-            64,
-            &format!(
-                "{} spriterandomscale 0.2",
-                SPRITE.replace(
-                    "detailOrientation 2",
-                    &format!("detailOrientation {orientation}")
-                )
-            ),
-        );
-        rejected(&fixture, "spriterandomscale=0");
     }
     dictionary(&fixture, 64, SPRITE);
     assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
@@ -267,7 +255,10 @@ fn static_shapes_reuse_sprite_dictionary_and_preserve_native_parameter_bytes() {
         ("sprite_shape tri shape_size -0.1", "shape_size"),
         ("sprite_shape tri shape_size NaN", "shape_size"),
         ("sprite_shape tri sway 0.1", "sway"),
-        ("sprite_shape tri spriterandomscale 0.1", "unit scale"),
+        (
+            "sprite_shape tri spriterandomscale 1.1",
+            "spriterandomscale",
+        ),
     ] {
         dictionary(&fixture, 64, &format!("{fixed} {extra}"));
         rejected(&fixture, expected);
@@ -291,6 +282,46 @@ fn static_shapes_reuse_sprite_dictionary_and_preserve_native_parameter_bytes() {
     assert!(mixed.props.iter().any(|prop| prop.kind == 2));
     assert!(mixed.props.iter().any(|prop| prop.kind == 3));
     assert!(mixed.props.iter().all(|prop| prop.model == 0));
+    dictionary(&fixture, 64, SPRITE);
+    assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
+}
+
+#[test]
+fn native_half_sprite_paths_keep_raw_gaussian_scales_and_sampling() {
+    let fixture = fixture();
+    dictionary(&fixture, 512, &format!("{SPRITE} spriterandomscale 0.2"));
+    let vertical = details(&fixture);
+    for (orientation, shape, kind) in [
+        (0, "", 1),
+        (1, "", 1),
+        (0, "sprite_shape cross", 2),
+        (0, "sprite_shape tri shape_angle 35 shape_size 0.5", 3),
+    ] {
+        let entry = format!(
+            "{} {shape} spriterandomscale 0.2",
+            SPRITE.replace(
+                "detailOrientation 2",
+                &format!("detailOrientation {orientation}")
+            )
+        );
+        dictionary(&fixture, 512, &entry);
+        let scaled = details(&fixture);
+        assert_eq!(scaled, details(&fixture));
+        assert_eq!(scaled.sprites, vertical.sprites);
+        assert_eq!(scaled.props.len(), vertical.props.len());
+        assert!(scaled.props.iter().any(|prop| prop.scale < 1.0));
+        assert!(scaled.props.iter().any(|prop| prop.scale > 1.0));
+        for (mut prop, expected) in scaled.props.into_iter().zip(&vertical.props) {
+            assert_eq!(prop.kind, kind);
+            assert_eq!(prop.orientation, orientation);
+            assert!(prop.scale >= f32::from_bits(103 << 23) && prop.scale <= 6.0);
+            prop.kind = 1;
+            prop.orientation = 2;
+            prop.shape_angle = 0;
+            prop.shape_size = 0;
+            assert_eq!(&prop, expected);
+        }
+    }
     dictionary(&fixture, 64, SPRITE);
     assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
 }

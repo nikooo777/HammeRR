@@ -19,6 +19,12 @@ fn world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pendin
     for suffix in ["rt", "bk", "lf", "ft", "up", "dn"] {
         std::fs::write(skybox.join(format!("fixture{suffix}.vmt")), material).unwrap();
     }
+    std::fs::write(skybox.join("fixture_base.vmt"), material).unwrap();
+    std::fs::write(
+        skybox.join("fixtureup.vmt"),
+        "Patch { include materials/skybox/fixture_base.vmt }",
+    )
+    .unwrap();
     let mut hdr = std::fs::read(root.path().join("materials/test/checker.vtf")).unwrap();
     hdr.truncate(80);
     hdr[16..18].copy_from_slice(&2u16.to_le_bytes());
@@ -107,6 +113,37 @@ fn world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pendin
             .contains(&root.path().display().to_string())
     );
     assert!(!window.get_report().contains("pending_family"));
+    assert_eq!(window.get_report().matches("Directory mount:").count(), 1);
+    for (index, label) in [
+        "Right (rt)",
+        "Back (bk)",
+        "Left (lf)",
+        "Front (ft)",
+        "Up (up)",
+        "Down (dn)",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        crate::ui::tests::assert_dialog_button_visible(window, label);
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(window, label)
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(window.get_selected_face(), index as i32);
+        assert!(window.get_report().contains(&format!(
+            "Material: skybox/fixture{}\n",
+            ["rt", "bk", "lf", "ft", "up", "dn"][index]
+        )));
+    }
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(window, "Up (up)")
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+    assert_eq!(window.get_report().matches("Directory mount:").count(), 1);
+    assert_eq!(window.get_report().matches("Patch source:").count(), 1);
+    assert!(window.get_report().contains("fixture_base.vmt"));
+    assert!(!window.get_report().contains("fixturert.vmt"));
     crate::ui::tests::save_ui_snapshot(window.window(), "sky-assets");
     for label in ["Refresh sky assets", "Close"] {
         crate::ui::tests::assert_dialog_button_visible(window, label);
@@ -117,6 +154,11 @@ fn world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pendin
         .unwrap()
         .invoke_accessible_default_action();
     assert!(window.get_summary().contains("LDR assets: unavailable"));
+    assert_eq!(window.get_selected_face(), 4);
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(window, "Right (rt)")
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
     assert!(window.get_report().contains("Missing sky material"));
     std::fs::write(skybox.join("fixturert.vmt"), material).unwrap();
     window.invoke_refresh_assets();

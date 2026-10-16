@@ -1,15 +1,26 @@
 import { Button, TextEdit } from "std-widgets.slint";
 
+export struct SkyAssetFaceRow {
+    label: string,
+    ldr-status: string,
+    hdr-status: string,
+    detail: string,
+}
+
 export component SkyAssetsWindow inherits Window {
     title: "Sky assets - HammeRR";
     preferred-width: 980px;
     preferred-height: 860px;
-    min-width: 700px;
-    min-height: 620px;
+    min-width: 840px;
+    min-height: 720px;
     in property <string> family;
     in property <string> summary;
     in property <string> issues;
-    in property <string> report;
+    in property <[SkyAssetFaceRow]> faces;
+    in-out property <int> selected-face;
+    out property <string> report: root.faces.length > 0 ? root.faces[root.selected-face].detail : "No sky faces inspected. Set a valid mounted family in World settings and apply it, then refresh.";
+    in property <string> read-summary;
+    in property <string> scope;
     callback refresh-assets();
     callback close-dialog();
     forward-focus: keys;
@@ -32,15 +43,48 @@ export component SkyAssetsWindow inherits Window {
             height: 70px;
             accessible-label: "Sky family issues";
         }
-        TextEdit {
-            text: root.report;
-            read-only: true;
-            wrap: word-wrap;
+        HorizontalLayout {
+            spacing: 16px;
             vertical-stretch: 1;
-            accessible-label: "Sky material and texture inspection";
+            VerticalLayout {
+                spacing: 6px;
+                width: 310px;
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: "Face"; width: 110px; font-weight: 600; }
+                    Text { text: "LDR assets"; width: 90px; font-weight: 600; }
+                    Text { text: "HDR assets"; width: 90px; font-weight: 600; }
+                }
+                for face[index] in root.faces: HorizontalLayout {
+                    spacing: 6px;
+                    Button {
+                        text: face.label;
+                        width: 110px;
+                        accessible-label: face.label;
+                        primary: root.selected-face == index;
+                        clicked => { root.selected-face = index; }
+                    }
+                    Text { text: face.ldr-status; width: 90px; color: face.ldr-status == "ready" ? #a6d9ae : #e4ba87; }
+                    Text { text: face.hdr-status; width: 90px; color: face.hdr-status == "ready" ? #a6d9ae : #e4ba87; }
+                }
+                Rectangle { vertical-stretch: 1; }
+            }
+            VerticalLayout {
+                spacing: 6px;
+                Text { text: root.faces.length > 0 ? root.faces[root.selected-face].label : "Face details"; font-weight: 600; }
+                TextEdit {
+                    text: root.report;
+                    read-only: true;
+                    wrap: word-wrap;
+                    vertical-stretch: 1;
+                    accessible-label: "Sky material and texture inspection";
+                }
+            }
         }
+        Text { text: root.read-summary; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+        Text { text: root.scope; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
         Text {
-            text: "Inspects the applied world skyname. Apply properties before inspecting pending sky changes. Readiness checks mounted material declarations and VTF structure. The editor previews LDR; this report does not establish the game's selected channel, HDR radiance, shader rendering or portable sky packing.";
+            text: "Inspects the applied world skyname. Apply properties before inspecting pending sky changes. The editor previews LDR. This inspection does not pack custom sky assets.";
             wrap: word-wrap;
             color: #bac2ce;
             font-size: 12px;

@@ -2,11 +2,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use editor_core::sky_assets::{SkyAssetSource, SkyAssetsReport, SkyChannelReport};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::runtime::{SharedSession, lock};
 use crate::session::Session;
-use crate::{PropertiesWindow, SkyAssetsWindow};
+use crate::{PropertiesWindow, SkyAssetFaceRow, SkyAssetsWindow};
 
 pub struct Controller {
     pub window: SkyAssetsWindow,
@@ -38,7 +38,31 @@ fn ready(value: bool) -> &'static str {
     if value { "ready" } else { "unavailable" }
 }
 
-fn channel_text(label: &str, channel: &SkyChannelReport) -> String {
+fn dependency_source_text(
+    source: Option<&SkyAssetSource>,
+    root: Option<&SkyAssetSource>,
+) -> String {
+    match (source, root) {
+        (
+            Some(SkyAssetSource::Directory { mount, file }),
+            Some(SkyAssetSource::Directory { mount: root, .. }),
+        ) if mount == root => format!("File: {}", file.display()),
+        (
+            Some(SkyAssetSource::Vpk { index, files }),
+            Some(SkyAssetSource::Vpk { index: root, .. }),
+        ) if index == root => format!(
+            "Storage: {}",
+            files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => source_text(source),
+    }
+}
+
+fn channel_text(label: &str, channel: &SkyChannelReport, root: Option<&SkyAssetSource>) -> String {
     let mut text = format!("{label} assets: {} (structure)", ready(channel.ready));
     for issue in &channel.issues {
         text.push_str(&format!("\n  Issue: {issue}"));
@@ -63,7 +87,10 @@ fn channel_text(label: &str, channel: &SkyChannelReport) -> String {
         if let Some(format) = &texture.format {
             text.push_str(&format!(" · {format}"));
         }
-        text.push_str(&format!("\n  {}", source_text(texture.source.as_ref())));
+        text.push_str(&format!(
+            "\n  {}",
+            dependency_source_text(texture.source.as_ref(), root)
+        ));
         for issue in &texture.issues {
             text.push_str(&format!("\n  Issue: {issue}"));
         }
@@ -104,12 +131,13 @@ fn present(window: &SkyAssetsWindow, report: SkyAssetsReport) {
         issues.push_str("\nReport text or diagnostics truncated by inspection limits.");
     }
     window.set_issues(issues.into());
+    window.set_scope(report.readiness_scope.into());
     let faces = report
         .faces
         .iter()
         .map(|face| {
-            let mut text = format!(
-                "{} ({}) · {}\nShader: {}{}\n{}",
+            let label = format!(
+                "{} ({})",
                 match face.suffix.as_str() {
                     "rt" => "Right",
                     "bk" => "Back",
@@ -119,7 +147,10 @@ fn present(window: &SkyAssetsWindow, report: SkyAssetsReport) {
                     "dn" => "Down",
                     _ => "Face",
                 },
-                face.suffix,
+                face.suffix
+            );
+            let mut text = format!(
+                "Material: {}\nShader: {}{}\n{}",
                 face.material,
                 face.shader.as_deref().unwrap_or("unresolved"),
                 if face.shader_truncated {
@@ -129,34 +160,36 @@ fn present(window: &SkyAssetsWindow, report: SkyAssetsReport) {
                 },
                 source_text(face.source.as_ref())
             );
-            for material in &face.material_sources {
+            for material in face.material_sources.iter().skip(1) {
                 text.push_str(&format!(
-                    "\nMaterial source: {} · {} bytes\n{}",
+                    "\nPatch source: {} · {} bytes\n{}",
                     material.path,
                     material.bytes,
-                    source_text(Some(&material.source))
+                    dependency_source_text(Some(&material.source), face.source.as_ref())
                 ));
             }
             for issue in &face.issues {
                 text.push_str(&format!("\nIssue: {issue}"));
             }
             text.push_str(&format!(
-                "\n{}\n{}",
-                channel_text("LDR", &face.ldr),
-                channel_text("HDR", &face.hdr)
+                "\n\n{}\n\n{}",
+                channel_text("LDR", &face.ldr, face.source.as_ref()),
+                channel_text("HDR", &face.hdr, face.source.as_ref())
             ));
-            text
+            SkyAssetFaceRow {
+                label: label.into(),
+                ldr_status: ready(face.ldr.ready).into(),
+                hdr_status: ready(face.hdr.ready).into(),
+                detail: text.into(),
+            }
         })
-        .collect::<Vec<_>>()
-        .join("\n\n────────────────────────────────────────\n\n");
-    window.set_report(format!(
-        "{}\n\n{}\n{} assets read · {} bytes read\nLimits: {} asset lookups · {} total bytes · {} bytes per material · {} pixels per texture axis",
-        if faces.is_empty() {
-            "No sky faces inspected. Set a valid mounted family in World settings and apply it, then refresh."
-        } else {
-            &faces
-        },
-        report.readiness_scope,
+        .collect::<Vec<_>>();
+    if window.get_selected_face() < 0 || window.get_selected_face() as usize >= faces.len() {
+        window.set_selected_face(0);
+    }
+    window.set_faces(ModelRc::new(VecModel::from(faces)));
+    window.set_read_summary(format!(
+        "{} assets read · {} bytes · Limits: {} asset lookups, {} total bytes, {} bytes/material, {} pixels/axis",
         report.assets_read,
         report.bytes_read,
         report.limits.asset_lookups,

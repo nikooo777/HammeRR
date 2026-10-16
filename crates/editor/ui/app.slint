@@ -2541,7 +2541,7 @@ export component AppWindow inherits Window {
                                 accepted => { root.options-changed(); }
                             }
                         }
-                        if root.sky-channel == 1: Text { text: "Linear HDR · Reinhard · sky only"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                        if root.sky-channel == 1: Text { text: "Sky brightness only · −8 to +8 EV"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     }
                     if root.sky-preview-error != "": Text { text: root.sky-preview-error; color: #efb56b; wrap: word-wrap; }
                     if root.sky-preview: Text {

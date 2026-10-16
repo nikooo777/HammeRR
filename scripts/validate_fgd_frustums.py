@@ -223,7 +223,9 @@ def validate(client, output):
     check(guide()["suppression_reason"] == "not_selected", "Unselected source retains intrinsic data and suppresses its guide")
     client.call("select", {"ids": [entity]})
     restored = snapshot()
-    check(all(restored[key] == baseline[key] for key in restored if key != "history") and restored["history"]["undo_count"] == baseline["history"]["undo_count"] and path.read_bytes() == saved, "Reversible controls restore fields, saved bytes, camera and Undo count")
+    (output / "restored-state.json").write_text(json.dumps({"before": baseline, "after": restored}, indent=2) + "\n")
+    check(all(restored[key] == baseline[key] for key in restored if key not in ("history", "unsaved_changes")) and path.read_bytes() == saved, "Reversible controls restore exact authored fields, saved bytes, selection, view and camera")
+    check(not baseline["unsaved_changes"] and restored["unsaved_changes"] and restored["history"]["unsaved_changes"] and restored["history"]["current_state"] == baseline["history"]["current_state"] and restored["history"]["undo_count"] == baseline["history"]["undo_count"] and restored["history"]["redo_count"] == 1, "Actual edit and Undo restore the current history state while retaining the expected redo entry and monotonic dirty revision")
     check(render("frustum-restored", cameras["top"]) == shown["top"] and snapshot() == restored and client.call("get_object_hit_candidates", body_ray) == body_hits and detail(client, [entity])[0]["bounds"] == bounds, "Restored reads retain exact pixels, full current history and ordinary picks/bounds")
     client.call("new_map", {"discard_changes": True})
     native_helper = "frustum(lightfov,nearz,farz,lightcolor,-1)"

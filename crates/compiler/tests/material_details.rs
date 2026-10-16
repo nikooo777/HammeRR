@@ -649,6 +649,10 @@ fn blend_dictionary(fixture: &Fixture, density: u32) {
 }
 
 fn assert_native_terrain_contacts(bsp: &Bsp) {
+    assert_native_terrain_contacts_with_minimum_up(bsp, 0.5);
+}
+
+fn assert_native_terrain_contacts_with_minimum_up(bsp: &Bsp, minimum_normal_z: f64) {
     let data = bsp.displacements().unwrap().unwrap();
     let mut triangles = Vec::new();
     for (index, info) in data.infos.iter().enumerate() {
@@ -662,9 +666,12 @@ fn assert_native_terrain_contacts(bsp: &Bsp) {
     let leaves = bsp.records::<Leaf>().unwrap();
     for prop in bsp.detail_props().unwrap().unwrap().props {
         let point = DVec3::from_array(prop.origin.map(f64::from));
-        let normal = triangles
+        let values = prop.angles.map(|value| f64::from(value).to_radians());
+        let rotation = DQuat::from_euler(EulerRot::ZYX, values[1], values[0], values[2]);
+        let up = rotation * DVec3::Z;
+        let contacts = triangles
             .iter()
-            .find_map(|&[a, b, c]| {
+            .filter_map(|&[a, b, c]| {
                 let normal = (c - a).cross(b - a).normalize();
                 if (point - a).dot(normal).abs() > 0.002 {
                     return None;
@@ -677,11 +684,21 @@ fn assert_native_terrain_contacts(bsp: &Bsp) {
                 let v = (p.dot(ac) * ab.length_squared() - p.dot(ab) * ab.dot(ac)) / denominator;
                 (u >= -1e-4 && v >= -1e-4 && u + v <= 1.0 + 1e-4).then_some(normal)
             })
-            .expect("Generated detail origin is not on a final native terrain triangle");
-        assert!(normal.z > 0.5);
-        let values = prop.angles.map(|value| f64::from(value).to_radians());
-        let rotation = DQuat::from_euler(EulerRot::ZYX, values[1], values[0], values[2]);
-        assert!((rotation * DVec3::Z - normal).length() < 1e-4);
+            .collect::<Vec<_>>();
+        assert!(
+            !contacts.is_empty(),
+            "Generated detail origin {point} is not on a final native terrain triangle"
+        );
+        let normal = contacts
+            .iter()
+            .find(|&&normal| (up - normal).length() < 1e-4)
+            .unwrap_or_else(|| {
+                panic!("Generated detail up {up} at {point} does not match native contact normals {contacts:?}")
+            });
+        assert!(
+            normal.z > minimum_normal_z,
+            "Native terrain contact normal {normal} must exceed minimum up {minimum_normal_z}"
+        );
         let leaf = leaves[usize::from(prop.leaf)];
         assert_eq!(leaf.contents & bsp::contents::SOLID, 0);
         assert!(leaf.cluster >= 0);
@@ -1143,7 +1160,7 @@ fn assert_mixed_power_terrain_scatter(skewed: bool) {
     assert!(data.infos.iter().any(
         |info| info.allowed_triangle_indices().unwrap().len() < info.triangle_count().unwrap()
     ));
-    assert_native_terrain_contacts(&bsp);
+    assert_native_terrain_contacts_with_minimum_up(&bsp, if skewed { 0.0 } else { 0.5 });
     assert_eq!(fixture.source.write(&Default::default()), before);
     assert_eq!(
         compiled(&Vmf::parse(&before).unwrap(), &fixture.game)

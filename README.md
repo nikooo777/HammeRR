@@ -164,10 +164,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Working-region bounds and visibility controls](docs/images/working-region.png) | ![Authored fog controller and preview settings](docs/images/fog-preview.png) |
 | Focus the editor on whole objects touching a temporary box, with shared visibility reasons. | Choose an authored controller to preview static linear fog in perspective Textured views. |
 
-| 2D sky preview | Sky asset inspection |
+| LDR and HDR skies | Sky asset inspection |
 | --- | --- |
-| ![The selected sky rendered through sky surfaces](docs/images/sky-preview.png) | ![Six-face LDR and HDR asset status with selected-face details](docs/images/sky-assets.png) |
-| Preview the selected mounted sky through sky surfaces in perspective Textured views. | Inspect six-face LDR/HDR assets, mounted sources and actionable issues. |
+| ![Mounted HDR sky through a brick arch](docs/images/hdr-sky-preview.png) | ![Six-face LDR and HDR asset status with selected-face details](docs/images/sky-assets.png) |
+| Preview mounted skies and adjust HDR sky exposure without changing map lighting. | Inspect six-face LDR/HDR assets, mounted sources and actionable issues. |
 
 | Measurement guides | Rope preview |
 | --- | --- |
@@ -185,13 +185,18 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 
 | Entity connection guides | Particle effects |
 | --- | --- |
-| ![Colored guides between selected entity reference points](docs/images/fgd-lines.png) | ![Particle definitions and effect-name choices](docs/images/particle-browser.png) |
-| Show colored links to the unique named points referenced by selected entities. | Search active particle systems, inspect their definitions and choose effects for entities. |
+| ![Colored guides between imported authored node IDs](docs/images/fgd-node-lines.png) | ![Particle definitions and effect-name choices](docs/images/particle-browser.png) |
+| Show colored links between unique named points or imported node IDs. | Search active particle systems, inspect their definitions and choose effects for entities. |
 
 | Source projector guides | Entity icons |
 | --- | --- |
 | ![Selected projector with its square near and far planes](docs/images/source-projector-guide.png) | ![Mounted sound, target and relay entity icons](docs/images/fgd-icons.png) |
 | Show projector direction, field of view and near/far distances. | Show mounted entity images that follow the viewport camera. |
+
+| Entity model guides |
+| --- |
+| ![Player-start, camera and constraint resource models](docs/images/fgd-model-guides.png) |
+| Show mounted class models with flat shading while retaining their ordinary selection boxes. |
 
 | Connections | Safe renaming |
 | --- | --- |

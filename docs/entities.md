@@ -167,6 +167,8 @@ remain visible. Selecting the entity still outlines its ordinary FGD box.
    cache; FGD reload re-evaluates the declaration without changing values or
    Undo history.
 
+![Player-start, camera and constraint model guides with flat editor shading](images/fgd-model-guides.png)
+
 Missing, malformed, blank-body or oversized assets retain the editable box and
 an explicit diagnostic. Authored model fields, a declared model property,
 specialized lights and ropes, and sprite/decal/overlay sources retain their
@@ -294,6 +296,8 @@ point class with a declared read-only integer `nodeid` and one stored ID.
    through `get_entity_inspector.helpers.lines` and the same guide in `render_view`.
 4. Move an endpoint in a transform preview to inspect the guide's new position.
    **Working region…** and authored visibility still control both endpoints.
+
+![Separate source-to-node and node-to-node guides using stored IDs](images/fgd-node-lines.png)
 
 IDs use canonical decimal integers from `0` through `2147483647`; `0` is valid.
 A reference of `-1` means no association. Missing IDs never fall back to VMF

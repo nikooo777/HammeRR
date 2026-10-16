@@ -1,0 +1,57 @@
+import {Button, CheckBox, LineEdit} from "std-widgets.slint";
+
+export component EntityPlacementWindow inherits Window {
+    title: "Place entity on surface";
+    preferred-width: 610px;
+    preferred-height: 660px;
+    in property <string> classname;
+    in property <string> grid;
+    in property <string> summary;
+    in property <string> message;
+    in property <bool> ready;
+    in property <bool> owned;
+    in property <bool> shared-draft;
+    in-out property <bool> align;
+    in-out property <bool> snap;
+    in-out property <string> offset: "0";
+    callback pick();
+    callback review();
+    callback apply();
+    callback cancel();
+    callback invalidate();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 14px;
+            Text { text: "Place a point entity on a surface"; font-size: 20px; }
+            Text { text: "Entity · " + root.classname; wrap: word-wrap; }
+            Text { text: "Pick a visible brush, terrain or model surface. Review the entity bounds before applying."; wrap: word-wrap; color: #aeb8c6; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Offset"; vertical-alignment: center; }
+                LineEdit { width: 120px; text <=> root.offset; input-type: decimal; edited => { root.invalidate(); } }
+                Text { text: "units away from surface"; vertical-alignment: center; }
+            }
+            CheckBox { text: "Align local up to surface"; checked <=> root.align; toggled => { root.invalidate(); } }
+            CheckBox { text: "Snap along surface · grid " + root.grid; checked <=> root.snap; toggled => { root.invalidate(); } }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Pick surface"; enabled: root.owned; clicked => { root.pick(); } }
+                if root.shared-draft: Button { text: "Review shared placement"; clicked => { root.review(); } }
+            }
+            Text { text: root.summary; wrap: word-wrap; color: #d6deea; }
+            Rectangle { vertical-stretch: 1; }
+            Text { text: root.message; wrap: word-wrap; color: #aeb8c6; min-height: 40px; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply entity"; enabled: root.ready && root.owned; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

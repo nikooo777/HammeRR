@@ -157,9 +157,19 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![The selected sky rendered through sky surfaces](docs/images/sky-preview.png) |
 | Preview the selected mounted sky through sky surfaces in perspective Textured views. |
 
+| Measurement guides | Rope preview |
+| --- | --- |
+| ![Exact named rulers and coordinate controls](docs/images/measurements.png) | ![Authored rope spans with a static sag preview](docs/images/rope-preview.png) |
+| Save named rulers with exact endpoints, distances and XYZ components. | Inspect linked rope spans with authored slack, width and subdivision. |
+
 [Editor basics →](docs/basics.md) · [Selecting →](docs/selection.md)
 
 ### Entities and logic
+
+| Place entities on surfaces |
+| --- |
+| ![Reviewing a new point entity on a picked surface](docs/images/entity-placement-controls.png) |
+| Pick a surface and review snapped contact, bounds and orientation before creating an entity. |
 
 | Particle effects |
 | --- |
@@ -174,7 +184,7 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Linked paths |
 | --- |
 | ![Reviewing an ordered linked path](docs/images/linked-path.png) |
-| Create named open or closed path-node chains in one Undo step. |
+| Create named path chains or reorder and move existing nodes while retaining their identities. |
 
 [Linked paths →](docs/path-authoring.md)
 
@@ -211,8 +221,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 | Prefab library |
 | --- |
-| ![Reusable assemblies and placement controls](docs/images/prefab-library.png) |
-| Save brush and entity assemblies, then place them across maps with checked previews and links. |
+| ![Reusable assembly rotation, scale and source-pivot controls](docs/images/prefab-transformed-placement.png) |
+| Save and rename assemblies, then place rotated or brush-scaled copies with checked links. |
+
+| Transaction history |
+| --- |
+| ![Inspecting transaction authors, changes and retained states](docs/images/history.png) |
+| Inspect human and agent edits, then return to a retained state through Undo and Redo. |
 
 | Layers |
 | --- |

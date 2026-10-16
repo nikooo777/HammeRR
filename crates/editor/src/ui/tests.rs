@@ -5,6 +5,54 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[test]
+pub(crate) fn rope_preview_control_uses_shared_view_and_reports_bad_links_without_map_edits() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut state = Session::new(Err("no assets".into()));
+    state
+        .create_entity(
+            Actor::Agent,
+            "move_rope",
+            Some(DVec3::new(0.0, 0.0, 128.0)),
+            [("NextKey".into(), "missing_endpoint".into())]
+                .into_iter()
+                .collect(),
+        )
+        .unwrap();
+    let source = state.document().vmf().clone();
+    let history = state.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(state));
+    let app = AppWindow::new().unwrap();
+    bind_view_controls(&app, shared.clone());
+    refresh_rope_preview(&app, &lock(&shared));
+    assert!(!app.get_rope_preview());
+    app.set_rope_preview(true);
+    app.invoke_options_changed();
+    assert!(lock(&shared).view().rope_preview);
+    assert!(app.get_rope_preview_status().contains("no authored target"));
+    assert_eq!(lock(&shared).rope_preview_state()["enabled"], true);
+    {
+        let mut session = lock(&shared);
+        let view = session.view();
+        session.set_view(render::ViewOptions {
+            rope_preview: false,
+            ..view
+        });
+    }
+    refresh_rope_preview(&app, &lock(&shared));
+    assert!(!app.get_rope_preview());
+    assert_eq!(app.get_rope_preview_status(), "Rope preview is off");
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+}
+
+#[test]
 pub(crate) fn fog_preview_controls_choose_apply_cancel_and_reject_stale_or_unsupported_settings() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

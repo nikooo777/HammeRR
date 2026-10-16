@@ -21,6 +21,8 @@ pub const MAX_NODES: usize = crate::metadata::MAX_NODES;
 pub const MAX_GROUPS: usize = 256;
 const KEY: &str = "hammerr_transfer";
 
+mod placement;
+
 #[derive(Clone, Debug)]
 pub struct Payload {
     document: Document,

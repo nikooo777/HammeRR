@@ -11,6 +11,8 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Getting started](getting-started.md) | Requirements, building, launching, game content |
 | [Editor basics](basics.md) | The window, previews and undo, navigation, viewport modes, saved camera views |
 | [Recent maps](recent-maps.md) | Reopening retained paths with compatible build settings, removing and clearing entries |
+| [Transaction history](history.md) | Inspecting human/agent edits and navigating retained undo/redo states |
+| [Measurement guides](measurements.md) | Named persistent rulers, exact distances and axis components |
 | [Selecting](selection.md) | Click, area, volume and paint selection |
 | [Cut, copy and paste](clipboard.md) | Detached object transfer, placement previews, native VMF text and safe references |
 | [Prefab library](prefabs.md) | Save, search and place reusable brush/entity assemblies |
@@ -28,6 +30,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Working region](working-region.md) | Temporary whole-object display bounds and visibility reasons |
 | [Fog preview](fog.md) | Choosing an authored static fog controller for perspective Textured views |
 | [2D sky preview](sky.md) | Previewing the selected mounted sky through authored sky surfaces |
+| [Rope preview](ropes.md) | Static linked rope curves, diagnostics and source-entity picking |
 | [Terrain](terrain.md) | Creating, sculpting, blending, sewing, shading and selecting terrain triangles |
 | [Overlays](overlays.md) | Compiling imported surface projections, material, render order and distance fading |
 | [Cubemap faces](cubemap-faces.md) | Inspecting sample choices and previewing manual reflection bindings |

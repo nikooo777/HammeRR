@@ -85,7 +85,7 @@ def validate(args):
         tools = {tool["name"]: tool for tool in client.rpc("tools/list", {})["tools"]}
         check({"get_linked_path", "set_linked_path"} <= tools.keys(), "Linked-path MCP tools are discoverable")
         schema = json.dumps(tools["set_linked_path"]["inputSchema"])
-        check(all(f'"{action}"' in schema for action in ["preview", "review", "apply", "cancel"]), "Tagged actions are discoverable")
+        check(all(f'"{action}"' in schema for action in ["preview", "review", "apply", "cancel", "inspect", "edit"]), "Tagged actions are discoverable")
         check('"additionalProperties": false' in schema, "Linked-path actions reject undeclared fields")
         client.call("load_entity_definitions", {"path": str(fgd)})
         initial = state(client)
@@ -169,6 +169,34 @@ def validate(args):
             client.call("open_map", {"path": str(path)})
             check(detail(client, existing) == saved and path.read_bytes() == saved_bytes, f"{label}: saved/reopened VMF retains all IDs, links, coordinates and defaults")
             cases.append({"classname": classname, "closed": closed, "points": len(points), "objects": ids, "names": names, "targets": targets, "vmf": str(path)})
+
+        route = cases[0]
+        ids = route["objects"]
+        client.call("set_entity_properties", {"id": ids[1], "set": {"custom_intent": "retain this node", "wait": "3.75"}})
+        watcher = client.call("create_entity", {"classname": "info_target", "origin": [0, -128, 0], "properties": {"target": route["names"][0]}})["id"]
+        existing.append(watcher)
+        before = snapshot(client, existing)
+        inspected = client.call("set_linked_path", {"action": "inspect", "id": ids[1]})
+        nodes = [{"id": node["id"], "origin": node["origin"]} for node in inspected["nodes"]]
+        nodes = [nodes[2], nodes[0], nodes[1]]
+        nodes[2]["origin"][2] += 8.5
+        edited = client.call("set_linked_path", {"action": "edit", "nodes": nodes, "snapshot": inspected["snapshot"]})["preview"]
+        check(edited["existing"] and [node["id"] for node in edited["nodes"]] == [node["id"] for node in nodes], "Existing-chain preview retains IDs in the requested order")
+        check(snapshot(client, existing) == before, "Inspecting and previewing an existing chain preserves committed source/history")
+        client.call("set_linked_path", {"action": "apply", "token": edited["token"]})
+        after = detail(client, existing)
+        current = {node["id"]: dict(node["properties"]) for node in detail(client, ids)}
+        check(current[ids[1]]["custom_intent"] == "retain this node" and current[ids[1]]["wait"] == "3.75", "Existing edits preserve custom properties and authored defaults")
+        check(dict(detail(client, [watcher])[0]["properties"])["target"] == route["names"][0], "Outside entity references retain their original named node")
+        check(len(client.call("get_map_info")["undo"]) == len(before["undo"]) + 1, "Reordering and moving existing nodes adds one Undo step")
+        client.call("undo")
+        check(detail(client, existing) == before["objects"], "Undo restores exact existing objects, identities and references")
+        client.call("redo")
+        check(detail(client, existing) == after, "Redo restores the exact edited chain")
+        path = args.output / "edited-existing.vmf"
+        client.call("save_map", {"path": str(path)})
+        client.call("open_map", {"path": str(path)})
+        check(detail(client, existing) == after, "Edited existing identities, links and metadata survive save/reopen")
 
         bounded = preview(client, classname="path_corner", prefix="_" + "a" * 95, points=[[-65536, 0, 0], [65536, 0, 0]])
         check(bounded["preview"]["valid"], "Inclusive coordinate and prefix bounds accept a two-node path")

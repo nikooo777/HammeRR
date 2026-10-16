@@ -33,15 +33,18 @@ pub mod component_picking;
 pub mod components;
 pub mod context;
 pub mod cubemap_bindings;
+pub mod entity_placement;
 mod favorites;
 pub mod fog;
 pub mod groups;
+pub mod history;
 pub mod hollowing;
 pub mod layers;
 pub mod linked_path;
 mod management;
 pub mod material_assets;
 pub mod material_search;
+pub mod measurements;
 pub mod merging;
 mod model_attachments;
 pub mod model_browser;
@@ -58,6 +61,7 @@ pub mod primitives;
 mod recent;
 mod recovery;
 pub mod repeat;
+pub mod ropes;
 pub mod saved_views;
 pub mod sounds;
 pub mod statistics;
@@ -167,6 +171,8 @@ pub struct Session {
     game: Arc<GameFs>,
     game_error: Option<String>,
     document: Document,
+    history_actors: BTreeMap<u64, Actor>,
+    history_save_serial: u64,
     path: Option<PathBuf>,
     selection: BTreeSet<ObjectId>,
     face_selection: BTreeSet<FaceId>,
@@ -182,6 +188,7 @@ pub struct Session {
     checks: checks::State,
     material_search: material_search::State,
     context: context::State,
+    measurements: measurements::State,
     clip_tool: bool,
     clip_epoch: u64,
     clip_points: Option<clip_points::Draft>,
@@ -274,6 +281,8 @@ impl Session {
             game: Arc::new(game),
             game_error,
             document: Document::empty(),
+            history_actors: BTreeMap::new(),
+            history_save_serial: 0,
             path: None,
             selection: BTreeSet::new(),
             face_selection: BTreeSet::new(),
@@ -295,6 +304,7 @@ impl Session {
             checks: checks::State::default(),
             material_search: material_search::State::default(),
             context: context::State::default(),
+            measurements: measurements::State::default(),
             clip_tool: false,
             clip_epoch: 0,
             clip_points: None,
@@ -1146,6 +1156,7 @@ impl Session {
         self.surface_sample = None;
         self.material_search.report = None;
         self.context.draft = None;
+        self.measurements.reset_document();
         self.context.focused = None;
         self.context.serial += 1;
         self.property_draft = None;
@@ -1161,6 +1172,7 @@ impl Session {
             })
         });
         self.document = document;
+        self.history_actors.clear();
         self.fog_preview = fog::Selection::default();
         self.saved_cameras = [None; 4];
         self.document_generation += 1;
@@ -1216,6 +1228,7 @@ impl Session {
     /// first so a failed write never truncates the map.
     pub fn save(&mut self, actor: Actor, path: Option<&Path>) -> Result<PathBuf, String> {
         self.ensure_partitions_resolved()?;
+        self.ensure_entity_placement_resolved()?;
         let path = path
             .map(Path::to_owned)
             .or_else(|| self.path.clone())
@@ -1235,6 +1248,7 @@ impl Session {
         let backup_error = backup.err().or(retention_error);
         self.document.bump_map_version();
         self.document.mark_saved();
+        self.history_save_serial += 1;
         self.path = Some(path.clone());
         self.update_recovery_path();
         self.remember_saved_map(&path);
@@ -1260,8 +1274,18 @@ impl Session {
         f: impl FnOnce(&mut Transaction) -> Result<R, EditError>,
     ) -> Result<R, String> {
         let before = self.document.revision();
+        let discarded = self
+            .document
+            .redo_steps()
+            .iter()
+            .map(|step| step.id())
+            .collect::<Vec<_>>();
         let result = self.document.edit(label, f).map_err(|e| e.to_string())?;
         if self.document.revision() != before {
+            for id in discarded {
+                self.history_actors.remove(&id);
+            }
+            self.history_actors.insert(self.document.revision(), actor);
             self.prune_selection();
             self.changed();
             self.log(actor, label);
@@ -1695,6 +1719,7 @@ impl Session {
 
     pub fn launch_readiness(&self) -> Result<&Path, String> {
         self.ensure_partitions_resolved()?;
+        self.ensure_entity_placement_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }
@@ -1803,6 +1828,10 @@ impl Session {
     /// The nearest visible object along a ray. Brushes made only of tool
     /// materials can't be picked while tool textures are hidden.
     pub fn pick(&mut self, ray: &Ray) -> Option<Hit> {
+        self.pick_with_rope_preview(ray, None)
+    }
+
+    pub fn pick_with_rope_preview(&mut self, ray: &Ray, rope_preview: Option<bool>) -> Option<Hit> {
         let hidden = self.hidden_tool_brushes();
         let document = self.render_document();
         if self.face_mode {
@@ -1833,6 +1862,19 @@ impl Session {
                         .iter()
                         .filter(|instance| evaluation.objects.contains(&instance.id))
                         .filter_map(|instance| instance.pick(ray)),
+                )
+                .chain(
+                    rope_preview
+                        .unwrap_or(self.view.rope_preview)
+                        .then(|| self.rope_preview_geometry())
+                        .into_iter()
+                        .flat_map(|preview| {
+                            preview
+                                .links
+                                .iter()
+                                .filter_map(|link| link.pick(ray))
+                                .collect::<Vec<_>>()
+                        }),
                 )
                 .min_by(|a, b| a.distance.total_cmp(&b.distance))
         }
@@ -1916,6 +1958,9 @@ impl Session {
             .map_or(selected.clone(), |preview| {
                 self.grouped_preview_selection(&selected, &preview.matches.objects, preview.mode)
             });
+        let selected = self
+            .entity_placement_preview_id()
+            .map_or(selected, |id| [id].into_iter().collect());
         let selected_faces: HashSet<FaceId> = self.face_selection.iter().copied().collect();
         let selected_faces = self.area_preview.as_ref().map_or_else(
             || selected_faces.clone(),
@@ -2025,8 +2070,10 @@ impl Session {
             mesh.set_leak_path(points);
         }
         self.append_context_guides(&mut mesh);
+        self.append_measurement_guides(&mut mesh);
         self.append_model_attachment_guide(&mut mesh);
         self.append_surface_placement_guide(&mut mesh);
+        self.append_entity_placement_guide(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_compile_region_guide(&mut mesh);
         self.append_overlay_guide(&mut mesh);

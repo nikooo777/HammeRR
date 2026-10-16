@@ -335,6 +335,30 @@ pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: boo
             let (app, ui) = (app.as_weak(), ui.clone());
             move || load_fgd(&app.unwrap(), &ui)
         });
+        window.on_pick_surface({
+            let (app, ui) = (app.as_weak(), ui.clone());
+            move || {
+                let app = app.unwrap();
+                let shared = session_of(&ui);
+                let mut state = ui.borrow_mut();
+                if state.entity_placement.is_none() {
+                    match entity_placement_ui::Controller::new(&shared) {
+                        Ok(controller) => state.entity_placement = Some(controller),
+                        Err(error) => {
+                            app.set_message(error.to_string().into());
+                            return;
+                        }
+                    }
+                }
+                let window = state.entity_window.as_ref().unwrap();
+                let controller = state.entity_placement.as_ref().unwrap();
+                controller.initialize(&lock(&shared), &window.get_classname());
+                let _ = window.hide();
+                if let Err(error) = controller.window.show() {
+                    app.set_message(error.to_string().into());
+                }
+            }
+        });
         window.on_create({
             let (app, ui) = (app.as_weak(), ui.clone());
             move || {

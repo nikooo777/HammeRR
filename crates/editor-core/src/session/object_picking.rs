@@ -97,6 +97,13 @@ impl Session {
                 retain(hit);
             }
         }
+        if self.view.rope_preview {
+            for link in &self.rope_preview_geometry().links {
+                if let Some(hit) = link.pick(ray) {
+                    retain(hit);
+                }
+            }
+        }
         let index = self.group_selection_index();
         let mut units = BTreeMap::<map_core::groups::Member, Candidate>::new();
         for hit in owners.into_values() {

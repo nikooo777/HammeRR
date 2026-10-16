@@ -159,17 +159,22 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview a library assembly centered at position (world XYZ, default0,0,0) with get_prefabs.snapshot. Privately validates placement before changing clipboard/drafts. Geometry, map history and source files remain unchanged. The returned paste.preview.token uses existing apply_paste/cancel_paste and render_view. Supported IDs/names/references/groups/layers remap; external links require keep_external_links:true. Restore-cut-names is always false. UI: Prefabs… → Preview placement…."
+        description = "Preview a library assembly with get_prefabs.snapshot. position (world XYZ, default0,0,0) receives the source pivot (default original authored bounds center; optional custom pivot). Positive XYZ scale applies before world XYZ rotation in degrees; defaults preserve centered translation. Nonidentity scale requires brushes/brush entities. Unsupported spatial properties and opaque geometry/entity blocks reject rotated/scaled placement. Textures stay attached. Privately validates before replacing clipboard/drafts; source files/map/history remain unchanged. Returned paste.preview.token uses shared apply_paste/cancel_paste/render_view. IDs/names/references/groups/layers/notes remap; external links require keep_external_links:true. UI: Prefabs… → Preview placement…."
     )]
     pub(in crate::mcp) fn preview_prefab(
         &self,
         Parameters(args): Parameters<PreviewPrefabArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session().preview_prefab(
+            self.session().preview_prefab_placement(
                 Actor::Agent,
                 &args.name,
-                args.position.map(vec3).unwrap_or(DVec3::ZERO),
+                crate::session::prefabs::Placement {
+                    position: args.position.map(vec3).unwrap_or(DVec3::ZERO),
+                    rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
+                    scale: args.scale.map(vec3).unwrap_or(DVec3::ONE),
+                    pivot: args.pivot.map(vec3),
+                },
                 args.keep_external_links.unwrap_or(false),
                 &args.snapshot,
             )
@@ -186,6 +191,19 @@ impl EditorServer {
         run(|| {
             self.session()
                 .delete_prefab(Actor::Agent, &args.name, &args.snapshot)
+        })
+    }
+
+    #[tool(
+        description = "Rename an exact prefab library entry with get_prefabs.snapshot. new_name uses the same bounded portable names as Save; case-only changes are allowed. Atomic Linux no-replace rename preserves VMF bytes, IDs and asset references; existing destination names, including case variants, reject without changing either entry. No map/selection/clipboard payload/history changes. Existing Paste previews from that entry become stale and must be reopened from the renamed prefab; deletion alone retains detached previews. File operations are separate from map Undo. UI: Prefabs… → Rename… → Rename prefab; Cancel/Escape preserves the library."
+    )]
+    pub(in crate::mcp) fn rename_prefab(
+        &self,
+        Parameters(args): Parameters<RenamePrefabArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .rename_prefab(Actor::Agent, &args.name, &args.new_name, &args.snapshot)
         })
     }
 }

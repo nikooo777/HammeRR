@@ -65,6 +65,7 @@ impl EditorServer {
             "view": view_state(session.view()),
             "skybox": skybox,
             "fog_preview": session.fog_preview_state(),
+            "rope_preview": session.rope_preview_state(),
             "spatial": session.spatial(),
             "block_preview": bounds_json(session.block_preview()),
             "clipping": clip_state(&session),

@@ -148,7 +148,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"rope_preview":view.rope_preview,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -218,7 +218,14 @@ pub struct RepeatArrayTokenArgs {
 pub struct PreviewPrefabArgs {
     pub name: String,
     pub snapshot: String,
+    /// World position for the source pivot. Defaults to [0,0,0].
     pub position: Option<[f64; 3]>,
+    /// World XYZ degrees, applied after scale about the source pivot. Defaults to [0,0,0].
+    pub rotation: Option<[f64; 3]>,
+    /// Finite positive world XYZ factors, default [1,1,1]. Nonidentity scale requires only brushes/brush entities.
+    pub scale: Option<[f64; 3]>,
+    /// Source-world pivot mapped to position. Defaults to the original authored bounds center.
+    pub pivot: Option<[f64; 3]>,
     pub keep_external_links: Option<bool>,
 }
 
@@ -248,6 +255,8 @@ pub struct SetViewArgs {
     pub tool_textures: Option<bool>,
     /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six LDR faces.
     pub sky_preview: Option<bool>,
+    /// Show bounded static authored rope spans. No physics, parenting or attachment binding.
+    pub rope_preview: Option<bool>,
     /// Show the current compilation's leak path through geometry.
     pub leak_path: Option<bool>,
     /// textured, flat, wireframe, lightmap_density, or smoothing_groups; works in every projection.
@@ -267,6 +276,8 @@ pub struct RenderArgs {
     pub tool_textures: Option<bool>,
     /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six LDR faces.
     pub sky_preview: Option<bool>,
+    /// Temporary static rope preview override; leaves shared view and picking unchanged.
+    pub rope_preview: Option<bool>,
     /// Temporary static linear fog override. Requires a supported explicit or currently selected controller.
     pub fog_preview: Option<bool>,
     /// Temporary env_fog_controller entity:<id>; does not change shared settings.
@@ -285,6 +296,8 @@ pub struct PickArgs {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub camera: Option<CameraSpec>,
+    /// Match a temporary render_view rope_preview override; defaults to the shared view.
+    pub rope_preview: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

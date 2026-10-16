@@ -68,6 +68,12 @@ fn present(window: &PasteWindow, session: &Session, report: &Value) {
         .into(),
     );
     let mut lines = Vec::new();
+    if let Some(source) = report["preview"]["prefab_source"].as_str() {
+        lines.push(format!("Prefab source: {source}"));
+    }
+    if let Some(error) = report["preview"]["stale_reason"].as_str() {
+        lines.push(error.into());
+    }
     if let Some(error) = payload["reference_error"].as_str() {
         lines.push(error.into());
     }
@@ -106,10 +112,13 @@ fn present(window: &PasteWindow, session: &Session, report: &Value) {
 }
 
 fn checked(session: &Session, stamp: &RefCell<String>, token: Option<u64>) -> Result<(), String> {
-    if session.clipboard_stamp() != *stamp.borrow()
-        || session.clipboard_report()["preview"]["token"].as_u64() != token
+    let report = session.clipboard_report();
+    if session.clipboard_stamp() != *stamp.borrow() || report["preview"]["token"].as_u64() != token
     {
         return Err("Map, selection or clipboard changed; reopen Paste to review it".into());
+    }
+    if let Some(reason) = report["preview"]["stale_reason"].as_str() {
+        return Err(reason.into());
     }
     Ok(())
 }
@@ -288,6 +297,7 @@ impl Controller {
         };
         let report = session.clipboard_report();
         let preview = &report["preview"];
+        let error = error.or_else(|| preview["stale_reason"].as_str().map(str::to_owned));
         *self.stamp.borrow_mut() = session.clipboard_stamp();
         self.token.set(preview["token"].as_u64());
         self.prepared.set(None);

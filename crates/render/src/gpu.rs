@@ -209,6 +209,7 @@ pub struct ViewOptions {
     pub smoothing_group: u32,
     pub tool_textures: bool,
     pub sky_preview: bool,
+    pub rope_preview: bool,
     pub fog: Option<crate::fog::Fog>,
     pub leak_path: bool,
     pub grid_visible: bool,
@@ -229,6 +230,7 @@ impl Default for ViewOptions {
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
+            rope_preview: false,
             fog: None,
             leak_path: true,
             grid_visible: true,
@@ -263,6 +265,7 @@ pub struct GpuScene {
     leak_lines: Option<(wgpu::Buffer, u32)>,
     wire_lines: Option<(wgpu::Buffer, u32)>,
     tool_wire_lines: Option<(wgpu::Buffer, u32)>,
+    rope_lines: Option<(wgpu::Buffer, u32)>,
 }
 
 pub struct Renderer {
@@ -596,6 +599,7 @@ impl Renderer {
         };
         let wire_lines = wire_buffer("brush wireframes", &mesh.wire_lines);
         let tool_wire_lines = wire_buffer("tool brush wireframes", &mesh.tool_wire_lines);
+        let rope_lines = wire_buffer("rope selection", &mesh.rope_lines);
         for &batch in &mesh.batches {
             self.ensure_material(ctx, library, batch.material);
             let info = library.get(batch.material);
@@ -632,6 +636,7 @@ impl Renderer {
             leak_lines,
             wire_lines,
             tool_wire_lines,
+            rope_lines,
         }
     }
 
@@ -889,6 +894,9 @@ impl Renderer {
                 (&self.translucent_pipeline, &scene.translucent),
             ] {
                 for draw in batches {
+                    if draw.batch.rope && !options.rope_preview {
+                        continue;
+                    }
                     if options.surface == SurfaceView::Wireframe && !draw.helper {
                         continue;
                     }
@@ -940,6 +948,13 @@ impl Renderer {
                 }
             }
             if let Some((lines, count)) = &scene.lines {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, lines.slice(..));
+                pass.draw(0..*count, 0..1);
+            }
+            if options.rope_preview
+                && let Some((lines, count)) = &scene.rope_lines
+            {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_vertex_buffer(0, lines.slice(..));
                 pass.draw(0..*count, 0..1);

@@ -1,0 +1,123 @@
+import { Button, CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct MeasurementRow { id: string, name: string, detail: string }
+
+export component MeasurementsWindow inherits Window {
+    title: "Measurements - HammeRR";
+    preferred-width: 860px;
+    preferred-height: 740px;
+    min-width: 760px;
+    min-height: 680px;
+    in property <[MeasurementRow]> measurements;
+    in property <string> selected-id;
+    in-out property <string> measurement-name;
+    in-out property <string> start-x: "0";
+    in-out property <string> start-y: "0";
+    in-out property <string> start-z: "0";
+    in-out property <string> end-x: "64";
+    in-out property <string> end-y: "0";
+    in-out property <string> end-z: "0";
+    in-out property <bool> show-guides: true;
+    in property <bool> editable;
+    in property <bool> can-preview;
+    in property <bool> can-review;
+    in property <bool> can-delete;
+    in property <bool> can-frame;
+    in property <bool> ready;
+    in property <string> preview-status;
+    in property <string> result;
+    in property <string> message;
+    callback choose(string);
+    callback new-measurement();
+    callback edited();
+    callback preview();
+    callback review();
+    callback apply();
+    callback delete-measurement();
+    callback frame();
+    callback view-changed();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            HorizontalLayout {
+                Text { text: "Measurements"; font-size: 24px; font-weight: 600; }
+                Rectangle { horizontal-stretch: 1; }
+                CheckBox { text: "Show guides"; checked <=> root.show-guides; toggled => { root.view-changed(); } }
+            }
+            Text { text: "Persistent world-space rulers · exact endpoints in Hammer units · X red, Y green, Z blue"; color: #b6c1cf; wrap: word-wrap; }
+            Rectangle {
+                background: #191f28;
+                border-radius: 6px;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    ScrollView {
+                        vertical-stretch: 1;
+                        min-height: 135px;
+                        VerticalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            for measurement in root.measurements: Button {
+                                text: measurement.name + "\n" + measurement.detail;
+                                primary: root.selected-id == measurement.id;
+                                min-height: 54px;
+                                max-height: 54px;
+                                vertical-stretch: 0;
+                                clicked => { root.choose(measurement.id); }
+                            }
+                            if root.measurements.length == 0: Text { text: "No saved measurements. Enter two endpoints, then Preview."; color: #b6c1cf; wrap: word-wrap; }
+                        }
+                    }
+                    HorizontalLayout {
+                        Button { text: "New measurement"; enabled: root.editable; clicked => { root.new-measurement(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "Frame"; enabled: root.can-frame; clicked => { root.frame(); } }
+                        Button { text: "Delete"; enabled: root.can-delete; clicked => { root.delete-measurement(); } }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Name"; width: 50px; vertical-alignment: center; }
+                LineEdit { enabled: root.editable; text <=> root.measurement-name; accessible-label: "Measurement name"; edited => { root.edited(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Rectangle { width: 50px; }
+                Text { horizontal-stretch: 1; text: "X"; color: #eb6e6e; }
+                Text { horizontal-stretch: 1; text: "Y"; color: #78d77d; }
+                Text { horizontal-stretch: 1; text: "Z"; color: #73a5f5; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Start"; width: 50px; vertical-alignment: center; }
+                LineEdit { enabled: root.editable; text <=> root.start-x; accessible-label: "Start X"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable; text <=> root.start-y; accessible-label: "Start Y"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable; text <=> root.start-z; accessible-label: "Start Z"; edited => { root.edited(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "End"; width: 50px; vertical-alignment: center; }
+                LineEdit { enabled: root.editable; text <=> root.end-x; accessible-label: "End X"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable; text <=> root.end-y; accessible-label: "End Y"; edited => { root.edited(); } }
+                LineEdit { enabled: root.editable; text <=> root.end-z; accessible-label: "End Z"; edited => { root.edited(); } }
+            }
+            Text { text: root.result; font-size: 17px; font-weight: 600; min-height: 45px; wrap: word-wrap; }
+            Text { text: root.preview-status; min-height: 40px; wrap: word-wrap; }
+            Text { text: root.message; color: #b6c1cf; min-height: 36px; wrap: word-wrap; }
+            Text { text: "128 rulers · 80 characters per name · ±65536 per coordinate · Guides cannot be picked and ignore object visibility."; color: #b6c1cf; font-size: 12px; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                if root.can-review: Button { text: "Review preview"; clicked => { root.review(); } }
+                Button { text: "Preview"; enabled: root.can-preview; clicked => { root.preview(); } }
+                Button { text: "Apply"; enabled: root.ready; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

@@ -12,13 +12,26 @@ pub const MAX_ENTRIES: usize = 128;
 pub const MAX_SCAN: usize = 512;
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_NAME_BYTES: usize = 80;
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
     pub bytes: u64,
     modified: SystemTime,
     #[cfg(unix)]
     identity: (u64, u64),
+}
+impl Entry {
+    fn same_file(&self, other: &Self) -> bool {
+        #[cfg(unix)]
+        {
+            self.identity == other.identity
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = other;
+            false
+        }
+    }
 }
 pub struct Snapshot {
     pub entries: Vec<Entry>,
@@ -134,6 +147,62 @@ impl Store {
         }
         Ok(snapshot)
     }
+    pub(crate) fn check_preview(&self, source: &Entry) -> Result<(), String> {
+        let snapshot = self.snapshot()?;
+        if let Some(current) = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.name == source.name)
+        {
+            if current != source {
+                return Err("Prefab source changed; choose it in Prefabs and preview again".into());
+            }
+        } else if let Some(renamed) = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.same_file(source))
+        {
+            return Err(format!(
+                "Prefab was renamed to {}; choose it in Prefabs and preview again",
+                renamed.name
+            ));
+        }
+        Ok(())
+    }
+    pub fn rename(&self, value: &str, new_name: &str, stamp: &str) -> Result<(), String> {
+        name(value)?;
+        name(new_name)?;
+        let snapshot = self.checked(stamp)?;
+        if !snapshot.entries.iter().any(|entry| entry.name == value) {
+            return Err("Prefab no longer exists".into());
+        }
+        if value == new_name {
+            return Err("Choose a different prefab name".into());
+        }
+        if snapshot.entries.iter().any(|entry| {
+            entry.name != value && entry.name.to_lowercase() == new_name.to_lowercase()
+        }) {
+            return Err("A prefab with that name already exists; choose another name".into());
+        }
+        self.checked(stamp)?;
+        #[cfg(target_os = "linux")]
+        {
+            rustix::fs::renameat_with(
+                rustix::fs::CWD,
+                self.directory.join(format!("{value}.vmf")),
+                rustix::fs::CWD,
+                self.directory.join(format!("{new_name}.vmf")),
+                rustix::fs::RenameFlags::NOREPLACE,
+            )
+            .map_err(|error| {
+                format!("Cannot rename prefab without replacing another entry: {error}")
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err("Atomic prefab renaming is supported on Linux only".into())
+        }
+    }
     pub fn read(&self, value: &str, stamp: &str) -> Result<String, String> {
         name(value)?;
         let snapshot = self.checked(stamp)?;
@@ -210,6 +279,96 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn atomic_rename_preserves_bytes_and_both_entries_on_invalid_or_stale_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().into(),
+        };
+        store
+            .save(
+                "Alpha",
+                "world { original }",
+                &store.snapshot().unwrap().stamp,
+            )
+            .unwrap();
+        store
+            .save("Beta", "world { other }", &store.snapshot().unwrap().stamp)
+            .unwrap();
+        let snapshot = store.snapshot().unwrap();
+        let alpha = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.name == "Alpha")
+            .unwrap()
+            .clone();
+        for new_name in ["beta", "../outside", " Alpha", "Alpha"] {
+            assert!(store.rename("Alpha", new_name, &snapshot.stamp).is_err());
+            assert_eq!(
+                fs::read_to_string(directory.path().join("Alpha.vmf")).unwrap(),
+                "world { original }"
+            );
+            assert_eq!(
+                fs::read_to_string(directory.path().join("Beta.vmf")).unwrap(),
+                "world { other }"
+            );
+        }
+        store.rename("Alpha", "ALPHA", &snapshot.stamp).unwrap();
+        assert!(!directory.path().join("Alpha.vmf").exists());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("ALPHA.vmf")).unwrap(),
+            "world { original }"
+        );
+        assert!(store.check_preview(&alpha).unwrap_err().contains("renamed"));
+        assert!(store.rename("Beta", "Gamma", &snapshot.stamp).is_err());
+        assert!(directory.path().join("Beta.vmf").exists());
+        assert!(!directory.path().join("Gamma.vmf").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn competing_renames_never_replace_or_lose_either_payload() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().into(),
+        };
+        store
+            .save("Alpha", "alpha", &store.snapshot().unwrap().stamp)
+            .unwrap();
+        store
+            .save("Beta", "beta", &store.snapshot().unwrap().stamp)
+            .unwrap();
+        let snapshot = store.snapshot().unwrap().stamp;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let mut workers = Vec::new();
+        for source in ["Alpha", "Beta"] {
+            let (directory, snapshot, barrier) = (
+                directory.path().to_path_buf(),
+                snapshot.clone(),
+                barrier.clone(),
+            );
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                Store { directory }.rename(source, "Result", &snapshot)
+            }));
+        }
+        barrier.wait();
+        let succeeded = workers
+            .into_iter()
+            .filter_map(|worker| worker.join().unwrap().ok())
+            .count();
+        assert_eq!(succeeded, 1);
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.entries.len(), 2);
+        let mut texts = snapshot
+            .entries
+            .iter()
+            .map(|entry| store.read(&entry.name, &snapshot.stamp).unwrap())
+            .collect::<Vec<_>>();
+        texts.sort();
+        assert_eq!(texts, ["alpha", "beta"]);
+    }
     #[test]
     fn portable_files_use_atomic_unique_creation_and_stale_guards() {
         let dir = tempfile::tempdir().unwrap();

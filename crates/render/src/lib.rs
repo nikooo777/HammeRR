@@ -8,6 +8,7 @@ pub mod handles;
 mod helpers;
 pub mod materials;
 pub mod models;
+pub mod ropes;
 pub mod scene;
 pub mod sky;
 

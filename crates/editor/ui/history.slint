@@ -1,0 +1,101 @@
+import { Button, ListView, ScrollView } from "std-widgets.slint";
+
+export struct HistoryRow {
+    state: string,
+    title: string,
+    status: string,
+    summary: string,
+    current: bool,
+}
+
+export component HistoryWindow inherits Window {
+    title: "History - HammeRR";
+    preferred-width: 850px;
+    preferred-height: 730px;
+    min-width: 670px;
+    min-height: 620px;
+    in property <string> document-title;
+    in property <string> position;
+    in property <[HistoryRow]> rows;
+    in property <string> selected-state;
+    in property <string> detail;
+    in property <string> message;
+    in property <string> page;
+    in property <bool> has-newer;
+    in property <bool> has-older;
+    in property <bool> can-navigate;
+    callback choose(string);
+    callback newer();
+    callback older();
+    callback refresh-history();
+    callback navigate();
+    callback cancel();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+    }
+    VerticalLayout {
+        padding: 18px;
+        spacing: 10px;
+        Text { text: "Transaction history"; font-size: 24px; font-weight: 600; }
+        Text { text: root.document-title; wrap: word-wrap; }
+        Text { text: root.position; wrap: word-wrap; color: #bac2ce; }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Initial state"; clicked => { root.choose("0"); } }
+            Button { text: "Refresh"; clicked => { root.refresh-history(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Newer"; enabled: root.has-newer; clicked => { root.newer(); } }
+            Text { text: root.page; vertical-alignment: center; }
+            Button { text: "Older"; enabled: root.has-older; clicked => { root.older(); } }
+        }
+        ListView {
+            vertical-stretch: 1;
+            for row in root.rows: Rectangle {
+                height: 90px;
+                background: row.state == root.selected-state ? #304c65 : row.current ? #293d32 : #262b33;
+                border-radius: 4px;
+                accessible-role: button;
+                accessible-label: "Inspect " + row.title;
+                accessible-action-default => { root.choose(row.state); }
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 3px;
+                    Text { text: row.title; overflow: elide; font-weight: 600; }
+                    Text { text: row.status; color: #bac2ce; overflow: elide; }
+                    Text { text: row.summary; color: #bac2ce; overflow: elide; }
+                }
+                TouchArea {
+                    clicked => { root.choose(row.state); }
+                }
+            }
+        }
+        if root.rows.length == 0: Text { text: "No transactions in this document yet."; color: #bac2ce; }
+        ScrollView {
+            height: 110px;
+            Text { text: root.detail; wrap: word-wrap; }
+        }
+        Text { text: root.message; wrap: word-wrap; color: #bac2ce; }
+        Text {
+            text: "Choose a transaction to inspect its changes and the state after it. Going to a state keeps the redo chain. New edits replace that chain. History is kept only while this document is open.";
+            wrap: word-wrap;
+            font-size: 12px;
+            color: #bac2ce;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button {
+                text: "Go to selected state";
+                enabled: root.can-navigate;
+                clicked => { root.navigate(); }
+            }
+            Button { text: "Cancel selection"; enabled: root.selected-state != ""; clicked => { root.cancel(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Close"; clicked => { root.close-dialog(); } }
+        }
+    }
+}

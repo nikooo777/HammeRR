@@ -6,12 +6,81 @@ use crate::{
 use slint::{ComponentHandle, VecModel};
 use std::{cell::RefCell, rc::Rc};
 const PAGE: usize = 64;
+fn vector(values: [slint::SharedString; 3], label: &str) -> Result<glam::DVec3, String> {
+    let mut result = glam::DVec3::ZERO;
+    for (axis, value) in values.into_iter().enumerate() {
+        result[axis] = value
+            .trim()
+            .parse()
+            .map_err(|_| format!("{label} must contain finite numbers"))?;
+    }
+    if !result.is_finite() {
+        return Err(format!("{label} must contain finite numbers"));
+    }
+    Ok(result)
+}
+
+fn placement(window: &PrefabsWindow) -> Result<crate::session::prefabs::Placement, String> {
+    Ok(crate::session::prefabs::Placement {
+        position: vector(
+            [
+                window.get_center_x(),
+                window.get_center_y(),
+                window.get_center_z(),
+            ],
+            "Placement position",
+        )?,
+        rotation: vector(
+            [
+                window.get_rotation_x(),
+                window.get_rotation_y(),
+                window.get_rotation_z(),
+            ],
+            "Rotation",
+        )?,
+        scale: vector(
+            [
+                window.get_scale_x(),
+                window.get_scale_y(),
+                window.get_scale_z(),
+            ],
+            "Scale",
+        )?,
+        pivot: match window.get_pivot_mode() {
+            0 => None,
+            1 => Some(glam::DVec3::ZERO),
+            2 => Some(vector(
+                [
+                    window.get_pivot_x(),
+                    window.get_pivot_y(),
+                    window.get_pivot_z(),
+                ],
+                "Source pivot",
+            )?),
+            _ => return Err("Choose a source pivot".into()),
+        },
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Save,
+    Delete,
+    Rename,
+}
+
+struct Draft {
+    action: Action,
+    stamp: String,
+    source: Option<String>,
+}
+
 #[derive(Default)]
 struct Form {
     selected: Option<String>,
     offset: usize,
     stamp: String,
-    action: Option<(bool, String)>,
+    action: Option<Draft>,
     seen: Option<(u64, u64, u64)>,
 }
 pub struct Controller {
@@ -55,8 +124,22 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
     );
     window.set_can_save(!session.selected_ids().is_empty());
     window.set_can_preview(!report["selected"].is_null() && form.action.is_none());
-    window.set_saving(form.action.as_ref().is_some_and(|(delete, _)| !*delete));
-    window.set_deleting(form.action.as_ref().is_some_and(|(delete, _)| *delete));
+    window.set_editing(form.action.is_some());
+    window.set_saving(
+        form.action
+            .as_ref()
+            .is_some_and(|draft| draft.action == Action::Save),
+    );
+    window.set_deleting(
+        form.action
+            .as_ref()
+            .is_some_and(|draft| draft.action == Action::Delete),
+    );
+    window.set_renaming(
+        form.action
+            .as_ref()
+            .is_some_and(|draft| draft.action == Action::Rename),
+    );
     window.set_directory(
         report["directory"]
             .as_str()
@@ -145,19 +228,30 @@ impl Controller {
                 refresh(&window.unwrap(), &lock(&shared), &form, true);
             }
         });
-        let begin_callback = |delete| {
+        let begin_callback = |action| {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
                 let mut state = form.borrow_mut();
                 let stamp = state.stamp.clone();
-                state.action = Some((delete, stamp));
+                let source = state.selected.clone();
+                let initial_name = if action == Action::Rename {
+                    source.clone().unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                state.action = Some(Draft {
+                    action,
+                    stamp,
+                    source,
+                });
                 drop(state);
-                window.unwrap().set_prefab_name("".into());
+                window.unwrap().set_prefab_name(initial_name.into());
                 refresh(&window.unwrap(), &lock(&shared), &form, true);
             }
         };
-        window.on_begin_save(begin_callback(false));
-        window.on_begin_delete(begin_callback(true));
+        window.on_begin_save(begin_callback(Action::Save));
+        window.on_begin_delete(begin_callback(Action::Delete));
+        window.on_begin_rename(begin_callback(Action::Rename));
         let cancel_callback = |close| {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
@@ -178,56 +272,76 @@ impl Controller {
                 slint::CloseRequestResponse::HideWindow
             }
         });
-        let write_callback = |delete| {
+        let write_callback = |action| {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
                 let window = window.unwrap();
                 let mut session = lock(&shared);
                 let result = (|| {
                     let state = form.borrow();
-                    let (deleting, stamp) = state
+                    let draft = state
                         .action
                         .as_ref()
-                        .ok_or("Start a save or deletion first")?;
-                    if *deleting != delete {
+                        .ok_or("Start a library action first")?;
+                    if draft.action != action {
                         return Err("Library action changed".into());
                     }
-                    if delete {
-                        session.delete_prefab(
+                    match action {
+                        Action::Delete => session.delete_prefab(
                             Actor::User,
-                            state.selected.as_deref().ok_or("Choose a prefab first")?,
-                            stamp,
-                        )
-                    } else {
-                        {
+                            draft.source.as_deref().ok_or("Choose a prefab first")?,
+                            &draft.stamp,
+                        ),
+                        Action::Rename => session.rename_prefab(
+                            Actor::User,
+                            draft.source.as_deref().ok_or("Choose a prefab first")?,
+                            &window.get_prefab_name(),
+                            &draft.stamp,
+                        ),
+                        Action::Save => {
                             let ids = session.selected_ids();
-                            session.save_prefab(Actor::User, &window.get_prefab_name(), &ids, stamp)
+                            session.save_prefab(
+                                Actor::User,
+                                &window.get_prefab_name(),
+                                &ids,
+                                &draft.stamp,
+                            )
                         }
                     }
                 })();
                 match result {
                     Ok(_) => {
                         let mut state = form.borrow_mut();
-                        if delete {
+                        if action == Action::Delete {
                             state.selected = None;
                         } else {
                             state.selected = Some(window.get_prefab_name().to_string());
                         }
                         state.action = None;
+                        if action == Action::Rename {
+                            state.offset = 0;
+                            window.set_query("".into());
+                        }
                         drop(state);
-                        window.set_message(if delete {
-                            "Prefab deleted; placed map copies remain.".into()
-                        } else {
-                            "Prefab saved without changing the map.".into()
-                        });
+                        window.set_message(
+                            match action {
+                                Action::Delete => "Prefab deleted; placed map copies remain.",
+                                Action::Save => "Prefab saved without changing the map.",
+                                Action::Rename => {
+                                    "Prefab renamed. Choose it and preview again before placing it."
+                                }
+                            }
+                            .into(),
+                        );
                         refresh(&window, &session, &form, true);
                     }
                     Err(error) => window.set_message(error.into()),
                 }
             }
         };
-        window.on_save(write_callback(false));
-        window.on_delete(write_callback(true));
+        window.on_save(write_callback(Action::Save));
+        window.on_delete(write_callback(Action::Delete));
+        window.on_rename(write_callback(Action::Rename));
         window.on_preview({
             let (window, shared, form, paste) = (
                 window.as_weak(),
@@ -240,22 +354,10 @@ impl Controller {
                 let mut session = lock(&shared);
                 let result = (|| {
                     let state = form.borrow();
-                    let position = [
-                        window.get_center_x(),
-                        window.get_center_y(),
-                        window.get_center_z(),
-                    ]
-                    .map(|value| {
-                        value
-                            .parse::<f64>()
-                            .map_err(|_| "Placement coordinates must be finite numbers".to_string())
-                    })
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?;
-                    session.preview_prefab(
+                    session.preview_prefab_placement(
                         Actor::User,
                         state.selected.as_deref().ok_or("Choose a prefab first")?,
-                        glam::DVec3::new(position[0], position[1], position[2]),
+                        placement(&window)?,
                         window.get_keep_external(),
                         &state.stamp,
                     )
@@ -296,6 +398,188 @@ impl Controller {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn prefab_rename_controls_cancel_guard_collisions_and_stale_owned_placement() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (session, directory, brush) = crate::test_assets::prefabs();
+        let original = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.show(&lock(&shared)).unwrap();
+        for name in ["Alpha assembly", "Beta assembly"] {
+            controller.window.invoke_begin_save();
+            controller.window.set_prefab_name(name.into());
+            controller.window.invoke_save();
+        }
+        let bytes = std::fs::read(directory.path().join("Alpha assembly.vmf")).unwrap();
+        controller.window.invoke_choose("Alpha assembly".into());
+        controller.window.invoke_preview();
+        let clipboard = lock(&shared).clipboard_report();
+        controller.window.invoke_begin_rename();
+        assert_eq!(controller.window.get_prefab_name(), "Alpha assembly");
+        controller.window.set_prefab_name("Renamed assembly".into());
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-rename");
+        controller.window.invoke_cancel();
+        assert!(directory.path().join("Alpha assembly.vmf").exists());
+        assert!(!directory.path().join("Renamed assembly.vmf").exists());
+        assert_eq!(lock(&shared).clipboard_report(), clipboard);
+        controller.window.invoke_begin_rename();
+        controller.window.set_prefab_name("beta assembly".into());
+        controller.window.invoke_rename();
+        assert!(controller.window.get_renaming());
+        assert!(controller.window.get_message().contains("already exists"));
+        assert_eq!(lock(&shared).clipboard_report(), clipboard);
+        controller.window.set_prefab_name("Renamed assembly".into());
+        controller.window.invoke_rename();
+        assert!(!controller.window.get_editing());
+        assert_eq!(controller.window.get_selected(), "Renamed assembly");
+        assert_eq!(
+            std::fs::read(directory.path().join("Renamed assembly.vmf")).unwrap(),
+            bytes
+        );
+        controller.paste.refresh(&lock(&shared));
+        assert!(!controller.paste.window.get_ready());
+        assert!(controller.paste.window.get_message().contains("renamed"));
+        controller.paste.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        controller.window.invoke_preview();
+        assert!(controller.paste.window.get_ready());
+        controller.paste.window.invoke_cancel();
+        controller.refresh(&lock(&shared));
+        controller.window.invoke_begin_rename();
+        controller.window.set_prefab_name("Outdated action".into());
+        let mut session = lock(&shared);
+        let stamp = session.prefab_report("", 0, 64, None)["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        session
+            .save_prefab(Actor::Agent, "Other entry", &[brush], &stamp)
+            .unwrap();
+        drop(session);
+        controller.refresh(&lock(&shared));
+        controller.window.invoke_rename();
+        assert!(controller.window.get_message().contains("changed"));
+        assert!(!directory.path().join("Outdated action.vmf").exists());
+        controller
+            .window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                text: slint::platform::Key::Escape.into(),
+            });
+        assert!(!controller.window.get_editing());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history);
+    }
+    #[test]
+    fn prefab_transform_controls_review_exact_geometry_and_retain_foreign_preview() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (session, directory, _) = crate::test_assets::prefabs();
+        let original = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.show(&lock(&shared)).unwrap();
+        controller.window.invoke_begin_save();
+        controller
+            .window
+            .set_prefab_name("Scaled brush assembly".into());
+        controller.window.invoke_save();
+        let file = std::fs::read(directory.path().join("Scaled brush assembly.vmf")).unwrap();
+        controller
+            .window
+            .invoke_choose("Scaled brush assembly".into());
+        controller.window.set_center_x("128".into());
+        controller.window.set_center_y("64".into());
+        controller.window.set_center_z("16".into());
+        controller.window.set_rotation_z("90".into());
+        controller.window.set_scale_x("2".into());
+        controller.window.set_scale_y("0.5".into());
+        controller.window.set_scale_z("1.25".into());
+        controller.window.set_pivot_mode(2);
+        controller.window.set_pivot_x("8".into());
+        controller.window.set_pivot_y("4".into());
+        controller.window.invoke_preview();
+        let report = lock(&shared).clipboard_report();
+        assert_eq!(report["preview"]["valid"], true);
+        assert!(controller.paste.window.get_ready());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        let expected = lock(&shared).render_document().vmf().clone();
+        let bounds = &report["preview"]["bounds"];
+        for (actual, expected) in bounds
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip([[114.0, 48.0, 16.0], [130.0, 112.0, 56.0]])
+        {
+            let actual: [f64; 3] = serde_json::from_value(actual.clone()).unwrap();
+            assert!(
+                glam::DVec3::from_array(actual)
+                    .abs_diff_eq(glam::DVec3::from_array(expected), 1e-8)
+            );
+        }
+        crate::ui::tests::save_ui_snapshot(
+            controller.window.window(),
+            "prefab-transformed-placement",
+        );
+        crate::ui::tests::save_ui_snapshot(
+            controller.paste.window.window(),
+            "prefab-transformed-paste",
+        );
+        controller.window.set_rotation_x("NaN".into());
+        controller.window.invoke_preview();
+        assert!(controller.window.get_message().contains("finite"));
+        assert_eq!(lock(&shared).clipboard_report(), report);
+        controller.window.set_rotation_x("0".into());
+        controller.paste.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &expected);
+        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+        assert_eq!(
+            std::fs::read(directory.path().join("Scaled brush assembly.vmf")).unwrap(),
+            file
+        );
+        lock(&shared).undo(Actor::User).unwrap();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        controller.refresh(&lock(&shared));
+        controller.window.invoke_preview();
+        let mut session = lock(&shared);
+        let stamp = session.prefab_report("", 0, 64, None)["snapshot"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        session
+            .preview_prefab(
+                Actor::Agent,
+                "Scaled brush assembly",
+                glam::DVec3::splat(256.0),
+                false,
+                &stamp,
+            )
+            .unwrap();
+        let replacement = session.clipboard_report();
+        drop(session);
+        controller.paste.window.invoke_apply();
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        controller.paste.window.invoke_cancel();
+        assert_eq!(lock(&shared).clipboard_report(), replacement);
+    }
+
     #[test]
     fn prefab_controls_share_capture_review_apply_and_cancel_delete() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(

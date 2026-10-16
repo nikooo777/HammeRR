@@ -5,6 +5,25 @@ use map_core::{ObjectId, transfer};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placement {
+    pub position: DVec3,
+    pub rotation: DVec3,
+    pub scale: DVec3,
+    pub pivot: Option<DVec3>,
+}
+
+impl Default for Placement {
+    fn default() -> Self {
+        Self {
+            position: DVec3::ZERO,
+            rotation: DVec3::ZERO,
+            scale: DVec3::ONE,
+            pivot: None,
+        }
+    }
+}
+
 pub(super) struct State {
     store: Result<Store, String>,
 }
@@ -16,7 +35,7 @@ impl Default for State {
     }
 }
 fn info(name: &str, payload: &transfer::Payload) -> Value {
-    json!({"name":name,"objects":payload.ids().len(),"groups":payload.document().vmf().world.groups.len(),"layers":map_core::layers::Graph::read(payload.document()).map(|graph|graph.records.len()).ok(),"faces":payload.document().vmf().side_ids().count(),"bytes":payload.text().len(),"bounds":map_core::query::bounds_of(payload.document(),payload.ids()).map(|(a,b)|[a.to_array(),b.to_array()]),"placement_anchor":"Bounds center; placement uses an exact world-space offset"})
+    json!({"name":name,"objects":payload.ids().len(),"groups":payload.document().vmf().world.groups.len(),"layers":map_core::layers::Graph::read(payload.document()).map(|graph|graph.records.len()).ok(),"faces":payload.document().vmf().side_ids().count(),"bytes":payload.text().len(),"bounds":map_core::query::bounds_of(payload.document(),payload.ids()).map(|(a,b)|[a.to_array(),b.to_array()]),"placement_anchor":"Original bounds center by default; an optional source-world pivot maps to the placement position"})
 }
 impl Session {
     pub(super) fn configure_prefabs(&mut self, directory: Result<PathBuf, String>) {
@@ -41,6 +60,16 @@ impl Session {
             );
         }
         Ok(snapshot)
+    }
+    pub(super) fn check_prefab_preview_source(
+        &self,
+        source: &prefabs::Entry,
+    ) -> Result<(), String> {
+        self.prefabs
+            .store
+            .as_ref()
+            .map_err(Clone::clone)?
+            .check_preview(source)
     }
     pub fn prefab_report(
         &self,
@@ -136,11 +165,48 @@ impl Session {
         self.log(actor, format!("deleted prefab {name}"));
         Ok(self.prefab_report("", 0, 64, None))
     }
+    pub fn rename_prefab(
+        &mut self,
+        actor: Actor,
+        name: &str,
+        new_name: &str,
+        stamp: &str,
+    ) -> Result<Value, String> {
+        let snapshot = self.checked_prefabs(stamp)?;
+        self.prefabs.store.as_ref().map_err(Clone::clone)?.rename(
+            name,
+            new_name,
+            &snapshot.stamp,
+        )?;
+        self.stale_prefab_preview(name, new_name);
+        self.view_serial += 1;
+        self.log(actor, format!("renamed prefab {name} to {new_name}"));
+        Ok(self.prefab_report("", 0, 64, Some(new_name)))
+    }
     pub fn preview_prefab(
         &mut self,
         actor: Actor,
         name: &str,
         position: DVec3,
+        keep_external: bool,
+        stamp: &str,
+    ) -> Result<Value, String> {
+        self.preview_prefab_placement(
+            actor,
+            name,
+            Placement {
+                position,
+                ..Default::default()
+            },
+            keep_external,
+            stamp,
+        )
+    }
+    pub fn preview_prefab_placement(
+        &mut self,
+        actor: Actor,
+        name: &str,
+        placement: Placement,
         keep_external: bool,
         stamp: &str,
     ) -> Result<Value, String> {
@@ -156,24 +222,44 @@ impl Session {
             .map_err(|error| error.to_string())?;
         let (a, b) = map_core::query::bounds_of(payload.document(), payload.ids())
             .ok_or("Prefab needs bounded objects")?;
+        let pivot = placement.pivot.unwrap_or((a + b) * 0.5);
+        let mut detail = info(name, &payload);
+        detail["placement"] = json!({"position":placement.position.to_array(),"rotation":placement.rotation.to_array(),"scale":placement.scale.to_array(),"source_pivot":pivot.to_array(),"pivot_policy":if placement.pivot.is_some(){"custom"}else{"bounds_center"},"order":"Scale in world XYZ, then rotate world X/Y/Z, then move the source pivot to position; textures stay attached"});
+        let payload = payload
+            .transformed(
+                placement.rotation,
+                placement.scale,
+                pivot,
+                &self.definitions,
+            )
+            .map_err(|error| error.to_string())?;
         let options = transfer::Options {
-            offset: position - (a + b) * 0.5,
+            offset: placement.position - pivot,
             keep_external,
             texture_lock: true,
             restore_names: false,
         };
-        let mut probe = self.document.preview_snapshot();
-        probe
-            .edit("check prefab placement", |tx| {
-                transfer::paste(tx, &payload, options, &self.definitions)
-            })
-            .map_err(|error| error.to_string())?;
-        self.checked_prefabs(stamp)?;
-        let detail = info(name, &payload);
-        self.import_clipboard(actor, Some(payload.text()), &self.clipboard_stamp())?;
-        let paste = self.preview_paste(options, &self.clipboard_stamp())?;
+        let source = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.name == name)
+            .ok_or("Prefab no longer exists")?
+            .clone();
+        let prepared = self.prepare_paste(&payload, options, Some(source))?;
+        let paste = self.finish_prefab_placement(actor, payload, prepared, stamp)?;
         self.log(actor, format!("preview prefab {name}"));
         Ok(json!({"prefab":detail,"paste":paste}))
+    }
+
+    fn finish_prefab_placement(
+        &mut self,
+        actor: Actor,
+        payload: transfer::Payload,
+        prepared: super::clipboard::PreparedPaste,
+        stamp: &str,
+    ) -> Result<Value, String> {
+        self.checked_prefabs(stamp)?;
+        Ok(self.install_prefab_paste(actor, payload, prepared))
     }
 }
 

@@ -1,9 +1,9 @@
 import {Button, CheckBox, ComboBox, LineEdit, ScrollView} from "std-widgets.slint";
 
-export struct LinkedPathPoint { label: string, x: string, y: string, z: string, link: string }
+export struct LinkedPathPoint { label: string, x: string, y: string, z: string, link: string, id: string, name: string }
 
 export component LinkedPathWindow inherits Window {
-    title: "Create linked path - HammeRR";
+    title: root.existing ? "Edit linked path - HammeRR" : "Create linked path - HammeRR";
     preferred-width: 840px;
     preferred-height: 700px;
     min-width: 760px;
@@ -13,12 +13,16 @@ export component LinkedPathWindow inherits Window {
     in-out property <bool> closed;
     in-out property <[LinkedPathPoint]> points;
     in property <bool> editable: true;
+    in property <bool> existing;
+    in property <bool> can-load;
     in property <bool> can-preview;
     in property <bool> can-review;
     in property <bool> ready;
     in property <string> preview-status;
     in property <string> message;
     callback edited();
+    callback load-selected();
+    callback new-path();
     callback add-point();
     callback remove-point(int);
     callback move-point(int, int);
@@ -32,15 +36,21 @@ export component LinkedPathWindow inherits Window {
         VerticalLayout {
             padding: 20px;
             spacing: 12px;
-            Text { text: "Create linked path"; font-size: 24px; font-weight: 600; }
-            Text { text: "Place ordered point entities and link each target to the next name."; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: root.existing ? "Edit linked path" : "Create linked path"; font-size: 24px; font-weight: 600; }
+            Text { text: root.existing ? "Reorder or reposition existing nodes. Names, IDs and other properties stay with each node." : "Place ordered point entities and link each target to the next name."; color: #b6c1cf; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Load selected path"; enabled: root.can-load; clicked => { root.load-selected(); } }
+                if root.existing: Button { text: "New path"; enabled: root.can-preview; clicked => { root.new-path(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
             HorizontalLayout {
                 spacing: 14px;
                 VerticalLayout {
                     spacing: 5px;
                     Text { text: "Class"; font-weight: 600; }
                     ComboBox {
-                        enabled: root.editable;
+                        enabled: root.editable && !root.existing;
                         model: ["path_corner", "path_track"];
                         current-index <=> root.class-index;
                         accessible-label: "Class";
@@ -52,14 +62,15 @@ export component LinkedPathWindow inherits Window {
                     spacing: 5px;
                     Text { text: "Name prefix"; font-weight: 600; }
                     LineEdit {
-                        enabled: root.editable;
+                        enabled: root.editable && !root.existing;
+                        placeholder-text: root.existing ? "Existing names stay unchanged" : "Name prefix";
                         text <=> root.prefix;
                         accessible-label: "Name prefix";
                         edited => { root.edited(); }
                     }
                 }
                 CheckBox {
-                    enabled: root.editable;
+                    enabled: root.editable && !root.existing;
                     text: "Closed loop";
                     checked <=> root.closed;
                     toggled => { root.edited(); }
@@ -117,14 +128,15 @@ export component LinkedPathWindow inherits Window {
                                     }
                                     Button { text: "↑"; accessible-label: "Move up"; width: 36px; enabled: root.editable && index > 0; clicked => { root.move-point(index, -1); } }
                                     Button { text: "↓"; accessible-label: "Move down"; width: 36px; enabled: root.editable && index + 1 < root.points.length; clicked => { root.move-point(index, 1); } }
-                                    Button { text: "Remove"; width: 130px; enabled: root.editable && root.points.length > 2; clicked => { root.remove-point(index); } }
+                                    Button { text: "Remove"; width: 130px; enabled: root.editable && !root.existing && root.points.length > 2; clicked => { root.remove-point(index); } }
                                 }
+                                if root.existing: Text { text: point.name + " · " + point.id; color: #d6deea; font-size: 12px; wrap: word-wrap; }
                                 if point.link != "": Text { text: point.link; color: #b6c1cf; font-size: 12px; wrap: word-wrap; }
                             }
                         }
                     }
                     HorizontalLayout {
-                        Button { text: "Add point"; enabled: root.editable && root.points.length < 64; clicked => { root.add-point(); } }
+                        Button { text: "Add point"; enabled: root.editable && !root.existing && root.points.length < 64; clicked => { root.add-point(); } }
                         Rectangle { horizontal-stretch: 1; }
                         Text { text: "2–64 points · ±65536 per axis"; color: #b6c1cf; vertical-alignment: center; }
                     }

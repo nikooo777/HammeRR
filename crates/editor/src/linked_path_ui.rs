@@ -9,7 +9,7 @@ use crate::{
     runtime::{SharedSession, lock},
     session::{
         Actor, Session,
-        linked_path::{MAX_POINTS, MIN_POINTS, Request},
+        linked_path::{EditRequest, ExistingNode, MAX_POINTS, MIN_POINTS, Request},
     },
 };
 
@@ -20,6 +20,7 @@ struct Form {
     generation: u64,
     owned_token: Option<u64>,
     dirty: bool,
+    existing_snapshot: Option<String>,
 }
 
 pub struct Controller {
@@ -43,6 +44,8 @@ fn point_row(point: DVec3, index: usize) -> LinkedPathPoint {
         y: source_formats::vmf::format_number(point.y).into(),
         z: source_formats::vmf::format_number(point.z).into(),
         link: Default::default(),
+        id: Default::default(),
+        name: Default::default(),
     }
 }
 
@@ -119,15 +122,24 @@ fn load_preview(window: &LinkedPathWindow, preview: &Value) -> Result<(), String
                 .ok_or(invalid)?;
             let target = match node.get("target") {
                 Some(Value::Null) => "end",
-                Some(Value::String(target)) if !target.is_empty() => target,
+                Some(Value::String(target)) => {
+                    if target.is_empty() {
+                        "end"
+                    } else {
+                        target
+                    }
+                }
                 _ => return Err(invalid.into()),
             };
             let mut row = point_row(DVec3::from_array(coordinates), index);
+            row.id = node["id"].as_str().ok_or(invalid)?.into();
+            row.name = name.into();
             row.link = format!("{name} → {target}").into();
             Ok(row)
         })
         .collect::<Result<Vec<_>, String>>()?;
     window.set_class_index(class_index);
+    window.set_existing(preview["existing"] == true);
     window.set_prefix(prefix.into());
     window.set_closed(closed);
     window.set_points(ModelRc::new(VecModel::from(rows)));
@@ -149,6 +161,7 @@ fn adopt_preview(
         .ok_or("Linked path preview has no token")?;
     form.borrow_mut().owned_token = Some(token);
     load_preview(window, preview)?;
+    form.borrow_mut().existing_snapshot = state["snapshot"].as_str().map(str::to_owned);
     form.borrow_mut().dirty = false;
     window.set_message("Review the ordered points and links before Apply.".into());
     Ok(())
@@ -165,6 +178,9 @@ fn refresh(window: &LinkedPathWindow, session: &Session, form: &RefCell<Form>) {
     let current = !preview.is_null() && preview["valid"] == true;
     let reviewed = token.is_some() && token == form.owned_token && user_owned;
     window.set_editable(editable);
+    window.set_can_load(
+        editable && session.selected_ids().len() == 1 && (preview.is_null() || user_owned),
+    );
     window.set_can_preview(editable && (preview.is_null() || user_owned));
     window.set_can_review(editable && current && (!reviewed || form.dirty));
     window.set_ready(editable && current && reviewed && !form.dirty);
@@ -184,13 +200,18 @@ fn refresh(window: &LinkedPathWindow, session: &Session, form: &RefCell<Form>) {
             "Settings changed. Preview again before applying.".into()
         } else {
             format!(
-                "{} linked {} entities · {} · Apply creates the path in one Undo step.",
+                "{} linked {} entities · {} · Apply {} the path in one Undo step.",
                 preview["points"].as_array().map_or(0, Vec::len),
                 preview["classname"].as_str().unwrap_or("path"),
                 if preview["closed"] == true {
                     "closed loop"
                 } else {
                     "open path"
+                },
+                if preview["existing"] == true {
+                    "updates"
+                } else {
+                    "creates"
                 }
             )
         }
@@ -217,6 +238,53 @@ impl Controller {
             .window()
             .set_size(slint::LogicalSize::new(840.0, 700.0));
         let form = Rc::new(RefCell::new(Form::default()));
+        window.on_load_selected({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                let window = window.unwrap();
+                let session = lock(&shared);
+                let result = (|| {
+                    if form.borrow().generation != session.document_generation() {
+                        return Err("Map changed; reopen Create linked path…".into());
+                    }
+                    let selected = session.selected_ids();
+                    let [map_core::ObjectId::Entity(id)] = selected.as_slice() else {
+                        return Err("Select one existing path_corner or path_track node".into());
+                    };
+                    let state = session.inspect_existing_linked_path(*id)?;
+                    load_preview(&window, &state)?;
+                    form.borrow_mut().existing_snapshot = state["snapshot"].as_str().map(str::to_owned);
+                    form.borrow_mut().dirty = true;
+                    window.set_message("Names, class and open/closed topology stay fixed. Move rows or edit coordinates, then Preview.".into());
+                    Ok::<_, String>(())
+                })();
+                if let Err(error) = result { window.set_message(error.into()); }
+                refresh(&window, &session, &form);
+            }
+        });
+        window.on_new_path({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                let window = window.unwrap();
+                window.set_existing(false);
+                window.set_prefix("path".into());
+                window.set_closed(false);
+                let rows = window
+                    .get_points()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, mut row)| {
+                        row.id = Default::default();
+                        row.name = Default::default();
+                        row.label = (index + 1).to_string().into();
+                        row
+                    })
+                    .collect();
+                set_rows(&window, rows);
+                form.borrow_mut().existing_snapshot = None;
+                edited(&window, &lock(&shared), &form);
+            }
+        });
         window.on_edited({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || edited(&window.unwrap(), &lock(&shared), &form)
@@ -225,6 +293,9 @@ impl Controller {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
                 let window = window.unwrap();
+                if window.get_existing() {
+                    return;
+                }
                 let mut rows = window.get_points().iter().collect::<Vec<_>>();
                 if rows.len() >= MAX_POINTS {
                     return;
@@ -255,6 +326,9 @@ impl Controller {
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move |index| {
                 let window = window.unwrap();
+                if window.get_existing() {
+                    return;
+                }
                 let mut rows = window.get_points().iter().collect::<Vec<_>>();
                 if rows.len() > MIN_POINTS && index >= 0 && (index as usize) < rows.len() {
                     rows.remove(index as usize);
@@ -291,8 +365,36 @@ impl Controller {
                         return Err("Map changed; reopen Create linked path…".into());
                     }
                     let request = request(&window)?;
-                    let snapshot = session.linked_path_stamp();
-                    session.preview_linked_path(Actor::User, request, &snapshot)
+                    if window.get_existing() {
+                        let nodes = window
+                            .get_points()
+                            .iter()
+                            .zip(request.points)
+                            .map(|(row, origin)| {
+                                let map_core::ObjectId::Entity(id) =
+                                    crate::identity::parse_id(&row.id)?
+                                else {
+                                    return Err(
+                                        "Existing path row has no entity ID; load it again".into(),
+                                    );
+                                };
+                                Ok(ExistingNode { id, origin })
+                            })
+                            .collect::<Result<Vec<_>, String>>()?;
+                        let snapshot = form
+                            .borrow()
+                            .existing_snapshot
+                            .clone()
+                            .ok_or("Load the existing path again")?;
+                        session.preview_existing_linked_path(
+                            Actor::User,
+                            EditRequest { nodes },
+                            &snapshot,
+                        )
+                    } else {
+                        let snapshot = session.linked_path_stamp();
+                        session.preview_linked_path(Actor::User, request, &snapshot)
+                    }
                 })();
                 if let Err(error) = result.and_then(|state| adopt_preview(&window, &state, &form)) {
                     window.set_message(error.into());
@@ -380,6 +482,7 @@ impl Controller {
                     -POINT_STEP
                 };
                 self.window.set_class_index(0);
+                self.window.set_existing(false);
                 self.window.set_prefix("path".into());
                 self.window.set_closed(false);
                 set_rows(

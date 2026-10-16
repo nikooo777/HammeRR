@@ -29,8 +29,9 @@ def validate(args):
     restarted = None
     try:
         schemas = {tool["name"]: tool["inputSchema"] for tool in source.rpc("tools/list", {})["tools"]}
-        tools = {"get_prefabs", "save_prefab", "preview_prefab", "delete_prefab"}
+        tools = {"get_prefabs", "save_prefab", "preview_prefab", "delete_prefab", "rename_prefab"}
         check(tools <= schemas.keys() and all(schemas[name].get("additionalProperties") is False for name in tools), "All shared prefab tools and strict settings are discoverable")
+        check({"position", "rotation", "scale", "pivot"} <= schemas["preview_prefab"]["properties"].keys(), "Prefab placement exposes world rotation, positive scale and an optional source pivot")
         brush = source.call("create_block", {"mins": [0, 0, 0], "maxs": [32, 32, 32], "material": "dev/dev_measuregeneric01"})["id"]
         parent = source.call("create_entity", {"classname": "info_target", "origin": [16, 16, 64], "properties": {"targetname": "prefab_anchor"}})["id"]
         child = source.call("create_entity", {"classname": "info_target", "origin": [48, 16, 64], "properties": {"targetname": "prefab_child", "parentname": "prefab_anchor"}})["id"]
@@ -64,6 +65,45 @@ def validate(args):
         source.call("select", {"ids": []})
         source.call("save_prefab", {"name": "Stale", "ids": ids, "snapshot": stale}, error=True)
         check(not (library / "Stale.vmf").exists(), "Changed selection rejects an old save request")
+        source.call("save_prefab", {"name": "Scale fixture", "ids": [brush], "snapshot": report(source)["snapshot"]})
+        scale_file = (library / "Scale fixture.vmf").read_bytes()
+        transformed = destination.call("preview_prefab", {"name": "Scale fixture", "snapshot": report(destination)["snapshot"], "position": [128, 64, 16], "rotation": [0, 0, 90], "scale": [2, 0.5, 1.25], "pivot": [8, 4, 0]})
+        bounds = transformed["paste"]["preview"]["bounds"]
+        check(all(abs(actual - expected) < 1e-6 for row, expected_row in zip(bounds, [[114, 48, 16], [130, 112, 56]], strict=True) for actual, expected in zip(row, expected_row, strict=True)), "Scale applies before world rotation and maps the custom source pivot to position")
+        check(transformed["prefab"]["placement"]["source_pivot"] == [8, 4, 0], "Placement report identifies the exact source pivot")
+        retained = destination.call("get_clipboard")
+        for changes in [{"scale": [0, 1, 1]}, {"scale": [-1, 1, 1]}, {"scale": [1e100, 1, 1]}, {"pivot": [70000, 0, 0]}, {"rotation": [70000, 0, 0]}]:
+            destination.call("preview_prefab", {"name": "Scale fixture", "snapshot": report(destination)["snapshot"], **changes}, error=True)
+            check(destination.call("get_clipboard") == retained, f"Invalid transform retains the owned preview: {changes}")
+        destination.call("preview_prefab", {"name": "Fixture assembly", "snapshot": report(destination)["snapshot"], "scale": [2, 2, 2]}, error=True)
+        check(destination.call("get_clipboard") == retained, "Point entities refuse nonidentity scale before replacing the clipboard or owned preview")
+        source.call("rename_prefab", {"name": "Scale fixture", "new_name": "fixture assembly", "snapshot": report(source)["snapshot"]}, error=True)
+        check((library / "Scale fixture.vmf").read_bytes() == scale_file and file.read_bytes() == content, "Rename collision preserves both prefab files byte for byte")
+        stale = report(source)["snapshot"]
+        source.call("rename_prefab", {"name": "Scale fixture", "new_name": "Renamed scale fixture", "snapshot": stale})
+        check(not (library / "Scale fixture.vmf").exists() and (library / "Renamed scale fixture.vmf").read_bytes() == scale_file, "Atomic rename preserves VMF identities and external asset paths")
+        source.call("rename_prefab", {"name": "Renamed scale fixture", "new_name": "Outdated rename", "snapshot": stale}, error=True)
+        check(not (library / "Outdated rename.vmf").exists(), "An old library snapshot cannot rename the refreshed entry")
+        invalidated = destination.call("get_clipboard")
+        check(not invalidated["preview"]["valid"] and "renamed" in invalidated["preview"]["stale_reason"], "Another Session's rename explicitly stales the existing Paste review")
+        destination.call("apply_paste", {"token": transformed["paste"]["preview"]["token"]}, error=True)
+        check(destination.call("get_map_info")["world_brushes"] == 0, "Stale renamed-source placement cannot edit the map")
+        transformed = destination.call("preview_prefab", {"name": "Renamed scale fixture", "snapshot": report(destination)["snapshot"], "position": [128, 64, 16], "rotation": [0, 0, 90], "scale": [2, 0.5, 1.25], "pivot": [8, 4, 0]})
+        scaled = destination.call("apply_paste", {"token": transformed["paste"]["preview"]["token"]})
+        scaled_objects = detail(destination, scaled["objects"])
+        check(destination.call("get_map_info")["world_brushes"] == 1 and (library / "Renamed scale fixture.vmf").read_bytes() == scale_file, "Transformed Apply inserts one assembly without changing the prefab VMF")
+        destination.call("undo")
+        check(destination.call("get_map_info")["world_brushes"] == 0, "One Undo removes the scaled assembly")
+        destination.call("redo")
+        check(detail(destination, scaled["objects"]) == scaled_objects, "Redo restores exact transformed geometry and generated identities")
+        destination.call("undo")
+        source.call("delete_prefab", {"name": "Renamed scale fixture", "snapshot": report(source)["snapshot"]})
+        spatial = source.call("create_entity", {"classname": "info_target", "origin": [0, 0, 0], "properties": {"movedir": "0 90 0"}})["id"]
+        source.call("save_prefab", {"name": "Spatial fixture", "ids": [spatial], "snapshot": report(source)["snapshot"]})
+        retained = destination.call("get_clipboard")
+        destination.call("preview_prefab", {"name": "Spatial fixture", "snapshot": report(destination)["snapshot"], "rotation": [0, 0, 90]}, error=True)
+        check(destination.call("get_clipboard") == retained, "Unsupported directional metadata refuses rotation without changing prior clipboard state")
+        source.call("delete_prefab", {"name": "Spatial fixture", "snapshot": report(source)["snapshot"]})
         destination.call("create_entity", {"classname": "info_target", "origin": [-128, 0, 16], "properties": {"targetname": "prefab_anchor"}})
         inspected = report(destination, query="fixture", selected="Fixture assembly")
         check(inspected["total"] == 1 and inspected["selected"]["objects"] == 3, "Independent sessions search and inspect the same library")
@@ -76,7 +116,7 @@ def validate(args):
         check(destination.call("get_map_info")["undo"] == previous["undo"] and destination.call("get_map_info")["world_brushes"] == previous["world_brushes"], "Prefab preview preserves map geometry and history")
         destination.call("cancel_paste", {"token": token})
         check(destination.call("get_map_info")["world_brushes"] == 0, "Shared Cancel discards prefab placement")
-        preview = destination.call("preview_prefab", {"name": "Fixture assembly", "position": target, "snapshot": report(destination)["snapshot"]})
+        preview = destination.call("preview_prefab", {"name": "Fixture assembly", "position": target, "rotation": [0, 0, 90], "pivot": [16, 16, 16], "snapshot": report(destination)["snapshot"]})
         applied = destination.call("apply_paste", {"token": preview["paste"]["preview"]["token"]})
         objects = detail(destination, applied["objects"])
         properties = [dict(obj.get("properties", [])) for obj in objects]

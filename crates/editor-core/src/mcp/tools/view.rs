@@ -3,6 +3,14 @@ use super::super::*;
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Inspect the shared Rope preview toggle, checked authored move_rope/keyframe_rope NextKey spans, static curve points, Slack/Width, bounded limits and link diagnostics. Enable through set_view.rope_preview or override one render_view. Neutral helper shading; no RopeMaterial fidelity, physics, collision, wind, runtime I/O, parenting or attachment binding. Clicking a span selects its source entity; endpoint helpers, area selection and framing remain available.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_rope_preview(&self) -> ToolResult {
+        ok(self.session().rope_preview_state())
+    }
+
+    #[tool(
         description = "Inspect shared Fog preview settings and all authored env_fog_controller choices, parsed parameters and visible errors. Defaults off; no automatic controller selection. Snapshot guards reviewed settings. Static initial view-depth range fog in perspective Textured views only; sky/helpers unchanged. No native parity, radial/directional blend, far-Z clipping, HDR/zoom scaling, water, fog-volume switching, runtime I/O or transitions.",
         annotations(read_only_hint = true)
     )]
@@ -168,7 +176,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set shared viewport visibility and mode in any projection: textured, flat, wireframe, lightmap_density or smoothing_groups. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. Helpers, selection and tool filters remain active. sky_preview resolves world skyname as six mounted LDR skybox faces on sky surfaces in perspective Textured views with Tool textures enabled; unavailable faces retain the tool surface. No 3D sky-camera transform, fog, HDR or material animation. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
+        description = "Set shared viewport visibility and mode in any projection: textured, flat, wireframe, lightmap_density or smoothing_groups. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. Helpers, selection and tool filters remain active. rope_preview shows bounded static authored NextKey rope spans with Slack/Width; inspect get_rope_preview for diagnostics and limits. No rope physics, parenting or attachment binding. sky_preview resolves world skyname as six mounted LDR skybox faces on sky surfaces in perspective Textured views with Tool textures enabled; unavailable faces retain the tool surface. No 3D sky-camera transform, fog, HDR or material animation. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
     )]
     pub(in crate::mcp) fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
@@ -188,6 +196,9 @@ impl EditorServer {
             }
             if let Some(sky) = args.sky_preview {
                 view.sky_preview = sky;
+            }
+            if let Some(rope) = args.rope_preview {
+                view.rope_preview = rope;
             }
             session.set_view(view);
             Ok(view_state(view))
@@ -258,6 +269,9 @@ impl EditorServer {
         if let Some(sky) = args.sky_preview {
             view.sky_preview = sky;
         }
+        if let Some(rope) = args.rope_preview {
+            view.rope_preview = rope;
+        }
         let mut fog_preview = {
             let session = self.session();
             let controller = match fog_controller_id(args.fog_controller.as_deref()) {
@@ -287,8 +301,9 @@ impl EditorServer {
         let material_reload = self.session().material_reload_report().cloned();
         let preview_issues = rendered.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
         let working_region = self.session().working_region_summary();
-        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "preview_issues":preview_issues, "material_reload":material_reload,
-            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "fog":fog_parameters(view), "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
+        let rope_preview = self.session().rope_preview_report(view.rope_preview);
+        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "preview_issues":preview_issues, "material_reload":material_reload,
+            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview, "rope_preview":view.rope_preview, "fog":fog_parameters(view), "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
                 "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),
@@ -323,7 +338,7 @@ impl EditorServer {
                 origin: origin.as_dvec3(),
                 direction: direction.as_dvec3(),
             };
-            let hit = session.pick(&ray);
+            let hit = session.pick_with_rope_preview(&ray, args.rope_preview);
             Ok(hit.map_or(json!({ "hit": null }), |hit| {
                 hit_json(session.render_document(), &hit)
             }))

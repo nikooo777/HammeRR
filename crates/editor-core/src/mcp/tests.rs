@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn rope_preview_parameters_share_view_render_and_pixel_pick_overrides() {
+    let args: SetViewArgs = serde_json::from_value(json!({"rope_preview":true})).unwrap();
+    assert_eq!(args.rope_preview, Some(true));
+    let args: RenderArgs = serde_json::from_value(json!({"rope_preview":false})).unwrap();
+    assert_eq!(args.rope_preview, Some(false));
+    let args: PickArgs =
+        serde_json::from_value(json!({"x":10,"y":20,"rope_preview":true})).unwrap();
+    assert_eq!(args.rope_preview, Some(true));
+    assert_eq!(view_state(ViewOptions::default())["rope_preview"], false);
+}
+
+#[test]
+fn prefab_rename_arguments_require_exact_names_and_a_fresh_snapshot() {
+    let args: RenamePrefabArgs =
+        serde_json::from_value(json!({"name":"Before","new_name":"After","snapshot":"1:2"}))
+            .unwrap();
+    assert_eq!(args.new_name, "After");
+    assert!(
+        serde_json::from_value::<RenamePrefabArgs>(json!({"name":"Before","new_name":"After"}))
+            .is_err()
+    );
+    assert!(
+        serde_json::from_value::<RenamePrefabArgs>(
+            json!({"name":"Before","new_name":"After","snapshot":"1:2","overwrite":true})
+        )
+        .is_err()
+    );
+    let schema = serde_json::to_value(schemars::schema_for!(RenamePrefabArgs)).unwrap();
+    assert_eq!(schema["additionalProperties"], false);
+}
+
+#[test]
+fn prefab_transform_arguments_are_optional_strict_and_discoverable() {
+    let args: PreviewPrefabArgs =
+        serde_json::from_value(json!({"name":"Assembly","snapshot":"1:2"})).unwrap();
+    assert!(
+        args.position.is_none()
+            && args.rotation.is_none()
+            && args.scale.is_none()
+            && args.pivot.is_none()
+    );
+    let args: PreviewPrefabArgs = serde_json::from_value(json!({"name":"Assembly","snapshot":"1:2","position":[128,64,16],"rotation":[0,0,90],"scale":[2,0.5,1.25],"pivot":[8,4,0]})).unwrap();
+    assert_eq!(args.scale, Some([2.0, 0.5, 1.25]));
+    assert_eq!(args.pivot, Some([8.0, 4.0, 0.0]));
+    assert!(
+        serde_json::from_value::<PreviewPrefabArgs>(
+            json!({"name":"Assembly","snapshot":"1:2","reflection":true})
+        )
+        .is_err()
+    );
+    let schema = serde_json::to_value(schemars::schema_for!(PreviewPrefabArgs)).unwrap();
+    assert_eq!(schema["additionalProperties"], false);
+    for name in ["position", "rotation", "scale", "pivot"] {
+        assert!(schema["properties"].get(name).is_some());
+    }
+}
+
+#[test]
 fn fog_preview_parameters_require_review_and_entity_controller_ids() {
     let args: FogPreviewArgs =
         serde_json::from_value(json!({"enabled":true,"controller":"entity:12","snapshot":"1:2:3"}))

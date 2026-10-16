@@ -44,6 +44,11 @@ fn range(data: &[u8], start: usize, length: usize) -> io::Result<Range<usize>> {
 }
 
 pub(super) fn name(name: &str, limits: PakLimits) -> io::Result<()> {
+    if name.eq_ignore_ascii_case("__preload_section.pre") {
+        return Err(invalid(
+            "PAK native preload metadata cannot be preserved by canonical repacking",
+        ));
+    }
     if name.is_empty()
         || name.len() > limits.max_name_bytes
         || name.len() > u16::MAX as usize

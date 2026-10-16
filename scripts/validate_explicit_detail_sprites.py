@@ -106,7 +106,7 @@ def validate_controls(client, args, ids, sprites, source, saved, data, expected)
         _, repeated, _ = compile_pair(client, args.output, f"{name}-repeated", ids)
         require(repeated == compiled and variant_source.read_bytes() == variant_saved, "Explicit controls changed deterministic output or saved source")
         variants[name] = {"bsp": str(bsp), "bsp_sha256": probe.digest(compiled), "count": len(expected), "orientation": orientation, "kind": kind, "scale": float(scale), "sway": encoded_sway, "saved_reopened": True}
-        client.call("open_map", {"path": str(source)})
+        client.call("open_map", {"path": str(source), "discard_changes": True})
         require(detail(client, ids) == authored, "Explicit control reset changed original source")
     previous = args.output / "control-rejected.bsp"
     previous.write_bytes(data)

@@ -1473,6 +1473,42 @@ or desktop input. The software panel test reads the shared summary and
 four-component color, and writes `source-projector-guide-inspector.png` when
 `HAMMERR_UI_SNAPSHOTS` names an existing directory.
 
+### Evaluated FGD frustum guides
+
+```sh
+cargo test -p map-core --lib entity_helpers::frustums
+cargo test -p editor-core --features mcp --lib session::fgd_helpers::frustums
+cargo test -p editor --bin editor fgd_frustum_panel_shares_evaluated_pitch_default_provenance_and_failures_without_authoring
+python3 -B scripts/validate_fgd_frustums.py --binary target/debug/hammerr-headless --output /tmp/hammerr-fgd-frustums-check
+```
+
+Pure and Session fixtures cover the installed Hammer2009 transform, raw pitch
+scaling before angle reduction, omitted bindings/default scale, strict types,
+malformed/missing values, binding aliases/caps, native precision, declaration
+and scene budgets, visibility, previews and Source projector coexistence.
+The software panel test reads evaluated pitch/default/error summaries and
+writes `fgd-frustum-guide-inspector.png` when `HAMMERR_UI_SNAPSHOTS` names an
+existing directory.
+
+The private stdio script computes independent scalar X/Y/Z rotation products
+for nonzero yaw/roll and raw pitch 450.5 with scale 0.5. Actual Top, Front, Side
+and perspective PNGs compare no-helper controls and independently projected
+CPU edge samples. It checks zero-to-five-argument forms, readonly/default
+provenance, nominal FOV boundaries without clamp substitution, RGB/intensity,
+79/80-byte bindings, errors, omissions, preview cancellation and unchanged
+ordinary bounds, picks, volume selection, framing, camera, saved source and
+history. Equal Source geometry has explicit shared presentation and pixel
+parity; nonidentical or unavailable Source branches retain precedence without
+a generic bypass. The original Source report remains independent.
+
+Use a fresh output directory and a graphics adapter; optional `--gameinfo`
+selects mounted content. `results.json` records reports, independent corners,
+projected-edge measurements, image hashes/cameras and a saved-source hash.
+Pure reads retain complete current history; authored reversible controls
+compare restored fields and Undo count separately from their changed redo
+branch. The script launches no game or desktop input and makes no native
+projected-light or universal Hammer++ claim.
+
 ### Literal FGD icon sprites
 
 ```sh

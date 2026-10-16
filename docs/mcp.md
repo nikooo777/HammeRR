@@ -401,7 +401,7 @@ precedence. Invalid/ambiguous size declarations expose an amber marker and
 `invalid_fgd_size`; working-region bounds remain unresolved with an explicit
 error. Picking, framing, area/volume selection and placement use the same valid
 bounds. Helper forms outside the box/color, property-sphere, literal-line,
-literal-icon and literal-model scopes remain listed and unevaluated. Catalog source
+literal-icon, literal-model and admitted frustum scopes remain listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history.
 
@@ -541,13 +541,15 @@ The human summary identifies defaults and warns that engine defaults may
 differ. RGB colors the guide; intensity is reported without opacity or exposure
 conversion, and RGB edits preserve an omitted fourth component.
 
-`helper_pitch_scale_evaluated` remains false. `helper_pitch_scales` retains up to
+Within `helpers.source_projector`, `helper_pitch_scale_evaluated` remains false.
+`helper_pitch_scales` retains up to
 sixteen FGD `frustum()` declarations, with `argument_count`, `declaration_state`
 (`declared_unevaluated` for five arguments, otherwise `unsupported_helper_form`),
 the fifth argument's `raw`/`raw_truncated`, and `evaluated:false`.
 `omitted_helper_declarations` counts additional declarations. Changing this
 unevaluated argument changes inspection metadata without changing Source guide
-geometry. This feature does not evaluate generic FGD frusta.
+geometry. The independent Source orientation does not consume FGD pitch scale;
+`helpers.frustums` evaluates admitted FGD declarations separately.
 
 `helpers.projector_limits` describes the admission and display caps: at most
 128 displayed projectors in entity-ID order, 256-byte values and helper
@@ -562,6 +564,60 @@ precedence. Intrinsic state remains separate from suppression. Guide extents
 never change object bounds, picking, selection, placement, framing or working
 regions, and read/render operations preserve source, history and camera. The
 guide does not preview projected textures, lighting, shadows or runtime state.
+
+`get_entity_inspector.helpers.frustums` reports evaluated Hammer2009 FGD
+`frustum()` authoring guides through the same Session operations as the property
+panel, viewport and `render_view`. Existing `load_entity_definitions` and
+`set_entity_properties` reload declarations or edit bindings; no new tool or
+setting is added. Zero to five arguments are supported. Omitted first-four
+bindings are `_fov`, `_NearPlane`, `_FarPlane` and `_light`; omitted fifth
+`pitch_scale` is `1`. First-three bindings require declared `float`/`integer`
+properties, fourth `color255`. Origin is authored-only and angles require an
+`angle` declaration. Authored values precede labeled FGD defaults; absent
+values never acquire native constructor substitutes.
+
+Each row contains `declaration_index`, bounded `arguments`,
+`arguments_truncated`, `inputs`, `orientation_policy`, `pitch_scale_evaluated`,
+`pitch_scale`, `pitch_scale_source` (`helper_argument` or `helper_default`),
+`fov_degrees`, `near_z`, `far_z`, `color`, `intensity`, `origin`, raw `angles`,
+`effective_angles`, eight `corners`, potential `guide_bounds`, intrinsic `state`
+(`ready`, `invalid` or `unsupported`), `error`, `displayed`, `presentation` and
+`suppression_reason`. Inputs retain `property`, `property_type`, `raw`,
+`raw_truncated`, `value_source` (`authored`, `fgd_default` or `missing`) and
+per-input `error`. Parent `omitted_frustum_declarations` counts declarations
+beyond sixteen; `frustum_limits` gives the scope and resource limits.
+
+The proven authoring transform is
+`T(origin) · Rz(yaw) · Ry(-pitch_scale × raw_pitch) · Rx(roll)`.
+Scale multiplies raw pitch before angle reduction, including pitches beyond
+360°. Zero angles face +X. This is the installed Hammer2009 helper contract;
+it does not establish universal Hammer++ or native projection behavior.
+Fourth-component color intensity remains metadata, independently of RGB guide
+color and opacity.
+
+`presentation:"separate"` draws an eligible generic guide. An actually
+displayed Source projector with exactly equal corners/RGB yields
+`shared_with_source_projector`, reusing its one presentation. Ready FGD
+geometry on `env_projectedtexture` that cannot share reports
+`presentation:"suppressed"` and `source_projector_precedence`, including
+unavailable Source branches. The Source report and its orientation remain
+independent. Models, specialized lights/ropes/sprites, hidden/unselected
+sources and working-region exclusions retain explicit suppression reasons.
+
+Binding names require 1–79 UTF-8 bytes, must be distinct case-insensitively and
+cannot alias `origin` or `angles`. Literal scalar/RGB helper extensions and
+legacy `angle` are unsupported. Values/argument previews cap at 256 bytes;
+scale and its raw-pitch product must remain finite at native precision.
+Nominal FOV is 0.02–178 degrees inclusive, with 0 < near < far ≤ 65536.
+Corners must remain pairwise distinct and finite with nonzero native plane
+areas and coordinate offsets within ±65536 of the origin. Invalid inputs are
+never clamped or replaced. At most sixteen declarations per entity and 128
+displayed guides in entity-ID/declaration order are supported. Display requires
+a selected visible FGD point class. Displayed
+previews update geometry without changing ordinary object bounds, picking,
+selection, placement/contact, snapping, framing or working-region membership.
+Read/render operations preserve source, camera and history. The guides do not
+preview projected textures, lighting, shadows, parenting or runtime state.
 
 `get_entity_inspector.helpers.icon_sprite` reports a loaded class's literal FGD
 `iconsprite(material)` through the same Session inspection and scene operations

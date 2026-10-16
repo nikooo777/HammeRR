@@ -359,3 +359,90 @@ fn prefab_thumbnail_gpu_cache_refresh_and_source_changes_preserve_editor_state()
     assert_eq!(session.history_snapshot(), history);
     assert_eq!(session.camera(), camera);
 }
+
+#[test]
+fn thumbnail_point_helpers_share_fgd_geometry_color_and_reload_invalidation() {
+    let (mut session, _directory, _) = fixture();
+    session.set_definitions(
+        Actor::User,
+        source_formats::fgd::Catalog::parse(
+            "@BaseClass size(-24 -12 0, 40 20 72) color(12 34 56) = sized [] @PointClass base(sized) = sample []",
+        )
+        .unwrap(),
+    );
+    let point = session
+        .create_entity(
+            Actor::User,
+            "sample",
+            Some(DVec3::new(100.0, 200.0, 300.0)),
+            std::collections::BTreeMap::from([("angles".into(), "30 45 60".into())]),
+        )
+        .unwrap();
+    let stamp = session.prefab_report("", 0, 64, None)["snapshot"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    session
+        .save_prefab(Actor::User, "Sized helper", &[point], &stamp)
+        .unwrap();
+    let source = session.thumbnail_source("Sized helper").unwrap();
+    let document = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let prepared = session.prepare_prefab_thumbnail(&source).unwrap();
+    assert_eq!(prepared.mesh.stats.point_entities, 1);
+    assert_eq!(prepared.mesh.stats.brushes, 0);
+    assert_eq!(
+        geometry_bounds(&prepared.mesh).unwrap(),
+        (
+            Vec3::new(76.0, 188.0, 300.0),
+            Vec3::new(140.0, 220.0, 372.0)
+        )
+    );
+    assert_eq!(
+        prepared.report["bounds"],
+        json!([[76.0, 188.0, 300.0], [140.0, 220.0, 372.0]])
+    );
+    assert!(
+        prepared
+            .mesh
+            .vertices
+            .iter()
+            .all(|vertex| vertex.color[..3] == [12, 34, 56])
+    );
+    seed_cache(&session, "Sized helper");
+    session.set_definitions(
+        Actor::Agent,
+        source_formats::fgd::Catalog::parse(
+            "@PointClass size(-8 -4 0, 16 12 24) color(100 110 120) = sample []",
+        )
+        .unwrap(),
+    );
+    assert!(
+        session
+            .cached_prefab_thumbnail("Sized helper")
+            .unwrap()
+            .is_none()
+    );
+    let reloaded = session.prepare_prefab_thumbnail(&source).unwrap();
+    assert_eq!(
+        geometry_bounds(&reloaded.mesh).unwrap(),
+        (
+            Vec3::new(92.0, 196.0, 300.0),
+            Vec3::new(116.0, 212.0, 324.0)
+        )
+    );
+    assert!(
+        reloaded
+            .mesh
+            .vertices
+            .iter()
+            .all(|vertex| vertex.color[..3] == [100, 110, 120])
+    );
+    assert_eq!(
+        session.thumbnail_source("Sized helper").unwrap().text,
+        source.text
+    );
+    assert_eq!(session.document().vmf(), &document);
+    assert_eq!(session.history_snapshot(), history);
+    assert!(!session.prefabs.thumbnails.renderer.initialized());
+}

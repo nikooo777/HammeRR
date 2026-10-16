@@ -214,6 +214,7 @@ cargo test -p source-formats --lib bsp::detail_props::tests
 cargo test -p compiler --test detail_props
 python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-check
 python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-native-check --runtime
+python3 -B scripts/validate_material_details.py --output /tmp/hammerr-material-details-check --runtime
 ```
 
 The MCP check covers native model records, defaults, hidden omission, rejected
@@ -227,6 +228,14 @@ compositor dependencies. Override `--game-dir`, `--fgd` or `--port` as needed.
 an already checked BSP containing the same observer entity; `--fixture-game`
 copies its private materials. This mode checks records and runtime rendering,
 and explicitly does not repeat authored-source validation.
+
+`validate_material_details` authors a ground material/dictionary fixture through
+the existing world and face operations, checks deterministic generated records,
+rejections and source/history preservation, and optionally runs the same native
+detail ON/OFF observer. The native occluder check accepts
+`validate_occluder_runtime.py --union touching|overlapping --runtime`; add
+`--start-inactive` for the inverse initial state. Each run needs a fresh output
+directory and uses the shared private launch guards.
 
 ### Direct UV vectors
 

@@ -111,7 +111,10 @@ pending draft stale. Preview it again before applying.
   whole; disjoint helpers are omitted. Boundary crossings stop the build.
   Portal openings still need two sealed areas. Window render models must remain
   available, and occluders must satisfy their normal area and geometry limits.
-- Detail props, instances and visibility clusters require full-map builds. Retained slime,
+- [Material detail scattering](material-detail-scattering.md) uses the final clipped
+  exposed world/detail faces. Generated centers stay inside the region; models
+  can extend beyond it. Source brushes and their material assignments stay whole.
+- Explicit detail props, instances and visibility clusters require full-map builds. Retained slime,
   detail/model water and boundary-crossing water or terrain are also unsupported. These
   cases stop compilation and preserve prior output.
 - At most 16,384 source objects, 65,536 source sides and 128 sides per brush.

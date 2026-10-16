@@ -273,6 +273,11 @@ fn world_family(bsp: &Bsp, control: &Control) -> io::Result<String> {
                     "Packed sky entity key exceeds HammeRR's 2047-byte admission limit",
                 ));
             }
+            if key.eq_ignore_ascii_case("classname") && key != "classname" {
+                return Err(invalid(
+                    "Packed sky entity classname keys must use canonical lowercase spelling",
+                ));
+            }
             let trimmed = key.trim_end_matches(' ');
             if trimmed != key
                 && (trimmed.eq_ignore_ascii_case("classname")
@@ -283,9 +288,7 @@ fn world_family(bsp: &Bsp, control: &Control) -> io::Result<String> {
                 ));
             }
         }
-        let classes = block
-            .iter()
-            .filter(|(key, _)| key.eq_ignore_ascii_case("classname"));
+        let classes = block.iter().filter(|(key, _)| key == "classname");
         let class_values = classes.map(|(_, value)| value.as_str()).collect::<Vec<_>>();
         if class_values
             .iter()

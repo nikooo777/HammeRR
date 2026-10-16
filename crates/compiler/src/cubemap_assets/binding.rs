@@ -388,6 +388,7 @@ pub(crate) fn prepare(
             sha256: sha256.clone(),
         })
         .collect();
+    let missing_sources = graph.missing_sources.iter().cloned().collect();
     let mut entries = graph.into_entries();
     for sample in &samples {
         entries.push(PakEntry {
@@ -407,6 +408,7 @@ pub(crate) fn prepare(
             assignments,
             aliases,
             sources,
+            missing_sources,
             default_texture: None,
             texinfo_bindings: Vec::new(),
             face_bindings: Vec::new(),

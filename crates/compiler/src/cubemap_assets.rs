@@ -145,6 +145,8 @@ pub struct CubemapAssetManifest {
     pub assignments: Vec<CubemapAssignment>,
     pub aliases: Vec<CubemapAliasAsset>,
     pub sources: Vec<CubemapSourceAsset>,
+    #[serde(default)]
+    pub missing_sources: Vec<String>,
     pub default_texture: Option<CubemapSourceAsset>,
     pub texinfo_bindings: Vec<CubemapTexInfoBinding>,
     pub face_bindings: Vec<CubemapFaceBinding>,

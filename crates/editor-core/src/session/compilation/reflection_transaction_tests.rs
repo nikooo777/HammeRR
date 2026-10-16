@@ -245,6 +245,7 @@ fn backing_asset_replacement_after_preparation_rejects_publication() {
         samples: vec![],
         assignments: vec![],
         aliases: vec![],
+        missing_sources: vec![],
         default_texture: None,
         texinfo_bindings: vec![],
         face_bindings: vec![],

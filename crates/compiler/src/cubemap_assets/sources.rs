@@ -54,6 +54,23 @@ pub fn capture_reflection_source_guard(
         }
         capture_paths(&after, &mut stamps)?;
     }
+    for path in &manifest.missing_sources {
+        control.checkpoint().map_err(io::Error::other)?;
+        let before = game.asset_lookup_paths(path)?;
+        capture_paths(&before, &mut stamps)?;
+        if game.contains(path)? {
+            return Err(invalid(format!(
+                "Reflection model material candidate appeared before publication: {path}"
+            )));
+        }
+        let after = game.asset_lookup_paths(path)?;
+        if before != after {
+            return Err(invalid(format!(
+                "Reflection source resolution changed: {path}"
+            )));
+        }
+        capture_paths(&after, &mut stamps)?;
+    }
     let guard = ReflectionSourceGuard {
         stamps: stamps.into_values().collect(),
     };

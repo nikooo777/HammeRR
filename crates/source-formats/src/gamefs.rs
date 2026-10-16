@@ -489,9 +489,19 @@ impl GameFs {
     /// Resolve the same `game` asset as [`Self::read`], including higher-priority lookup dependencies.
     /// Changed VPK indexes and dangling lookup symlinks require a content reload.
     pub fn asset_source_paths(&self, path: &str) -> io::Result<Option<AssetSourcePaths>> {
+        let (found, sources) = self.asset_lookup(path)?;
+        Ok(found.then_some(sources))
+    }
+
+    /// Returns lookup dependencies even when the asset is absent.
+    pub fn asset_lookup_paths(&self, path: &str) -> io::Result<AssetSourcePaths> {
+        self.asset_lookup(path).map(|(_, sources)| sources)
+    }
+
+    fn asset_lookup(&self, path: &str) -> io::Result<(bool, AssetSourcePaths)> {
         let path = asset_relative(path)?;
         if path.is_empty() {
-            return Ok(None);
+            return Ok((false, AssetSourcePaths::default()));
         }
         let mut sources = AssetSourcePaths::default();
         for mounted in self
@@ -525,10 +535,11 @@ impl GameFs {
             };
             if found {
                 sources.finish();
-                return Ok(Some(sources));
+                return Ok((true, sources));
             }
         }
-        Ok(None)
+        sources.finish();
+        Ok((false, sources))
     }
 
     pub fn read_from_limited(

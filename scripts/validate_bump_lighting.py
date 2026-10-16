@@ -191,7 +191,8 @@ def fixture(args):
 
 
 def worker(args):
-    shutil.copytree(args.assets, args.output / "cstrike/materials", dirs_exist_ok=True)
+    private = runtime.private_game(args.game_dir.resolve(), args.output, args.bsp)
+    shutil.copytree(args.assets, private / "materials", dirs_exist_ok=True)
     args.capture_ppm = True
     runtime.OBSERVER = runtime.OBSERVER.replace(
         "setpos -64 -64 32; setang 25 45 0; mat_fullbright",

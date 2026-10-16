@@ -5,7 +5,7 @@ fn generated_detail_tint_preserves_skewed_sculpted_terrain_alpha_and_samples() {
     let mut fixture = fixture();
     let solid = add_scatter_terrain(&mut fixture, 3, 1);
     skew_terrain(&mut fixture.source, solid);
-    std::fs::write(fixture.directory.path().join("detail.vbsp"), "detail { tufts { density 8192 low { alpha 0 a { model models/props/test.mdl upright 1 } } high { alpha 1 b { model models/props/other.mdl upright 1 } } } }").unwrap();
+    std::fs::write(fixture.directory.path().join("detail.vbsp"), "detail { tufts { density 8192 low { alpha 0 a { model models/props/test.mdl upright 0 } } high { alpha 1 b { model models/props/other.mdl upright 0 } } } }").unwrap();
     let reference = compiled(&fixture.source, &fixture.game).bsp.unwrap();
     let original = reference.detail_props().unwrap().unwrap();
     assert!(original.props.iter().any(|prop| prop.model == 0));

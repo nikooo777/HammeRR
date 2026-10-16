@@ -269,6 +269,8 @@ fn validate_manifest(manifest: &CubemapAssetManifest) -> io::Result<()> {
         || manifest.aliases.len() > MAX_ALIASES
         || manifest.assignments.len() > MAX_ASSIGNMENT_WORK
         || manifest.sources.len() > 4096
+        || manifest.missing_sources.len() > 4096
+        || manifest.sources.len() + manifest.missing_sources.len() > 4096
         || manifest.texinfo_bindings.len() > i16::MAX as usize + 1
         || manifest.face_bindings.len() > 196_608
     {
@@ -363,6 +365,14 @@ fn validate_manifest(manifest: &CubemapAssetManifest) -> io::Result<()> {
             || !is_hash(&source.sha256)
         {
             return Err(invalid("Invalid reflection source-asset receipt"));
+        }
+    }
+    for path in &manifest.missing_sources {
+        if path.is_empty()
+            || asset_relative(path).map_err(|error| invalid(error.to_string()))? != *path
+            || !sources.insert(path)
+        {
+            return Err(invalid("Invalid missing reflection source-asset receipt"));
         }
     }
     Ok(())

@@ -60,19 +60,28 @@ impl Material {
     }
 
     pub fn load_limited(fs: &GameFs, name: &str, maximum: usize) -> Result<Option<Self>, Error> {
-        Self::load_depth(fs, &material_path(name), 0, maximum)
+        Self::load_with_reader(&material_path(name), &mut |path| {
+            fs.read_limited(path, maximum)
+        })
+    }
+
+    /// Loads a game-relative VMT path and its Patch includes through the reader.
+    pub fn load_with_reader(
+        path: &str,
+        read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
+    ) -> Result<Option<Self>, Error> {
+        Self::load_depth(&normalize(path), 0, read)
     }
 
     fn load_depth(
-        fs: &GameFs,
         path: &str,
         depth: usize,
-        maximum: usize,
+        read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
     ) -> Result<Option<Self>, Error> {
         if depth > MAX_PATCH_DEPTH {
             return Err(Error::PatchTooDeep);
         }
-        let Some(bytes) = fs.read_limited(path, maximum)? else {
+        let Some(bytes) = read(path)? else {
             return Ok(None);
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -87,7 +96,7 @@ impl Material {
             .find(|n| n.key.eq_ignore_ascii_case("include"))
             .and_then(Node::as_str)
             .ok_or(Error::NoShader)?;
-        let mut base = Self::load_depth(fs, &normalize(include), depth + 1, maximum)?
+        let mut base = Self::load_depth(&normalize(include), depth + 1, read)?
             .ok_or_else(|| Error::MissingInclude(include.to_owned()))?;
         for node in children {
             match (&node.value, node.key.to_ascii_lowercase().as_str()) {

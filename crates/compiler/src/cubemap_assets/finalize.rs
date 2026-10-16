@@ -264,6 +264,14 @@ pub fn verify_sources(
             )));
         }
     }
+    for path in &manifest.missing_sources {
+        control.checkpoint().map_err(io::Error::other)?;
+        if game.contains(path)? {
+            return Err(invalid(format!(
+                "Reflection model material candidate appeared before publication: {path}"
+            )));
+        }
+    }
     Ok(())
 }
 

@@ -62,8 +62,10 @@ pub(super) struct Graph<'a> {
     fs: &'a GameFs,
     control: &'a Control,
     materials: BTreeMap<String, Material>,
+    material_snapshots: BTreeMap<String, Vec<u8>>,
     reflective: BTreeMap<String, bool>,
     pub sources: BTreeMap<String, String>,
+    pub missing_sources: BTreeSet<String>,
     source_bytes: usize,
     pub entries: BTreeMap<String, Vec<u8>>,
     pub aliases: BTreeMap<String, CubemapAliasAsset>,
@@ -75,8 +77,10 @@ impl<'a> Graph<'a> {
             fs,
             control,
             materials: BTreeMap::new(),
+            material_snapshots: BTreeMap::new(),
             reflective: BTreeMap::new(),
             sources: BTreeMap::new(),
+            missing_sources: BTreeSet::new(),
             source_bytes: 0,
             entries: BTreeMap::new(),
             aliases: BTreeMap::new(),
@@ -123,32 +127,7 @@ impl<'a> Graph<'a> {
                     format!("entity:{}: reflection model {path}: {error}", entity.id)
                 })?;
             for name in &parsed.materials {
-                let mut found = false;
-                for candidate in parsed
-                    .material_directories
-                    .iter()
-                    .map(|directory| {
-                        if directory.is_empty() {
-                            name.clone()
-                        } else {
-                            format!("{directory}/{name}")
-                        }
-                    })
-                    .chain(std::iter::once(name.clone()))
-                {
-                    let candidate = material_name(&candidate)?;
-                    if self
-                        .fs
-                        .read_limited(&vmt::material_path(&candidate), MAX_MATERIAL_BYTES)
-                        .map_err(|error| error.to_string())?
-                        .is_some()
-                    {
-                        self.needs_alias(&candidate)?;
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
+                if !self.record_model_material(name, &parsed.material_directories)? {
                     return Err(format!(
                         "entity:{}: reflection model material was not found: {name}",
                         entity.id
@@ -170,6 +149,33 @@ impl<'a> Graph<'a> {
         Ok(())
     }
 
+    fn record_model_material(
+        &mut self,
+        name: &str,
+        directories: &[String],
+    ) -> Result<bool, String> {
+        for candidate in directories
+            .iter()
+            .map(|directory| {
+                if directory.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{directory}/{name}")
+                }
+            })
+            .chain(std::iter::once(name.to_owned()))
+        {
+            let candidate = material_name(&candidate)?;
+            let path = vmt::material_path(&candidate);
+            if self.record_material(&path)?.is_some() {
+                self.needs_alias(&candidate)?;
+                return Ok(true);
+            }
+            self.record_missing(&path)?;
+        }
+        Ok(false)
+    }
+
     fn record(&mut self, path: &str, maximum: usize) -> Result<Vec<u8>, String> {
         self.control.checkpoint()?;
         let bytes = self
@@ -177,7 +183,50 @@ impl<'a> Graph<'a> {
             .read_limited(path, maximum)
             .map_err(|error| format!("{path}: {error}"))?
             .ok_or_else(|| format!("Reflection dependency was not found: {path}"))?;
-        let digest = hash(&bytes);
+        self.record_bytes(path, &bytes)?;
+        Ok(bytes)
+    }
+
+    fn record_material(&mut self, path: &str) -> Result<Option<Vec<u8>>, String> {
+        if let Some(bytes) = self.material_snapshots.get(path) {
+            return Ok(Some(bytes.clone()));
+        }
+        self.control.checkpoint()?;
+        let Some(bytes) = self
+            .fs
+            .read_limited(path, MAX_MATERIAL_BYTES)
+            .map_err(|error| format!("{path}: {error}"))?
+        else {
+            return Ok(None);
+        };
+        self.record_bytes(path, &bytes)?;
+        self.material_snapshots
+            .insert(path.to_owned(), bytes.clone());
+        Ok(Some(bytes))
+    }
+
+    fn record_missing(&mut self, path: &str) -> Result<(), String> {
+        if self.sources.contains_key(path) {
+            return Err(format!(
+                "Reflection source disappeared while preparing the build: {path}"
+            ));
+        }
+        if !self.missing_sources.contains(path) {
+            if self.sources.len() + self.missing_sources.len() >= 4096 {
+                return Err("Reflection dependency source budget exceeded".into());
+            }
+            self.missing_sources.insert(path.to_owned());
+        }
+        Ok(())
+    }
+
+    fn record_bytes(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        if self.missing_sources.contains(path) {
+            return Err(format!(
+                "Reflection source appeared while preparing the build: {path}"
+            ));
+        }
+        let digest = hash(bytes);
         if let Some(old) = self.sources.get(path) {
             if *old != digest {
                 return Err(format!(
@@ -189,12 +238,14 @@ impl<'a> Graph<'a> {
                 .source_bytes
                 .checked_add(bytes.len())
                 .ok_or("Reflection source byte count overflow")?;
-            if self.source_bytes > MAX_GENERATED_BYTES || self.sources.len() >= 4096 {
+            if self.source_bytes > MAX_GENERATED_BYTES
+                || self.sources.len() + self.missing_sources.len() >= 4096
+            {
                 return Err("Reflection dependency source budget exceeded".into());
             }
             self.sources.insert(path.to_owned(), digest);
         }
-        Ok(bytes)
+        Ok(())
     }
 
     fn record_patch_chain(
@@ -208,7 +259,9 @@ impl<'a> Graph<'a> {
                 "Reflection material include cycle/depth exceeded: {path}"
             ));
         }
-        let bytes = self.record(path, MAX_MATERIAL_BYTES)?;
+        let bytes = self
+            .record_material(path)?
+            .ok_or_else(|| format!("Reflection dependency was not found: {path}"))?;
         let text = std::str::from_utf8(&bytes).map_err(|error| format!("{path}: {error}"))?;
         bound_text(text)?;
         let nodes = keyvalues::parse_lenient(text.trim_start_matches('\u{feff}'))
@@ -227,9 +280,11 @@ impl<'a> Graph<'a> {
                 .ok_or("Patch material has no include")?;
             let include = asset_relative(include).map_err(|error| error.to_string())?;
             self.record_patch_chain(&include, depth + 1, active)?;
-            let base = Material::load_limited(self.fs, &include, MAX_MATERIAL_BYTES)
-                .map_err(|error| format!("{path}: {error}"))?
-                .ok_or_else(|| format!("Patch include was not found: {include}"))?;
+            let base = Material::load_with_reader(&include, &mut |path| {
+                Ok(self.material_snapshots.get(path).cloned())
+            })
+            .map_err(|error| format!("{path}: {error}"))?
+            .ok_or_else(|| format!("Patch include was not found: {include}"))?;
             let mut values: BTreeMap<_, _> = base.params.into_iter().collect();
             for edit in shader.children().unwrap().iter().filter(|node| {
                 node.key.eq_ignore_ascii_case("replace") || node.key.eq_ignore_ascii_case("insert")
@@ -267,9 +322,11 @@ impl<'a> Graph<'a> {
             return Ok(material.clone());
         }
         self.record_patch_chain(&vmt::material_path(name), 0, &mut BTreeSet::new())?;
-        let material = Material::load_limited(self.fs, name, MAX_MATERIAL_BYTES)
-            .map_err(|error| format!("{name}: {error}"))?
-            .ok_or_else(|| format!("Reflection material was not found: {name}"))?;
+        let material = Material::load_with_reader(&vmt::material_path(name), &mut |path| {
+            Ok(self.material_snapshots.get(path).cloned())
+        })
+        .map_err(|error| format!("{name}: {error}"))?
+        .ok_or_else(|| format!("Reflection material was not found: {name}"))?;
         for (key, value) in strings(&material_nodes(&material)) {
             if texture_parameter(key)
                 && !value.trim().is_empty()
@@ -663,3 +720,6 @@ fn rewrite_nodes(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

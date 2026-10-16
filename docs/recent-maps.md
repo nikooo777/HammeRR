@@ -39,9 +39,10 @@ The equivalent MCP calls are `get_recent_maps`, `open_recent_map`,
 
 - The list retains twenty maps. Each absolute UTF-8 path fits in 4096 bytes, and
   preferences fit in a 192 KiB regular file.
-- Build context includes lighting, physics, sky quality, visibility, bounce count
-  and smoothing angle. Game content and custom FGD files do not switch
-  automatically. A different mounted game keeps the current build settings and
+- Build context includes lighting, physics, sky quality, visibility, bounce count,
+  smoothing angle, **Generate reflections** and **Pack sky assets**. Missing
+  booleans in older records default to off. Game content and custom FGD files do
+  not switch automatically. A different mounted game keeps the current build settings and
   retains the original entry's context until you explicitly change settings or
   save the map. Active compiles keep their current settings; reopen after the
   compile finishes to restore retained values.

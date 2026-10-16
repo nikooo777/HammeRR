@@ -20,6 +20,108 @@ fn fixture(actor: Actor) -> (tempfile::TempDir, Session, u32) {
     };
     (directory, session, id)
 }
+
+#[test]
+fn entity_images_off_defers_admission_and_retains_cached_failures_until_reload() {
+    for actor in [Actor::User, Actor::Agent] {
+        let (directory, mut session, id) = fixture(actor);
+        let path = directory.path().join("materials/test/icon.vmt");
+        let healthy = std::fs::read(&path).unwrap();
+        std::fs::write(&path, b"invalid icon before admission").unwrap();
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let serial = session.scene_serial();
+        session.set_view(render::ViewOptions {
+            entity_images: false,
+            ..session.view()
+        });
+        let report = session
+            .entity_helper_report(id)
+            .unwrap()
+            .icon_sprite
+            .unwrap();
+        assert!(!report.displayed);
+        assert_eq!(report.suppression_reason, Some("view_disabled"));
+        assert!(report.source.is_none());
+        let ordinary = session.build_scene();
+        assert!(ordinary.icons.is_empty());
+        assert_eq!(ordinary.vertices.len(), 24);
+        std::fs::write(&path, &healthy).unwrap();
+        session.set_view(render::ViewOptions {
+            entity_images: true,
+            ..session.view()
+        });
+        assert!(
+            session
+                .entity_helper_report(id)
+                .unwrap()
+                .icon_sprite
+                .unwrap()
+                .displayed
+        );
+        let shared = session.view();
+        let temporary = session.build_scene_for_view(render::ViewOptions {
+            entity_images: false,
+            ..shared
+        });
+        assert!(temporary.icons.is_empty());
+        assert_eq!(session.view(), shared);
+        assert_eq!(session.scene_serial(), serial);
+        std::fs::write(&path, b"invalid icon after reload").unwrap();
+        session.reload_material_assets(actor);
+        assert_eq!(
+            session
+                .entity_helper_report(id)
+                .unwrap()
+                .icon_sprite
+                .unwrap()
+                .status,
+            "unavailable"
+        );
+        std::fs::write(&path, healthy).unwrap();
+        for enabled in [false, false, true] {
+            session.set_view(render::ViewOptions {
+                entity_images: enabled,
+                ..session.view()
+            });
+        }
+        assert_eq!(
+            session
+                .entity_helper_report(id)
+                .unwrap()
+                .icon_sprite
+                .unwrap()
+                .status,
+            "unavailable"
+        );
+        session.reload_material_assets(actor);
+        assert!(
+            session
+                .entity_helper_report(id)
+                .unwrap()
+                .icon_sprite
+                .unwrap()
+                .displayed
+        );
+        session.set_view(render::ViewOptions {
+            entity_images: false,
+            ..session.view()
+        });
+        session.set_definitions(
+            actor,
+            Catalog::parse("@PointClass iconsprite() = sample []").unwrap(),
+        );
+        let unsupported = session
+            .entity_helper_report(id)
+            .unwrap()
+            .icon_sprite
+            .unwrap();
+        assert_eq!(unsupported.status, "unsupported");
+        assert!(unsupported.error.is_some() && !unsupported.displayed);
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+    }
+}
 #[test]
 fn ready_icon_replaces_only_box_fill_and_keeps_shared_bounds_picks_and_history() {
     for actor in [Actor::User, Actor::Agent] {

@@ -49,6 +49,7 @@ impl Session {
         document: &Document,
         evaluation: &Evaluation,
         inspected: Option<u32>,
+        enabled: bool,
     ) -> BTreeMap<u32, (Report, Option<Instance>)> {
         let mut rows = BTreeMap::new();
         let mut preceding_assets = Vec::new();
@@ -156,6 +157,8 @@ impl Session {
                     origin.is_finite() && origin.abs().max_element() <= MAX_HELPER_EXTENT
                 }) {
                     Some("invalid_origin")
+                } else if !enabled {
+                    Some("view_disabled")
                 } else if evaluated >= MAX_GUIDES {
                     Some("scene_model_limit")
                 } else {
@@ -230,17 +233,26 @@ impl Session {
     pub(super) fn inspected_fgd_model(&self, id: u32) -> Option<Report> {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        self.fgd_model_rows(document, &evaluation, Some(id))
-            .remove(&id)
-            .map(|(report, _)| report)
+        self.fgd_model_rows(
+            document,
+            &evaluation,
+            Some(id),
+            self.view().entity_model_guides,
+        )
+        .remove(&id)
+        .map(|(report, _)| report)
     }
 
     pub(in crate::session) fn fgd_model_guides(
         &self,
         document: &Document,
         evaluation: &Evaluation,
+        enabled: bool,
     ) -> Vec<Instance> {
-        self.fgd_model_rows(document, evaluation, None)
+        if !enabled {
+            return Vec::new();
+        }
+        self.fgd_model_rows(document, evaluation, None, enabled)
             .into_values()
             .filter_map(|(_, instance)| instance)
             .collect()

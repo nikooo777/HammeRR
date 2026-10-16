@@ -16,7 +16,7 @@ pub mod sky;
 pub use camera::{Camera, Projection};
 pub use gpu::{
     AreaGuide, COLOR_FORMAT, ClipGuide, GpuContext, GpuScene, PaintGuide, RenderTarget, Renderer,
-    SurfaceView, ViewOptions,
+    SceneKey, SurfaceView, ViewOptions,
 };
 pub use materials::{MaterialId, MaterialLibrary};
 pub use scene::SceneMesh;

@@ -24,7 +24,7 @@ fn hdr_sky_view_requests_validate_atomically_before_graphics_and_preserve_source
     assert_eq!(view_state(default)["sky_exposure_ev"], 0.0);
     for args in [
         json!({"sky_channel":"auto","surface":"flat"}),
-        json!({"sky_channel":"hdr","sky_exposure_ev":8.01,"tool_textures":false}),
+        json!({"sky_channel":"hdr","sky_exposure_ev":8.01,"tool_textures":false,"entity_images":false,"entity_model_guides":false}),
         json!({"sky_exposure_ev":-8.01,"selection_outlines":false}),
     ] {
         let changed = server

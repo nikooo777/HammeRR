@@ -187,7 +187,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set shared viewport visibility and mode in any projection: textured, flat, wireframe, lightmap_density or smoothing_groups. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. selection_outlines defaults on and controls selected object/face edges, marker outlines, model brackets and rope centerlines while preserving surfaces, selection tint, picking and diagnostic/tool guides. Helpers, selection and tool filters remain active. rope_preview shows bounded static authored NextKey rope spans with Slack/Width; inspect get_rope_preview for diagnostics and limits. No rope physics, parenting or attachment binding. sky_preview resolves world skyname as six mounted skybox faces selected by sky_channel (ldr default or explicit hdr), with sky_exposure_ev -8..8 applying only to HDR under the documented linear/Reinhard editor policy. This does not select game or build channels. The preview draws on sky surfaces in perspective Textured views with Tool textures enabled; unavailable faces retain the tool surface. No 3D sky-camera transform, fog or material animation; unavailable HDR never falls back to LDR. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
+        description = "Set shared viewport visibility and mode in any projection: textured, flat, wireframe, lightmap_density or smoothing_groups. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. selection_outlines defaults on and controls selected object/face edges, marker outlines, model brackets and rope centerlines while preserving surfaces, selection tint, picking and diagnostic/tool guides. entity_images and entity_model_guides default on and control only literal FGD icon images and studio/studioprop editor meshes. Off retains ordinary editable boxes and defers guide asset reads; authored models, lights, ropes and other guides remain independent. Pure resource visibility preserves pending reviews. Helpers, selection and tool filters remain active. rope_preview shows bounded static authored NextKey rope spans with Slack/Width; inspect get_rope_preview for diagnostics and limits. No rope physics, parenting or attachment binding. sky_preview resolves world skyname as six mounted skybox faces selected by sky_channel (ldr default or explicit hdr), with sky_exposure_ev -8..8 applying only to HDR under the documented linear/Reinhard editor policy. This does not select game or build channels. The preview draws on sky surfaces in perspective Textured views with Tool textures enabled; unavailable faces retain the tool surface. No 3D sky-camera transform, fog or material animation; unavailable HDR never falls back to LDR. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
     )]
     pub(in crate::mcp) fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
@@ -213,6 +213,12 @@ impl EditorServer {
             }
             if let Some(outlines) = args.selection_outlines {
                 view.selection_outlines = outlines;
+            }
+            if let Some(images) = args.entity_images {
+                view.entity_images = images;
+            }
+            if let Some(guides) = args.entity_model_guides {
+                view.entity_model_guides = guides;
             }
             let view = session.sky_preview_options(
                 view,
@@ -302,6 +308,12 @@ impl EditorServer {
         if let Some(outlines) = args.selection_outlines {
             view.selection_outlines = outlines;
         }
+        if let Some(images) = args.entity_images {
+            view.entity_images = images;
+        }
+        if let Some(guides) = args.entity_model_guides {
+            view.entity_model_guides = guides;
+        }
         let mut fog_preview = {
             let session = self.session();
             let controller = match fog_controller_id(args.fog_controller.as_deref()) {
@@ -333,7 +345,7 @@ impl EditorServer {
         let working_region = self.session().working_region_summary();
         let rope_preview = self.session().rope_preview_report(view.rope_preview);
         let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "fog_preview":fog_preview, "rope_preview":rope_preview, "preview_issues":preview_issues, "material_reload":material_reload,
-            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev, "rope_preview":view.rope_preview, "selection_outlines":view.selection_outlines, "fog":fog_parameters(view), "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
+            "view": { "tool_textures": view.tool_textures, "sky_preview":view.sky_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev, "rope_preview":view.rope_preview, "selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"entity_model_guides":view.entity_model_guides, "fog":fog_parameters(view), "leak_path": view.leak_path, "surface": view.surface.name(), "smoothing_group": view.smoothing_group,
                 "grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
                 "block_preview": view.block_preview.map(|bounds| bounds.map(|point| point.to_array())),

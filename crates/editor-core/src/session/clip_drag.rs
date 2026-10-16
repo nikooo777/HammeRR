@@ -695,4 +695,23 @@ mod tests {
         update(&mut s, token, 30.0);
         assert_eq!(result, s.clip_preview().unwrap().plane);
     }
+    #[test]
+    fn resource_visibility_and_noop_requests_preserve_active_clip_drag() {
+        let mut session = fixture();
+        let token = begin(&mut session, Handle::X);
+        update(&mut session, token, 16.0);
+        let document = session.render_document().vmf().clone();
+        let serial = session.scene_serial();
+        for enabled in [false, false, true] {
+            session.set_view(render::ViewOptions {
+                entity_images: enabled,
+                entity_model_guides: enabled,
+                ..session.view()
+            });
+            assert_eq!(session.clip_drag().unwrap().token, token);
+            assert_eq!(session.render_document().vmf(), &document);
+            assert_eq!(session.scene_serial(), serial);
+        }
+        session.cancel_clip_drag(token).unwrap();
+    }
 }

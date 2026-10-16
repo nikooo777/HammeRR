@@ -19,6 +19,44 @@ fn session() -> Option<(Session, u32)> {
 }
 
 #[test]
+fn resource_visibility_preserves_model_choice_and_property_review_tokens() {
+    let mut session = Session::new(Err("no assets needed".into()));
+    let ObjectId::Entity(id) = session
+        .create_entity(
+            Actor::Agent,
+            "prop_dynamic",
+            Some(DVec3::ZERO),
+            BTreeMap::from([("model".into(), "".into())]),
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    session
+        .begin_property_edit(super::super::PropertyTarget::World)
+        .unwrap();
+    let token = session.begin_model_choice(id).unwrap()["token"]
+        .as_u64()
+        .unwrap();
+    let choice = session.model_choice(token).unwrap();
+    let property = json!(session.property_draft());
+    let source = session.document().vmf().clone();
+    let serial = session.scene_serial();
+    for enabled in [false, false, true] {
+        session.set_view(render::ViewOptions {
+            entity_images: enabled,
+            entity_model_guides: enabled,
+            ..session.view()
+        });
+        assert_eq!(session.model_choice(token).unwrap(), choice);
+        assert_eq!(json!(session.property_draft()), property);
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.scene_serial(), serial);
+    }
+    session.cancel_model_choice(token).unwrap();
+}
+
+#[test]
 fn model_choices_catalog_preview_and_atomic_apply_preserve_the_active_scene() {
     for actor in [Actor::User, Actor::Agent] {
         let Some((mut session, id)) = session() else {

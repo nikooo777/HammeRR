@@ -21,6 +21,7 @@ impl Prepared {
 
 pub(super) fn prepare(vmf: &Vmf) -> Prepared {
     let mut prepared = Prepared::default();
+    let mut surfaces = map_core::displacement::surface::prepare(vmf);
     let mut world = Vec::new();
     let solids = vmf.world.solids.iter().map(|solid| (solid, true)).chain(
         vmf.entities
@@ -72,6 +73,12 @@ pub(super) fn prepare(vmf: &Vmf) -> Prepared {
                     continue;
                 }
             };
+            if let Some(error) = surfaces.issues.get(&id) {
+                prepared.issue(id, error.clone());
+                prepared.unshaded.insert(id, mesh);
+                continue;
+            }
+            let mesh = surfaces.meshes.remove(&id).unwrap_or(mesh);
             let angle = match smoothing::angle(info) {
                 Ok(angle) => angle,
                 Err(error) => {
@@ -176,6 +183,68 @@ mod tests {
                 .unwrap();
         }
         document.vmf().clone()
+    }
+
+    #[test]
+    fn curved_mixed_power_rendering_and_wire_edges_follow_the_coarse_seam() {
+        let mut vmf = fixture();
+        for (index, solid) in vmf.world.solids.iter_mut().enumerate() {
+            let geometry = BrushGeometry::from_solid(solid).unwrap();
+            let face = geometry
+                .faces
+                .iter()
+                .find(|face| solid.sides[face.side].displacement.is_some())
+                .unwrap();
+            let info = solid.sides[face.side].displacement.as_mut().unwrap();
+            info.power = if index == 0 { 2 } else { 4 };
+            let size = (1 << info.power) + 1;
+            info.normals = Some(vec![vec![DVec3::Z; size]; size]);
+            info.distances = Some(vec![vec![0.0; size]; size]);
+            info.alphas = None;
+            let mesh = DisplacementMesh::build(face, info).unwrap();
+            info.distances = Some(
+                mesh.base_positions
+                    .chunks(size)
+                    .map(|row| row.iter().map(|point| point.y.powi(2) / 128.0).collect())
+                    .collect(),
+            );
+        }
+        let source = vmf.clone();
+        let prepared = prepare(&vmf);
+        assert!(prepared.issues.is_empty());
+        let solid = &vmf.world.solids[1];
+        let side = solid
+            .sides
+            .iter()
+            .find(|side| side.displacement.is_some())
+            .unwrap();
+        let mesh = &prepared.meshes[&FaceId {
+            solid: solid.id,
+            side: side.id,
+        }]
+            .mesh;
+        let expected = DVec3::new(64.0, 4.0, 16.5);
+        assert!(mesh.positions.contains(&expected));
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        let scene = SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
+        assert!(scene.issues.is_empty());
+        assert!(
+            scene
+                .vertices
+                .iter()
+                .any(|vertex| vertex.position == expected.as_vec3().to_array())
+        );
+        assert!(
+            scene
+                .wire_lines
+                .iter()
+                .any(|vertex| vertex.position == expected.as_vec3().to_array())
+        );
+        assert_eq!(vmf, source);
     }
 
     #[test]

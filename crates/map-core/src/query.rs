@@ -92,13 +92,17 @@ pub fn pick_surface(
         .iter()
         .find(|face| solid.sides[face.side].id == side)?;
     let mut normal = face.plane.normal;
-    if let Some(info) = &solid.sides[face.side].displacement {
-        let mesh = crate::DisplacementMesh::build(face, info).ok()?;
+    if solid.sides[face.side].displacement.is_some() {
+        let surfaces = crate::displacement::surface::prepare(doc.vmf());
+        let mesh = surfaces.get(&crate::surface::FaceId {
+            solid: solid.id,
+            side,
+        })?;
         let ray = Ray {
             origin: ray.origin,
             direction: ray.direction.try_normalize()?,
         };
-        let (triangle, _) = pick_displacement_triangle(&ray, &mesh)?;
+        let (triangle, _) = pick_displacement_triangle(&ray, mesh)?;
         let [a, b, c] =
             crate::displacement::triangles::indices((mesh.size - 1).ilog2()).ok()?[triangle];
         normal = (mesh.positions[c] - mesh.positions[a])
@@ -274,13 +278,14 @@ fn visit_hits(
         origin: ray.origin,
         direction: ray.direction.normalize(),
     };
+    let surfaces = crate::displacement::surface::prepare(doc.vmf());
     let test_solid = |object, solid: &Solid| {
         if solid.hidden || !include_solid(solid) {
             return None;
         }
         let displaced = solid.sides.iter().any(|side| side.displacement.is_some());
         let (t, side) = if displaced {
-            terrain::pick(&ray, solid, &include_face)?
+            terrain::pick(&ray, solid, &include_face, &surfaces)?
         } else {
             ray_solid(&ray, solid)?
         };

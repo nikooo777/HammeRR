@@ -133,6 +133,45 @@ impl Session {
         map_core::displacement::edit::inspect(document, faces).map_err(|error| error.to_string())
     }
 
+    pub(super) fn terrain_surface_grids(
+        &self,
+        faces: &[FaceId],
+        preview: bool,
+    ) -> Result<Vec<map_core::displacement::edit::TerrainGrid>, String> {
+        let mut grids = self.terrain_grids(faces, preview)?;
+        let document = if preview {
+            self.render_document()
+        } else {
+            &self.document
+        };
+        let surfaces = map_core::displacement::surface::prepare(document.vmf());
+        for grid in &mut grids {
+            if let Some(error) = surfaces.issues.get(&grid.face) {
+                return Err(error.clone());
+            }
+            if let Some(mesh) = surfaces.get(&grid.face) {
+                grid.mesh = mesh.clone();
+            }
+        }
+        Ok(grids)
+    }
+
+    pub(super) fn terrain_surface_triangles(
+        &self,
+        faces: &[FaceId],
+        preview: bool,
+    ) -> Result<Vec<TerrainTriangles>, String> {
+        let mut rows = self.terrain_triangles(faces, preview)?;
+        let grids = self.terrain_surface_grids(faces, preview)?;
+        for (row, grid) in rows.iter_mut().zip(grids) {
+            for triangle in &mut row.triangles {
+                triangle.positions = triangle.indices.map(|index| grid.mesh.positions[index]);
+                triangle.centroid = triangle.positions.into_iter().sum::<DVec3>() / 3.0;
+            }
+        }
+        Ok(rows)
+    }
+
     pub fn preview_terrain_sew(
         &mut self,
         actor: Actor,

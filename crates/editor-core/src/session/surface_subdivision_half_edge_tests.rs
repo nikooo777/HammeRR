@@ -99,3 +99,78 @@ fn half_edge_subdivision_uses_both_actors_owned_preview_and_atomic_history() {
         assert_eq!(session.document.vmf(), &saved);
     }
 }
+
+#[test]
+fn rounded_half_edge_session_hits_and_guides_follow_displayed_positions() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = Session::new(Err("no assets".into()));
+        let faces = cage(&mut session, actor);
+        session.preview_terrain_subdivision(actor, &faces).unwrap();
+        session.commit_face_preview(actor).unwrap();
+        let before = session.document.vmf().clone();
+        let raw = session.terrain_grids(&faces, false).unwrap();
+        let displayed = session.terrain_surface_grids(&faces, true).unwrap();
+        let (face, vertex, position) = raw
+            .iter()
+            .zip(&displayed)
+            .find_map(|(raw, displayed)| {
+                raw.mesh
+                    .positions
+                    .iter()
+                    .zip(&displayed.mesh.positions)
+                    .enumerate()
+                    .find(|(_, (a, b))| a.distance(**b) > 1e-6)
+                    .map(|(vertex, (_, point))| (raw.face, vertex, *point))
+            })
+            .unwrap();
+        session
+            .highlight_terrain_vertices(actor, &[(face, vec![vertex])])
+            .unwrap();
+        let scene = session.build_scene();
+        assert!(scene.lines.iter().any(|line| {
+            line.color == [85, 225, 255, 255]
+                && line.position == (position + DVec3::X * 1.75).as_vec3().to_array()
+        }));
+        let rows = session.terrain_surface_triangles(&faces, true).unwrap();
+        let mut picked = false;
+        for row in rows {
+            let source = &raw.iter().find(|grid| grid.face == row.face).unwrap().mesh;
+            for triangle in row.triangles {
+                let source_center = triangle
+                    .indices
+                    .map(|index| source.positions[index])
+                    .into_iter()
+                    .sum::<DVec3>()
+                    / 3.0;
+                if triangle.centroid.distance(source_center) < 1e-6 {
+                    continue;
+                }
+                let [a, b, c] = triangle.positions;
+                let Some(normal) = (c - a).cross(b - a).try_normalize() else {
+                    continue;
+                };
+                let ray = map_core::query::Ray {
+                    origin: triangle.centroid + normal * 128.0,
+                    direction: -normal,
+                };
+                let Some(hit) = session.pick_terrain_triangle(&ray, &faces).unwrap() else {
+                    continue;
+                };
+                if hit.triangle.face == row.face && hit.triangle.triangle == triangle.id {
+                    assert!(hit.point.distance(triangle.centroid) < 1e-6);
+                    picked = true;
+                    break;
+                }
+            }
+            if picked {
+                break;
+            }
+        }
+        assert!(picked);
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(
+            session.terrain_grids(&faces, false).unwrap()[0].mesh,
+            raw[0].mesh
+        );
+    }
+}

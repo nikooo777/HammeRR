@@ -13,7 +13,7 @@ use source_formats::fgd::ClassKind;
 use super::super::{Session, working_region::Evaluation};
 
 pub(super) const MAX_DISPLAYED_SPHERES: usize = 128;
-pub(super) const LIMITS: &str = "Selected visible generic point entities only; sphere(property) uses authored values or labeled FGD defaults. Three world-axis guide rings, 32 segments each; at most 16 declarations per entity and 128 displayed spheres in entity-ID order. Property-name/value previews are bounded to 128/256 bytes; oversized values are never parsed. Positive finite native radii up to 65536 units. Nonpositive values have no finite guide and retain entity-specific runtime meaning. Guides do not affect collision, picking, placement, framing or working regions. Zero-argument sphere(), brush, model helpers including missing assets, specialized-light and rope helpers are outside this scope. Model fade distances may use screen pixels rather than world units.";
+pub(super) const LIMITS: &str = "Selected visible generic point entities only; sphere(property) uses authored values or labeled FGD defaults. sphere() implicitly binds the declared numeric radius property and reports implicit_property; equivalent effective property names share one guide in declaration order. Three world-axis guide rings, 32 segments each; at most 16 declarations per entity and 128 displayed spheres in entity-ID order. Property-name/value previews are bounded to 128/256 bytes; oversized values are never parsed. Positive finite native radii up to 65536 units. Nonpositive values have no finite guide and retain entity-specific runtime meaning. Guides do not affect collision, picking, placement, framing or working regions. Brush, model helpers including missing assets, specialized-light and rope helpers are outside this scope. Model fade distances may use screen pixels rather than world units.";
 
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -21,6 +21,7 @@ pub struct Report {
     pub raw: Option<String>,
     pub raw_truncated: bool,
     pub property_truncated: bool,
+    pub implicit_property: bool,
     pub value_source: &'static str,
     pub property_type: Option<String>,
     pub radius: Option<f64>,
@@ -41,6 +42,7 @@ impl Report {
             raw: sphere.raw.clone(),
             raw_truncated: sphere.raw_truncated,
             property_truncated: sphere.property_truncated,
+            implicit_property: sphere.implicit_property,
             value_source: sphere.value_source,
             property_type: sphere.property_type.clone(),
             radius: sphere.radius,

@@ -22,6 +22,12 @@ FGD = '''
     missing(float) : "Missing radius"
 ]
 '''
+IMPLICIT_FGD = '''
+@BaseClass sphere() sphere(radius) = implicit_radius [
+    radius(string) : "Max Audible Distance" : "64"
+]
+@PointClass base(implicit_radius) size(8 8 8) = implicit_sample []
+'''
 
 
 def validate(client, output):
@@ -164,7 +170,42 @@ def validate(client, output):
     check(source.read_bytes() == saved and detail(client, [entity]) == original, "Guide inspection and visibility checks retain saved source and authored fields")
     check(client.call("get_map_info")["undo"] == before["undo"] and client.call("get_camera") == camera_before, "Read/render/filter workflows retain map history and the active camera")
     check(render("restored-spheres", camera)[0] == rings, "Restored guide settings reproduce identical actual pixels")
-    (output / "results.json").write_text(json.dumps({"passed": len(checks), "checks": checks, "helpers": first, "edge_cases": edges, "malformed": malformed, "desktop_input": False}, indent=2) + "\n")
+    implicit_history = client.call("get_history")["undo_count"]
+    fgd.write_text(FGD + IMPLICIT_FGD)
+    client.call("load_entity_definitions", {"path": str(fgd)})
+    implicit = client.call("create_entity", {"classname": "implicit_sample", "origin": [512, 0, 16]})["id"]
+    implicit_report = inspect(implicit)
+    implicit_row = implicit_report["spheres"][0]
+    check(len(implicit_report["spheres"]) == 1 and implicit_row["implicit_property"] and implicit_row["property"] == "radius" and implicit_row["radius"] == 64 and implicit_row["value_source"] == "authored", "sphere() binds declared radius and deduplicates the equivalent explicit declaration")
+    check("sphere() uses the implicit radius binding" in implicit_report["status"], "The human helper summary labels the implicit radius binding")
+    implicit_camera = {**camera, "center": [512, 0, 16]}
+    implicit_pixels, _ = render("implicit-radius", implicit_camera)
+    implicit_before = detail(client, [implicit]), client.call("get_history")["undo_count"]
+    fgd.write_text(FGD + IMPLICIT_FGD.replace("sphere()", "sphere(radius)"))
+    client.call("load_entity_definitions", {"path": str(fgd)})
+    explicit_report = inspect(implicit)
+    check(len(explicit_report["spheres"]) == 1 and not explicit_report["spheres"][0]["implicit_property"], "Equivalent explicit declaration retains named-property provenance")
+    check(render("equivalent-explicit-radius", implicit_camera)[0] == implicit_pixels and (detail(client, [implicit]), client.call("get_history")["undo_count"]) == implicit_before, "Implicit and explicit radius bindings render identical actual pixels without source or history edits")
+    fgd.write_text(FGD + IMPLICIT_FGD)
+    client.call("load_entity_definitions", {"path": str(fgd)})
+    client.call("set_entity_properties", {"id": implicit, "remove": ["radius"]})
+    fallback = spheres(implicit)["radius"]
+    check(fallback["implicit_property"] and fallback["value_source"] == "fgd_default" and fallback["radius"] == 64, "Implicit binding and value-source provenance remain independent for absent authored values")
+    check(render("implicit-radius-default", implicit_camera)[0] == implicit_pixels, "Removing the matching override retains exact default-radius pixels")
+    author(implicit, radius=0)
+    zero = spheres(implicit)["radius"]
+    implicit_empty, _ = render("implicit-zero-radius", implicit_camera)
+    check(zero["state"] == "nonpositive" and zero["guide_bounds"] is None and not zero["displayed"] and changed_outside(implicit_empty, implicit_pixels, 45, 100) > 150, "Implicit zero produces no fallback or infinite guide and actual radius pixels disappear")
+    for raw, state in [("-1", "nonpositive"), ("broken", "invalid")]:
+        author(implicit, radius=raw)
+        row = spheres(implicit)["radius"]
+        check(row["implicit_property"] and row["value_source"] == "authored" and row["state"] == state and not row["displayed"] and render(f"implicit-{state}", implicit_camera)[0] == implicit_empty, f"Implicit radius {raw!r} retains explicit {state} semantics without substitute geometry")
+    for _ in range(5):
+        client.call("undo")
+    client.call("select", {"ids": [entity]})
+    check(client.call("get_history")["undo_count"] == implicit_history and source.read_bytes() == saved and detail(client, [entity]) == original and client.call("get_camera") == camera_before, "Implicit binding controls restore exact original history, authored fields, saved bytes and camera")
+    check(render("restored-after-implicit-radius", camera)[0] == rings, "The original named-property scene remains pixel-identical after implicit-radius controls")
+    (output / "results.json").write_text(json.dumps({"passed": len(checks), "checks": checks, "helpers": first, "edge_cases": edges, "malformed": malformed, "implicit_binding": implicit_report, "explicit_equivalent": explicit_report, "desktop_input": False}, indent=2) + "\n")
     print(json.dumps({"passed": len(checks), "output": str(output)}))
 
 

@@ -99,6 +99,14 @@ Each ring uses the named property's authored numeric value, or its FGD default
 when no value is stored. Multiple property radii remain separate guides. During
 a transform preview, the rings follow the displayed origin.
 
+Zero-argument `sphere()` binds the class's declared numeric `radius` property.
+For `ambient_generic`, edit **Max Audible Distance**; for `env_shake`, edit
+**Effect Radius**; for `env_soundscape`, edit **Radius**. The helper summary
+identifies this implicit binding, and the shared report marks `implicit_property`.
+Equivalent `sphere()` and `sphere(radius)` declarations share one guide, retaining
+the first declaration's binding provenance. The property must still be declared
+as a supported numeric type; a missing or incompatible declaration is diagnostic.
+
 1. Click **Entity…**, choose `env_firesensor`, then **Place entity**. Its shipped
    FGD declares `sphere(fireradius)` and labels the property **Radius**.
 2. Select the entity and enter a positive **Radius**, such as `128`. Read the
@@ -134,7 +142,7 @@ sphere declarations per entity and 128 guides per frame are accepted, with 32
 segments per ring. Scalar values must be finite and within ±65536; native
 floating-point conversion must retain a finite, noncollapsed guide. Diagnostic
 previews retain at most 256 bytes of raw value and 128 bytes of property name,
-with explicit truncation flags. Zero-argument `sphere()`, `iconsprite`, `sprite`, `studio`,
+with explicit truncation flags. `iconsprite`, `sprite`, `studio`,
 frustum and other helper declarations remain outside this preview scope.
 
 FGD `line(R G B, targetname, property)` draws a selected generic point entity's

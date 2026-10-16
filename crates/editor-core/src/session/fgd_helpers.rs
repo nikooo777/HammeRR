@@ -7,6 +7,8 @@ use serde::Serialize;
 
 use super::{Session, models::Models, working_region::Evaluation};
 
+mod spheres;
+
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub status: String,
@@ -18,6 +20,8 @@ pub struct Report {
     pub errors: Vec<String>,
     pub unsupported: Vec<String>,
     pub definition_sources: Vec<String>,
+    pub spheres: Vec<spheres::Report>,
+    pub sphere_limits: &'static str,
     pub limits: &'static str,
 }
 
@@ -129,8 +133,22 @@ impl Session {
                 appearance.unsupported.join(", ")
             );
         }
+        let spheres = self.inspected_spheres(id);
+        if !spheres.is_empty() {
+            let displayed = spheres.iter().filter(|sphere| sphere.displayed).count();
+            let unavailable = spheres
+                .iter()
+                .filter(|sphere| sphere.state != "ready")
+                .count();
+            let suppressed = spheres.len() - displayed - unavailable;
+            status += &format!(
+                ". Sphere guides: {displayed} displayed, {suppressed} suppressed, {unavailable} unavailable; authored/FGD scalar guides, not runtime influence bounds"
+            );
+        }
         Ok(Report {
             status,
+            spheres,
+            sphere_limits: spheres::LIMITS,
             bounds_source,
             invalid_size: appearance.invalid_size,
             world_bounds: bounds.map(|(mins, maxs)| [mins.to_array(), maxs.to_array()]),
@@ -146,7 +164,7 @@ impl Session {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Other FGD helper declarations are not evaluated here; existing authored model, light and rope previews remain independent.",
+            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Named-property sphere guides are reported separately and never change these object bounds; other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
         })
     }
 }

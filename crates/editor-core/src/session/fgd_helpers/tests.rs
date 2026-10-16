@@ -54,7 +54,8 @@ fn fgd_size_drives_shared_scene_picks_bounds_regions_and_inspector_without_map_e
         assert_eq!(selected.vertices.len(), mesh.vertices.len());
         session.select(&[], SelectMode::Replace).unwrap();
         assert_eq!(report.bounds_source, "fgd_size");
-        assert_eq!(report.unsupported, ["sphere"]);
+        assert!(report.unsupported.is_empty());
+        assert_eq!(report.spheres[0].radius, Some(64.0));
         assert!(report.status.contains("world-aligned"));
         assert_eq!(
             session
@@ -201,7 +202,7 @@ fn loaded_model_geometry_takes_precedence_over_a_conflicting_fgd_box() {
     let mut session = Session::new(Ok(game));
     session.set_definitions(
         Actor::Agent,
-        Catalog::parse("@PointClass size(2 2 2) = prop_static []").unwrap(),
+        Catalog::parse("@PointClass size(2 2 2) sphere(radius) = prop_static [ radius(float) : \"Radius\" : 128 ]").unwrap(),
     );
     let id = session
         .create_entity(
@@ -219,6 +220,8 @@ fn loaded_model_geometry_takes_precedence_over_a_conflicting_fgd_box() {
     };
     let report = session.entity_helper_report(entity).unwrap();
     assert_eq!(report.bounds_source, "model");
+    assert_eq!(report.spheres[0].suppression_reason, Some("loaded_model"));
+    assert!(sphere_vertices(&session.build_scene()).is_empty());
     assert_eq!(
         serde_json::to_value(report.world_bounds).unwrap(),
         session.inspect_entity_model(entity).unwrap()["world_bounds"]
@@ -230,4 +233,299 @@ fn loaded_model_geometry_takes_precedence_over_a_conflicting_fgd_box() {
             .helpers
             .contains_key(&id)
     );
+}
+
+fn sphere_vertices(mesh: &render::SceneMesh) -> Vec<&render::scene::LineVertex> {
+    mesh.lines
+        .iter()
+        .filter(|vertex| vertex.color == [80, 220, 255, 255])
+        .collect()
+}
+
+#[test]
+fn sphere_guides_share_selection_visibility_and_preview_centers_without_changing_bounds() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.set_definitions(actor, Catalog::parse(DEFINITION).unwrap());
+        let id = session
+            .create_entity(actor, "sample", Some(DVec3::ZERO), BTreeMap::new())
+            .unwrap();
+        let ObjectId::Entity(entity) = id else {
+            unreachable!()
+        };
+        let source = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let bounds = session.object_bounds_in(session.document(), &[id]);
+        let selected = session.build_scene();
+        assert_eq!(sphere_vertices(&selected).len(), 3 * 32 * 2);
+        let selected_bounds = (selected.mins, selected.maxs);
+        let report = session.entity_helper_report(entity).unwrap();
+        assert!(report.spheres[0].displayed);
+        assert_eq!(report.spheres[0].center, Some([0.0; 3]));
+        assert_eq!(
+            report.spheres[0].guide_bounds,
+            Some([[-64.0; 3], [64.0; 3]])
+        );
+        assert!(
+            session
+                .pick(&Ray {
+                    origin: DVec3::new(60.0, -100.0, 0.0),
+                    direction: DVec3::Y
+                })
+                .is_none()
+        );
+        session.set_view(crate::session::ViewOptions {
+            selection_outlines: false,
+            ..session.view()
+        });
+        assert_eq!(sphere_vertices(&session.build_scene()).len(), 3 * 32 * 2);
+        session.select(&[], SelectMode::Replace).unwrap();
+        let plain = session.build_scene();
+        assert!(sphere_vertices(&plain).is_empty());
+        assert_eq!((plain.mins, plain.maxs), selected_bounds);
+        assert_eq!(
+            plain
+                .vertices
+                .iter()
+                .map(|vertex| vertex.position)
+                .collect::<Vec<_>>(),
+            selected
+                .vertices
+                .iter()
+                .map(|vertex| vertex.position)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(plain.indices, selected.indices);
+        let report = session.entity_helper_report(entity).unwrap();
+        assert_eq!(report.spheres[0].state, "ready");
+        assert!(!report.spheres[0].displayed);
+        assert_eq!(report.spheres[0].suppression_reason, Some("not_selected"));
+        session.select(&[id], SelectMode::Replace).unwrap();
+        session
+            .preview_transform(
+                actor,
+                &[id],
+                map_core::edit::Transform {
+                    translation: DVec3::new(100.0, 200.0, 300.0),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let report = session.entity_helper_report(entity).unwrap();
+        assert!(report.spheres[0].displayed);
+        assert_eq!(report.spheres[0].center, Some([100.0, 200.0, 300.0]));
+        assert_eq!(
+            report.world_bounds,
+            Some([[-24.0, -12.0, 0.0], [40.0, 20.0, 72.0]])
+        );
+        let preview = session.build_scene();
+        assert!(
+            sphere_vertices(&preview)
+                .iter()
+                .any(|vertex| vertex.position == [164.0, 200.0, 300.0])
+        );
+        session.cancel_transform_preview();
+        assert_eq!(
+            session.entity_helper_report(entity).unwrap().spheres[0].center,
+            Some([0.0; 3])
+        );
+        session
+            .set_working_region(
+                actor,
+                working_region::Action::Set {
+                    bounds: [DVec3::splat(50.0), DVec3::splat(60.0)],
+                    enabled: true,
+                },
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        assert!(sphere_vertices(&session.build_scene()).is_empty());
+        assert_eq!(
+            session.entity_helper_report(entity).unwrap().spheres[0].suppression_reason,
+            Some("outside_working_region")
+        );
+        assert_eq!(session.object_bounds_in(session.document(), &[id]), bounds);
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.document().undo_labels().count(), history);
+        session
+            .set_working_region(
+                actor,
+                working_region::Action::Clear,
+                &session.working_region_stamp(),
+            )
+            .unwrap();
+        session
+            .edit(actor, "import hidden entity", |tx| {
+                tx.entity_mut(entity)?.hidden = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(sphere_vertices(&session.build_scene()).is_empty());
+        assert_eq!(
+            session.entity_helper_report(entity).unwrap().spheres[0].suppression_reason,
+            Some("authored_hidden")
+        );
+    }
+}
+
+#[test]
+fn sphere_property_edits_are_atomic_and_unavailable_states_do_not_invent_geometry() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = Session::new(Err("no assets needed".into()));
+        session.set_definitions(actor, Catalog::parse(DEFINITION).unwrap());
+        let id = session
+            .create_entity(actor, "sample", Some(DVec3::ZERO), BTreeMap::new())
+            .unwrap();
+        let ObjectId::Entity(entity) = id else {
+            unreachable!()
+        };
+        let before = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        assert!(
+            session
+                .set_entity_properties(
+                    actor,
+                    entity,
+                    &[
+                        ("radius".into(), Some("invalid".into())),
+                        ("targetname".into(), Some("must_not_apply".into()))
+                    ]
+                )
+                .is_err()
+        );
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.document().undo_labels().count(), history);
+        session
+            .set_entity_properties(actor, entity, &[("radius".into(), None)])
+            .unwrap();
+        let row = &session.entity_helper_report(entity).unwrap().spheres[0];
+        assert_eq!(row.value_source, "fgd_default");
+        assert_eq!(row.radius, Some(64.0));
+        for raw in ["0", "-1", "65537"] {
+            session
+                .set_entity_properties(actor, entity, &[("radius".into(), Some(raw.into()))])
+                .unwrap();
+            let report = session.entity_helper_report(entity).unwrap();
+            assert!(!report.spheres[0].displayed);
+            assert_eq!(
+                report.spheres[0].suppression_reason,
+                Some("unavailable_radius")
+            );
+            assert_eq!(
+                report.spheres[0].state,
+                if raw == "65537" {
+                    "invalid"
+                } else {
+                    "nonpositive"
+                }
+            );
+            assert!(sphere_vertices(&session.build_scene()).is_empty());
+        }
+        session
+            .edit(actor, "import malformed radius", |tx| {
+                tx.entity_mut(entity)?.properties.set("radius", "broken");
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            session.entity_helper_report(entity).unwrap().spheres[0].state,
+            "invalid"
+        );
+        session.undo(actor).unwrap();
+        session
+            .set_entity_properties(actor, entity, &[("radius".into(), Some("32".into()))])
+            .unwrap();
+        assert!(session.entity_helper_report(entity).unwrap().spheres[0].displayed);
+        assert_eq!(sphere_vertices(&session.build_scene()).len(), 3 * 32 * 2);
+    }
+}
+
+#[test]
+fn sphere_scene_budget_and_specialized_precedence_are_reported_deterministically() {
+    let helpers = (0..16)
+        .map(|i| format!("sphere(r{i})"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let properties = (0..16)
+        .map(|i| format!("r{i}(float) : \"Radius\" : {}", i + 1))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut session = Session::new(Err("no assets needed".into()));
+    session.set_definitions(Actor::Agent, Catalog::parse(&format!("@PointClass {helpers} = sample [{properties}] @PointClass sphere(radius) = light [ radius(float) : \"Radius\" : 128 ] @PointClass sphere(radius) = move_rope [ radius(float) : \"Radius\" : 128 ]")).unwrap());
+    let mut objects = Vec::new();
+    for i in 0..9 {
+        objects.push(
+            session
+                .create_entity(
+                    Actor::Agent,
+                    "sample",
+                    Some(DVec3::new(i as f64 * 100.0, 0.0, 0.0)),
+                    BTreeMap::new(),
+                )
+                .unwrap(),
+        );
+    }
+    objects.reverse();
+    session.select(&objects, SelectMode::Replace).unwrap();
+    assert_eq!(
+        sphere_vertices(&session.build_scene()).len(),
+        spheres::MAX_DISPLAYED_SPHERES * 3 * 32 * 2
+    );
+    let ObjectId::Entity(first) = *objects.last().unwrap() else {
+        unreachable!()
+    };
+    let ObjectId::Entity(last) = objects[0] else {
+        unreachable!()
+    };
+    assert!(
+        session
+            .entity_helper_report(first)
+            .unwrap()
+            .spheres
+            .iter()
+            .all(|row| row.displayed)
+    );
+    let report = session.entity_helper_report(last).unwrap();
+    assert!(report.spheres.iter().all(|row| row.state == "ready"
+        && !row.displayed
+        && row.suppression_reason == Some("scene_guide_limit")));
+    assert!(report.status.contains("16 suppressed"));
+    session
+        .edit(Actor::Agent, "import unavailable radii", |tx| {
+            let entity = tx.entity_mut(first)?;
+            entity.properties.set("r0", "0");
+            entity.properties.set("r1", "broken");
+            Ok(())
+        })
+        .unwrap();
+    let report = session.entity_helper_report(first).unwrap();
+    assert_eq!(report.spheres[0].state, "nonpositive");
+    assert_eq!(report.spheres[1].state, "invalid");
+    let report = session.entity_helper_report(last).unwrap();
+    assert!(report.spheres[..2].iter().all(|row| row.displayed));
+    assert!(
+        report.spheres[2..]
+            .iter()
+            .all(|row| row.suppression_reason == Some("scene_guide_limit"))
+    );
+    assert_eq!(
+        sphere_vertices(&session.build_scene()).len(),
+        spheres::MAX_DISPLAYED_SPHERES * 3 * 32 * 2
+    );
+    for (class, reason) in [
+        ("light", "specialized_light"),
+        ("move_rope", "specialized_rope"),
+    ] {
+        let ObjectId::Entity(id) = session
+            .create_entity(Actor::Agent, class, Some(DVec3::ZERO), BTreeMap::new())
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let report = session.entity_helper_report(id).unwrap();
+        assert_eq!(report.spheres[0].state, "ready");
+        assert_eq!(report.spheres[0].suppression_reason, Some(reason));
+        assert!(sphere_vertices(&session.build_scene()).is_empty());
+    }
 }

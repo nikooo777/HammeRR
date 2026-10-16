@@ -164,10 +164,10 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Working-region bounds and visibility controls](docs/images/working-region.png) | ![Authored fog controller and preview settings](docs/images/fog-preview.png) |
 | Focus the editor on whole objects touching a temporary box, with shared visibility reasons. | Choose an authored controller to preview static linear fog in perspective Textured views. |
 
-| 2D sky preview |
-| --- |
-| ![The selected sky rendered through sky surfaces](docs/images/sky-preview.png) |
-| Preview the selected mounted sky through sky surfaces in perspective Textured views. |
+| 2D sky preview | Sky asset inspection |
+| --- | --- |
+| ![The selected sky rendered through sky surfaces](docs/images/sky-preview.png) | ![Six-face LDR and HDR asset status with selected-face details](docs/images/sky-assets.png) |
+| Preview the selected mounted sky through sky surfaces in perspective Textured views. | Inspect six-face LDR/HDR assets, mounted sources and actionable issues. |
 
 | Measurement guides | Rope preview |
 | --- | --- |

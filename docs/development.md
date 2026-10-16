@@ -506,6 +506,10 @@ cache semantics and upload logs. Cloud reads into private files remain allowed;
 no Cloud preference commands are issued. Reports retain these checks separately
 from feature assertions.
 
+Use a short output directory: the private Wayland socket path must fit within
+107 filesystem bytes. Overlong paths reject before directories or processes
+are created.
+
 ## In-game checks
 
 These scripts compile fixtures through MCP and run Counter-Strike: Source with `-insecure` on a private headless display. They need [Cage](https://github.com/cage-kiosk/cage) and [grim](https://sr.ht/~emersion/grim/). Generated maps, config, scripts and logs use private folders; the shared launch guard audits installed settings and Cloud state after exit. No mouse or keyboard input reaches your desktop.
@@ -745,7 +749,7 @@ python3 -B scripts/validate_sky_assets.py --binary target/debug/hammerr-headless
 
 Core tests cover exact family identity, separate LDR/HDR structure, bounded directory/VPK and Patch reads, malformed/missing assets and unsupported declarations without substituting families. The MCP test checks strict empty arguments and exact Session report parity while preserving an unapplied property draft. The private stdio fixture mounts synthetic LDR/HDR VTFs and material/Patch sources, checks directory/VPK provenance, malformed winning assets, compressed HDR diagnostics, missing faces and invalid names, and compares document/history/camera/selection/clipboard/drafts and mounted bytes around every inspection. It starts no renderer, compiler or game process.
 
-The software UI test `world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pending_edits` invokes the actual **Inspect applied sky…**, six face, **Refresh sky assets** and **Close** buttons. It verifies selected-face details, separate Patch provenance without repeating the root mount, preserved face choice during refresh, the applied name while a different skyname is staged, and an untouched transform draft and parent edit through repair and close. `HAMMERR_UI_SNAPSHOTS` writes `sky-assets.png` through the offscreen testing backend.
+The software UI test `world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pending_edits` invokes the actual **Inspect applied sky…**, six face, **Refresh sky assets** and **Close** buttons. It verifies selected-face details, separate Patch provenance without repeating the root mount, preserved face choice during refresh, the applied name while a different skyname is staged, and an untouched transform draft and parent edit through repair and close. Create the directory named by `HAMMERR_UI_SNAPSHOTS` before enabling it; the test writes `sky-assets.png` through the offscreen backend.
 
 ### Recent maps and build recipes
 

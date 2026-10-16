@@ -25,6 +25,8 @@ Inspect the applied family's material and texture structure before choosing a sk
 4. Repair the named material or texture in the reported mount, then click **Refresh sky assets**. Read failures remain visible; a broken winning asset does not silently select a healthy lower mount.
 5. Click **Close** to return to the existing property edit. Inspection does not change the map, Undo, camera, selection, clipboard or drafts, and starts no game or compiler process.
 
+![Six sky faces with LDR and HDR asset status and selected-face details](images/sky-assets.png)
+
 MCP provides the same report through `inspect_sky_assets {}`. It reads current mounted files each time and preserves valid authored names and references. Overlong invalid values and bounded diagnostics carry explicit truncation indicators. It does not repair an invalid name, append `_hdr`, choose a substitute family or copy assets into the map.
 
 Inspection supports static `Sky` and `UnlitGeneric` material declarations with bounded Patch resolution. LDR requires `$basetexture`; HDR requires `Sky` with `$hdrbasetexture` in RGBA16F or RGBA16 format. VTF layout must be complete, with one frame, one face, depth one and at most 4096 pixels per axis. Compressed HDR declarations, unknown parameters and nested material effects produce explicit issues. The report permits 128 distinct asset lookups, 64 MiB total reads and 1 MiB per material; limits and read counts accompany the result. Family names are limited to 256 bytes and must be relative, without surrounding whitespace or control characters.

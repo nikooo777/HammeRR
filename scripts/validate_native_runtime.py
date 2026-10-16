@@ -334,8 +334,10 @@ def drain_private_group(process):
 
 def private_compositor(command, output, timeout=65, extra_environment=None):
     output = output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
     private_runtime = output / "wayland"
+    if len(os.fsencode(private_runtime / "wayland-0")) >= 108:
+        raise ValueError("Private Wayland socket path exceeds the Unix socket limit; use a shorter output directory")
+    output.mkdir(parents=True, exist_ok=True)
     private_runtime.mkdir(mode=0o700)
     environment = {
         **os.environ,

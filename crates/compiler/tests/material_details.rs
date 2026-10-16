@@ -626,6 +626,23 @@ fn terrain_info_mut(source: &mut Vmf, solid: u32) -> &mut source_formats::vmf::D
         .unwrap()
 }
 
+fn skew_terrain(source: &mut Vmf, solid: u32) {
+    let terrain = source
+        .world
+        .solids
+        .iter_mut()
+        .find(|candidate| candidate.id == solid)
+        .unwrap();
+    for side in &mut terrain.sides {
+        for point in &mut side.plane.0 {
+            point.x *= 1.0 - (point.y - 32.0) / 128.0 * 0.75;
+        }
+        if let Some(info) = &mut side.displacement {
+            info.start_position.x *= 1.0 - (info.start_position.y - 32.0) / 128.0 * 0.75;
+        }
+    }
+}
+
 fn blend_dictionary(fixture: &Fixture, density: u32) {
     std::fs::write(fixture.directory.path().join("detail.vbsp"), format!(
         "detail {{ tufts {{ density {density} low {{ alpha 0 item {{ model models/props/test.mdl }} }} high {{ alpha 1 item {{ model models/props/other.mdl }} }} }} }}")).unwrap();
@@ -733,8 +750,20 @@ fn terrain_uses_whole_base_area_final_native_triangles_and_interpolated_alpha_gr
 
 #[test]
 fn terrain_scatter_accepts_sheared_and_sloped_parallelogram_bases() {
+    assert_sheared_sloped_terrain_scatter(false);
+}
+
+#[test]
+fn terrain_scatter_accepts_sheared_and_sloped_skewed_bases() {
+    assert_sheared_sloped_terrain_scatter(true);
+}
+
+fn assert_sheared_sloped_terrain_scatter(skewed: bool) {
     let mut fixture = fixture();
     let solid = add_scatter_terrain(&mut fixture, 3, 3);
+    if skewed {
+        skew_terrain(&mut fixture.source, solid);
+    }
     blend_dictionary(&fixture, 8192);
     let terrain = fixture
         .source
@@ -755,9 +784,70 @@ fn terrain_scatter_accepts_sheared_and_sloped_parallelogram_bases() {
     }
     let before = fixture.source.write(&Default::default());
     let output = compiled(&fixture.source, &fixture.game);
-    assert!(output.stats.detail_props > 250);
+    assert_eq!(output.stats.detail_props, if skewed { 168 } else { 268 });
     assert_native_terrain_contacts(&output.bsp.unwrap());
     assert_eq!(fixture.source.write(&Default::default()), before);
+}
+
+#[test]
+fn skewed_terrain_uses_uniform_base_area_final_sculpted_triangles_and_alpha() {
+    for (power, corner) in [(2, 0), (3, 1), (4, 2), (4, 3)] {
+        let mut fixture = fixture();
+        let solid = add_scatter_terrain(&mut fixture, power, corner);
+        skew_terrain(&mut fixture.source, solid);
+        blend_dictionary(&fixture, 32768);
+        let before = fixture.source.write(&Default::default());
+        let output = compiled(&fixture.source, &fixture.game);
+        assert_eq!(output.stats.detail_props, 671);
+        assert_eq!(output.stats.detail_prop_models, 2);
+        let bsp = output.bsp.unwrap();
+        assert_native_terrain_contacts(&bsp);
+        let props = bsp.detail_props().unwrap().unwrap();
+        let mut wide_half = 0;
+        for prop in &props.props {
+            let y = f64::from(prop.origin[1]);
+            let half_width = 128.0 * (1.0 - (y - 32.0) / 128.0 * 0.75);
+            assert!((32.0..=160.0).contains(&y));
+            assert!(f64::from(prop.origin[0]).abs() <= half_width + 0.001);
+            wide_half += usize::from(y < 96.0);
+        }
+        assert!(wide_half * 100 > props.props.len() * 58);
+        assert!(wide_half * 100 < props.props.len() * 72);
+        for (negative, expected) in [(true, MODEL), (false, "models/props/other.mdl")] {
+            let region = props
+                .props
+                .iter()
+                .filter(|prop| {
+                    let y = f64::from(prop.origin[1]);
+                    let half_width = 128.0 * (1.0 - (y - 32.0) / 128.0 * 0.75);
+                    let x = f64::from(prop.origin[0]) / half_width;
+                    if negative { x < -0.75 } else { x > 0.75 }
+                })
+                .collect::<Vec<_>>();
+            let selected = region
+                .iter()
+                .filter(|prop| props.model_name(usize::from(prop.model)).unwrap() == expected)
+                .count();
+            assert!(region.len() > 40 && selected * 10 > region.len() * 6);
+        }
+        assert_eq!(fixture.source.write(&Default::default()), before);
+        assert_eq!(
+            compiled(&Vmf::parse(&before).unwrap(), &fixture.game)
+                .bsp
+                .unwrap()
+                .to_bytes(),
+            bsp.to_bytes()
+        );
+        std::fs::write(
+            fixture.directory.path().join("materials/test/scatter.vmt"),
+            "UnlitGeneric { }",
+        )
+        .unwrap();
+        let baseline = compiled(&fixture.source, &fixture.game).bsp.unwrap();
+        for index in 0..bsp::LUMP_COUNT {
+            assert_eq!(bsp.lump(index), baseline.lump(index));
+        }
+    }
 }
 
 #[test]
@@ -784,6 +874,31 @@ fn terrain_alpha_endpoints_and_empty_groups_never_fall_back_to_another_group() {
     terrain_info_mut(&mut fixture.source, solid).alphas = Some(vec![vec![127.5; 5]; 5]);
     let half = compiled(&fixture.source, &fixture.game);
     assert!((95..=175).contains(&half.stats.detail_props));
+}
+
+#[test]
+fn skewed_terrain_alpha_endpoints_and_empty_groups_preserve_selection() {
+    let mut fixture = fixture();
+    let solid = add_scatter_terrain(&mut fixture, 2, 1);
+    skew_terrain(&mut fixture.source, solid);
+    blend_dictionary(&fixture, 8192);
+    for (alpha, expected) in [(0.0, MODEL), (255.0, "models/props/other.mdl")] {
+        terrain_info_mut(&mut fixture.source, solid).alphas = Some(vec![vec![alpha; 5]; 5]);
+        let output = compiled(&fixture.source, &fixture.game);
+        assert_eq!(output.stats.detail_props, 167);
+        let details = output.bsp.unwrap().detail_props().unwrap().unwrap();
+        assert_eq!(details.models.len(), 1);
+        assert_eq!(details.model_name(0).unwrap(), expected);
+    }
+    std::fs::write(fixture.directory.path().join("detail.vbsp"),
+        "detail { tufts { density 8192 low { alpha 0 } high { alpha 1 item { model models/props/test.mdl } } } }").unwrap();
+    terrain_info_mut(&mut fixture.source, solid).alphas = Some(vec![vec![0.0; 5]; 5]);
+    let output = compiled(&fixture.source, &fixture.game);
+    assert_eq!(output.stats.detail_props, 0);
+    assert_eq!(output.stats.detail_prop_models, 0);
+    terrain_info_mut(&mut fixture.source, solid).alphas = Some(vec![vec![127.5; 5]; 5]);
+    let output = compiled(&fixture.source, &fixture.game);
+    assert!((55..=110).contains(&output.stats.detail_props));
 }
 
 #[test]
@@ -823,8 +938,20 @@ fn unused_unsupported_alpha_groups_do_not_reject_flat_or_terrain_endpoint_select
 
 #[test]
 fn terrain_scatter_keeps_whole_region_sheets_and_rejects_crossing_sheets_atomically() {
+    assert_terrain_scatter_regions(false);
+}
+
+#[test]
+fn skewed_terrain_scatter_keeps_whole_regions_and_rejects_crossing_sheets_atomically() {
+    assert_terrain_scatter_regions(true);
+}
+
+fn assert_terrain_scatter_regions(skewed: bool) {
     let mut fixture = fixture();
-    add_scatter_terrain(&mut fixture, 3, 1);
+    let solid = add_scatter_terrain(&mut fixture, 3, 1);
+    if skewed {
+        skew_terrain(&mut fixture.source, solid);
+    }
     blend_dictionary(&fixture, 4096);
     std::fs::create_dir_all(fixture.directory.path().join("materials/tools")).unwrap();
     std::fs::write(
@@ -922,6 +1049,15 @@ fn terrain_scatter_keeps_whole_region_sheets_and_rejects_crossing_sheets_atomica
 
 #[test]
 fn terrain_scatter_uses_final_mixed_power_lod_surface_without_changing_authored_grids() {
+    assert_mixed_power_terrain_scatter(false);
+}
+
+#[test]
+fn skewed_terrain_scatter_uses_final_mixed_power_lod_surface() {
+    assert_mixed_power_terrain_scatter(true);
+}
+
+fn assert_mixed_power_terrain_scatter(skewed: bool) {
     let mut fixture = fixture();
     fixture.source.world.solids[0]
         .sides
@@ -983,12 +1119,25 @@ fn terrain_scatter_uses_final_mixed_power_lod_surface_without_changing_authored_
             info.alphas = Some(vec![vec![127.5; mesh.size]; mesh.size]);
         }
     }
+    if skewed {
+        let solids = fixture
+            .source
+            .world
+            .solids
+            .iter()
+            .filter(|solid| solid.sides.iter().any(|side| side.displacement.is_some()))
+            .map(|solid| solid.id)
+            .collect::<Vec<_>>();
+        for solid in solids {
+            skew_terrain(&mut fixture.source, solid);
+        }
+    }
     blend_dictionary(&fixture, 8192);
     let before = fixture.source.write(&Default::default());
     let output = compiled(&fixture.source, &fixture.game);
     assert!(output.stats.displacement_lod_snapped_vertices > 0);
     assert!(output.stats.displacement_lod_disabled_vertices > 0);
-    assert_eq!(output.stats.detail_props, 268);
+    assert_eq!(output.stats.detail_props, if skewed { 166 } else { 268 });
     let bsp = output.bsp.unwrap();
     let data = bsp.displacements().unwrap().unwrap();
     assert!(data.infos.iter().any(
@@ -1006,10 +1155,22 @@ fn terrain_scatter_uses_final_mixed_power_lod_surface_without_changing_authored_
 }
 
 #[test]
-fn terrain_scatter_rejects_skewed_bases_and_shares_sample_budget_with_flat_surfaces() {
+fn terrain_scatter_shares_sample_budget_with_flat_surfaces() {
+    assert_shared_terrain_sample_budget(false);
+}
+
+#[test]
+fn skewed_terrain_scatter_shares_sample_budget_with_flat_surfaces() {
+    assert_shared_terrain_sample_budget(true);
+}
+
+fn assert_shared_terrain_sample_budget(skewed: bool) {
     let mut fixture = fixture();
     let solid = add_scatter_terrain(&mut fixture, 2, 0);
-    dictionary(&fixture, 225000, "model models/props/test.mdl amount 0");
+    if skewed {
+        skew_terrain(&mut fixture.source, solid);
+    }
+    dictionary(&fixture, 240000, "model models/props/test.mdl amount 0");
     assert_eq!(
         compiled(&fixture.source, &fixture.game).stats.detail_props,
         0
@@ -1057,41 +1218,53 @@ fn terrain_scatter_rejects_skewed_bases_and_shares_sample_budget_with_flat_surfa
     assert!(!output.write(&path).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
     assert_eq!(fixture.source.write(&Default::default()), before);
-    fixture.source.world.solids[0]
-        .sides
-        .iter_mut()
-        .find(|side| side.id == fixture.floor_side)
-        .unwrap()
-        .material = "dev/dev_measuregeneric01".into();
+}
+
+#[test]
+fn skewed_terrain_model_bounds_and_cancellation_preserve_source_and_previous_output() {
+    let mut fixture = fixture();
+    let solid = add_scatter_terrain(&mut fixture, 2, 0);
+    skew_terrain(&mut fixture.source, solid);
     dictionary(&fixture, 8192, "model models/props/test.mdl");
-    let terrain = fixture
-        .source
-        .world
-        .solids
-        .iter_mut()
-        .find(|candidate| candidate.id == solid)
-        .unwrap();
-    for side in &mut terrain.sides {
-        for point in &mut side.plane.0 {
-            point.x *= 1.0 - (point.y - 32.0) / 128.0 * 0.25;
-        }
-        if let Some(info) = &mut side.displacement {
-            info.start_position.x *= 1.0 - (info.start_position.y - 32.0) / 128.0 * 0.25;
-        }
-    }
     let before = fixture.source.write(&Default::default());
+    let baseline = compiled(&fixture.source, &fixture.game)
+        .bsp
+        .unwrap()
+        .to_bytes();
+    let path = fixture.directory.path().join("previous-skewed-terrain.bsp");
+    std::fs::write(&path, &baseline).unwrap();
+    let model = fixture.directory.path().join("models/props/test.vvd");
+    let original = std::fs::read(&model).unwrap();
+    let mut invalid = original.clone();
+    invalid[128..132].copy_from_slice(&65_536.0_f32.to_le_bytes());
+    std::fs::write(&model, invalid).unwrap();
     let output = compiler::compile(&fixture.source, &fixture.game);
     assert!(
         output.bsp.is_none()
             && output.report.diagnostics.iter().any(|diagnostic| diagnostic
                 .message
-                .contains("requires a parallelogram base quad")),
+                .contains("Transformed detail model mesh bounds")),
         "{:?}",
         output.report
     );
     assert!(!output.write(&path).unwrap());
-    assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+    assert_eq!(std::fs::read(&path).unwrap(), baseline);
     assert_eq!(fixture.source.write(&Default::default()), before);
+    std::fs::write(model, original).unwrap();
+    let control = compiler::Control::default();
+    control.cancel().unwrap();
+    let output = compiler::compile_controlled(&fixture.source, &fixture.game, &control);
+    assert!(output.bsp.is_none());
+    assert!(!output.write(&path).unwrap());
+    assert_eq!(std::fs::read(&path).unwrap(), baseline);
+    assert_eq!(fixture.source.write(&Default::default()), before);
+    assert_eq!(
+        compiled(&fixture.source, &fixture.game)
+            .bsp
+            .unwrap()
+            .to_bytes(),
+        baseline
+    );
 }
 
 #[test]

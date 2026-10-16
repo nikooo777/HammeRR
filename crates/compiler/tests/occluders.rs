@@ -1,7 +1,7 @@
 mod common;
 
-use glam::DVec3;
-use map_core::{Document, ObjectId, edit};
+use glam::{DQuat, DVec3};
+use map_core::{BrushGeometry, Document, ObjectId, edit};
 use source_formats::bsp::{Brush, Bsp, Face, Model, OCCLUDER_INACTIVE, Plane, lump};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::vmf::Vmf;
@@ -205,6 +205,9 @@ fn invalid_helpers_have_object_errors_and_do_not_overwrite_a_successful_build() 
                 extra.id += 10_000;
                 for side in &mut extra.sides {
                     side.id += 10_000;
+                    for point in &mut side.plane.0 {
+                        *point += DVec3::new(16.0, 128.0, 0.0);
+                    }
                 }
                 entity.solids.push(extra);
             }
@@ -440,40 +443,19 @@ fn separated_helper_islands_share_one_index_and_hidden_children_do_not_emit() {
 }
 
 #[test]
-fn touching_later_invalid_and_over_budget_helpers_reject_without_output() {
+fn later_invalid_and_over_budget_helpers_reject_without_output() {
     let (_directory, fs) = game();
-    for case in 0..5 {
-        let (mut vmf, id) = multibrush_fixture(if case == 2 { 17 } else { 2 });
+    for case in 0..3 {
+        let (mut vmf, id) = multibrush_fixture(if case == 1 { 17 } else { 2 });
         let entity = vmf
             .entities
             .iter_mut()
             .find(|entity| entity.id == id)
             .unwrap();
         match case {
-            0 => {
-                let original = entity.solids[0].clone();
-                let id = entity.solids[1].id;
-                let sides = entity.solids[1]
-                    .sides
-                    .iter()
-                    .map(|side| side.id)
-                    .collect::<Vec<_>>();
-                entity.solids[1] = original;
-                entity.solids[1].id = id;
-                for (side, id) in entity.solids[1].sides.iter_mut().zip(sides) {
-                    side.id = id;
-                }
-            }
-            1 => entity.solids[1].sides[0].material = "missing/second_brush".into(),
-            2 => {}
-            3 => {
-                for side in &mut entity.solids[1].sides {
-                    for point in &mut side.plane.0 {
-                        point.x -= 12.0;
-                    }
-                }
-            }
-            4 => {
+            0 => entity.solids[1].sides[0].material = "missing/second_brush".into(),
+            1 => {}
+            2 => {
                 for index in 0..250 {
                     let mut side = entity.solids[1].sides[0].clone();
                     side.id = 100_000 + index;
@@ -496,4 +478,327 @@ fn touching_later_invalid_and_over_budget_helpers_reject_without_output() {
             output.report
         );
     }
+}
+
+fn union_fixture(bounds: &[([f64; 3], [f64; 3])]) -> (Vmf, u32) {
+    let mut document = Document::new(common::room());
+    let object = document
+        .edit("union helper", |tx| {
+            let mut solids = Vec::new();
+            for &(mins, maxs) in bounds {
+                let ObjectId::Solid(solid) = edit::create_block(
+                    tx,
+                    DVec3::from_array(mins),
+                    DVec3::from_array(maxs),
+                    "tools/toolsoccluder",
+                )?
+                else {
+                    unreachable!()
+                };
+                solids.push(solid);
+            }
+            edit::tie_to_entity(
+                tx,
+                &solids,
+                "func_occluder",
+                &[
+                    ("targetname".into(), "union_screen".into()),
+                    ("StartActive".into(), "0".into()),
+                ],
+            )
+        })
+        .unwrap();
+    let ObjectId::Entity(id) = object else {
+        unreachable!()
+    };
+    (document.vmf().clone(), id)
+}
+
+fn native_polygons(bsp: &Bsp) -> Vec<(DVec3, Vec<DVec3>)> {
+    let native = bsp.occlusion().unwrap().unwrap();
+    let planes = bsp.records::<Plane>().unwrap();
+    let vertices = bsp.vertices().unwrap();
+    native
+        .polygons
+        .iter()
+        .map(|polygon| {
+            let plane = planes[polygon.plane as usize];
+            let normal = DVec3::from_array(plane.normal.map(f64::from));
+            let points = native.vertex_indices[polygon.first_vertex_index as usize..]
+                [..polygon.vertex_count as usize]
+                .iter()
+                .map(|&index| {
+                    let point = DVec3::from_array(vertices[index as usize].map(f64::from));
+                    assert!((point.dot(normal) - f64::from(plane.dist)).abs() < 0.01);
+                    point
+                })
+                .collect::<Vec<_>>();
+            (normal, points)
+        })
+        .collect()
+}
+
+fn assert_union_boundary(bsp: &Bsp, vmf: &Vmf, id: u32, expected_area: f64) {
+    let entity = vmf.entities.iter().find(|entity| entity.id == id).unwrap();
+    let geometries = entity
+        .solids
+        .iter()
+        .filter(|solid| !solid.hidden)
+        .map(|solid| BrushGeometry::from_solid(solid).unwrap())
+        .collect::<Vec<_>>();
+    let contains = |point: DVec3| {
+        geometries.iter().any(|geometry| {
+            geometry
+                .faces
+                .iter()
+                .all(|face| face.plane.distance_to(point) <= 0.001)
+        })
+    };
+    let mut area = 0.0;
+    for (normal, points) in native_polygons(bsp) {
+        let first = points[0];
+        for triangle in points[1..].windows(2) {
+            let cross = (triangle[1] - first).cross(triangle[0] - first);
+            assert!(cross.dot(normal) > 0.0);
+            area += cross.length() * 0.5;
+            for weights in [
+                [1.0, 1.0, 1.0],
+                [3.0, 1.0, 1.0],
+                [1.0, 3.0, 1.0],
+                [1.0, 1.0, 3.0],
+            ] {
+                let point =
+                    (first * weights[0] + triangle[0] * weights[1] + triangle[1] * weights[2])
+                        / weights.iter().sum::<f64>();
+                assert!(
+                    contains(point - normal * 0.05),
+                    "outward winding at {point}"
+                );
+                assert!(
+                    !contains(point + normal * 0.05),
+                    "interior polygon at {point}"
+                );
+            }
+        }
+    }
+    assert!(
+        (area - expected_area).abs() < 0.2,
+        "area {area}, expected {expected_area}"
+    );
+}
+
+#[test]
+fn touching_overlapping_contained_and_concave_helpers_emit_only_union_boundaries() {
+    let (_directory, fs) = game();
+    let baseline = compiler::compile(&common::room(), &fs).bsp.unwrap();
+    let cases = [
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [0.0, 64.0, 144.0]),
+                ([0.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+            ],
+            98_304.0,
+        ),
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [16.0, 64.0, 144.0]),
+                ([-16.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+            ],
+            98_304.0,
+        ),
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+                ([-64.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+            ],
+            98_304.0,
+        ),
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+                ([-16.0, -16.0, 48.0], [16.0, 16.0, 112.0]),
+            ],
+            98_304.0,
+        ),
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [16.0, 0.0, 144.0]),
+                ([-16.0, -32.0, 16.0], [64.0, 64.0, 144.0]),
+            ],
+            89_088.0,
+        ),
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [0.0, 64.0, 144.0]),
+                ([0.0, -32.0, 48.0], [64.0, 32.0, 112.0]),
+            ],
+            81_920.0,
+        ),
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [64.0, -32.0, 144.0]),
+                ([-64.0, 32.0, 16.0], [64.0, 64.0, 144.0]),
+                ([-64.0, -64.0, 16.0], [-32.0, 64.0, 144.0]),
+                ([32.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+            ],
+            122_880.0,
+        ),
+    ];
+    for (index, (bounds, expected_area)) in cases.iter().enumerate() {
+        let (vmf, id) = union_fixture(bounds);
+        let original = vmf.clone();
+        let output = compiler::compile(&vmf, &fs);
+        assert!(
+            !output.report.has_errors(),
+            "case {index}: {:?}",
+            output.report
+        );
+        assert_eq!(vmf, original);
+        assert_eq!(output.stats.occluders, 1);
+        let bsp = Bsp::parse(&output.bsp.unwrap().to_bytes()).unwrap();
+        let native = bsp.occlusion().unwrap().unwrap();
+        assert_eq!(native.occluders[0].flags, OCCLUDER_INACTIVE);
+        assert_eq!(native.occluders[0].area, 1);
+        assert_eq!(native.occluders[0].mins, [-64.0, -64.0, 16.0]);
+        assert_eq!(native.occluders[0].maxs, [64.0, 64.0, 144.0]);
+        assert_eq!(bsp.records::<Model>().unwrap().len(), 1);
+        assert_eq!(
+            bsp.records::<Brush>().unwrap(),
+            baseline.records::<Brush>().unwrap()
+        );
+        assert_eq!(
+            bsp.records::<Face>().unwrap().len(),
+            baseline.records::<Face>().unwrap().len()
+        );
+        let entities = bsp.entities().unwrap();
+        assert!(entities.contains("\"targetname\" \"union_screen\""));
+        assert!(entities.contains("\"StartActive\" \"0\""));
+        assert!(entities.contains("\"occludernumber\" \"0\""));
+        assert_union_boundary(&bsp, &vmf, id, *expected_area);
+    }
+}
+
+#[test]
+fn oblique_union_and_disjoint_rotated_bounds_preserve_real_polygon_coverage() {
+    let (_directory, fs) = game();
+    for (bounds, expected_area, expected_polygons) in [
+        (
+            vec![
+                ([-64.0, -64.0, 16.0], [16.0, 0.0, 144.0]),
+                ([-16.0, -32.0, 16.0], [64.0, 64.0, 144.0]),
+            ],
+            89_088.0,
+            None,
+        ),
+        (
+            vec![
+                ([-64.0, -48.0, 16.0], [64.0, -16.0, 144.0]),
+                ([-64.0, 16.0, 16.0], [64.0, 48.0, 144.0]),
+            ],
+            98_304.0,
+            Some(12),
+        ),
+    ] {
+        let (mut vmf, id) = union_fixture(&bounds);
+        let rotation = DQuat::from_rotation_z(std::f64::consts::FRAC_PI_4);
+        for solid in &mut vmf
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == id)
+            .unwrap()
+            .solids
+        {
+            for side in &mut solid.sides {
+                for point in &mut side.plane.0 {
+                    *point = rotation * *point;
+                }
+            }
+        }
+        let output = compiler::compile(&vmf, &fs);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        if let Some(expected) = expected_polygons {
+            assert_eq!(output.stats.occluder_polygons, expected);
+        }
+        assert_union_boundary(&output.bsp.unwrap(), &vmf, id, expected_area);
+    }
+}
+
+#[test]
+fn coplanar_active_faces_survive_nodraw_ownership_in_both_brush_orders() {
+    let (_directory, fs) = game();
+    for nodraw in [0, 1] {
+        let (mut vmf, id) = union_fixture(&[
+            ([-64.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+            ([-64.0, -64.0, 16.0], [64.0, 64.0, 144.0]),
+        ]);
+        let entity = vmf
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == id)
+            .unwrap();
+        for side in &mut entity.solids[nodraw].sides {
+            side.material = "tools/toolsnodraw".into();
+        }
+        let output = compiler::compile(&vmf, &fs);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.occluder_polygons, 6);
+        assert_union_boundary(&output.bsp.unwrap(), &vmf, id, 98_304.0);
+    }
+}
+
+#[test]
+fn unsupported_union_contacts_and_precision_fail_without_replacing_output() {
+    let (_directory, fs) = game();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("preserved.bsp");
+    std::fs::write(&path, b"previous successful build").unwrap();
+    for (mins, maxs, diagnostic) in [
+        ([0.0, 64.0, 16.0], [64.0, 128.0, 144.0], "edge or point"),
+        ([0.0, 64.0, 144.0], [64.0, 128.0, 208.0], "edge or point"),
+        ([0.005, -64.0, 16.0], [64.0, 64.0, 144.0], "within 0.01"),
+        ([-0.005, -64.0, 16.0], [64.0, 64.0, 144.0], "within 0.01"),
+        (
+            [-32.0, -64.0, 16.005],
+            [64.0, 64.0, 144.005],
+            "nearly coplanar",
+        ),
+    ] {
+        let (vmf, id) = union_fixture(&[([-64.0, -64.0, 16.0], [0.0, 64.0, 144.0]), (mins, maxs)]);
+        let original = vmf.clone();
+        let output = compiler::compile(&vmf, &fs);
+        assert_eq!(vmf, original);
+        assert!(output.bsp.is_none(), "{diagnostic}");
+        assert!(
+            output.report.diagnostics.iter().any(|entry| {
+                entry.object.as_deref() == Some(&format!("entity:{id}"))
+                    && entry.message.contains(diagnostic)
+            }),
+            "{:?}",
+            output.report
+        );
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous successful build");
+    }
+}
+
+#[test]
+fn union_fragment_growth_is_bounded_before_native_output() {
+    let (_directory, fs) = game();
+    let mut bounds = Vec::new();
+    for index in 0..8 {
+        let offset = -176.0 + f64::from(index) * 48.0;
+        bounds.push(([-192.0, offset, 32.0], [192.0, offset + 16.0, 192.0]));
+        bounds.push(([offset, -192.0, 32.0], [offset + 16.0, 192.0, 192.0]));
+    }
+    let (vmf, id) = union_fixture(&bounds);
+    let output = compiler::compile(&vmf, &fs);
+    assert!(output.bsp.is_none());
+    assert!(
+        output.report.diagnostics.iter().any(|entry| {
+            entry.object.as_deref() == Some(&format!("entity:{id}"))
+                && entry.message.contains("boundary-polygon")
+        }),
+        "{:?}",
+        output.report
+    );
 }

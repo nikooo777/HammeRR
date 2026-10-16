@@ -148,6 +148,21 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     );
 }
 
+fn bind_model_guide_reload(app: &AppWindow, shared: SharedSession) {
+    let weak = app.as_weak();
+    app.on_reload_model_guides(move || {
+        let app = weak.unwrap();
+        let mut session = lock(&shared);
+        let cancelled = session.refresh_model_assets(Actor::User);
+        refresh_panel(&app, &mut session);
+        app.set_message(if cancelled {
+            "Model assets reloaded; preview snap to grid again".into()
+        } else {
+            "Model assets reloaded".into()
+        });
+    });
+}
+
 fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
     app.on_options_changed({
         let app = app.as_weak();
@@ -220,9 +235,15 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_selection_title(title.into());
     app.set_selection_detail(detail.into());
     app.set_entity_selected(properties.is_some());
+    let helper_report =
+        single_selected_entity(session).and_then(|id| session.entity_helper_report(id).ok());
+    app.set_has_fgd_model_guide(
+        helper_report
+            .as_ref()
+            .is_some_and(|report| report.model_guide.is_some()),
+    );
     app.set_entity_helper_status(
-        single_selected_entity(session)
-            .and_then(|id| session.entity_helper_report(id).ok())
+        helper_report
             .map_or_else(String::new, |report| report.status)
             .into(),
     );
@@ -1742,6 +1763,7 @@ pub(super) fn run(
             }
         }
     });
+    bind_model_guide_reload(&app, session_of(&ui));
     bind_view_controls(&app, session_of(&ui));
     app.on_key({
         let (app, ui) = (app.as_weak(), ui.clone());
@@ -3058,6 +3080,9 @@ mod projector_tests;
 
 #[cfg(test)]
 mod icon_tests;
+
+#[cfg(test)]
+mod model_guide_tests;
 
 pub(crate) use entities::property_row;
 pub(crate) use materials::{

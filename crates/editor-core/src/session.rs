@@ -2079,14 +2079,15 @@ impl Session {
         };
         let evaluation = self.working_evaluation(document);
         let icons = self.fgd_icon_instances(document, &evaluation);
-        let mut mesh = SceneMesh::build_with_helpers_and_icons_filtered(
+        let model_guides = self.fgd_model_guides(document, &evaluation);
+        let mut mesh = SceneMesh::build_with_visual_helpers_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
             (&selected, &selected_faces),
             &overlays,
             (&evaluation.models.instances, &evaluation.helpers),
-            &icons,
+            (&icons, &model_guides),
             |id| evaluation.objects.contains(&id),
         );
         if let Some(points) = self.pointfile_points() {

@@ -29,10 +29,12 @@ SIZE_ENUM = 6
 WIDTH = 1280
 HEIGHT = 720
 PAKFILE = 40
+GAME_LUMP = 35
 MAX_BSP_BYTES = 64 * 1024**2
 MAX_PAK_BYTES = 16 * 1024**2
 MAX_ENTRY_BYTES = 1024**2
 FACE_NAMES = ["right", "left", "back", "front", "up", "down"]
+FACE_RECORD = struct.Struct("<HBBihhhh4Bif2i2iiHHI")
 MODULES = ["engine.so", "vtex_dll.so", "bsppack.so"]
 CONTROL_VALUES = {"sv_lan": 1, "mat_hdr_level": 0, "mat_fullbright": 0}
 READY = "HAMMERR_CUBEMAP_READY 2 100"
@@ -164,6 +166,62 @@ def seed_pak(data, entries):
     return bytes(result)
 
 
+def native_staging_bsp(data):
+    before = bsp_lumps(data)
+    require(struct.unpack_from("<I", data, 4)[0] == 20 and FACE_RECORD.size == 56, "Unexpected native BSP/face layout")
+    require(before[7][2] and len(before[7][2]) % FACE_RECORD.size == 0, "Face lump does not contain SDK dface_t records")
+    require(not before[53][2] and not before[55][2] and not before[58][2], "Capture proof requires LDR-only source data")
+    for index, expected in [(8, 1), (9, 2), (10, 1), (56, 1)]:
+        require(before[index][:2] == (expected, 0), f"Unexpected native source lump metadata: {index}")
+    result = bytearray(data)
+    changes = []
+    for index in [7, 53, 55]:
+        version, compression, payload = before[index]
+        require(version in (0, 1) and compression == 0, f"Unsupported staging lump metadata: {index}")
+        offset = 8 + index * 16 + 8
+        struct.pack_into("<i", result, offset, 1)
+        if version != 1:
+            changes.append({"lump": index, "source_version": version, "capture_version": 1, "version_field_offset": offset, "bytes": len(payload), "payload_sha256": digest(payload)})
+    staged = bytes(result)
+    after = bsp_lumps(staged)
+    require(all(old[1:] == new[1:] and new[0] == (1 if index in (7, 53, 55) else old[0]) for index, (old, new) in enumerate(zip(before, after, strict=True))), "Staging changed source payload or unrelated metadata")
+    allowed = {change["version_field_offset"] + byte for change in changes for byte in range(4)}
+    changed = [offset for offset, (a, b) in enumerate(zip(data, staged, strict=True)) if a != b]
+    require(set(changed) <= allowed, "Staging changed bytes outside registered version fields")
+    source_faces = list(FACE_RECORD.iter_unpack(before[7][2]))
+    require(source_faces == list(FACE_RECORD.iter_unpack(after[7][2])), "Staging changed semantic face records")
+    return staged, {"source_sha256": digest(data), "staged_sha256": digest(staged), "version_changes": changes, "changed_byte_offsets": changed, "face_record_bytes": FACE_RECORD.size, "face_count": len(source_faces), "semantic_records_and_other_bytes_preserved": True}
+
+
+def game_lump_records(data):
+    version, compression, payload = bsp_lumps(data)[GAME_LUMP]
+    require(compression == 0 and len(payload) >= 4, "Invalid game-lump metadata/directory")
+    start, size = struct.unpack_from("<2i", data, 8 + GAME_LUMP * 16)
+    count = struct.unpack_from("<i", payload)[0]
+    require(0 <= count <= 256 and 4 + count * 16 <= size, "Invalid game-lump entry count")
+    normalized = bytearray(payload)
+    records, offsets, spans = [], [], []
+    for index in range(count):
+        entry = 4 + index * 16
+        identity, flags, record_version, offset, length = struct.unpack_from("<IHHii", payload, entry)
+        require(start + 4 + count * 16 <= offset <= offset + length <= start + size <= len(data), f"Game-lump entry is outside its directory/payload/BSP bounds: {index}")
+        records.append((identity, flags, record_version, length, data[offset:offset + length]))
+        offsets.append({"index": index, "id": f"{identity:08x}", "flags": flags, "version": record_version, "bytes": length, "absolute_offset": offset, "payload_sha256": digest(data[offset:offset + length])})
+        spans.append((offset, offset + length))
+        struct.pack_into("<i", normalized, entry + 8, 0)
+    spans.sort()
+    require(all(a[1] <= b[0] for a, b in zip(spans, spans[1:])), "Overlapping game-lump entry payloads")
+    return (version, compression, bytes(normalized)), records, offsets
+
+
+def verify_game_lump_preservation(before, after):
+    before_metadata, before_records, before_offsets = game_lump_records(before)
+    after_metadata, after_records, after_offsets = game_lump_records(after)
+    require(before_metadata == after_metadata, "Native capture changed game-lump metadata or bytes outside absolute entry offsets")
+    require(before_records == after_records, "Native capture changed game-lump order, IDs, flags, versions, lengths or payloads")
+    return {"entry_count": len(before_records), "before": before_offsets, "after": after_offsets, "only_absolute_entry_offsets_may_differ": True}
+
+
 def sample_name(origin):
     return f"materials/maps/{MAP_NAME}/c{origin[0]}_{origin[1]}_{origin[2]}.vtf"
 
@@ -173,7 +231,7 @@ def bootstrap_cube():
     header[:4] = b"VTF\0"
     for offset, value in [(4, 7), (8, 2), (12, 80), (20, 0x4000 | 0x0c)]:
         struct.pack_into("<I", header, offset, value)
-    for offset, value in [(16, CUBE_SIZE), (18, CUBE_SIZE), (24, 1), (26, 0xffff), (63, 1)]:
+    for offset, value in [(16, CUBE_SIZE), (18, CUBE_SIZE), (24, 1), (26, 0), (63, 1)]:
         struct.pack_into("<H", header, offset, value)
     struct.pack_into("<3f", header, 32, 0.5, 0.0, 0.5)
     struct.pack_into("<f", header, 48, 1.0)
@@ -183,7 +241,7 @@ def bootstrap_cube():
     pixels = bytearray()
     for mip in reversed(range(header[56])):
         size = max(1, CUBE_SIZE >> mip)
-        pixels.extend(bytes([255, 0, 255, 255]) * size * size * 6)
+        pixels.extend(bytes([255, 0, 255, 255]) * size * size * 7)
     return bytes(header + pixels)
 
 
@@ -362,6 +420,12 @@ def verify_controls(text):
     return values
 
 
+def verify_bootstrap_load(text):
+    for origin in SAMPLES:
+        name = sample_name(origin)
+        require(f'Error reading texture data "{name}"' not in text and f"couldn't find {name}" not in text, f"Native engine rejected the staged bootstrap: {name}")
+
+
 def observed_modules(pid, expected, seen):
     path = Path(f"/proc/{pid}/maps")
     try:
@@ -413,12 +477,15 @@ def worker(args):
     sentinel = b"Preserve this preexisting packed asset through native capture.\n"
     assets["hammerr/cubemap-capture-sentinel.txt"] = sentinel
     bootstrap = bootstrap_cube()
-    decode_cube(bootstrap)
+    bootstrap_metadata, _ = decode_cube(bootstrap)
+    require(bootstrap_metadata["faces"] == 7, "Installed engine requires legacy seven-face cube bootstraps")
     assets.update({sample_name(origin): bootstrap for origin in SAMPLES})
     staged = game / "maps" / f"{MAP_NAME}.bsp"
-    staged.write_bytes(seed_pak(read_bounded(args.bsp, MAX_BSP_BYTES), assets))
+    native_source, staging_report = native_staging_bsp(read_bounded(args.bsp, MAX_BSP_BYTES))
+    staged.write_bytes(seed_pak(native_source, assets))
     seeded = staged.read_bytes()
     seeded_lumps = bsp_lumps(seeded)
+    game_lump_records(seeded)
     seeded_entries, seeded_records = zip_entries(seeded_lumps[PAKFILE][2])
     (output / "seeded.bsp").write_bytes(seeded)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -428,7 +495,7 @@ def worker(args):
     environment = {**os.environ, "LD_LIBRARY_PATH": str(args.game_dir / "bin/linux64"), "LD_DEBUG": "files", "LD_DEBUG_OUTPUT": str(output / "loader"), "SteamAppId": "240", "SteamGameId": "240", "SDL_VIDEODRIVER": "x11", "XDG_CONFIG_HOME": str(private_settings / "config"), "XDG_CACHE_HOME": str(private_settings / "cache"), "XDG_DATA_HOME": str(private_settings / "data")}
     launch_options = runtime.private_launch_options(args.game_dir, game, hdr_level=0, map_name=MAP_NAME, log_name="hammerr-cubemap.log", controls={"servercfgfile": "hammerr_cubemap_postmap.cfg", "mat_fullbright": 0})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(WIDTH), "-h", str(HEIGHT), "-novid", *launch_options, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    report = {"command": command, "cwd": str(args.game_dir), "module_fingerprints": fingerprints, "viewport": [WIDTH, HEIGHT], "capture_size": CUBE_SIZE, "sample_origins": SAMPLES, "seeded_pak": seeded_records, "bootstrap_sha256": digest(bootstrap), "capture_trigger": "buildcubemaps 1 in a private cfg after verified post-map readiness", "display": os.environ.get("DISPLAY"), "wayland_display": os.environ.get("WAYLAND_DISPLAY"), "desktop_input": False, "success": False}
+    report = {"command": command, "cwd": str(args.game_dir), "module_fingerprints": fingerprints, "viewport": [WIDTH, HEIGHT], "capture_size": CUBE_SIZE, "sample_origins": SAMPLES, "native_staging": staging_report, "seeded_pak": seeded_records, "bootstrap_sha256": digest(bootstrap), "bootstrap_vtf": bootstrap_metadata, "capture_trigger": "buildcubemaps 1 in a private cfg after verified post-map readiness", "display": os.environ.get("DISPLAY"), "wayland_display": os.environ.get("WAYLAND_DISPLAY"), "desktop_input": False, "success": False}
     (output / "command.json").write_text(json.dumps(report, indent=2) + "\n")
     console = game / "hammerr-cubemap.log"
     seen = {}
@@ -442,9 +509,11 @@ def worker(args):
             while time.monotonic() - started < args.timeout:
                 text = read_bounded(console, 2 * 1024**2).decode(errors="replace") if console.exists() else ""
                 observed_modules(process.pid, fingerprints, seen)
+                require(not any(message in text for message in ["ValidateLump:", "vtex failed to compile cubemap", "Can't load vtex_dll", "Can't load bsppack", "Cube map buffer size"]), f"Native capture reported a fatal error; inspect {console}")
                 if not armed and READY in text:
                     report["private_launch"] = runtime.verify_private_launch(game, text)
                     report["post_map_controls"] = verify_controls(text)
+                    verify_bootstrap_load(text)
                     screenshot = output / "ready.png"
                     subprocess.run(["grim", str(screenshot)], check=True, timeout=5)
                     image = read_bounded(screenshot, MAX_PAK_BYTES)
@@ -480,7 +549,8 @@ def worker(args):
             captured = read_bounded(staged, MAX_BSP_BYTES)
             after_lumps = bsp_lumps(captured)
             require(captured[4:8] == seeded[4:8] and captured[1032:1036] == seeded[1032:1036], "Native capture changed BSP version/revision")
-            require(all(before == after for index, (before, after) in enumerate(zip(seeded_lumps, after_lumps, strict=True)) if index != PAKFILE), "Native capture changed a non-PAK BSP lump")
+            require(all(before == after for index, (before, after) in enumerate(zip(seeded_lumps, after_lumps, strict=True)) if index not in (PAKFILE, GAME_LUMP)), "Native capture changed a non-PAK BSP lump")
+            report["game_lump_preservation"] = verify_game_lump_preservation(seeded, captured)
             final_entries, final_records = zip_entries(after_lumps[PAKFILE][2])
             sample_paths = {sample_name(origin) for origin in SAMPLES}
             for name, data in seeded_entries.items():
@@ -498,7 +568,7 @@ def worker(args):
                 samples.append({"name": name, "sha256": digest(final_entries[name]), "vtf": metadata, "pixels": pixels})
             require(len({sample["sha256"] for sample in samples}) == len(SAMPLES), "Distinct sample positions produced identical complete captures")
             (output / "captured.bsp").write_bytes(captured)
-            report.update({"success": True, "samples": samples, "final_pak": final_records, "unchanged_non_pak_lumps": [index for index in range(64) if index != PAKFILE], "packed_source_assets_preserved": True, "capture_seconds": time.monotonic() - started, "observed_modules": modules, "post_capture_console_tail": text[-12000:]})
+            report.update({"success": True, "samples": samples, "final_pak": final_records, "unchanged_non_pak_lumps": [index for index in range(64) if index not in (PAKFILE, GAME_LUMP)], "packed_source_assets_preserved": True, "capture_seconds": time.monotonic() - started, "observed_modules": modules, "post_capture_console_tail": text[-12000:]})
     except BaseException as error:
         report.update({"error": str(error), "traceback": traceback.format_exc(), "observed_modules": seen})
         raise

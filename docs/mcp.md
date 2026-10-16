@@ -132,6 +132,7 @@ To build the map, set the build options once, then compile:
 | Material replacement | `find_material_faces`, `get_material_search`, `select_material_faces`, `replace_materials` |
 | Material browsing | `search_materials`, `browse_materials`, `preview_material`, `set_material_favorite`, `reload_material_assets` |
 | Entities | `create_entity`, `set_entity_properties`, `tie_to_entity`, `move_to_world` |
+| Linked paths | `get_linked_path`, `set_linked_path` |
 | Entity definitions and inspector | `search_entity_classes`, `get_entity_class`, `load_entity_definitions`, `get_entity_inspector`, `set_entity_color`, `set_entity_component` |
 | Particle definitions and choices | `browse_particles`, `inspect_particle`, `begin_particle_choice`, `choose_particle`, `get_particle_choice`, `apply_particle_choice`, `cancel_particle_choice`, `reload_particle_assets` |
 | Connections | `get_entity_connections`, `get_connection_choices`, `begin_connection_edit`, `update_connection_draft`, `commit_connection_edit`, `cancel_connection_edit`, `delete_entity_connection` |
@@ -266,6 +267,19 @@ These details aren't obvious from the tool list.
 - `run_map` and `launch_game` always launch CS:S with `-insecure`.
 - Hint helpers use `create_block` with `tools/toolsskip`, then `select_faces` and `edit_faces` to paint `tools/toolshint` onto the intended split faces. Keep them as world brushes. Both compile paths protect finite hint polygons during initial structural plane selection, then partition remaining filled open leaves. Helpers add no rendering/collision. Results expose `hint_surfaces`, `hint_splits`, `hint_priority_splits` (retained added initial planes, included in `hint_splits`) and cumulative `hint_work`. Skip sides bound the helper; mixed materials and unsupported ownership fail atomically. Hidden/coplanar/outside helpers need no new split. Initial selection runs in `world_tree`; remaining refinement runs in cancellable `hint_planes`.
 - Imported `info_overlay` entities compile through `compile_map`, `start_compile` and `run_map`. `overlays` and `overlay_face_refs` count regular projections, imported water transitions and their compiled surface bindings. Edit regular overlay material, U/V ranges, render order and fades with `set_entity_properties`; imported basis/corner fields remain read-only. Compilation preserves VMF properties and history, resolves source sides to final world/detail/terrain faces and creates named accessors for regular overlays. Nested `info_overlay_transition` blocks compile as imported explicit projections, are consumed without runtime accessors and never inherit top-surface bindings onto generated water undersides. They allow 1,024 records and 256 compiled references each, sharing the 65,536 total binding/reference budgets with regular overlays; regular fade indexing remains separate. Transition authoring, fades and accessor fields are unsupported. Invalid targets or exceeded budgets preserve the previous BSP. See [Overlays](overlays.md) for limits.
+
+### Linked paths
+
+`get_linked_path` returns the current `snapshot`, owned `preview`, supported
+`classes` and `limits`. `set_linked_path` uses strict tagged actions:
+`preview` takes `classname`, `prefix`, ordered `points`, optional `closed` and
+the current `snapshot`; `review`, `apply` and `cancel` require `token`.
+Preview and Review preserve source/history. Review issues a fresh token; only
+the current owner can Apply or Cancel. Apply creates and selects the planned
+nodes in one Undo step. Occupied names receive bounded numeric suffixes; names
+that would acquire existing references reject. Open endpoints omit `target`;
+closed paths link the last node to the first. See [Linked paths](path-authoring.md)
+for controls and limits.
 
 ### Generated LDR reflections
 

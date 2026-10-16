@@ -40,6 +40,11 @@ cargo test -p editor-core --features mcp --lib
 cargo build -p editor-core --features mcp --bin hammerr-headless
 ```
 
+Development and test builds leave the generated `editor-ui` crate unoptimized
+to reduce compilation work. Slint's testing metadata stays enabled, other
+package settings keep their existing optimization levels, and release builds
+retain full UI optimization.
+
 The optional `test-support` feature exposes shared fixtures for desktop tests. It is not needed to run either program. `editor --headless` remains compatible with the standalone target.
 
 On the development desktop, serialize Cargo work with eight jobs and a 24 GiB memory limit:
@@ -336,6 +341,20 @@ measure natural reflection or refraction quality.
 Output directories must be fresh. The saved compile fixture avoids rebuilding
 for a repeated native observation; use the same `--vertical-sides` mode when
 reusing it.
+
+### Linked path authoring
+
+```sh
+cargo test -p editor-core --features mcp --lib linked_path
+cargo test -p editor --bin editor linked_path_window_
+python3 -B scripts/validate_linked_paths.py --binary target/debug/hammerr-headless --output /tmp/hammerr-linked-paths-check
+```
+
+Checks both path classes and open/closed chains, inherited FGD defaults,
+bounded points and safe names, reviewed/stale tokens, source/history
+preservation, one Undo/Redo and exact saved/reopened links and IDs. The MCP
+validator launches no compiler or game; User/Agent ownership is exercised by
+the core and software UI checks. Set `HAMMERR_UI_SNAPSHOTS` to save the dialog.
 
 ### Generated reflections
 

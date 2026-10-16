@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct State {
     pub(super) primitives: primitives::State,
     pub(super) repeat: repeat::State,
+    pub(super) linked_path: linked_path::State,
     pub(super) clipboard: clipboard::State,
     pub(super) components: components::State,
     pub(super) merging: merging::State,
@@ -23,6 +24,12 @@ impl State {
             .map(|preview| &preview.document)
             .or_else(|| {
                 self.repeat
+                    .preview
+                    .as_ref()
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
+                self.linked_path
                     .preview
                     .as_ref()
                     .map(|preview| &preview.document)
@@ -79,6 +86,7 @@ impl State {
 pub(super) enum Kind {
     Paste,
     Repeat,
+    LinkedPath,
     Clip,
     Hollow,
     Carve,
@@ -97,6 +105,9 @@ impl Session {
         }
         if !retained.contains(&Kind::Repeat) {
             self.clear_repeat_preview();
+        }
+        if !retained.contains(&Kind::LinkedPath) {
+            self.clear_linked_path_preview();
         }
         if !retained.contains(&Kind::Clip) {
             self.cancel_clip_preview();

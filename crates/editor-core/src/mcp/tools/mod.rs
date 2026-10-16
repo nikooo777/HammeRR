@@ -9,6 +9,7 @@ mod entities;
 mod files;
 mod geometry;
 mod groups;
+mod linked_path;
 mod materials;
 mod overlay;
 mod particles;

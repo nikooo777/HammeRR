@@ -553,6 +553,7 @@ impl EditorServer {
             + Self::files_tools()
             + Self::geometry_tools()
             + Self::groups_tools()
+            + Self::linked_path_tools()
             + Self::materials_tools()
             + Self::overlay_tools()
             + Self::partitions_tools()

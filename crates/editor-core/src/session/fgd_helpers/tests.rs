@@ -6,6 +6,53 @@ use source_formats::fgd::Catalog;
 const DEFINITION: &str = "@BaseClass size(-24 -12 0, 40 20 72) color(12 34 56) = shared [] @PointClass base(shared) sphere(radius) = sample [ angles(angle) : \"Angles\" : \"0 90 0\" radius(float) : \"Radius\" : 64 ]";
 
 #[test]
+fn implicit_sphere_binding_shares_named_geometry_defaults_and_read_only_reload() {
+    let definition = "@BaseClass sphere() sphere(radius) = shared [ radius(string) : \"Max Audible Distance\" : \"64\" ] @PointClass base(shared) = sample []";
+    for actor in [Actor::User, Actor::Agent] {
+        let mut session = Session::new(Err("no assets".into()));
+        session.set_definitions(actor, Catalog::parse(definition).unwrap());
+        let ObjectId::Entity(id) = session
+            .create_entity(actor, "sample", Some(DVec3::ZERO), BTreeMap::new())
+            .unwrap()
+        else {
+            panic!()
+        };
+        let before = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let scene = session.build_scene();
+        let mesh = sphere_vertices(&scene);
+        let report = session.entity_helper_report(id).unwrap();
+        assert_eq!(report.spheres.len(), 1);
+        assert!(report.spheres[0].implicit_property && report.spheres[0].displayed);
+        assert_eq!(report.spheres[0].value_source, "authored");
+        assert!(
+            report
+                .status
+                .contains("sphere() uses the implicit radius binding")
+        );
+        session.set_definitions(
+            actor,
+            Catalog::parse(&definition.replace("sphere()", "sphere(radius)")).unwrap(),
+        );
+        let named = session.entity_helper_report(id).unwrap();
+        assert_eq!(named.spheres.len(), 1);
+        assert!(!named.spheres[0].implicit_property);
+        assert_eq!(sphere_vertices(&session.build_scene()), mesh);
+        session.set_definitions(actor, Catalog::parse(definition).unwrap());
+        session
+            .set_entity_properties(actor, id, &[("radius".into(), None)])
+            .unwrap();
+        let fallback = session.entity_helper_report(id).unwrap();
+        assert!(fallback.spheres[0].implicit_property);
+        assert_eq!(fallback.spheres[0].value_source, "fgd_default");
+        assert_eq!(sphere_vertices(&session.build_scene()), mesh);
+        session.undo(actor).unwrap();
+        assert_eq!(session.document().vmf(), &before);
+        assert_eq!(session.document().undo_labels().count(), history);
+    }
+}
+
+#[test]
 fn fgd_size_drives_shared_scene_picks_bounds_regions_and_inspector_without_map_edits() {
     for actor in [Actor::User, Actor::Agent] {
         let mut session = Session::new(Err("no assets needed".into()));

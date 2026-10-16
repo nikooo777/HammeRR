@@ -20,6 +20,7 @@ pub struct Sphere {
     pub raw: Option<String>,
     pub raw_truncated: bool,
     pub property_truncated: bool,
+    pub implicit_property: bool,
     pub value_source: &'static str,
     pub property_type: Option<String>,
     pub radius: Option<f64>,
@@ -31,13 +32,20 @@ pub struct Sphere {
 
 pub(super) fn supported(class: &Class, helper: &Helper) -> bool {
     helper.name == "sphere"
-        && helper.arguments.len() == 1
-        && helper.arguments[0].len() <= MAX_SPHERE_KEY_BYTES
-        && class
-            .property(&helper.arguments[0])
-            .is_some_and(|property| {
-                matches!(property.kind.as_str(), "float" | "integer" | "string")
-            })
+        && property_key(helper).is_some_and(|key| {
+            key.len() <= MAX_SPHERE_KEY_BYTES
+                && class.property(key).is_some_and(|property| {
+                    matches!(property.kind.as_str(), "float" | "integer" | "string")
+                })
+        })
+}
+
+fn property_key(helper: &Helper) -> Option<&str> {
+    match helper.arguments.as_slice() {
+        [] => Some("radius"),
+        [key] => Some(key),
+        _ => None,
+    }
 }
 
 pub fn resolve(class: &Class, entity: &Entity) -> Vec<Sphere> {
@@ -48,15 +56,14 @@ pub fn resolve(class: &Class, entity: &Entity) -> Vec<Sphere> {
         .iter()
         .filter(|helper| helper.name == "sphere")
     {
-        if helper.arguments.len() == 1
-            && helper.arguments[0].len() <= MAX_SPHERE_KEY_BYTES
-            && !keys.insert(helper.arguments[0].to_ascii_lowercase())
-        {
+        if property_key(helper).is_some_and(|key| {
+            key.len() <= MAX_SPHERE_KEY_BYTES && !keys.insert(key.to_ascii_lowercase())
+        }) {
             continue;
         }
         if result.len() == MAX_SPHERES_PER_ENTITY {
             result.push(Sphere {
-                property: String::new(), raw: None, raw_truncated: false, property_truncated: false, value_source: "missing", property_type: None,
+                property: String::new(), raw: None, raw_truncated: false, property_truncated: false, implicit_property: false, value_source: "missing", property_type: None,
                 radius: None, center: None, guide_bounds: None, state: "unsupported",
                 error: Some(format!("Sphere guides support at most {MAX_SPHERES_PER_ENTITY} declarations per entity; remaining declarations were omitted")),
             });
@@ -77,15 +84,14 @@ fn bounded(raw: &str, limit: usize) -> String {
 
 fn resolve_one(class: &Class, entity: &Entity, helper: &Helper) -> Sphere {
     let mut result = Sphere {
-        property: helper
-            .arguments
-            .first()
+        property: property_key(helper)
             .map(|key| bounded(key, MAX_SPHERE_KEY_BYTES))
             .unwrap_or_default(),
         property_truncated: helper
             .arguments
             .first()
             .is_some_and(|key| key.len() > MAX_SPHERE_KEY_BYTES),
+        implicit_property: helper.arguments.is_empty(),
         raw_truncated: false,
         raw: None,
         value_source: "missing",
@@ -100,7 +106,7 @@ fn resolve_one(class: &Class, entity: &Entity, helper: &Helper) -> Sphere {
         error: None,
     };
     if !supported(class, helper) {
-        result.error = Some("sphere() requires exactly one declared float, integer or numeric-string property; zero-argument and other helper forms are unavailable".into());
+        result.error = Some("sphere() requires a declared float, integer or numeric-string radius property; sphere(property) names a declared numeric property. Other forms are unavailable".into());
         return result;
     }
     let property = class.property(&result.property).unwrap();

@@ -148,6 +148,9 @@ impl Session {
             status += &format!(
                 ". Sphere guides: {displayed} displayed, {suppressed} suppressed, {unavailable} unavailable; authored/FGD scalar guides, not runtime influence bounds"
             );
+            if spheres.iter().any(|sphere| sphere.implicit_property) {
+                status += ". sphere() uses the implicit radius binding";
+            }
         }
         if !lines.is_empty() {
             let displayed = lines.iter().filter(|line| line.displayed).count();

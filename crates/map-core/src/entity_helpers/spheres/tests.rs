@@ -84,7 +84,7 @@ fn malformed_authored_values_never_fall_back_and_nonpositive_values_remain_expli
 
 #[test]
 fn unsupported_forms_missing_values_and_native_precision_are_diagnostic() {
-    for declaration in ["sphere()", "sphere(missing)", "sphere(radius, other)"] {
+    for declaration in ["sphere(missing)", "sphere(radius, other)"] {
         let rows = resolve_fixture(
             &format!("@PointClass {declaration} = sample [ radius(float) : \"Radius\" : 64 ]"),
             &[],
@@ -109,6 +109,53 @@ fn unsupported_forms_missing_values_and_native_precision_are_diagnostic() {
             "{origin}"
         );
     }
+}
+
+#[test]
+fn implicit_radius_binds_declared_numeric_properties_and_deduplicates_effective_names() {
+    let implicit = "@BaseClass sphere() sphere(radius) sphere(RADIUS) = shared [ Radius(string) : \"Max Audible Distance\" : \"1250\" ] @PointClass base(shared) = sample []";
+    let explicit = "@PointClass sphere(Radius) = sample [ Radius(string) : \"Max Audible Distance\" : \"1250\" ]";
+    let rows = resolve_fixture(implicit, &[]);
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].implicit_property);
+    assert_eq!(rows[0].property, "Radius");
+    assert_eq!(rows[0].radius, Some(1250.0));
+    assert_eq!(rows[0].value_source, "fgd_default");
+    let named = resolve_fixture(explicit, &[]).remove(0);
+    assert!(!named.implicit_property);
+    assert_eq!(rows[0].lines(), named.lines());
+    assert_eq!(rows[0].guide_bounds, named.guide_bounds);
+    let authored = resolve_fixture(implicit, &[("RADIUS", "64")]).remove(0);
+    assert!(authored.implicit_property);
+    assert_eq!(authored.radius, Some(64.0));
+    assert_eq!(authored.value_source, "authored");
+    for (raw, expected) in [
+        ("0", "nonpositive"),
+        ("-1", "nonpositive"),
+        ("broken", "invalid"),
+    ] {
+        let row = resolve_fixture(implicit, &[("radius", raw)]).remove(0);
+        assert_eq!(row.state, expected);
+        assert!(row.lines().is_empty());
+        assert!(row.guide_bounds.is_none());
+    }
+    for declaration in ["", "radius(color255) : \"Color\" : \"1 2 3\""] {
+        let row = resolve_fixture(
+            &format!("@PointClass sphere() = sample [{declaration}]"),
+            &[],
+        )
+        .remove(0);
+        assert!(row.implicit_property);
+        assert_eq!(row.property, "radius");
+        assert_eq!(row.state, "unsupported");
+        assert!(row.lines().is_empty());
+    }
+    let rows = resolve_fixture(
+        "@PointClass sphere(radius) sphere() = sample [ radius(integer) : \"Radius\" : 128 ]",
+        &[],
+    );
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].implicit_property);
 }
 
 #[test]

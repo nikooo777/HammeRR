@@ -71,7 +71,7 @@ struct Publication {
     pending: Option<compiler::PreparedWrite>,
     lease: Option<compiler::OutputLease>,
     pointfile_lease: Option<compiler::OutputLease>,
-    sources: Option<compiler::cubemap_assets::ReflectionSourceGuard>,
+    sources: Option<compiler::asset_sources::OutputAssetSourceGuard>,
     published: bool,
     committed: bool,
     error: Option<String>,
@@ -107,6 +107,8 @@ impl CompileRequest {
         let mut pointfile_lease = None;
         if self.options.generate_reflections {
             native_runtime::preflight_vmf(&self.vmf).map_err(|e| e.to_string())?;
+        }
+        if self.options.requires_guarded_publication() {
             if let Some(stamp) = &self.source_stamp {
                 stamp.verify_metadata().map_err(|e| e.to_string())?;
             }
@@ -122,20 +124,26 @@ impl CompileRequest {
             let stamp = self
                 .destination_stamp
                 .as_ref()
-                .ok_or("Reflection destination snapshot missing")?;
+                .ok_or("Guarded destination snapshot missing")?;
             stamp.verify_metadata().map_err(|e| e.to_string())?;
             lease = Some(
                 compiler::OutputLease::acquire(&self.path, &self.control)
                     .map_err(|e| e.to_string())?,
             );
             stamp
-                .verify_lease(lease.as_ref().ok_or("Reflection output lease missing")?)
+                .verify_lease(lease.as_ref().ok_or("Guarded output lease missing")?)
                 .map_err(|e| e.to_string())?;
         }
         let path = lease
             .as_ref()
             .map(|lease| lease.path().to_owned())
             .unwrap_or_else(|| self.path.clone());
+        let reservation = self
+            .options
+            .requires_guarded_publication()
+            .then(|| compiler::WriteReservation::new(&path, &self.control))
+            .transpose()
+            .map_err(|e| e.to_string())?;
         let mut output = compiler::compile_with_context_controlled(
             &self.vmf,
             &self.game,
@@ -166,7 +174,7 @@ impl CompileRequest {
         }
         self.control.checkpoint()?;
         let mut sources = None;
-        let (pending, published, committed) = if self.options.generate_reflections {
+        let (pending, published, committed) = if self.options.requires_guarded_publication() {
             if output.bsp.is_none() && output.leak.is_some() {
                 pointfile_lease = Some(
                     compiler::OutputLease::acquire(&path.with_extension("lin"), &self.control)
@@ -174,24 +182,25 @@ impl CompileRequest {
                 );
             }
             let pending = output
-                .prepare_write_controlled(&path, &self.control)
+                .prepare_write_reserved(
+                    reservation.ok_or("Guarded output reservation missing")?,
+                    &self.control,
+                )
                 .map_err(|e| e.to_string())?;
-            if let Some(manifest) = &output.cubemap_assets {
-                sources = Some(
-                    compiler::cubemap_assets::capture_reflection_source_guard(
-                        manifest,
-                        &self.game,
-                        &self.control,
-                    )
-                    .map_err(|e| e.to_string())?,
-                );
-            }
+            sources = Some(
+                compiler::asset_sources::capture_output_asset_source_guard(
+                    &output,
+                    &self.game,
+                    &self.control,
+                )
+                .map_err(|e| e.to_string())?,
+            );
             if let Some(source) = &source {
                 source.verify(&self.control).map_err(|e| e.to_string())?;
             }
             lease
                 .as_ref()
-                .ok_or("Reflection destination lease missing")?
+                .ok_or("Guarded destination lease missing")?
                 .verify(&self.control)
                 .map_err(|e| e.to_string())?;
             (pending, false, false)
@@ -451,28 +460,29 @@ impl Session {
         }
         let control = compiler::Control::default();
         let generating = self.compilation.options.generate_reflections;
-        let (context, environment, source_stamp, destination_stamp) = if generating {
+        let (context, environment) = if generating {
             if self.game_running() {
                 return Err("Close CS:S before capturing reflections".into());
             }
             let context = compiler::CompileContext::from_output(&path)?;
             let environment = self.capture_environment()?;
-            let source_stamp = self
-                .path
-                .as_ref()
-                .map(|path| compiler::FileStamp::capture(path).map_err(|e| e.to_string()))
-                .transpose()?;
-            let destination_stamp =
-                compiler::FileStamp::capture(&path).map_err(|e| e.to_string())?;
-            (
-                Some(context),
-                Some(environment),
-                source_stamp,
-                Some(destination_stamp),
-            )
+            (Some(context), Some(environment))
         } else {
-            (None, None, None, None)
+            (None, None)
         };
+        let (source_stamp, destination_stamp) =
+            if self.compilation.options.requires_guarded_publication() {
+                let source_stamp = self
+                    .path
+                    .as_ref()
+                    .map(|path| compiler::FileStamp::capture(path).map_err(|e| e.to_string()))
+                    .transpose()?;
+                let destination_stamp =
+                    compiler::FileStamp::capture(&path).map_err(|e| e.to_string())?;
+                (source_stamp, Some(destination_stamp))
+            } else {
+                (None, None)
+            };
         self.compilation.serial += 1;
         self.compilation.job = Some(Job {
             token: self.compilation.serial,
@@ -514,7 +524,7 @@ impl Session {
         Ok(request)
     }
 
-    fn commit_reflection_output(&self, result: &CompileResult) -> Result<(), String> {
+    fn commit_guarded_output(&self, result: &CompileResult) -> Result<(), String> {
         let mut publication = result
             .publication
             .lock()
@@ -523,36 +533,42 @@ impl Session {
             return Ok(());
         }
         let outcome: Result<(), String> = (|| {
+            let activity = if result.options.generate_reflections {
+                "reflection capture"
+            } else {
+                "sky asset packing"
+            };
             if self.closing
                 || result.generation != self.document_generation
                 || result.revision != self.document.revision()
                 || result.options != self.compilation.options
                 || result.content_epoch != self.content_epoch
             {
-                return Err("Map, content, runtime or build settings changed during reflection capture; previous output preserved".into());
+                return Err(format!(
+                    "Map, content, runtime or build settings changed during {activity}; previous output preserved"
+                ));
             }
             let job = self
                 .compilation
                 .job
                 .as_ref()
                 .filter(|job| job.token == result.token)
-                .ok_or("Reflection compile job was replaced")?;
+                .ok_or("Guarded compile job was replaced")?;
             if job.source_path != self.path {
-                return Err(
-                    "Map source path changed during reflection capture; previous output preserved"
-                        .into(),
-                );
+                return Err(format!(
+                    "Map source path changed during {activity}; previous output preserved"
+                ));
             }
             result.control.checkpoint()?;
             let pending = publication
                 .pending
                 .take()
-                .ok_or("Prepared reflection output missing")?;
+                .ok_or("Prepared guarded output missing")?;
             let lease = publication
                 .pointfile_lease
                 .as_ref()
                 .or(publication.lease.as_ref())
-                .ok_or("Reflection destination lease missing")?;
+                .ok_or("Guarded destination lease missing")?;
             let success = pending
                 .commit_checked_with(lease, &result.control, || {
                     if let Some(source) = &result.source {
@@ -592,8 +608,8 @@ impl Session {
                 self.log(actor, "Discarded completion from a replaced compile job");
                 return;
             }
-            if result.options.generate_reflections {
-                let _ = self.commit_reflection_output(result);
+            if result.options.requires_guarded_publication() {
+                let _ = self.commit_guarded_output(result);
             }
         }
         self.compiling = false;

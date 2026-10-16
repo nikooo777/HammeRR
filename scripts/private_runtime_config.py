@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 PLAYABLE_ENGINE_SHA256 = (
@@ -627,6 +628,30 @@ def private_readonly_launch(command, output, environment):
         "--bind", str(output), str(output), "--", *command,
     ]
     return arguments, {**environment, "TMPDIR": str(temporary)}
+
+
+@contextmanager
+def private_native_process(command, root, game, output, environment, report):
+    process = None
+    try:
+        arguments, environment = private_readonly_launch(command, output, environment)
+        report["command"] = arguments
+        with (output / "launcher.log").open("w") as stream:
+            process = subprocess.Popen(
+                arguments, cwd=root, env=environment, stdin=subprocess.DEVNULL,
+                stdout=stream, stderr=stream,
+            )
+            yield process
+    finally:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        report["exit_code"] = None if process is None else process.returncode
+        report["configuration_preservation"] = finish_private_launch(game)
 
 
 def verify_private_launch(game, text):

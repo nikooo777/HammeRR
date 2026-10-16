@@ -9,10 +9,10 @@ from validate_working_region import configure
 SIZE = 401
 DOUBLE = "line(240 80 24, targetname, start, targetname, aim)"
 FGD = f'''
-@BaseClass line(32 220 80, targetname, aim) = line_base [
+@BaseClass line(32 220 80, targetname, aim) {DOUBLE} = line_base [
     aim(target_destination) : "Target" : "end"
 ]
-@PointClass base(line_base) size(8 8 8) color(40 170 225) {DOUBLE}
+@PointClass base(line_base) size(8 8 8) color(40 170 225)
     = line_sample [
     start(target_destination) : "Start" : "start"
     count(integer) : "Count" : 0

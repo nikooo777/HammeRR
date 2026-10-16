@@ -406,7 +406,8 @@ paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history.
 
 `get_entity_inspector.helpers.spheres` resolves `sphere(property)` declarations
-for point entities through the same Session operations as the property panel and
+for point entities, including brushless FGD `@FilterClass` definitions such as
+`filter_enemy`, through the same Session operations as the property panel and
 `render_view`. Each entry reports `property`, `raw`, `value_source` (`authored`,
 `fgd_default` or `missing`), `property_type`, `radius`, `center`, potential
 `guide_bounds`, intrinsic `state`, `error`, `displayed` and `suppression_reason`.

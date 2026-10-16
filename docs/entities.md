@@ -94,10 +94,10 @@ Limits: These are world-aligned editor boxes in Source units, independent of `an
 ### Inspect a property radius
 
 FGD `sphere(property)` declarations add three world-axis guide rings around a
-selected generic point entity. Each ring uses the named property's authored
-numeric value, or its FGD default when no value is stored. Multiple property
-radii remain separate guides. During a transform preview, the rings follow the
-displayed origin.
+selected generic point entity, including brushless `@FilterClass` definitions.
+Each ring uses the named property's authored numeric value, or its FGD default
+when no value is stored. Multiple property radii remain separate guides. During
+a transform preview, the rings follow the displayed origin.
 
 1. Click **Entity…**, choose `env_firesensor`, then **Place entity**. Its shipped
    FGD declares `sphere(fireradius)` and labels the property **Radius**.
@@ -108,6 +108,10 @@ displayed origin.
 4. Select another object, hide the entity, or exclude its ordinary box with
    **Working region…** to suppress the rings. Restore selection and visibility
    to display them again.
+
+The shipped `filter_enemy` definition uses this same point-guide path for
+**Radius** (`filter_radius`) and **Outer Radius** (`filter_outer_radius`), both
+defaulting to `0`.
 
 ![Selected point entity with distinct property-radius guides](images/fgd-spheres.png)
 

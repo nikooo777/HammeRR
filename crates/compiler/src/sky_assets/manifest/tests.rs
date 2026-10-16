@@ -798,3 +798,32 @@ fn world_identity_requires_canonical_classname_keys_and_retains_sky_key_case() {
     bsp.set_entities("{ classname WORLDSPAWN SKYNAME TeSt }");
     assert_eq!(world_family(&bsp, &Control::default()).unwrap(), "TeSt");
 }
+
+#[test]
+fn world_identity_entity_value_admission_counts_quoted_utf8_bytes() {
+    for value in ["A".repeat(2047), format!("{}x", "é".repeat(1023))] {
+        assert_eq!(value.len(), 2047);
+        let mut bsp = Bsp::new();
+        bsp.set_entities(&format!(
+            "{{ classname worldspawn skyname test message \"{value}\" }}"
+        ));
+        assert_eq!(world_family(&bsp, &Control::default()).unwrap(), "test");
+    }
+    for value in [
+        "A".repeat(2048),
+        "é".repeat(1024),
+        format!("{} skip skyname other ", "A".repeat(2048)),
+    ] {
+        assert!(value.len() >= 2048);
+        let mut bsp = Bsp::new();
+        bsp.set_entities(&format!(
+            "{{ classname worldspawn skyname test message \"{value}\" }}"
+        ));
+        assert!(
+            world_family(&bsp, &Control::default())
+                .unwrap_err()
+                .to_string()
+                .contains("entity token exceeds HammeRR's 2047-byte admission limit")
+        );
+    }
+}

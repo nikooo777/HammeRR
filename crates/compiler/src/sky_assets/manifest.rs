@@ -13,7 +13,7 @@ use crate::asset_sources::hash;
 
 pub const PACKED_SKY_MANIFEST_PATH: &str = "hammerr/packed-sky.json";
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
-const MAX_ENTITY_KEY_BYTES: usize = 2047;
+const MAX_ENTITY_TOKEN_BYTES: usize = 2047;
 const ENTITY_LIMITS: FlatBlockLimits = FlatBlockLimits {
     max_bytes: 4 * 1024 * 1024,
     max_blocks: 65_536,
@@ -266,11 +266,11 @@ fn world_family(bsp: &Bsp, control: &Control) -> io::Result<String> {
     let mut worlds = 0;
     for (index, block) in blocks.iter().enumerate() {
         checkpoint(control)?;
-        for (key, _) in block {
+        for (key, value) in block {
             checkpoint(control)?;
-            if key.len() > MAX_ENTITY_KEY_BYTES {
+            if key.len() > MAX_ENTITY_TOKEN_BYTES || value.len() > MAX_ENTITY_TOKEN_BYTES {
                 return Err(invalid(
-                    "Packed sky entity key exceeds HammeRR's 2047-byte admission limit",
+                    "Packed sky entity token exceeds HammeRR's 2047-byte admission limit",
                 ));
             }
             if key.eq_ignore_ascii_case("classname") && key != "classname" {

@@ -37,13 +37,14 @@ fn class(entity: &Entity) -> bool {
 }
 
 fn record(entity: &Entity) -> Result<DetailProp, String> {
+    let sprite = entity
+        .classname()
+        .is_some_and(|name| name.eq_ignore_ascii_case("prop_detail_sprite"));
     if entity.solids.iter().any(|solid| !solid.hidden) {
-        return Err("Detail model props are point entities; remove their brush geometry".into());
+        return Err("Detail props are point entities; remove their brush geometry".into());
     }
     if entity.connections.iter().flatten().next().is_some() {
-        return Err(
-            "Detail model props are client-only and cannot carry entity I/O connections".into(),
-        );
+        return Err("Detail props are client-only and cannot carry entity I/O connections".into());
     }
     for key in [
         "parentname",
@@ -58,7 +59,7 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
             .is_some_and(|value| !value.trim().is_empty())
         {
             return Err(format!(
-                "Detail model props are client-only and cannot honor {key}; remove the runtime behavior"
+                "Detail props are client-only and cannot honor {key}; remove the runtime behavior"
             ));
         }
     }
@@ -78,11 +79,14 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
         ("fademaxdist", 0.0),
         ("fadescale", 1.0),
     ] {
+        if sprite && key == "detailOrientation" {
+            continue;
+        }
         if let Some(raw) = entity.properties.get(key) {
             let value = raw.parse::<f64>().ok().filter(|value| value.is_finite());
             if value != Some(default) {
                 return Err(format!(
-                    "Detail model props require {key}={default}; this native model record does not support that override"
+                    "Detail props require {key}={default}; this native detail record does not support that override"
                 ));
             }
         }
@@ -91,19 +95,17 @@ fn record(entity: &Entity) -> Result<DetailProp, String> {
         .map_err(|error| error.to_string())?
         != [255; 3]
     {
-        return Err(
-            "Tinted detail model props are unsupported; rendercolor must be 255 255 255".into(),
-        );
+        return Err("Tinted detail props are unsupported; rendercolor must be 255 255 255".into());
     }
     let origin = if entity.properties.get("origin").is_some() {
         entity
             .origin()
-            .ok_or("Detail model prop origin must contain three finite coordinates")?
+            .ok_or("Detail prop origin must contain three finite coordinates")?
     } else {
         DVec3::ZERO
     };
     if !origin.is_finite() || origin.abs().max_element() > MAX_COMPILE_COORD {
-        return Err("Detail model prop origin must fit finite Source coordinates".into());
+        return Err("Detail prop origin must fit finite Source coordinates".into());
     }
     let angles = static_props::angles(entity)?;
     let origin = origin.as_vec3();
@@ -330,26 +332,41 @@ pub(crate) fn bake(
         entities
             .iter()
             .copied()
+            .filter(|entity| {
+                !entity
+                    .classname()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("prop_detail_sprite"))
+            })
             .filter_map(|entity| entity.properties.get("lightingorigin")),
         control,
     )?;
     for entity in entities {
         control.checkpoint()?;
         let result: Result<(), String> = (|| {
+            let mut prop = record(entity)?;
+            let point = DVec3::from_array(prop.origin.map(f64::from));
             if entity
                 .classname()
                 .is_some_and(|name| name.eq_ignore_ascii_case("prop_detail_sprite"))
             {
-                return Err("Explicit prop_detail_sprite compilation is unsupported; use a model-only prop_detail".into());
+                if entity
+                    .properties
+                    .get("lightingorigin")
+                    .is_some_and(|name| !name.trim().is_empty())
+                {
+                    return Err("Explicit detail sprites do not support named lightingorigin; this override is model-only".into());
+                }
+                let (sprite, orientation) = sprites::explicit(entity)?;
+                prop.kind = sprites::KIND;
+                prop.orientation = orientation;
+                return builder.add_sprite(sprite, prop, point, control);
             }
-            let prop = record(entity)?;
             let lighting_origin = lighting.resolve(
                 entity
                     .properties
                     .get("lightingorigin")
                     .filter(|name| !name.trim().is_empty()),
             )?;
-            let point = DVec3::from_array(prop.origin.map(f64::from));
             builder.add(
                 entity.properties.get("model").unwrap_or(""),
                 prop,

@@ -1135,6 +1135,26 @@ existing flat artifacts can be compared byte-for-byte after compiler changes.
 Runtime isolation, preservation and cleanup use the same policy as other private
 CS:S validators, including `-insecure`, `-default` and pre/post-map `sv_lan 1`.
 
+### Explicit detail sprites
+
+```sh
+cargo test -p compiler --test detail_sprites explicit_sprite
+python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-check
+python3 -B scripts/validate_explicit_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-explicit-detail-sprites-native --runtime
+```
+
+`validate_explicit_detail_sprites` authors 24 `prop_detail_sprite` entities through
+the existing property calls. It checks exact SDK rectangle/UV fields, scale-one
+type-one records, authored positions, dictionary deduplication, open visible
+leaves, runtime-entity removal, save/reopen, unchanged unrelated geometry and
+exact foreground/background output. Rejected fields must preserve previous
+output, source and history. `--runtime` adds a private installed-engine detail
+ON/OFF observation of the same BSP. Compiler regressions cover all three
+orientations, mixed model/sprite dictionaries and invalid geometry/overrides.
+Use a fresh output directory; `--game-dir`, `--fgd` and `--port` override the
+installed paths and private native port. Native launches retain `-insecure`,
+pre/post-map `sv_lan 1` and the shared preservation/cleanup policy.
+
 ### Detail sprites, shapes and light styles
 
 ```sh
@@ -1183,7 +1203,7 @@ separate model and sprite masks subtract detail-disabled backgrounds. These
 controls check native response, without assuming SDK half-color extras restore
 static-base intensity. Compiler and source-format tests cover record caps,
 missing-channel zero fill, malformed ranges/layouts and atomic rejection.
-Detail shadows, sway and explicit sprite entities remain unsupported.
+Detail shadows and authored sway remain unsupported.
 
 All four validators need fresh output directories and installed CS:S/FGD assets.
 Native modes retain the shared private-launch, source/configuration preservation

@@ -102,6 +102,61 @@ impl Definition {
     }
 }
 
+pub(super) fn explicit(entity: &source_formats::vmf::Entity) -> Result<(DetailSprite, u8), String> {
+    for key in ["spriterandomscale", "sway", "shape_angle", "shape_size"] {
+        if let Some(raw) = entity.properties.get(key)
+            && raw.parse::<f64>().ok().filter(|value| value.is_finite()) != Some(0.0)
+        {
+            return Err(format!("Explicit detail sprites require {key}=0"));
+        }
+    }
+    if entity
+        .properties
+        .get("sprite_shape")
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err("Explicit detail sprites do not support sprite_shape".into());
+    }
+    let required = |key| {
+        entity
+            .properties
+            .get(key)
+            .ok_or_else(|| format!("Explicit detail sprite requires {key}"))
+    };
+    let upper_left = vector::<2>(required("position_ul")?, "position_ul")?;
+    let lower_right = vector::<2>(required("position_lr")?, "position_lr")?;
+    let [x, y] = vector::<2>(required("tex_ul")?, "tex_ul")?;
+    let [width, height] = vector::<2>(required("tex_size")?, "tex_size")?;
+    let [total] = vector::<1>(required("tex_total_size")?, "tex_total_size")?;
+    if x < 0.0
+        || y < 0.0
+        || width < 1.0
+        || height < 1.0
+        || total <= 0.0
+        || x + width > total
+        || y + height > total
+    {
+        return Err("Explicit detail sprite texture rectangle must fit its positive logical atlas size with width and height at least one texel".into());
+    }
+    let orientation = entity
+        .properties
+        .get("detailOrientation")
+        .unwrap_or("0")
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && (0.0..=2.0).contains(value) && value.fract() == 0.0)
+        .ok_or("Explicit detail sprite detailOrientation must be an integer within 0–2")?
+        as u8;
+    let sprite = DetailSprite {
+        upper_left,
+        lower_right,
+        texture_upper_left: [(x + 0.5) / total, (y + 0.5) / total],
+        texture_lower_right: [(width + (x - 0.5)) / total, (height + (y - 0.5)) / total],
+    };
+    check_geometry(sprite, 1.0)?;
+    Ok((sprite, orientation))
+}
+
 pub(super) fn key(sprite: DetailSprite) -> [u32; 8] {
     let values = [
         sprite.upper_left,
@@ -251,6 +306,25 @@ fn check_orientation_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_uvs_preserve_sdk_arithmetic_and_default_orientation() {
+        let mut entity = source_formats::vmf::Entity::new(1, "prop_detail_sprite");
+        for (key, value) in [
+            ("position_ul", "-4 16"),
+            ("position_lr", "12 -16"),
+            ("tex_ul", "0.1 0.2"),
+            ("tex_size", "2.3 1.1"),
+            ("tex_total_size", "512"),
+        ] {
+            entity.properties.set(key, value);
+        }
+        let (sprite, orientation) = explicit(&entity).unwrap();
+        assert_eq!(orientation, 0);
+        assert_eq!(sprite.upper_left, [-4.0, 16.0]);
+        assert_eq!(sprite.lower_right, [12.0, -16.0]);
+        assert_eq!(sprite.texture_lower_right[0].to_bits(), 0x3b73_3333);
+    }
 
     #[test]
     fn fixed_source_right_up_and_full_camera_bounds_reject_real_extents() {

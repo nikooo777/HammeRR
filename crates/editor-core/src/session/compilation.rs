@@ -515,7 +515,7 @@ impl Session {
         if publication.committed || publication.pending.is_none() {
             return Ok(());
         }
-        let outcome = (|| {
+        let outcome: Result<(), String> = (|| {
             if self.closing
                 || result.generation != self.document_generation
                 || result.revision != self.document.revision()

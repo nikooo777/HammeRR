@@ -685,6 +685,35 @@ fn explicit_sprite_scale_precision_matches_native_fast_and_slow_paths() {
 }
 
 #[test]
+fn explicit_fast_sprite_bounds_reject_native_width_and_height_overflow_before_scaling() {
+    let mut fixture = fixture();
+    let mut entity = explicit_sprite(800_000, 2);
+    entity.properties.set("position_ul", "-1.5e38 1.5e38");
+    entity.properties.set("position_lr", "1.5e38 -1.5e38");
+    entity.properties.set("scale", "1e-38");
+    fixture.source.entities.push(entity);
+    let baseline = compiled(&fixture);
+    let rows = baseline.detail_props().unwrap().unwrap();
+    assert!(
+        rows.props
+            .iter()
+            .any(|prop| prop.origin[2] == 32.0 && prop.scale == 1e-38)
+    );
+    let base = fixture.source.clone();
+    for (upper_left, lower_right) in [
+        ("-3e38 1.5e38", "3e38 -1.5e38"),
+        ("-1.5e38 3e38", "1.5e38 -3e38"),
+        ("-3e38 3e38", "3e38 -3e38"),
+    ] {
+        fixture.source = base.clone();
+        let entity = fixture.source.entities.last_mut().unwrap();
+        entity.properties.set("position_ul", upper_left);
+        entity.properties.set("position_lr", lower_right);
+        rejected(&fixture, "geometry");
+    }
+}
+
+#[test]
 fn explicit_shape_controls_reject_unrepresentable_parameters_atomically() {
     let mut fixture = fixture();
     for changes in [

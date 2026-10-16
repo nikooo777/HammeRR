@@ -283,6 +283,8 @@ pub(super) fn check_geometry(sprite: DetailSprite, scale: f32) -> Result<(), Str
         || scale <= 0.0
         || sprite.upper_left[0] >= sprite.lower_right[0]
         || sprite.upper_left[1] <= sprite.lower_right[1]
+        || !(sprite.lower_right[0] - sprite.upper_left[0]).is_finite()
+        || !(sprite.lower_right[1] - sprite.upper_left[1]).is_finite()
     {
         return Err(
             "Detail sprite geometry and scale must remain finite and positive in native floats"

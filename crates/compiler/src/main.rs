@@ -137,6 +137,10 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(identity) = &source_identity {
             identity.verify(control)?;
         }
+        let prepared = output.prepare_write_controlled(&path, control)?;
+        let pointfile = (output.bsp.is_none() && output.leak.is_some())
+            .then(|| OutputLease::acquire(&path.with_extension("lin"), control))
+            .transpose()?;
         let assets = output
             .cubemap_assets
             .as_ref()
@@ -154,11 +158,11 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(())
         };
-        match output.prepare_write_controlled(&path, control)? {
-            Some(prepared) if output.bsp.is_none() && output.leak.is_some() => {
-                let pointfile = OutputLease::acquire(&path.with_extension("lin"), control)?;
+        match prepared {
+            Some(prepared) if pointfile.is_some() => {
+                let pointfile = pointfile.as_ref().unwrap();
                 pointfile.verify(control)?;
-                prepared.commit_checked_with(&pointfile, control, validate)?
+                prepared.commit_checked_with(pointfile, control, validate)?
             }
             Some(prepared) => prepared.commit_checked_with(lease, control, validate)?,
             None => false,

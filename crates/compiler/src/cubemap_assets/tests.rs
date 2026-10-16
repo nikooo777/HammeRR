@@ -647,3 +647,65 @@ fn ambiguous_native_patch_edits_fail_without_synthesizing_reflectivity() {
             .contains("nested Patch")
     );
 }
+
+#[test]
+fn prepared_output_in_a_content_mount_does_not_invalidate_its_final_source_guard() {
+    let (directory, game) = game();
+    let (vmf, _) = source();
+    let output = merge(pending(&vmf, &game), &game);
+    let path = directory.path().join("reflections.bsp");
+    let control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &control).unwrap();
+    let prepared = output
+        .prepare_write_controlled(&path, &control)
+        .unwrap()
+        .unwrap();
+    let guard =
+        capture_reflection_source_guard(output.cubemap_assets.as_ref().unwrap(), &game, &control)
+            .unwrap();
+    assert!(
+        prepared
+            .commit_checked_with(&lease, &control, || guard.verify_metadata())
+            .unwrap()
+    );
+    assert_eq!(&std::fs::read(&path).unwrap()[..4], b"VBSP");
+}
+
+#[test]
+fn final_source_guard_detects_shadow_additions_after_output_preparation() {
+    let (_directory, mut game) = game();
+    let (vmf, _) = source();
+    let output = merge(pending(&vmf, &game), &game);
+    let first = tempfile::tempdir().unwrap();
+    game.mounts.insert(
+        0,
+        MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(first.path().to_owned()),
+        },
+    );
+    let destination = tempfile::tempdir().unwrap();
+    let path = destination.path().join("reflections.bsp");
+    std::fs::write(&path, b"previous output").unwrap();
+    let control = Control::default();
+    let lease = crate::OutputLease::acquire(&path, &control).unwrap();
+    let prepared = output
+        .prepare_write_controlled(&path, &control)
+        .unwrap()
+        .unwrap();
+    let guard =
+        capture_reflection_source_guard(output.cubemap_assets.as_ref().unwrap(), &game, &control)
+            .unwrap();
+    std::fs::create_dir_all(first.path().join("Materials/Dev")).unwrap();
+    std::fs::write(
+        first.path().join("Materials/Dev/DEV_MEASUREGENERIC01.vmt"),
+        "UnlitGeneric { $color [1 0 0] }",
+    )
+    .unwrap();
+    assert!(
+        prepared
+            .commit_checked_with(&lease, &control, || guard.verify_metadata())
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"previous output");
+}

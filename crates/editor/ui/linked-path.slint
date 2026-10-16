@@ -19,6 +19,7 @@ export component LinkedPathWindow inherits Window {
     in property <bool> can-preview;
     in property <bool> can-review;
     in property <bool> ready;
+    in property <bool> picking;
     in property <string> preview-status;
     in property <string> message;
     callback edited();
@@ -27,13 +28,15 @@ export component LinkedPathWindow inherits Window {
     callback add-point();
     callback remove-point(int);
     callback move-point(int, int);
+    callback pick-position(int);
+    callback cancel-pick();
     callback preview();
     callback review();
     callback apply();
     callback cancel();
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
-        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        key-pressed(event) => { if event.text == Key.Escape { if root.picking { root.cancel-pick(); } else { root.cancel(); } accept } else { reject } }
         VerticalLayout {
             padding: 20px;
             spacing: 12px;
@@ -94,7 +97,7 @@ export component LinkedPathWindow inherits Window {
                         Text { horizontal-stretch: 1; text: "X"; color: #d59090; }
                         Text { horizontal-stretch: 1; text: "Y"; color: #9fc796; }
                         Text { horizontal-stretch: 1; text: "Z"; color: #90b1e0; }
-                        Rectangle { width: 214px; }
+                        Rectangle { width: 360px; }
                     }
                     ScrollView {
                         vertical-stretch: 1;
@@ -130,6 +133,7 @@ export component LinkedPathWindow inherits Window {
                                     Button { text: "↑"; accessible-label: "Move up"; width: 36px; enabled: root.editable && index > 0; clicked => { root.move-point(index, -1); } }
                                     Button { text: "↓"; accessible-label: "Move down"; width: 36px; enabled: root.editable && index + 1 < root.points.length; clicked => { root.move-point(index, 1); } }
                                     Button { text: "Remove"; width: 130px; enabled: root.editable && root.points.length > 2; clicked => { root.remove-point(index); } }
+                                    Button { text: "Pick position…"; width: 140px; enabled: root.ready; clicked => { root.pick-position(index); } }
                                 }
                                 if root.existing: Text { text: point.id == "" ? (point.name == "" ? "New node · assigned at Preview" : point.name + " · new node") : point.name + " · " + point.id; color: #d6deea; font-size: 12px; wrap: word-wrap; }
                                 if point.link != "": Text { text: point.link; color: #b6c1cf; font-size: 12px; wrap: word-wrap; }
@@ -147,6 +151,7 @@ export component LinkedPathWindow inherits Window {
             }
             Text { text: root.preview-status; wrap: word-wrap; min-height: 36px; }
             Text { text: root.message; color: #b6c1cf; wrap: word-wrap; min-height: 36px; }
+            if root.picking: Button { text: "Cancel position pick"; clicked => { root.cancel-pick(); } }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

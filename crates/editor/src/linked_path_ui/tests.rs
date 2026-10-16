@@ -2,6 +2,72 @@ use super::*;
 use source_formats::fgd::Catalog;
 use std::sync::{Arc, Mutex};
 
+#[test]
+fn row_surface_pick_cancel_miss_and_apply_share_the_owned_session_preview() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut session = Session::new(Err("no assets needed".into()));
+    session.set_definitions(Actor::User,Catalog::parse("@PointClass = path_corner [ targetname(target_source) : \"Name\" target(target_destination) : \"Next\" ]").unwrap());
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(-128.0, -128.0, -16.0),
+            DVec3::new(128.0, 128.0, 0.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let camera = render::Camera {
+        position: glam::Vec3::new(20.0, 30.0, 100.0),
+        projection: render::Projection::Top,
+        ortho_height: 256.0,
+        ..session.camera()
+    };
+    session.set_camera(camera);
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(session));
+    let controller = Controller::new(&shared).unwrap();
+    controller.set_viewport((511, 511));
+    controller.show(&lock(&shared)).unwrap();
+    controller.window.invoke_preview();
+    assert!(controller.window.get_ready());
+    let before = request(&controller.window).unwrap().points;
+    controller.window.invoke_pick_position(1);
+    assert!(controller.window.get_picking());
+    assert!(!controller.window.get_ready() && !controller.window.get_editable());
+    assert!(
+        controller
+            .pick_at_pixel(&mut lock(&shared), glam::DVec2::splat(-1.0), (511, 511))
+            .is_err()
+    );
+    controller.window.invoke_cancel_pick();
+    assert!(!controller.window.get_picking());
+    assert_eq!(request(&controller.window).unwrap().points, before);
+    controller.window.invoke_pick_position(1);
+    controller
+        .pick_at_pixel(&mut lock(&shared), glam::DVec2::splat(255.0), (511, 511))
+        .unwrap();
+    assert!(controller.window.get_ready() && !controller.window.get_picking());
+    assert_eq!(request(&controller.window).unwrap().points[0], before[0]);
+    assert_eq!(
+        request(&controller.window).unwrap().points[1],
+        DVec3::new(20.0, 30.0, 0.0)
+    );
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+    controller.window.invoke_apply();
+    assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &source);
+}
+
 fn edit_coordinate(window: &LinkedPathWindow, index: usize, x: &str) {
     window.window().take_snapshot().unwrap();
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(

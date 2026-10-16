@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use glam::DVec3;
 use serde_json::Value;
@@ -27,6 +30,7 @@ struct Form {
 pub struct Controller {
     pub window: LinkedPathWindow,
     form: Rc<RefCell<Form>>,
+    viewport: Rc<Cell<(u32, u32)>>,
 }
 
 fn coordinate(value: &str) -> Result<f64, String> {
@@ -226,13 +230,18 @@ fn refresh(window: &LinkedPathWindow, session: &Session, form: &RefCell<Form>) {
     let user_owned = preview["owner"] == Actor::User.label();
     let current = !preview.is_null() && preview["valid"] == true;
     let reviewed = token.is_some() && token == form.owned_token && user_owned;
-    window.set_editable(editable);
+    let picking = !preview["picking"].is_null();
+    window.set_picking(picking);
+    window.set_editable(editable && !picking);
     window.set_can_load(
-        editable && session.selected_ids().len() == 1 && (preview.is_null() || user_owned),
+        editable
+            && !picking
+            && session.selected_ids().len() == 1
+            && (preview.is_null() || user_owned),
     );
-    window.set_can_preview(editable && (preview.is_null() || user_owned));
+    window.set_can_preview(editable && !picking && (preview.is_null() || user_owned));
     window.set_can_review(editable && current && (!reviewed || form.dirty));
-    window.set_ready(editable && current && reviewed && !form.dirty);
+    window.set_ready(editable && current && reviewed && !form.dirty && !picking);
     window.set_preview_status(
         if !same_map {
             "Map changed. Reopen Create linked path… to start in this map.".into()
@@ -280,13 +289,62 @@ fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
     }
 }
 
+fn cancel_position_pick(
+    window: &LinkedPathWindow,
+    session: &mut Session,
+    form: &RefCell<Form>,
+) -> Result<(), String> {
+    let token = form
+        .borrow()
+        .owned_token
+        .ok_or("Review the path before cancelling position picking")?;
+    let state = session.cancel_linked_path_pick(Actor::User, token)?;
+    form.borrow_mut().owned_token = state["preview"]["token"].as_u64();
+    load_preview(window, &state["preview"])?;
+    refresh(window, session, form);
+    window.set_message("Position picking cancelled; the preview points are unchanged.".into());
+    let _ = window.show();
+    Ok(())
+}
+
 impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = LinkedPathWindow::new()?;
+        let viewport = Rc::new(Cell::new((1, 1)));
         window
             .window()
             .set_size(slint::LogicalSize::new(840.0, 700.0));
         let form = Rc::new(RefCell::new(Form::default()));
+        window.on_pick_position({
+            let (window,shared,form,viewport) = (window.as_weak(),shared.clone(),form.clone(),viewport.clone());
+            move |row| {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let result = (|| {
+                    refresh(&window,&session,&form);
+                    if !window.get_ready() || row < 0 { return Err("Preview and review the current values before picking a position".into()); }
+                    let token = form.borrow().owned_token.ok_or("Review the path first")?;
+                    let camera = session.camera();
+                    let stamp = session.linked_path_pick_stamp();
+                    let state = session.begin_linked_path_pick(Actor::User,token,row as usize,camera,viewport.get(),&stamp)?;
+                    adopt_preview(&window,&state,&form)?;
+                    refresh(&window,&session,&form);
+                    window.set_message("Click a visible surface to update this preview row. Escape cancels picking. Apply is still required.".into());
+                    let _ = window.hide();
+                    Ok::<_,String>(())
+                })();
+                if let Err(error) = result { window.set_message(error.into()); }
+            }
+        });
+        window.on_cancel_pick({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                let window = window.unwrap();
+                if let Err(error) = cancel_position_pick(&window, &mut lock(&shared), &form) {
+                    window.set_message(error.into());
+                }
+            }
+        });
         window.on_load_selected({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
@@ -521,7 +579,48 @@ impl Controller {
                 slint::CloseRequestResponse::HideWindow
             }
         });
-        Ok(Self { window, form })
+        Ok(Self {
+            window,
+            form,
+            viewport,
+        })
+    }
+
+    pub fn set_viewport(&self, size: (u32, u32)) {
+        self.viewport.set(size);
+    }
+
+    pub fn pick_at_pixel(
+        &self,
+        session: &mut Session,
+        position: glam::DVec2,
+        size: (u32, u32),
+    ) -> Result<(), String> {
+        let token = self
+            .form
+            .borrow()
+            .owned_token
+            .ok_or("Review the linked path before picking a position")?;
+        let state = session.pick_linked_path_pixel(
+            Actor::User,
+            token,
+            crate::session::Pointer {
+                position: position.floor() + glam::DVec2::splat(0.5),
+                size,
+            },
+        )?;
+        adopt_preview(&self.window, &state, &self.form)?;
+        refresh(&self.window, session, &self.form);
+        self.window.set_message(
+            "Position picked into the preview. Review the coordinates; Apply is still required."
+                .into(),
+        );
+        let _ = self.window.show();
+        Ok(())
+    }
+
+    pub fn cancel_pick(&self, session: &mut Session) -> Result<(), String> {
+        cancel_position_pick(&self.window, session, &self.form)
     }
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {

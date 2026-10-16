@@ -277,6 +277,13 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 
 [Model detail props →](docs/model-detail-props.md)
 
+| Material detail scattering |
+| --- |
+| ![Material-generated foliage in Counter-Strike: Source](docs/images/material-detail-scattering.png) |
+| Generate decorative models from ground materials when building. |
+
+[Material detail scattering →](docs/material-detail-scattering.md)
+
 | Sound exploration |
 | --- |
 | ![Sound browser and audition controls](docs/images/sound-browser.png) |

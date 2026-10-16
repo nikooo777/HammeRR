@@ -1,3 +1,5 @@
+[← Manual](README.md)
+
 # Material detail scattering
 
 Materials can generate non-colliding client-only detail models on exposed world
@@ -64,6 +66,8 @@ The existing MCP operations use the same compiler: paint through `edit_faces`,
 change `detailvbsp` through the world property draft, then call `compile_map` or
 `start_compile`. No separate scatter objects or authoring operation are needed.
 
+![Material-generated detail models in CS:S](images/material-detail-scattering.png)
+
 Limits: model-only detail types on planar world and `func_detail` surfaces;
 terrain, sprites, procedural shapes, runtime brush models, non-normal detail
 orientation, and fluid surfaces reject. Referenced types must contain supported
@@ -74,6 +78,12 @@ small outward probe inset from face boundaries to choose an open visible BSP
 leaf while the stored model origin stays on its surface. Models keep white
 unbaked lighting; baked detail
 lighting and light styles remain unfinished.
+
+Compile regions scatter only on the retained, clipped exposed surfaces. Region
+clipping changes the count and seed; the source brush stays whole. Generated
+origins stay inside the region and their open leaves, but model geometry can
+extend past the boundary. Explicit `prop_detail` entities still require full-map
+builds.
 
 Groups may be empty, including the alpha-zero groups in installed model detail
 types. An empty selected group emits no models and produces an informational

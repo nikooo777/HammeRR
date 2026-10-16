@@ -1,10 +1,9 @@
 use map_core::{Document, edit};
-use source_formats::vmf::Vmf;
 
 use super::*;
 
 fn fixtures() -> Vec<Solid> {
-    let mut document = Document::new(Vmf::default());
+    let mut document = Document::empty();
     document
         .edit("union fixtures", |tx| {
             edit::create_block(

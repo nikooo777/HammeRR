@@ -18,6 +18,10 @@ const MAX_POLYGONS_PER_OCCLUDER: usize = 256;
 const MAX_VERTICES_PER_OCCLUDER: usize = 4096;
 const MAX_AREA_WORK: usize = 4_000_000;
 
+#[path = "occluders/csg.rs"]
+mod csg;
+pub(super) use csg::Budget as CsgBudget;
+
 pub(crate) struct Polygon {
     pub plane: usize,
     pub winding: Winding,
@@ -122,26 +126,14 @@ impl Map<'_> {
                 ));
                 return Ok(());
             }
-            for (_, other) in &geometries {
-                let separated = (geometry.maxs + DVec3::splat(crate::winding::ON_EPSILON))
-                    .cmplt(other.mins)
-                    .any()
-                    || (other.maxs + DVec3::splat(crate::winding::ON_EPSILON))
-                        .cmplt(geometry.mins)
-                        .any();
-                if !separated {
-                    report.diagnostics.push(Diagnostic::error(
-                        "Occluder brush bounds touch or overlap; use separated bounds or separate func_occluder entities until occluder CSG is supported",
-                        Some(object),Some(geometry.center()),
-                    ));
-                    return Ok(());
-                }
-            }
             geometries.push((solid, geometry));
         }
-        let mut polygons = Vec::new();
+        let mut brush_polygons = Vec::new();
+        let mut active_faces = Vec::new();
         for (solid, geometry) in &geometries {
-            for face in &geometry.faces {
+            let mut polygons = Vec::new();
+            let mut active = vec![false; geometry.faces.len()];
+            for (index, face) in geometry.faces.iter().enumerate() {
                 control.checkpoint()?;
                 let side = &solid.sides[face.side];
                 let material = self.materials.load(&side.material)?;
@@ -190,8 +182,28 @@ impl Map<'_> {
                     return Ok(());
                 }
                 polygons.push(Polygon { plane, winding });
+                active[index] = true;
             }
+            brush_polygons.push(polygons);
+            active_faces.push(active);
         }
+        let polygons = match csg::boundary(
+            &geometries,
+            brush_polygons,
+            &active_faces,
+            &self.planes,
+            &mut self.occluder_csg,
+            control,
+        ) {
+            Ok(polygons) => polygons,
+            Err(error) => {
+                control.checkpoint()?;
+                report
+                    .diagnostics
+                    .push(Diagnostic::error(error, Some(object), entity.origin()));
+                return Ok(());
+            }
+        };
         if polygons.is_empty() {
             report.diagnostics.push(Diagnostic::error(
                 "Occluder has no active faces; apply tools/toolsoccluder to at least one side",

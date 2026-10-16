@@ -22,6 +22,7 @@ const MAX_AREA_WORK: usize = 4_000_000;
 mod csg;
 pub(super) use csg::Budget as CsgBudget;
 
+#[derive(Debug)]
 pub(crate) struct Polygon {
     pub plane: usize,
     pub winding: Winding,

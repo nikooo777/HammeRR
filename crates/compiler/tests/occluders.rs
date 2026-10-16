@@ -326,6 +326,39 @@ fn separate_areas_receive_distinct_indices_and_straddling_occluders_are_rejected
         "{:?}",
         output.report
     );
+    let (union, union_id) = union_fixture(&[
+        ([-32.0, -16.0, 16.0], [0.0, 16.0, 160.0]),
+        ([0.0, -16.0, 16.0], [32.0, 16.0, 160.0]),
+    ]);
+    let mut grouped = document.vmf().clone();
+    let spanning_entity = grouped
+        .entities
+        .iter_mut()
+        .find(|entity| entity.id == spanning)
+        .unwrap();
+    spanning_entity.solids = union
+        .entities
+        .iter()
+        .find(|entity| entity.id == union_id)
+        .unwrap()
+        .solids
+        .clone();
+    for (index, solid) in spanning_entity.solids.iter_mut().enumerate() {
+        solid.id = 1_000_000 + index as u32 * 100;
+        for (index, side) in solid.sides.iter_mut().enumerate() {
+            side.id = solid.id + 1 + index as u32;
+        }
+    }
+    let output = compiler::compile(&grouped, &fs);
+    assert!(output.bsp.is_none());
+    assert!(
+        output.report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.object.as_deref() == Some(&format!("entity:{spanning}"))
+                && diagnostic.message.contains("spans 2 visibility areas")
+        }),
+        "{:?}",
+        output.report
+    );
 }
 
 #[test]

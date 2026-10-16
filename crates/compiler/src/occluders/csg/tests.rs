@@ -77,7 +77,7 @@ fn union_budgets_bound_work_allocation_and_fragments_before_clipping() {
         ),
     ] {
         let mut budget = budget;
-        let error = run(&solids, &mut budget, &control).err().unwrap();
+        let error = run(&solids, &mut budget, &control).unwrap_err();
         assert!(error.contains(expected), "{error}");
         assert_eq!(budget.points, 0);
         assert_eq!(budget.fragments, 0);
@@ -95,7 +95,7 @@ fn union_budgets_bound_work_allocation_and_fragments_before_clipping() {
         cancel_after_work: Some(used.0 / 2),
         ..Budget::default()
     };
-    let error = run(&solids, &mut budget, &cancelled).err().unwrap();
+    let error = run(&solids, &mut budget, &cancelled).unwrap_err();
     assert_eq!(error, "Compilation cancelled");
     assert!(budget.work > 0 && budget.fragments > 0);
 }

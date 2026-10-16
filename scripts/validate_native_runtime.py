@@ -15,7 +15,7 @@ from validate_face_lighting import DEFAULT_BINARY, ROOT, Client, detail
 from validate_visibility import ROOM
 from private_runtime_config import (
     finish_private_launch, private_launch_options, private_observer,
-    validate_private_game_paths, verify_private_launch,
+    private_readonly_launch, validate_private_game_paths, verify_private_launch,
 )
 
 OBSERVER = """
@@ -114,7 +114,9 @@ def worker(args):
     root = args.game_dir.resolve()
     output = args.output.resolve()
     game = private_game(root, output, args.bsp)
-    launch_options = private_launch_options(root, game)
+    server_config = "hammerr_private_server.cfg"
+    (game / "cfg" / server_config).write_text("toggle sv_lan 1\nhelp sv_lan\n")
+    launch_options = private_launch_options(root, game, controls={"servercfgfile": server_config})
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     env = {
         **os.environ,
@@ -140,6 +142,7 @@ def worker(args):
         "-port",
         "27583",
     ]
+    command, env = private_readonly_launch(command, output, env)
     with (output / "launcher.log").open("w") as log:
         process = subprocess.Popen(
             command, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log

@@ -6,7 +6,7 @@ Author fixed occlusion polygons that CS:S can use to reject hidden renderable ob
 
 ## Author and compile
 
-1. Create 1–16 convex brushes inside one visibility area of a sealed map, contained within the opaque wall or other permanent cover they represent. Leave separated world bounds between brushes. Occluders are invisible helpers; they do not provide visible walls or collision.
+1. Create 1–16 convex brushes inside one visibility area of a sealed map, contained within the opaque wall or other permanent cover they represent. Brushes may be separated, share a face or overlap. The compiler keeps their exterior polygons and preserves gaps and concave outlines. Occluders are invisible helpers; they do not provide visible walls or collision.
 2. Select the brushes in **Objects** mode. Type `tools/toolsoccluder` in the material inspector and click **Apply**. For unused sides, switch **Selection** to **Faces · materials & textures**, select those sides and apply `tools/toolsnodraw`.
 3. Return to **Objects**, select all the helper brushes and click **Tie to entity…**. Choose `func_occluder`.
 4. In **Advanced properties**, set `StartActive` to `1` for an initially active occluder or `0` for an inactive one. Set its **Name** if another entity should control it.
@@ -19,12 +19,13 @@ Author fixed occlusion polygons that CS:S can use to reject hidden renderable ob
 
 ## Limits
 
-- Each entity supports 1–16 visible convex brushes with strictly separated world bounds: at least one axis needs a gap greater than 0.01 units between each pair. Touching or overlapping bounds, including disjoint rotated shapes whose bounds overlap, require separate `func_occluder` entities. Within-entity and cross-occluder CSG are unavailable. Hidden entities and hidden child brushes are omitted.
+- Each entity supports 1–16 visible convex brushes. Overlapping volumes and exact face contacts produce the union boundary; contained brushes and duplicate faces do not add internal polygons. Disjoint rotated shapes can have overlapping bounds. Hidden entities and hidden child brushes are omitted. Separate `func_occluder` entities retain independent geometry and activation.
+- Interacting brushes must have closed convex topology with at most 64 sides each. Edge-only and point-only contacts, gaps or thin overlaps within 0.01 units of contact, nearly coplanar faces and collapsed or tiny clipping fragments are rejected. Align shared faces exactly, overlap by more than 0.01 units, simplify the helper or use separate entities. At coincident exterior faces, an active face takes precedence over nodraw; the first active brush owns duplicate coverage.
 - Occlusion geometry stays in world coordinates. Parenting is rejected; changing an entity origin does not move its compiled polygons. Use ordinary brush editing to reposition the helper.
 - [Compile regions](compile-regions.md#include-overlays-and-visibility-helpers) retain a helper only when its combined visible brush bounds fit completely. Disjoint helpers are omitted; crossing bounds stop the build. Editor origins do not determine inclusion.
 - Nodraw faces are excluded, except trigger-marked faces. The material must be available in mounted content so the compiler can check its flags. At least one active face must remain. Hint, skip, origin and terrain tooling are rejected.
 - Every emitted occluder needs one adjacent open visibility area. Area checks include the polygon interiors and adjacent leaves; ambiguous placements fail with an object-linked diagnostic. Keep helpers clear of area boundaries.
-- CS:S transmits occluder indices in ten bits, allowing 1,024 indexed entities. HammeRR additionally bounds each helper to 256 combined input sides/polygons and 4,096 polygon vertices, total output to 65,536 polygons and 262,144 vertex references, and area assignment to four million work units. Global BSP vertex and plane budgets also apply.
+- CS:S transmits occluder indices in ten bits, allowing 1,024 indexed entities. HammeRR additionally bounds each helper to 256 combined input sides and 4,096 input polygon vertices, then 256 boundary polygons and 4,096 boundary vertices after union. Across the map, union work is limited to four million work units, one million allocated points and 65,536 generated fragments. Native output is limited to 65,536 polygons and 262,144 vertex references; area assignment has a separate four-million-work-unit limit. Global BSP vertex and plane budgets also apply.
 - The brush is consumed without adding a runtime brush model, render face, collision brush or PVS split. The runtime entity retains its name, activation setting and connections and receives a fresh `occludernumber`.
 - Failed or cancelled compilation preserves the previous BSP. Compilation leaves authored geometry, properties and undo history unchanged.
 

@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -47,6 +48,21 @@ def room(client):
     client.call("create_entity", {"classname": "info_player_terrorist", "origin": [-64, 0, 8]})
     client.call("create_entity", {"classname": "info_player_counterterrorist", "origin": [64, 0, 8]})
     client.call("set_compile_settings", {"lighting": "fullbright", "physics": "none"})
+
+
+def boundary_area(data):
+    _, polygons, indices = native_occlusion(data)
+    vertices = records(data, 3, "<3f")
+    area = 0.0
+    for start, size, _ in polygons:
+        points = [vertices[indices[index][0]] for index in range(start, start + size)]
+        first = points[0]
+        for index in range(1, size - 1):
+            a = [points[index][axis] - first[axis] for axis in range(3)]
+            b = [points[index + 1][axis] - first[axis] for axis in range(3)]
+            cross = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+            area += math.sqrt(sum(value * value for value in cross)) * 0.5
+    return area
 
 
 def occluder(client, mins, maxs, active="1"):
@@ -134,6 +150,30 @@ def validate(client, output):
     check(stats["occluders"] == len(native) == 1 and len(polygons) == 12 and len(indices) == 48, "Separated helper brushes share one index with their actual polygon islands")
     check(native[0][3:9] == (-2, -96, 0, 2, 96, 192) and stats["brushes"] == 6, "Combined bounds do not become collision or render geometry")
     check(detail(client, [islands]) == before and client.call("get_map_info")["undo"] == undo, "Multi-brush compilation preserves authored geometry and history")
+    for mode, lower_top, upper_bottom in [("touching", 96, 96), ("overlapping", 112, 80)]:
+        room(client)
+        bounds = [([-2, -96, 0], [2, -24, 192]), ([-2, 24, 0], [2, 96, 192])]
+        bounds = [(low, [high[0], high[1], lower_top]) for low, high in bounds] + [([low[0], low[1], upper_bottom], high) for low, high in bounds]
+        brushes = [client.call("create_block", {"mins": low, "maxs": high, "material": "tools/toolsoccluder"})["id"] for low, high in bounds]
+        helper = client.call("tie_to_entity", {"ids": brushes, "classname": "func_occluder", "properties": {"targetname": "union_screen", "StartActive": "0"}})["id"]
+        vmf = output / f"occluder-union-{mode}.vmf"
+        client.call("save_map", {"path": str(vmf)})
+        source = vmf.read_bytes()
+        before, undo = detail(client, [helper]), client.call("get_map_info")["undo"]
+        path, stats = build(client, output, f"occluder-union-{mode}")
+        data = path.read_bytes()
+        native, polygons, indices = native_occlusion(data)
+        check(stats["occluders"] == len(native) == 1 and len(polygons) == 20 and len(indices) == 80, f"{mode.title()} brush union produces identical foreground/background boundary records")
+        check(native[0][0] == 1 and native[0][3:9] == (-2, -96, 0, 2, 96, 192) and abs(boundary_area(data) - 59520) < 0.01, f"{mode.title()} union removes internal coverage while preserving both polygon islands and inactive state")
+        check(stats["brushes"] == 6 and stats["models"] == baseline["stats"]["models"] and stats["clusters"] == baseline["stats"]["clusters"], f"{mode.title()} union adds no collision, brush model or PVS split")
+        check(detail(client, [helper]) == before and client.call("get_map_info")["undo"] == undo and vmf.read_bytes() == source, f"{mode.title()} union preserves VMF and undo history")
+    room(client)
+    brushes = [client.call("create_block", {"mins": low, "maxs": high, "material": "tools/toolsoccluder"})["id"] for low, high in [([-2, -96, 0], [2, -24, 96]), ([2, -24, 96], [6, 48, 192])]]
+    helper = client.call("tie_to_entity", {"ids": brushes, "classname": "func_occluder"})["id"]
+    failed = client.call("compile_map", {"path": str(previous)}, error=True)
+    failure = json.loads(failed["content"][0]["text"])
+    check(any(item["object"] == helper and "edge or point" in item["message"] for item in failure["diagnostics"]), "Unsupported union contact returns an entity-linked diagnostic")
+    check(previous.read_bytes() == b"previous successful build", "Rejected union preserves previous BSP bytes")
     return checks
 
 

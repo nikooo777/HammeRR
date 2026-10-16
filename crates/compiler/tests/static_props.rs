@@ -304,3 +304,24 @@ fn invalid_model_bounds_static_flags_and_ambiguous_lighting_helpers_reject() {
     vmf.entities.last_mut().unwrap().hidden = true;
     assert!(!compiler::compile(&vmf, &game).report.has_errors());
 }
+
+#[test]
+fn unused_duplicate_and_originless_helpers_preserve_no_reference_static_prop_bytes() {
+    let (_directory, game) = game();
+    let mut source = common::room();
+    add_prop(&mut source, "32 32 8");
+    let baseline = compiler::compile(&source, &game).bsp.unwrap().to_bytes();
+    for hidden in [false, false, true] {
+        let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
+        let mut helper = Entity::new(id, "info_lighting");
+        helper.properties.set("targetname", "unused");
+        helper.hidden = hidden;
+        if hidden {
+            helper.properties.set("origin", "0 NaN 64");
+        }
+        source.entities.push(helper);
+    }
+    let output = compiler::compile(&source, &game);
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    assert_eq!(output.bsp.unwrap().to_bytes(), baseline);
+}

@@ -17,6 +17,8 @@ const LIGHTING_SCALE: f64 = 255.0;
 const STYLE_COUNT: usize = 64;
 const MIN_STYLED_SPRITE_SCALE: f32 = f32::from_bits(103 << 23);
 const MAX_AUTHORED_STYLE_GAIN: f32 = 550.0 * (1.0 / 264.0);
+const OPEN_RECEIVER: &str =
+    "Detail lighting hull or sprite midpoint must lie in open visible world space";
 
 pub(super) struct Channel {
     ranges: Vec<std::ops::Range<usize>>,
@@ -30,6 +32,7 @@ pub(super) struct Context<'a> {
     pub visibility: &'a Visibility,
     pub kind: LightingKind,
     pub model_centers: &'a [DVec3],
+    pub lighting_origins: &'a [Option<DVec3>],
     pub lights: &'a [Emitter],
     pub shadows: &'a ShadowIndex<Occluder>,
     pub terrain: &'a ShadowIndex<Triangle>,
@@ -43,7 +46,11 @@ fn receiver(
     prop: &DetailProp,
     details: &DetailProps,
     model_centers: &[DVec3],
+    lighting_origin: Option<DVec3>,
 ) -> Result<(DVec3, DVec3), String> {
+    if lighting_origin.is_some() && prop.kind != 0 {
+        return Err("Named detail lighting origins require an explicit model record".into());
+    }
     let local = match prop.kind {
         0 => *model_centers
             .get(usize::from(prop.model))
@@ -64,7 +71,8 @@ fn receiver(
     };
     let angles = prop.angles.map(|value| f64::from(value).to_radians());
     let rotation = DQuat::from_euler(EulerRot::ZYX, angles[1], angles[0], angles[2]);
-    let center = DVec3::from_array(prop.origin.map(f64::from)) + rotation * local;
+    let center = lighting_origin
+        .unwrap_or_else(|| DVec3::from_array(prop.origin.map(f64::from)) + rotation * local);
     let normal = rotation * DVec3::Z;
     if !center.is_finite() || center.abs().max_element() > MAX_COMPILE_COORD || !normal.is_finite()
     {
@@ -82,9 +90,7 @@ fn cluster(ctx: &Context<'_>, point: DVec3, budget: &mut Budget<'_>) -> Result<u
     budget.consume(1)?;
     ctx.visibility.clusters[node]
         .filter(|_| !ctx.tree.nodes[node].solid())
-        .ok_or_else(|| {
-            "Detail lighting hull or sprite midpoint must lie in open visible world space".into()
-        })
+        .ok_or_else(|| OPEN_RECEIVER.into())
 }
 
 fn direct(
@@ -157,6 +163,11 @@ pub(super) fn bake(
     let Some(mut details) = bsp.detail_props().map_err(|error| error.to_string())? else {
         return Ok(None);
     };
+    if ctx.lighting_origins.len() != details.props.len() {
+        return Err(
+            "Detail lighting origin metadata does not match the sorted native records".into(),
+        );
+    }
     if details.props.is_empty() {
         return Ok(None);
     }
@@ -180,8 +191,13 @@ pub(super) fn bake(
                 "Existing styled detail records cannot be rebaked by static detail lighting".into(),
             );
         }
-        let (point, normal) = receiver(&prop, &details, ctx.model_centers)?;
-        let mut colors = direct(ctx, candidates, point, normal, budget)?;
+        let lighting_origin = ctx.lighting_origins[index];
+        let (point, normal) = receiver(&prop, &details, ctx.model_centers, lighting_origin)?;
+        let mut colors = direct(ctx, candidates, point, normal, budget).map_err(|error| {
+            if lighting_origin.is_some() && error==OPEN_RECEIVER {
+                "Named detail lighting origin must lie in open visible world space; helpers outside a sealed compile region remain referenced but cannot be sampled. Enlarge the region or disable it".into()
+            } else {error}
+        })?;
         let mut ambient = [DVec3::ZERO; STYLE_COUNT];
         for &direction in ctx.directions {
             budget.consume(1)?;
@@ -353,6 +369,34 @@ mod tests {
     use super::*;
     use source_formats::bsp::DetailSprite;
 
+    #[test]
+    fn named_model_receiver_replaces_only_the_point_and_preserves_stored_up_normal() {
+        let prop = DetailProp {
+            origin: [10.0, 20.0, 30.0],
+            angles: [90.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        let target = DVec3::new(-40.125, 50.25, 60.5);
+        let (point, normal) = receiver(
+            &prop,
+            &DetailProps::default(),
+            &[DVec3::splat(15.0)],
+            Some(target),
+        )
+        .unwrap();
+        assert_eq!(point, target);
+        assert!((normal - DVec3::X).length() < 1e-12);
+        assert!(
+            receiver(
+                &DetailProp { kind: 1, ..prop },
+                &DetailProps::default(),
+                &[],
+                Some(target)
+            )
+            .is_err()
+        );
+    }
+
     fn channel(budget: &mut Budget<'_>, props: usize, records: &[DetailPropLighting]) -> Channel {
         let allocation = budget
             .reserve_bytes(props * size_of::<std::ops::Range<usize>>() + size_of_val(records))
@@ -454,7 +498,7 @@ mod tests {
             angles: [0.0, 90.0, 0.0],
             ..Default::default()
         };
-        let (point, normal) = receiver(&prop, &details, &[]).unwrap();
+        let (point, normal) = receiver(&prop, &details, &[], None).unwrap();
         assert!((point - DVec3::new(4.0, 20.0, 42.0)).length() < 1e-12);
         assert!((normal - DVec3::Z).length() < 1e-12);
         for kind in [2, 3] {
@@ -465,7 +509,7 @@ mod tests {
                 shape_size: 200,
                 ..prop
             };
-            let (point, normal) = receiver(&prop, &details, &[]).unwrap();
+            let (point, normal) = receiver(&prop, &details, &[], None).unwrap();
             assert_eq!(point, DVec3::new(10.0, 20.0, 30.0));
             assert!((normal - DVec3::X).length() < 1e-12);
         }
@@ -556,6 +600,7 @@ mod tests {
             visibility: &visibility,
             kind: LightingKind::Ldr,
             model_centers: &[DVec3::ZERO],
+            lighting_origins: &[],
             lights: &[],
             shadows: &shadows,
             terrain: &terrain,

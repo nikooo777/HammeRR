@@ -93,6 +93,205 @@ fn color(bsp: &Bsp) -> DVec3 {
 }
 
 #[test]
+fn duplicate_native_placements_keep_distinct_named_receivers_through_leaf_sort_and_hdr() {
+    let mut fixture = fixture();
+    let first = fixture.source.entities.len() - 1;
+    let second = entity(
+        &mut fixture.source,
+        "detail_prop",
+        "0 0 16",
+        &[("model", "models/props/test.mdl")],
+    );
+    for (name, point) in [("red_sample", "-96 0 64"), ("blue_sample", "96 0 64")] {
+        entity(
+            &mut fixture.source,
+            "info_lighting",
+            point,
+            &[("targetname", name)],
+        );
+    }
+    for (point, color) in [("-96 0 128", "255 0 0 80"), ("96 0 128", "0 0 255 80")] {
+        entity(
+            &mut fixture.source,
+            "light",
+            point,
+            &[
+                ("_light", color),
+                ("_constant_attn", "0"),
+                ("_linear_attn", "0"),
+                ("_quadratic_attn", "1"),
+            ],
+        );
+    }
+    let no_reference = compiled(&fixture, LightingMode::Fullbright, 0).to_bytes();
+    fixture.source.entities[first]
+        .properties
+        .set("lightingorigin", "red_sample");
+    fixture.source.entities[second]
+        .properties
+        .set("lightingorigin", "blue_sample");
+    assert_eq!(
+        compiled(&fixture, LightingMode::Fullbright, 0).to_bytes(),
+        no_reference
+    );
+    let source = fixture.source.write(&Default::default());
+    for mode in [LightingMode::DirectLdr, LightingMode::DirectLdrHdr] {
+        let bsp = compiled(&fixture, mode, 0);
+        let details = bsp.detail_props().unwrap().unwrap();
+        assert_eq!(details.props.len(), 2);
+        let a = DVec3::from_array(details.props[0].lighting.linear());
+        let b = DVec3::from_array(details.props[1].lighting.linear());
+        assert!(a.x > a.z * 4.0 && b.z > b.x * 4.0, "{a:?} {b:?}");
+        let mut same = details.props[0];
+        same.lighting = details.props[1].lighting;
+        assert_eq!(same, details.props[1]);
+        fixture.source.entities[first]
+            .properties
+            .set("lightingorigin", "blue_sample");
+        fixture.source.entities[second]
+            .properties
+            .set("lightingorigin", "red_sample");
+        let swapped = compiled(&fixture, mode, 0).detail_props().unwrap().unwrap();
+        assert_eq!(swapped.props[0].lighting, details.props[1].lighting);
+        assert_eq!(swapped.props[1].lighting, details.props[0].lighting);
+        fixture.source.entities[first]
+            .properties
+            .set("lightingorigin", "red_sample");
+        fixture.source.entities[second]
+            .properties
+            .set("lightingorigin", "blue_sample");
+        let reopened = Vmf::parse(&source).unwrap();
+        assert_eq!(
+            compiler::compile_with_options(&reopened, &fixture.game, options(mode, 0))
+                .bsp
+                .unwrap()
+                .to_bytes(),
+            bsp.to_bytes()
+        );
+    }
+    assert_eq!(fixture.source.write(&Default::default()), source);
+}
+
+#[test]
+fn named_detail_origins_reject_missing_hidden_duplicate_and_invalid_helpers_in_fullbright() {
+    let fixture = fixture();
+    for case in ["missing", "hidden", "duplicate", "invalid"] {
+        let mut source = fixture.source.clone();
+        source
+            .entities
+            .last_mut()
+            .unwrap()
+            .properties
+            .set("lightingorigin", "sample");
+        if case != "missing" {
+            let helper = entity(
+                &mut source,
+                "info_lighting",
+                if case == "invalid" {
+                    "0 NaN 64"
+                } else {
+                    "0 0 64"
+                },
+                &[("targetname", "sample")],
+            );
+            source.entities[helper].hidden = case == "hidden";
+            if case == "duplicate" {
+                entity(
+                    &mut source,
+                    "info_lighting",
+                    "0 0 64",
+                    &[("targetname", "sample")],
+                );
+            }
+        }
+        let before = source.clone();
+        let path = fixture.directory.path().join("prior.bsp");
+        std::fs::write(&path, b"previous").unwrap();
+        let output = compiler::compile(&source, &fixture.game);
+        assert!(output.report.has_errors(), "{case}: {:?}", output.report);
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous");
+        assert_eq!(source, before);
+    }
+}
+
+#[test]
+fn named_receivers_remain_attached_when_native_leaf_sort_reverses_emission_order() {
+    let mut fixture = fixture();
+    let mut document = Document::new(fixture.source);
+    document
+        .edit("split room", |tx| {
+            edit::create_block(
+                tx,
+                DVec3::new(-8.0, -256.0, 0.0),
+                DVec3::new(8.0, 256.0, 160.0),
+                "test/black",
+            )
+        })
+        .unwrap();
+    fixture.source = document.into_vmf();
+    let first = fixture.source.entities.len() - 1;
+    fixture.source.entities[first]
+        .properties
+        .set("origin", "-64 32 16");
+    fixture.source.entities[first]
+        .properties
+        .set("lightingorigin", "red_sample");
+    let second = entity(
+        &mut fixture.source,
+        "prop_detail",
+        "64 32 16",
+        &[
+            ("model", "models/props/test.mdl"),
+            ("lightingorigin", "blue_sample"),
+        ],
+    );
+    for (name, point) in [("red_sample", "-96 0 64"), ("blue_sample", "96 0 64")] {
+        entity(
+            &mut fixture.source,
+            "info_lighting",
+            point,
+            &[("targetname", name)],
+        );
+    }
+    for (point, color) in [("-96 0 128", "255 0 0 80"), ("96 0 128", "0 0 255 80")] {
+        entity(
+            &mut fixture.source,
+            "light",
+            point,
+            &[
+                ("_light", color),
+                ("_constant_attn", "0"),
+                ("_linear_attn", "0"),
+                ("_quadratic_attn", "1"),
+            ],
+        );
+    }
+    let before = compiled(&fixture, LightingMode::Fullbright, 0)
+        .detail_props()
+        .unwrap()
+        .unwrap();
+    assert_ne!(before.props[0].leaf, before.props[1].leaf);
+    if before.props[0].origin[0] < 0.0 {
+        fixture.source.entities.swap(first, second);
+    }
+    let emission_origin = fixture.source.entities[first].origin().unwrap().x;
+    let baked = compiled(&fixture, LightingMode::DirectLdr, 0)
+        .detail_props()
+        .unwrap()
+        .unwrap();
+    assert_ne!(f64::from(baked.props[0].origin[0]), emission_origin);
+    for prop in baked.props {
+        let color = DVec3::from_array(prop.lighting.linear());
+        if prop.origin[0] < 0.0 {
+            assert!(color.x > color.z * 4.0, "{color:?}");
+        } else {
+            assert!(color.z > color.x * 4.0, "{color:?}");
+        }
+    }
+}
+
+#[test]
 fn detail_direct_color_uses_rotated_validated_hull_center_and_hdr_last_pass() {
     let mut fixture = fixture();
     let path = fixture.directory.path().join("models/props/test.mdl");

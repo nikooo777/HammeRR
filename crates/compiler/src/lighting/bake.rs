@@ -593,6 +593,7 @@ pub(crate) struct Settings<'a> {
     pub options: crate::Options,
     pub model_entities: &'a [usize],
     pub detail_model_centers: &'a [DVec3],
+    pub detail_lighting_origins: &'a [Option<DVec3>],
     pub smoothing_sources: &'a [Option<std::sync::Arc<crate::faces::SmoothingSource>>],
 }
 
@@ -661,6 +662,8 @@ pub(crate) fn bake(
     let _shared_geometry_allocation =
         shared_geometry_allocation(map, bsp, settings.smoothing_sources, &budget)?;
     let _detail_centers = budget.reserve::<DVec3>(settings.detail_model_centers.len())?;
+    let _detail_origins =
+        budget.reserve::<Option<DVec3>>(settings.detail_lighting_origins.len())?;
     let world_hulls = occluders(map, 0, report, &mut budget)?;
     let mut faces = bsp
         .lighting_faces(LightingKind::Ldr)
@@ -808,6 +811,7 @@ pub(crate) fn bake(
         model_count: has_receivers.iter().skip(1).filter(|&&lit| lit).count(),
         model_faces,
         detail_model_centers: settings.detail_model_centers,
+        detail_lighting_origins: settings.detail_lighting_origins,
         options,
     };
     let mut detail_ldr = None;
@@ -896,6 +900,7 @@ struct ChannelContext<'a> {
     model_count: usize,
     model_faces: usize,
     detail_model_centers: &'a [DVec3],
+    detail_lighting_origins: &'a [Option<DVec3>],
     options: crate::Options,
 }
 
@@ -923,6 +928,7 @@ fn bake_channel(
         model_count,
         model_faces,
         detail_model_centers,
+        detail_lighting_origins,
         options,
     } = *ctx;
     let sky_quality = options.sky_quality;
@@ -1233,6 +1239,7 @@ fn bake_channel(
             visibility,
             kind,
             model_centers: detail_model_centers,
+            lighting_origins: detail_lighting_origins,
             lights: &lights,
             shadows,
             terrain: terrain_shadows,

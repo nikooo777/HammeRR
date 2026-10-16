@@ -83,8 +83,8 @@ def validate(args):
             previous.write_bytes(data)
             for name, fields, expected in [
                 ("orientation", FIELDS.replace("detailOrientation 2", "detailOrientation 1.5"), "integer"),
-                ("fixed-random-scale", FIELDS.replace("detailOrientation 2", "detailOrientation 0"), "spriterandomscale=0"),
-                ("full-random-scale", FIELDS.replace("detailOrientation 2", "detailOrientation 1"), "spriterandomscale=0"),
+                ("fixed-random-scale", FIELDS.replace("detailOrientation 2", "detailOrientation 0").replace("spriterandomscale 0.2", "spriterandomscale 1.1"), "spriterandomscale"),
+                ("full-random-scale", FIELDS.replace("detailOrientation 2", "detailOrientation 1").replace("spriterandomscale 0.2", "spriterandomscale 1.1"), "spriterandomscale"),
                 ("shape", FIELDS + " spriteshape 1", "unsupported"),
                 ("logical-atlas", FIELDS.replace("0 0 128 128 512", "500 0 128 128 512"), "rectangle"),
                 ("random-scale", FIELDS.replace("spriterandomscale 0.2", "spriterandomscale 1.1"), "spriterandomscale"),
@@ -117,10 +117,23 @@ def validate(args):
                     if index != 35:
                         require(before == after, f"Orientation changed unrelated lump {index}")
                 orientations[str(orientation)] = {"bsp": str(variant_bsp), "bsp_sha256": probe.digest(variant_data), "count": len(variant["props"]), "sprite_entries": len(variant["sprites"])}
+            scaled_orientations = {}
+            for orientation in [0, 1]:
+                dictionary_path.write_text(dictionary(FIELDS.replace("detailOrientation 2", f"detailOrientation {orientation}")))
+                variant_bsp, variant_data, variant_result = compile_pair(client, args.output, f"scaled-orientation-{orientation}", ids)
+                variant = detail_records(variant_data, allow_sprites=True, allow_baked=True, sprite_orientation=orientation)
+                require(variant["sprites"] == parsed["sprites"] and variant_result["stats"]["detail_props"] == len(parsed["props"]), "Nonunit orientation changed dictionary/count")
+                require([{**row, "orientation": 2} for row in variant["props"]] == parsed["props"], "Nonunit orientation changed raw scale, sampling or SDK lighting")
+                scales = [row["scale"] for row in variant["props"]]
+                require(2 ** -24 <= min(scales) < 1 < max(scales) <= 6, "Nonunit scales did not vary within native bounds")
+                for index, (before, after) in enumerate(zip(probe.bsp_lumps(data), probe.bsp_lumps(variant_data), strict=True)):
+                    if index != 35:
+                        require(before == after, f"Nonunit orientation changed unrelated lump {index}")
+                scaled_orientations[str(orientation)] = {"bsp": str(variant_bsp), "bsp_sha256": probe.digest(variant_data), "count": len(scales), "sprite_entries": len(variant["sprites"]), "scale_range": [min(scales), max(scales)]}
             dictionary_path.write_text(dictionary())
             _, repeated, _ = compile_pair(client, args.output, "detail-sprites-repeated", ids)
             require(repeated == data and source.read_bytes() == saved and detail(client, ids) == authored, "Sprite compilation changed deterministic bytes or source")
-            report = {"success": True, "stats": result["stats"], "records": parsed, "orientations": orientations, "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "empty_control_geometry_exact": True, "native_exercised": False, "atlas": "installed detail/detailsprites", "fixture_game": str(game), "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
+            report = {"success": True, "stats": result["stats"], "records": parsed, "orientations": orientations, "scaled_orientations": scaled_orientations, "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "empty_control_geometry_exact": True, "native_exercised": False, "atlas": "installed detail/detailsprites", "fixture_game": str(game), "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
             (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
             return report
     finally:
@@ -141,7 +154,7 @@ def silhouette(directory):
 def orientation_views(args, result):
     captures = {}
     for orientation in [0, 1]:
-        variant = result["orientations"][str(orientation)]
+        variant = result["scaled_orientations"][str(orientation)]
         for view in ["level", "elevated"]:
             output = args.output / f"native-orientation-{orientation}-{view}"
             subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),
@@ -159,7 +172,23 @@ def orientation_views(args, result):
         changed = sum(a != b for a, b in zip(fixed, full, strict=True))
         require(changed > len(fixed) * 0.002, f"Fixed/full billboard silhouettes did not differ in {view} view")
         comparisons[view] = {"different_pixels": changed, "fixed_pixels": sum(fixed), "full_billboard_pixels": sum(full)}
-    return {"captures": {f"{orientation}-{view}": report for (orientation, view), (report, _) in captures.items()}, "silhouettes": comparisons}
+    scale_controls = {}
+    for orientation in [0, 1]:
+        variant = result["orientations"][str(orientation)]
+        output = args.output / f"native-unit-orientation-{orientation}"
+        subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),
+            "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir),
+            "--runtime", "--runtime-bsp", variant["bsp"], "--fixture-game", result["fixture_game"],
+            "--expected-count", str(variant["count"]), "--expected-sprites", str(variant["count"]),
+            "--sprite-orientation", str(orientation), "--view", "elevated", "--baked-lighting", "--port", str(args.port)], check=True, timeout=150)
+        unit_native = json.loads((output / "results.json").read_text())
+        require(unit_native["native_exercised"] and unit_native["native"]["success"], unit_native)
+        unit_mask = silhouette(output / "runtime")
+        scaled_mask = captures[(orientation, "elevated")][1]
+        changed = sum(a != b for a, b in zip(unit_mask, scaled_mask, strict=True))
+        require(changed > 0, "Sprite scale silhouette did not change")
+        scale_controls[str(orientation)] = {"native_unit": unit_native["native"], "different_pixels": changed, "unit_pixels": sum(unit_mask), "scaled_pixels": sum(scaled_mask)}
+    return {"captures": {f"{orientation}-{view}": report for (orientation, view), (report, _) in captures.items()}, "silhouettes": comparisons, "scale_silhouettes": scale_controls}
 
 
 def main():
@@ -169,7 +198,7 @@ def main():
     parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")
-    parser.add_argument("--orientation-views", action="store_true", help="Validate fixed/full sprites at level and elevated native views")
+    parser.add_argument("--orientation-views", action="store_true", help="Validate nonunit fixed/full sprites at level and elevated native views")
     parser.add_argument("--port", type=int, default=27709)
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)

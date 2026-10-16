@@ -369,7 +369,7 @@ fn place(
         + normal * LEAF_BIAS
         + inward * (LEAF_BIAS / inward.length().max(LEAF_BIAS));
     match &model.asset {
-        Asset::Model(path) => builder.add(path, prop, leaf_point, control),
+        Asset::Model(path) => builder.add(path, prop, leaf_point, None, control),
         Asset::Sprite(sprite) => {
             prop.scale = random.sprite_scale(sprite.random_scale)?;
             prop.orientation = sprite.orientation;

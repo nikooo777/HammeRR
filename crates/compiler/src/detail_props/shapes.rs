@@ -98,8 +98,11 @@ impl Shape {
         sprite: DetailSprite,
         origin: DVec3,
         angles: DVec3,
+        scale: f32,
     ) -> Result<(), String> {
-        super::sprites::check_geometry(sprite, 1.0)?;
+        super::sprites::check_geometry(sprite, scale)?;
+        super::sprites::check_native_scale(scale)?;
+        super::sprites::check_origin(origin)?;
         if !origin.is_finite()
             || !angles.is_finite()
             || !matches!(self.kind, CROSS | TRI)
@@ -107,8 +110,15 @@ impl Shape {
         {
             return Err("Detail sprite shape geometry is invalid".into());
         }
-        if self
-            .quads(sprite, origin, angles)
+        let quads = if scale == 1.0 {
+            self.quads(sprite, origin, angles)
+        } else {
+            self.quads(sprite, DVec3::ZERO, angles)
+                .into_iter()
+                .map(|quad| quad.map(|point| origin + point * f64::from(scale)))
+                .collect()
+        };
+        if quads
             .into_iter()
             .flatten()
             .any(|point| !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD)
@@ -193,9 +203,59 @@ mod tests {
                 size: 255,
             },
         ] {
+            let flat = Shape {
+                kind: shape.kind,
+                angle: 0,
+                size: 0,
+            };
+            let near_top = DVec3::Z * (MAX_COMPILE_COORD - 20.0);
+            assert!(
+                flat.check_bounds(sprite(), near_top, DVec3::ZERO, 1.0)
+                    .is_ok()
+            );
+            assert!(
+                flat.check_bounds(sprite(), near_top, DVec3::ZERO, 2.0)
+                    .is_err()
+            );
+            let nearer_top = DVec3::Z * (MAX_COMPILE_COORD - 10.0);
+            assert!(
+                flat.check_bounds(sprite(), nearer_top, DVec3::ZERO, 0.5)
+                    .is_ok()
+            );
+            assert!(
+                flat.check_bounds(sprite(), nearer_top, DVec3::ZERO, 1.0)
+                    .is_err()
+            );
+            for scale in [super::super::sprites::MIN_NATIVE_SCALE, 0.5, 1.001, 6.0] {
+                assert!(
+                    shape
+                        .check_bounds(sprite(), DVec3::ZERO, DVec3::ZERO, scale)
+                        .is_ok()
+                );
+            }
             assert!(
                 shape
-                    .check_bounds(sprite(), DVec3::ZERO, DVec3::new(35.0, 70.0, 20.0))
+                    .check_bounds(
+                        sprite(),
+                        DVec3::ZERO,
+                        DVec3::ZERO,
+                        super::super::sprites::MIN_NATIVE_SCALE * 0.5
+                    )
+                    .is_err()
+            );
+            assert!(
+                shape
+                    .check_bounds(
+                        sprite(),
+                        DVec3::X * (MAX_COMPILE_COORD + 1.0),
+                        DVec3::ZERO,
+                        0.5
+                    )
+                    .is_err()
+            );
+            assert!(
+                shape
+                    .check_bounds(sprite(), DVec3::ZERO, DVec3::new(35.0, 70.0, 20.0), 1.0)
                     .is_ok()
             );
             assert!(
@@ -203,7 +263,8 @@ mod tests {
                     .check_bounds(
                         sprite(),
                         DVec3::X * MAX_COMPILE_COORD,
-                        DVec3::new(35.0, 70.0, 20.0)
+                        DVec3::new(35.0, 70.0, 20.0),
+                        1.0
                     )
                     .is_err()
             );
@@ -212,7 +273,8 @@ mod tests {
                     .check_bounds(
                         sprite(),
                         DVec3::Z * MAX_COMPILE_COORD,
-                        DVec3::new(0.0, 0.0, 180.0)
+                        DVec3::new(0.0, 0.0, 180.0),
+                        1.0
                     )
                     .is_err()
             );

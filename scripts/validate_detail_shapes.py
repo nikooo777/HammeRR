@@ -21,6 +21,8 @@ VARIANTS = {
     "cross": ("sprite_shape cross", 2, 0, 0),
     "tri": ("sprite_shape tri", 3, 0, 0),
     "tri-fanned": ("sprite_shape tri shape_angle 35 shape_size 0.5", 3, 35, 127),
+    "cross-scaled": ("sprite_shape cross spriterandomscale 0.2", 2, 0, 0),
+    "tri-scaled": ("sprite_shape tri shape_angle 35 shape_size 0.5 spriterandomscale 0.2", 3, 35, 127),
 }
 
 
@@ -70,7 +72,12 @@ def validate(args):
                 parsed = detail_records(data, allow_sprites=True, allow_baked=True, sprite_orientation=0, allow_shapes=True)
                 require(len(parsed["props"]) == result["stats"]["detail_props"] == len(plain["props"]), "Shape changed sample count")
                 require(parsed["models"] == [] and parsed["sprites"] == plain["sprites"] and len(parsed["sprites"]) == 1, "Shape changed sprite dictionary identity")
-                require(all(row["kind"] == kind and row["shape_angle"] == angle and row["shape_size"] == size and row["sway"] == 0 and row["scale"] == 1 for row in parsed["props"]), "Native shape fields differ")
+                require(all(row["kind"] == kind and row["shape_angle"] == angle and row["shape_size"] == size and row["sway"] == 0 for row in parsed["props"]), "Native shape fields differ")
+                scales = [row["scale"] for row in parsed["props"]]
+                if name.endswith("-scaled"):
+                    require(2 ** -24 <= min(scales) < 1 < max(scales) <= 6, "Nonunit shape scales did not vary within native bounds")
+                else:
+                    require(all(scale == 1 for scale in scales), "Unit shape bytes changed")
                 identity = [(row["origin"], row["angles"], row["leaf"], row["sprite"]) for row in parsed["props"]]
                 require(identity == [(row["origin"], row["angles"], row["leaf"], row["sprite"]) for row in plain["props"]], "Shape changed placement identity")
                 colors = [row["lighting"] for row in parsed["props"]]
@@ -82,7 +89,7 @@ def validate(args):
                         require(before == after, f"Shape changed unrelated lump {index}")
                 _, repeated, _ = compile_pair(client, args.output, f"{name}-repeated", ids)
                 require(repeated == data, "Shape output is nondeterministic")
-                variants[name] = {"bsp": str(bsp), "bsp_sha256": probe.digest(data), "kind": kind, "shape_angle": angle, "shape_size": size, "count": len(parsed["props"]), "sprite_entries": len(parsed["sprites"])}
+                variants[name] = {"bsp": str(bsp), "bsp_sha256": probe.digest(data), "kind": kind, "shape_angle": angle, "shape_size": size, "count": len(parsed["props"]), "sprite_entries": len(parsed["sprites"]), "scale_range": [min(scales), max(scales)]}
             previous = args.output / "rejected.bsp"
             previous.write_bytes(plain_data)
             rejected = {}
@@ -94,7 +101,7 @@ def validate(args):
                 ("oversized-angle", "sprite_shape tri shape_angle 256", "shape_angle"),
                 ("oversized-size", "sprite_shape tri shape_size 1.1", "shape_size"),
                 ("sway", "sprite_shape tri sway 0.1", "sway"),
-                ("scale", "sprite_shape tri spriterandomscale 0.1", "unit scale"),
+                ("scale", "sprite_shape tri spriterandomscale 1.1", "spriterandomscale"),
             ]:
                 dictionary_path.write_text(dictionary(f"{FIELDS} {fields}"))
                 before = state(client, ids, source)
@@ -138,7 +145,14 @@ def native(args, result):
     second = silhouette(args.output / "native-tri-fanned/runtime")
     changed = sum(a != b for a, b in zip(first, second, strict=True))
     require(changed > len(first) * 0.002, "Tri shape parameter silhouette control did not change")
-    return {"captures": captures, "tri_parameter_silhouette": {"different_pixels": changed, "flat_pixels": sum(first), "fanned_pixels": sum(second)}}
+    scale_controls = {}
+    for unit, scaled in [("cross", "cross-scaled"), ("tri-fanned", "tri-scaled")]:
+        unit_mask = silhouette(args.output / f"native-{unit}/runtime")
+        scaled_mask = silhouette(args.output / f"native-{scaled}/runtime")
+        difference = sum(a != b for a, b in zip(unit_mask, scaled_mask, strict=True))
+        require(difference > 0, "Shape scale silhouette did not change")
+        scale_controls[scaled] = {"different_pixels": difference, "unit_pixels": sum(unit_mask), "scaled_pixels": sum(scaled_mask)}
+    return {"captures": captures, "scale_silhouettes": scale_controls, "tri_parameter_silhouette": {"different_pixels": changed, "flat_pixels": sum(first), "fanned_pixels": sum(second)}}
 
 
 def main():

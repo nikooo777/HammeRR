@@ -213,9 +213,11 @@ python3 -B scripts/validate_terrain_creation.py --output /tmp/hammerr-terrain-cr
 cargo test -p source-formats --lib bsp::detail_props::tests
 cargo test -p compiler --test detail_props
 cargo test -p compiler --test region_detail_models
+cargo test -p compiler --lib named_model_receiver
 python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-check
 python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-regions-check --regions
 python3 -B scripts/validate_detail_props.py --output /tmp/hammerr-detail-props-native-check --runtime
+python3 -B scripts/validate_detail_origins.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-origins-check
 python3 -B scripts/validate_material_details.py --output /tmp/hammerr-material-details-check --runtime
 ```
 
@@ -233,6 +235,14 @@ native launch. Compiler regressions cover inclusive bounds, the implicit zero
 origin, hidden omission and the normal asset, renderability, bounds, open-leaf
 and lighting-receiver checks. Selected origins on sealing boundaries are not
 nudged into open space.
+
+`validate_detail_origins` authors named `info_lighting` helpers for explicit
+models through the existing property calls. It checks sampled colors with
+unchanged placement, reference errors and preserved source/history/output
+through foreground/background builds. It uses isolated stdio MCP without a
+native launch; `--game-dir` and `--fgd` override the installed asset paths.
+Compiler regressions also cover the unchanged stored-up normal, Fullbright
+reference validation, ambiguous helpers and region-exterior lit receivers.
 
 `--runtime-bsp <path> --runtime --expected-count <n>` reuses this native check for
 an already checked BSP containing the same observer entity; `--fixture-game`
@@ -1143,17 +1153,20 @@ python3 -B scripts/validate_detail_light_styles.py --binary target/debug/hammerr
 `validate_detail_sprites` checks native atlas UVs and anchors, deterministic
 placement, custom atlas validation, bounds/budgets, rejected selected groups,
 source/history preservation and exact foreground/background output. Plain
-orientations `0` (stored angles) and `1` (full billboard) require unit scale;
-orientation `2` retains vertical billboarding and absolute Gaussian scale.
-`--orientation-views` requires `--runtime` and compares detail ON/OFF silhouettes
-for orientations 0 and 1 from level and elevated cameras in four private
-Cage/VScript observations.
+orientations `0` (stored angles), `1` (full billboard) and `2` (vertical
+billboard) share absolute Gaussian scale, preserving the raw emitted floats for
+SDK lighting. Tests cover raw scaled bounds and the native half-path minimum of
+2⁻²⁴ for fixed/full billboards and shapes. `--orientation-views` requires
+`--runtime` and compares scaled detail ON/OFF silhouettes for orientations 0 and
+1 from level and elevated cameras in four private Cage/VScript observations,
+plus two elevated controls at scale one.
 
 `validate_detail_shapes` checks fixed cross, tri and fanned-tri records against
 the plain-sprite control, including encoded angle/size bytes, actual quad
 bounds, deterministic placement, unchanged sprite dictionary, source/history
-preservation and rejected shape/sway combinations. `--runtime` compares
-detail ON/OFF captures and the tri-parameter silhouettes.
+preservation, nonunit Gaussian scales and rejected shape/sway combinations.
+`--runtime` compares detail ON/OFF captures, tri-parameter silhouettes and
+unit/scaled cross and tri silhouettes.
 
 `validate_detail_lighting` compares bright, dim and colored static lights for
 explicit models and generated sprites, without changing placement. It checks

@@ -77,10 +77,12 @@ fn game_directory(directory: &Path, request: &WorkerRequest) -> io::Result<PathB
     ];
     for mount in &request.environment.mounts {
         let path = mount.path.canonicalize()?;
-        if mount.ids.iter().any(|id| id == "game") {
-            mounts.push(format!("\"game\" \"{}\"", path.display()));
-        } else if mount.ids.iter().any(|id| id == "platform") {
-            mounts.push(format!("\"platform\" \"{}\"", path.display()));
+        let ids = ["game", "mod", "platform"]
+            .into_iter()
+            .filter(|id| mount.ids.iter().any(|mounted| mounted.as_str() == *id))
+            .collect::<Vec<_>>();
+        if !ids.is_empty() {
+            mounts.push(format!("\"{}\" \"{}\"", ids.join("+"), path.display()));
         }
     }
     let info = format!(
@@ -184,6 +186,25 @@ fn verify_markers(text: &str) -> io::Result<()> {
     verify_controls(text)
 }
 
+fn verify_native_diagnostics(text: &str) -> io::Result<()> {
+    for message in [
+        "Host_Error:",
+        "ValidateLump:",
+        "vtex failed to compile cubemap",
+        "Can't load vtex_dll",
+        "Can't load bsppack",
+        "Cube map buffer size",
+        "Host_WriteConfiguration: Wrote",
+    ] {
+        if text.contains(message) {
+            return Err(invalid(format!(
+                "Native client reported a capture/configuration failure: {message}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn viewport(directory: &Path, largest: u16) -> io::Result<()> {
     let image = directory.join("viewport.png");
     let mut child = Command::new("grim")
@@ -264,7 +285,7 @@ fn modules(directory: &Path, root: &Path, native_pid: u32) -> io::Result<()> {
         if count > 16 || bytes > 8 * 1024 * 1024 {
             return Err(invalid("Native loader diagnostics exceed their budget"));
         }
-        for line in util::text(&entry.path(), 8 * 1024 * 1024)?.lines() {
+        for line in util::diagnostic_text(&entry.path(), 8 * 1024 * 1024)?.lines() {
             let Some(captures) = pattern.captures(line) else {
                 continue;
             };
@@ -401,25 +422,11 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 native = Some(identity);
             }
             let text = if console.exists() {
-                util::text(&console, util::MAX_LOG)?
+                util::diagnostic_text(&console, util::MAX_LOG)?
             } else {
                 String::new()
             };
-            if [
-                "ValidateLump:",
-                "vtex failed to compile cubemap",
-                "Can't load vtex_dll",
-                "Can't load bsppack",
-                "Cube map buffer size",
-                "Host_WriteConfiguration: Wrote",
-            ]
-            .iter()
-            .any(|message| text.contains(message))
-            {
-                return Err(invalid(
-                    "Native client reported a capture/configuration failure",
-                ));
-            }
+            verify_native_diagnostics(&text)?;
             if fs::metadata(directory.join("launcher.log"))?.len() > 8 * 1024 * 1024 {
                 return Err(invalid("Native launcher log exceeds 8 MiB"));
             }
@@ -500,7 +507,8 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
             }
             thread::sleep(Duration::from_millis(100));
         }
-        let text = util::text(&console, util::MAX_LOG)?;
+        let text = util::diagnostic_text(&console, util::MAX_LOG)?;
+        verify_native_diagnostics(&text)?;
         verify_markers(&text)?;
         for index in 1..=request.samples.len() {
             if !text.contains(&format!(
@@ -576,7 +584,7 @@ pub(crate) fn run(directory: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn mod_only_mount_cannot_shadow_compiler_game_content() {
+    fn source_mount_ids_keep_mod_reads_without_game_shadowing_or_write_access() {
         let directory = tempfile::tempdir().unwrap();
         let engine = directory.path().join("engine");
         let output = directory.path().join("capture");
@@ -592,6 +600,8 @@ mod tests {
             fs::create_dir_all(path).unwrap();
         }
         fs::write(output.join("staged.bsp"), b"staged fixture").unwrap();
+        fs::write(mod_only.join("shared.txt"), b"mod only").unwrap();
+        fs::write(game_content.join("shared.txt"), b"game content").unwrap();
         let request = WorkerRequest {
             version: 1,
             nonce: "fixture".into(),
@@ -602,11 +612,15 @@ mod tests {
                 steam_root: PathBuf::new(),
                 mounts: vec![
                     crate::ContentMount {
-                        ids: vec!["mod".into()],
+                        ids: vec![
+                            "mod".into(),
+                            "mod_write".into(),
+                            "default_write_path".into(),
+                        ],
                         path: mod_only.clone(),
                     },
                     crate::ContentMount {
-                        ids: vec!["game".into()],
+                        ids: vec!["game".into(), "mod".into(), "game_write".into()],
                         path: game_content.clone(),
                     },
                 ],
@@ -615,9 +629,28 @@ mod tests {
             samples: vec![],
         };
         let game = game_directory(&output, &request).unwrap();
-        let info = util::text(&game.join("gameinfo.txt"), 16 * 1024).unwrap();
-        assert!(info.contains(game_content.to_str().unwrap()));
-        assert!(!info.contains(mod_only.to_str().unwrap()));
+        let mounted =
+            source_formats::gamefs::GameFs::from_gameinfo(game.join("gameinfo.txt")).unwrap();
+        let source_ids = |path: &Path| {
+            &mounted
+                .mounts
+                .iter()
+                .find(|mount| mount.mount.location() == path)
+                .unwrap()
+                .ids
+        };
+        assert_eq!(source_ids(&game_content), &["game", "mod"]);
+        assert_eq!(source_ids(&mod_only), &["mod"]);
+        let first_mod = mounted
+            .mounts
+            .iter()
+            .find(|mount| mount.ids.iter().any(|id| id == "mod"))
+            .unwrap();
+        assert_eq!(first_mod.mount.location(), game.as_path());
+        assert_eq!(
+            mounted.read("shared.txt").unwrap().unwrap(),
+            b"game content"
+        );
     }
 
     #[test]
@@ -632,5 +665,28 @@ mod tests {
         );
         assert!(verify_markers(&format!("{BEGIN}\n{ordered}")).is_err());
         assert!(verify_markers(&ordered.replace(RETURNED, "")).is_err());
+    }
+
+    #[test]
+    fn external_diagnostics_keep_markers_and_failures_after_non_utf8_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("native.log");
+        let mut bytes = b"Native diagnostic: \xe2\x02'\n".to_vec();
+        bytes.extend_from_slice(format!("{PREMAP}\nHAMMERR_MAPSPAWN\n{READY}\n{BEGIN}\n{RETURNED}\n{DISCONNECTED}\n\"sv_lan\" = \"1\"\n\"mat_hdr_level\" = \"0\"\n\"mat_fullbright\" = \"0\"\n\"mat_envmapsize\" = \"128\"\n").as_bytes());
+        fs::write(&path, &bytes).unwrap();
+        let text = util::diagnostic_text(&path, util::MAX_LOG).unwrap();
+        verify_native_diagnostics(&text).unwrap();
+        verify_markers(&text).unwrap();
+        assert!(util::text(&path, util::MAX_LOG).is_err());
+        assert!(util::diagnostic_text(&path, bytes.len() - 1).is_err());
+        bytes.extend_from_slice(b"Host_Error: Bad string: \xe2\x02'\n");
+        fs::write(&path, &bytes).unwrap();
+        let text = util::diagnostic_text(&path, util::MAX_LOG).unwrap();
+        assert!(
+            verify_native_diagnostics(&text)
+                .unwrap_err()
+                .to_string()
+                .contains("Host_Error:")
+        );
     }
 }

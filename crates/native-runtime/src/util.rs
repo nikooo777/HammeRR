@@ -43,6 +43,10 @@ pub(crate) fn text(path: &Path, limit: usize) -> io::Result<String> {
     String::from_utf8(read(path, limit)?).map_err(|e| invalid(e.to_string()))
 }
 
+pub(crate) fn diagnostic_text(path: &Path, limit: usize) -> io::Result<String> {
+    Ok(String::from_utf8_lossy(&read(path, limit)?).into_owned())
+}
+
 pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

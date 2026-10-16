@@ -385,6 +385,7 @@ def absent_runtime_sources(args, game):
     try:
         set_sky(client, args.family)
         report = client.call("inspect_sky_assets")
+        require(report["issues"] == [] and report["authored_name"] == args.family and report["authored_name_truncated"] is False and report["report_truncated"] is False, f"Runtime source absence requires a usable, complete GameFs inspection: {report}")
         require(not report["ldr_ready"] and not report["hdr_ready"] and len(report["faces"]) == 6 and all(face["source"] is None for face in report["faces"]), "A runtime search path still provides an original custom sky material")
         return {"gameinfo": (game / "gameinfo.txt").read_text(), "before_bsp_mount": report, "all_six_original_materials_absent": True}
     finally:

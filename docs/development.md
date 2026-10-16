@@ -739,6 +739,43 @@ python3 -B scripts/validate_sky_preview.py --binary target/debug/hammerr-headles
 
 CPU tests check six-face loading, VMT patches, dimensions, LDR selection, supported transforms and reported failures. The explicitly ignored GPU tests check cardinal/quadrant orientation, camera translation, depth/occlusion, fallback and unchanged view modes/filters. The MCP script always performs offscreen image checks, temporary and shared view settings, picking, world-setting Undo and save/reopen. Repeat with `--sky sky_day01_09` to cover stock vertical scaling. `--url` uses the preserved-map workflow described above; private headless sessions are the default.
 
+### Explicit HDR sky preview
+
+```sh
+cargo test -p compiler --lib sky_assets::hdr_preview
+cargo test -p render --lib sky::hdr
+cargo test -p editor-core --features mcp --lib session::sky_preview
+cargo test -p editor-core --features mcp --lib hdr_sky_view_requests_validate_atomically_before_graphics_and_preserve_source
+cargo test -p editor --bin editor hdr_sky_inline_controls_share_validation_restore_rejected_toggles_and_preserve_source
+python3 -B scripts/validate_hdr_sky_preview.py --binary target/debug/hammerr-headless --output /tmp/hammerr-hdr-sky-preview-check
+```
+
+Compiler fixtures cover exact six-face direct-Sky dependencies, source budgets,
+formats, complete syntax and unavailable assets without substitution. Renderer
+fixtures cover linear half-float/UNORM ×16 conversion, finite/radiance rejection
+and cache payload identity. Session and MCP checks cover strict channel/EV
+validation before graphics initialization, requested/ready/eligible metadata
+and source/view/draft preservation, including invalid names that leave a prior
+valid family cache untouched.
+The software UI test exercises shared controls, rejected-value restoration and
+`hdr-sky-preview-controls.png` through an existing `HAMMERR_UI_SNAPSHOTS`
+directory.
+
+The private stdio validator creates its own synthetic six-face half-float and
+UNORM sky families; only `--binary` and required fresh `--output` are accepted.
+It compares actual face/quadrant pixels against independent CPU radiance,
+exposure, per-channel Reinhard and single-sRGB references, including opaque
+output from nonopaque authored alpha. It checks shared/temporary parity,
+unchanged LDR and foreground pixels, depth occlusion, suppressed view modes and
+tool filtering, CPU/GPU cache reload, family eviction and cached failures.
+Negative/nonfinite radiance, malformed/missing faces, Patch/compressed HDR and unsupported
+materials retain explicit unavailable reports without a substitute sky.
+Settings and temporary renders preserve source, camera and history. The script
+requires a graphics adapter, writes `validation.json`, per-image JSON metadata
+and PNG controls, and launches no game or desktop input. Its pixel references
+cover the documented editor color policy without native hardware or game HDR
+parity claims.
+
 ### Sky asset inspection
 
 ```sh

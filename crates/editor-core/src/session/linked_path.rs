@@ -157,10 +157,10 @@ impl Session {
                 })
                 .find(|candidate| !occupied.contains(&candidate.to_ascii_lowercase()))
                 .ok_or("Too many existing names use this path prefix; choose another prefix")?;
-            if scan.iter().any(|reference| {
-                (reference.declared && connections::name_matches(&name, &reference.target))
-                    || reference.target.eq_ignore_ascii_case(&name)
-            }) {
+            if scan
+                .iter()
+                .any(|reference| connections::name_matches(&name, &reference.target))
+            {
                 return Err(format!(
                     "Generated name {name} would acquire an existing reference; choose another prefix"
                 ));

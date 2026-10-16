@@ -508,7 +508,12 @@ pub(super) fn run(
                     }
                 }
             }
-            if let Err(error) = ui.measurements.as_ref().unwrap().show(&lock(&ui.session)) {
+            let controller = ui.measurements.as_ref().unwrap();
+            controller.set_viewport((
+                app.unwrap().get_viewport_width().round().max(1.0) as u32,
+                app.unwrap().get_viewport_height().round().max(1.0) as u32,
+            ));
+            if let Err(error) = controller.show(&lock(&ui.session)) {
                 app.unwrap().set_message(error.to_string().into());
             }
         }
@@ -1781,6 +1786,48 @@ pub(super) fn run(
                 ui.pick_release = false;
                 return;
             }
+            let measurement_picking =
+                !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
+            if button == 0 && measurement_picking {
+                if down {
+                    ui.pick_release = true;
+                    if ui.measurements.is_none() {
+                        match measurements_ui::Controller::new(&ui.session) {
+                            Ok(controller) => ui.measurements = Some(controller),
+                            Err(error) => {
+                                app.set_message(error.to_string().into());
+                                return;
+                            }
+                        }
+                    }
+                    let controller = ui.measurements.as_ref().unwrap();
+                    let mut session = lock(&ui.session);
+                    let result = if session.camera() != ui.viewport.camera {
+                        Err("Viewport camera changed; choose Pick start or Pick end again".into())
+                    } else {
+                        controller.pick_at_pixel(
+                            &mut session,
+                            DVec2::new(f64::from(x), f64::from(y)),
+                            (
+                                viewport_size.0.round().max(1.0) as u32,
+                                viewport_size.1.round().max(1.0) as u32,
+                            ),
+                        )
+                    };
+                    match result {
+                        Ok(()) => app.set_message(
+                            "Measurement endpoint picked. Review the coordinates, then Apply or pick another endpoint.".into(),
+                        ),
+                        Err(error) => {
+                            controller.window.set_message(error.clone().into());
+                            app.set_message(error.into());
+                            let _ = controller.show(&session);
+                        }
+                    }
+                    refresh_interaction(&app, &session);
+                }
+                return;
+            }
             let entity_picking =
                 lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
             if button == 0 && entity_picking {
@@ -2927,8 +2974,18 @@ pub(super) fn run(
 
             let entity_picking =
                 lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
+            let measurement_picking =
+                !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
+            if let Some(controller) = &ui.measurements {
+                controller.set_viewport((
+                    app.get_viewport_width().round().max(1.0) as u32,
+                    app.get_viewport_height().round().max(1.0) as u32,
+                ));
+            }
             app.set_surface_picking(
-                lock(&ui.session).surface_placement()["picking"] == true || entity_picking,
+                lock(&ui.session).surface_placement()["picking"] == true
+                    || entity_picking
+                    || measurement_picking,
             );
             if let Some(controller) = &ui.entity_placement
                 && controller.window.window().is_visible()

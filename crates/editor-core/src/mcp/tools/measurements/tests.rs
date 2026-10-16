@@ -156,3 +156,122 @@ fn measurement_offscreen_mcp_renders_preview_saved_hidden_and_undo_in_all_projec
         assert_eq!(image(&server, projection), empty);
     }
 }
+
+#[test]
+fn mcp_measurement_surface_actions_share_tokens_exact_coordinates_and_pixel_view_guards() {
+    let mut session = Session::new(Err("no assets needed".into()));
+    session
+        .create_block(
+            Actor::User,
+            DVec3::new(-128.0, -128.0, -16.0),
+            DVec3::new(128.0, 128.0, 0.0),
+            "brick/test",
+            false,
+        )
+        .unwrap();
+    let user_camera = session.camera();
+    let source = session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let draft = preview(&server, None);
+    let picked = action(
+        &server,
+        json!({"action":"begin_pick","token":draft["draft"]["token"],"endpoint":"start",
+        "width":511,"height":511,"camera":{"projection":"top","center":[3.125,-5.25,0],"ortho_height":256},"snapshot":draft["pick_snapshot"]}),
+    );
+    assert_eq!(lock(&shared).camera(), user_camera);
+    let token = picked["draft"]["token"].as_u64().unwrap();
+    for args in [
+        json!({"action":"pick_pixel","token":token,"x":255,"y":255,"width":512,"height":511}),
+        json!({"action":"pick_pixel","token":token,"x":511,"y":255,"width":511,"height":511}),
+        json!({"action":"pick_ray","token":token,"ray_origin":[0,0,96],"ray_direction":[0,0,0]}),
+        json!({"action":"pick_ray","token":token,"ray_origin":[1000,1000,1000],"ray_direction":[0,0,1]}),
+        json!({"action":"apply","token":token}),
+    ] {
+        assert!(
+            server
+                .set_measurement(Parameters(serde_json::from_value(args).unwrap()))
+                .unwrap()
+                .is_error
+                .unwrap_or(false)
+        );
+        assert_eq!(value(server.get_measurements()), picked);
+    }
+    let state = action(
+        &server,
+        json!({"action":"pick_pixel","token":token,"x":255,"y":255,"width":511,"height":511}),
+    );
+    assert_eq!(
+        state["draft"]["measurement"]["start"],
+        json!([3.125, -5.25, 0.0])
+    );
+    assert_eq!(
+        state["draft"]["measurement"]["end"],
+        draft["draft"]["measurement"]["end"]
+    );
+    assert_eq!(state["draft"]["last_pick"]["endpoint"], "start");
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    let state = action(
+        &server,
+        json!({"action":"begin_pick","token":state["draft"]["token"],"endpoint":"end","width":511,"height":511,"snapshot":state["pick_snapshot"]}),
+    );
+    let state = action(
+        &server,
+        json!({"action":"pick_ray","token":state["draft"]["token"],"ray_origin":[30.123456789012,12.987654321012,96],"ray_direction":[0,0,-7]}),
+    );
+    assert_eq!(
+        state["draft"]["measurement"]["end"],
+        json!([30.123456789012, 12.987654321012, 0.0])
+    );
+    let human = lock(&shared)
+        .review_measurement(Actor::User, state["draft"]["token"].as_u64().unwrap())
+        .unwrap();
+    let token = human["draft"]["token"].as_u64().unwrap();
+    let state = lock(&shared)
+        .begin_measurement_pick(
+            Actor::User,
+            token,
+            crate::session::measurements::Endpoint::End,
+            user_camera,
+            (511, 511),
+            human["pick_snapshot"].as_str().unwrap(),
+        )
+        .unwrap();
+    assert!(
+        server
+            .set_measurement(Parameters(
+                serde_json::from_value(
+                    json!({"action":"cancel_pick","token":state["draft"]["token"]})
+                )
+                .unwrap()
+            ))
+            .unwrap()
+            .is_error
+            .unwrap_or(false)
+    );
+    let reviewed = action(
+        &server,
+        json!({"action":"review","token":state["draft"]["token"]}),
+    );
+    let cancelled = action(
+        &server,
+        json!({"action":"cancel_pick","token":reviewed["draft"]["token"]}),
+    );
+    assert_eq!(
+        cancelled["draft"]["measurement"],
+        state["draft"]["measurement"]
+    );
+    action(
+        &server,
+        json!({"action":"apply","token":cancelled["draft"]["token"]}),
+    );
+    assert_eq!(lock(&shared).document().undo_labels().count(), 2);
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+    for invalid in [
+        json!({"action":"begin_pick","token":1,"endpoint":"middle","width":511,"height":511,"snapshot":"invalid"}),
+        json!({"action":"pick_pixel","token":1,"x":-1,"y":255,"width":511,"height":511}),
+        json!({"action":"pick_ray","token":1,"ray_origin":[0,0,1],"ray_direction":[0,0,-1],"snap":true}),
+    ] {
+        assert!(serde_json::from_value::<MeasurementArgs>(invalid).is_err());
+    }
+}

@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use glam::DVec3;
 use map_core::measurements::Measurement;
@@ -6,8 +9,8 @@ use serde_json::Value;
 use slint::{ComponentHandle, VecModel};
 
 use crate::runtime::{SharedSession, lock};
-use crate::session::measurements::Request;
-use crate::session::{Actor, Session};
+use crate::session::measurements::{Endpoint, Request};
+use crate::session::{Actor, Pointer, Session};
 use crate::{MeasurementRow, MeasurementsWindow};
 
 #[derive(Default)]
@@ -24,6 +27,7 @@ struct Form {
 pub struct Controller {
     pub window: MeasurementsWindow,
     form: Rc<RefCell<Form>>,
+    viewport: Rc<Cell<(u32, u32)>>,
 }
 
 fn coordinate(value: &str) -> Result<f64, String> {
@@ -85,12 +89,17 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
         && form.owned_token == form.displayed_token
         && draft["owner"] == Actor::User.label();
     let editable = current && state["metadata_error"].is_null() && state["edit_error"].is_null();
+    let picking = !draft["picking"].is_null();
     window.set_editable(editable);
     window.set_can_preview(editable && (draft.is_null() || draft["owner"] == Actor::User.label()));
     window.set_can_review(editable && valid && (!reviewed || form.dirty));
-    window.set_ready(editable && reviewed && !form.dirty);
+    window.set_ready(editable && reviewed && !form.dirty && !picking);
+    window.set_can_pick(editable && reviewed && !form.dirty);
+    window.set_picking(picking && reviewed);
     window.set_can_delete(editable && draft.is_null() && form.selected.is_some());
-    window.set_can_frame(current && ((reviewed && !form.dirty) || form.selected.is_some()));
+    window.set_can_frame(
+        current && !picking && ((reviewed && !form.dirty) || form.selected.is_some()),
+    );
     window.set_show_guides(state["show_guides"] == true);
     let entries = session
         .measurements()
@@ -136,6 +145,10 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
         )
     } else if form.dirty {
         "Endpoints or name changed. Preview again before Apply.".into()
+    } else if picking {
+        draft["picking"]["error"].as_str().map(str::to_string).unwrap_or_else(||format!(
+            "Pick the {} endpoint on a visible surface. Escape cancels picking and keeps the endpoints.",
+            draft["picking"]["endpoint"].as_str().unwrap_or("selected")))
     } else {
         "Preview is current. Apply stores the measurement in one Undo step.".into()
     };
@@ -210,6 +223,72 @@ impl Controller {
     pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
         let window = MeasurementsWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
+        let viewport = Rc::new(Cell::new((1024, 576)));
+        for endpoint in [Endpoint::Start, Endpoint::End] {
+            let (pick_window, shared, form, viewport) = (
+                window.as_weak(),
+                shared.clone(),
+                form.clone(),
+                viewport.clone(),
+            );
+            let pick = move || {
+                let window = pick_window.unwrap();
+                let mut session = lock(&shared);
+                let camera = session.camera();
+                let snapshot = session.measurement_pick_stamp();
+                let result = {
+                    let form = form.borrow();
+                    if form.dirty {
+                        Err("Preview the changed endpoints or name before picking".to_string())
+                    } else {
+                        form.owned_token
+                            .ok_or_else(|| {
+                                "Preview or Review the measurement before picking".to_string()
+                            })
+                            .and_then(|token| {
+                                session.begin_measurement_pick(
+                                    Actor::User,
+                                    token,
+                                    endpoint,
+                                    camera,
+                                    viewport.get(),
+                                    &snapshot,
+                                )
+                            })
+                    }
+                };
+                match result.and_then(|state| adopt(&window, &session, &form, &state)) {
+                    Ok(()) => {
+                        let _ = window.hide();
+                    }
+                    Err(error) => window.set_message(error.into()),
+                }
+                refresh(&window, &session, &form);
+            };
+            match endpoint {
+                Endpoint::Start => window.on_pick_start(pick),
+                Endpoint::End => window.on_pick_end(pick),
+            }
+        }
+        window.on_cancel_pick({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let result = form
+                    .borrow()
+                    .owned_token
+                    .ok_or_else(|| {
+                        "Review the measurement before cancelling endpoint picking".to_string()
+                    })
+                    .and_then(|token| session.cancel_measurement_pick(Actor::User, token));
+                if let Err(error) = result.and_then(|state| adopt(&window, &session, &form, &state))
+                {
+                    window.set_message(error.into());
+                }
+                refresh(&window, &session, &form);
+            }
+        });
         window.on_edited({
             let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
             move || {
@@ -418,7 +497,56 @@ impl Controller {
                 slint::CloseRequestResponse::HideWindow
             }
         });
-        Ok(Self { window, form })
+        Ok(Self {
+            window,
+            form,
+            viewport,
+        })
+    }
+
+    pub fn set_viewport(&self, size: (u32, u32)) {
+        self.viewport.set(size);
+    }
+
+    pub fn pick_at_pixel(
+        &self,
+        session: &mut Session,
+        position: glam::DVec2,
+        size: (u32, u32),
+    ) -> Result<(), String> {
+        let token = self
+            .form
+            .borrow()
+            .owned_token
+            .ok_or("Review the measurement before picking an endpoint")?;
+        let state = session.pick_measurement_pixel(
+            Actor::User,
+            token,
+            Pointer {
+                position: position.floor() + glam::DVec2::splat(0.5),
+                size,
+            },
+        )?;
+        adopt(&self.window, session, &self.form, &state)?;
+        self.window.set_message("Surface endpoint picked. Check the exact coordinates, then pick the other endpoint or Apply.".into());
+        self.refresh(session);
+        let _ = self.window.show();
+        Ok(())
+    }
+
+    pub fn cancel_pick(&self, session: &mut Session) -> Result<(), String> {
+        let token = self
+            .form
+            .borrow()
+            .owned_token
+            .ok_or("Review the measurement before cancelling endpoint picking")?;
+        let state = session.cancel_measurement_pick(Actor::User, token)?;
+        adopt(&self.window, session, &self.form, &state)?;
+        self.window
+            .set_message("Endpoint picking cancelled; the preview endpoints are unchanged.".into());
+        self.refresh(session);
+        let _ = self.window.show();
+        Ok(())
     }
 
     pub fn refresh(&self, session: &Session) {
@@ -426,7 +554,11 @@ impl Controller {
     }
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
-        if !self.window.window().is_visible() {
+        if !self.window.window().is_visible()
+            && (self.form.borrow().owned_token.is_none()
+                || self.form.borrow().owned_token
+                    != session.measurement_state()["draft"]["token"].as_u64())
+        {
             *self.form.borrow_mut() = Form::default();
             remember_snapshot(&mut self.form.borrow_mut(), session);
             load(
@@ -441,7 +573,7 @@ impl Controller {
             );
             self.window.set_selected_id("".into());
             self.window.set_message(
-                "Enter exact world coordinates. Endpoints are not snapped or attached to objects."
+                "Enter exact world coordinates and Preview, then use Pick start or Pick end for visible surfaces."
                     .into(),
             );
         }

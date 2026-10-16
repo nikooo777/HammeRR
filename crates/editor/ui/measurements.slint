@@ -5,9 +5,9 @@ export struct MeasurementRow { id: string, name: string, detail: string }
 export component MeasurementsWindow inherits Window {
     title: "Measurements - HammeRR";
     preferred-width: 860px;
-    preferred-height: 740px;
+    preferred-height: 800px;
     min-width: 760px;
-    min-height: 680px;
+    min-height: 740px;
     in property <[MeasurementRow]> measurements;
     in property <string> selected-id;
     in-out property <string> measurement-name;
@@ -23,6 +23,8 @@ export component MeasurementsWindow inherits Window {
     in property <bool> can-review;
     in property <bool> can-delete;
     in property <bool> can-frame;
+    in property <bool> can-pick;
+    in property <bool> picking;
     in property <bool> ready;
     in property <string> preview-status;
     in property <string> result;
@@ -35,11 +37,19 @@ export component MeasurementsWindow inherits Window {
     callback apply();
     callback delete-measurement();
     callback frame();
+    callback pick-start();
+    callback pick-end();
+    callback cancel-pick();
     callback view-changed();
     callback cancel();
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
-        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if root.picking { root.cancel-pick(); } else { root.cancel(); }
+                accept
+            } else { reject }
+        }
         VerticalLayout {
             padding: 20px;
             spacing: 12px;
@@ -105,6 +115,14 @@ export component MeasurementsWindow inherits Window {
                 LineEdit { enabled: root.editable; text <=> root.end-x; accessible-label: "End X"; edited => { root.edited(); } }
                 LineEdit { enabled: root.editable; text <=> root.end-y; accessible-label: "End Y"; edited => { root.edited(); } }
                 LineEdit { enabled: root.editable; text <=> root.end-z; accessible-label: "End Z"; edited => { root.edited(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Pick start"; enabled: root.can-pick; clicked => { root.pick-start(); } }
+                Button { text: "Pick end"; enabled: root.can-pick; clicked => { root.pick-end(); } }
+                if root.picking: Button { text: "Cancel picking"; clicked => { root.cancel-pick(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: "Preview first · visible surfaces · no snapping"; color: #b6c1cf; wrap: word-wrap; }
             }
             Text { text: root.result; font-size: 17px; font-weight: 600; min-height: 45px; wrap: word-wrap; }
             Text { text: root.preview-status; min-height: 40px; wrap: word-wrap; }

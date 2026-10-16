@@ -1,8 +1,19 @@
 use glam::DVec3;
 use map_core::measurements::{self, Measurement, Measurements};
+use map_core::query::{Ray, SurfaceHit};
+use render::Camera;
 use serde_json::{Value, json};
 
-use super::{Actor, Session};
+use super::{Actor, Pointer, Session};
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Endpoint {
+    Start,
+    End,
+}
+
+const MAX_PICK_VIEWPORT_SIZE: u32 = 8192;
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -46,6 +57,18 @@ struct Draft {
     owner: Actor,
     measurement: Measurement,
     replace: bool,
+    picking: Option<Picking>,
+    last_pick: Option<(Endpoint, SurfaceHit)>,
+}
+
+struct Picking {
+    endpoint: Endpoint,
+    scene: u64,
+    view: u64,
+    camera_serial: u64,
+    session_camera: Camera,
+    camera: Camera,
+    size: (u32, u32),
 }
 
 fn measurement_json(measurement: &Measurement) -> Value {
@@ -74,6 +97,36 @@ impl Session {
             return Err("Map or measurement state changed; inspect Measurements again".into());
         }
         Ok(())
+    }
+
+    pub fn measurement_pick_stamp(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{:?}",
+            self.measurement_stamp(),
+            self.scene_serial,
+            self.view_serial,
+            self.camera_serial,
+            self.camera
+        )
+    }
+
+    fn checked_measurement_pick(&self, actor: Actor, token: u64) -> Result<&Picking, String> {
+        let draft = self.checked_measurement(token)?;
+        if draft.owner != actor {
+            return Err("Review the other actor's measurement before picking an endpoint".into());
+        }
+        let picking = draft
+            .picking
+            .as_ref()
+            .ok_or("Choose Pick start or Pick end first")?;
+        if picking.scene != self.scene_serial
+            || picking.view != self.view_serial
+            || picking.camera_serial != self.camera_serial
+            || picking.session_camera != self.camera
+        {
+            return Err("Scene or camera changed; choose Pick start or Pick end again".into());
+        }
+        Ok(picking)
     }
 
     fn measurement_context(&self) -> Result<(), String> {
@@ -115,18 +168,26 @@ impl Session {
             Err(error) => (Vec::new(), Some(error)),
         };
         let draft = self.measurements.draft.as_ref().map(|draft| {
+            let picking = draft.picking.as_ref().map(|picking| json!({
+                "endpoint":picking.endpoint,"width":picking.size.0,"height":picking.size.1,
+                "valid":self.checked_measurement_pick(draft.owner,draft.token).is_ok(),
+                "error":self.checked_measurement_pick(draft.owner,draft.token).err()}));
+            let last_pick = draft.last_pick.map(|(endpoint, surface)| json!({"endpoint":endpoint,
+                "target":crate::identity::id_string(surface.hit.object),"solid":surface.hit.solid,
+                "side":surface.hit.side,"point":surface.hit.point.to_array(),"normal":surface.normal.to_array()}));
             json!({"token":draft.token,"owner":draft.owner.label(),"replace":draft.replace,
                 "measurement":measurement_json(&draft.measurement),
+                "picking":picking,"last_pick":last_pick,
                 "valid":self.checked_measurement(draft.token).is_ok(),
                 "error":self.checked_measurement(draft.token).err()})
         });
-        json!({"snapshot":self.measurement_stamp(),"generation":self.document_generation,
+        json!({"snapshot":self.measurement_stamp(),"pick_snapshot":self.measurement_pick_stamp(),"generation":self.document_generation,
             "revision":self.document.revision(),"measurements":entries,"metadata_error":metadata_error,
             "metadata_preserved":true,"draft":draft,"show_guides":self.measurements.show,
             "edit_error":self.measurement_context().err(),
             "limits":{"measurements":measurements::MAX_MEASUREMENTS,"name_characters":measurements::MAX_NAME_CHARS,
-                "coordinate_extent":measurements::MAX_COORDINATE},
-            "picking":"Guides are editor-only world coordinates, never pickable, and remain visible independently of object visibility. Endpoints are exact numeric coordinates; no snapping or object attachment."})
+                "coordinate_extent":measurements::MAX_COORDINATE,"pick_viewport_dimension":MAX_PICK_VIEWPORT_SIZE},
+            "picking":"Preview a ruler, then arm start/end picking. Rays and viewport pixels use the first visible brush, terrain triangle or supported model mesh; misses preserve endpoints. No grid/plane fallback, snapping or object attachment. Guides never enter picking."})
     }
 
     fn measurement_plan(
@@ -185,10 +246,146 @@ impl Session {
             owner: actor,
             measurement,
             replace,
+            picking: None,
+            last_pick: None,
         });
         self.measurements.show = true;
         self.scene_serial += 1;
         Ok(self.measurement_state())
+    }
+
+    pub fn begin_measurement_pick(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        endpoint: Endpoint,
+        camera: Camera,
+        size: (u32, u32),
+        snapshot: &str,
+    ) -> Result<Value, String> {
+        if snapshot != self.measurement_pick_stamp() {
+            return Err("Measurement picking context changed; inspect Measurements again".into());
+        }
+        let draft = self.checked_measurement(token)?;
+        if draft.owner != actor {
+            return Err("Review the other actor's measurement before picking an endpoint".into());
+        }
+        if size.0 == 0
+            || size.1 == 0
+            || size.0 > MAX_PICK_VIEWPORT_SIZE
+            || size.1 > MAX_PICK_VIEWPORT_SIZE
+        {
+            return Err("Measurement viewport dimensions must be between 1 and 8192".into());
+        }
+        let (origin, direction) = camera.ray(0.0, 0.0, size.0 as f32 / size.1 as f32);
+        if !origin.is_finite() || !direction.is_finite() || direction.length_squared() == 0.0 {
+            return Err("Measurement picking requires a finite camera".into());
+        }
+        if self.get_entity_placement()["draft"]["picking"] == true
+            || self.surface_placement()["picking"] == true
+            || self.clip_tool
+            || self.spatial.draw_block
+            || self.component_picking().is_some()
+        {
+            return Err(
+                "Finish the active viewport tool before picking a measurement endpoint".into(),
+            );
+        }
+        let picking = Picking {
+            endpoint,
+            scene: self.scene_serial,
+            view: self.view_serial,
+            camera_serial: self.camera_serial,
+            session_camera: self.camera,
+            camera,
+            size,
+        };
+        self.measurements.serial += 1;
+        let draft = self.measurements.draft.as_mut().unwrap();
+        draft.token = self.measurements.serial;
+        draft.picking = Some(picking);
+        Ok(self.measurement_state())
+    }
+
+    pub fn cancel_measurement_pick(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
+        let draft = self
+            .measurements
+            .draft
+            .as_ref()
+            .filter(|draft| draft.token == token)
+            .ok_or("Measurement preview was closed or replaced")?;
+        if draft.owner != actor {
+            return Err(
+                "Review the other actor's measurement before cancelling endpoint picking".into(),
+            );
+        }
+        if draft.picking.is_none() {
+            return Err("Measurement endpoint picking is not active".into());
+        }
+        self.measurements.serial += 1;
+        let draft = self.measurements.draft.as_mut().unwrap();
+        draft.token = self.measurements.serial;
+        draft.picking = None;
+        Ok(self.measurement_state())
+    }
+
+    pub fn pick_measurement_ray(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        ray: Ray,
+    ) -> Result<Value, String> {
+        let endpoint = self.checked_measurement_pick(actor, token)?.endpoint;
+        let surface = self.placement_surface(&[], ray, true)?;
+        let draft = self.measurements.draft.as_ref().unwrap();
+        let mut measurement = draft.measurement.clone();
+        match endpoint {
+            Endpoint::Start => measurement.start = surface.hit.point,
+            Endpoint::End => measurement.end = surface.hit.point,
+        }
+        measurement.validate()?;
+        self.measurements.serial += 1;
+        let draft = self.measurements.draft.as_mut().unwrap();
+        draft.token = self.measurements.serial;
+        draft.measurement = measurement;
+        draft.picking = None;
+        draft.last_pick = Some((endpoint, surface));
+        self.scene_serial += 1;
+        Ok(self.measurement_state())
+    }
+
+    pub fn pick_measurement_pixel(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        pointer: Pointer,
+    ) -> Result<Value, String> {
+        let picking = self.checked_measurement_pick(actor, token)?;
+        let pointer = pointer.validate()?;
+        if pointer.size != picking.size {
+            return Err("Viewport dimensions changed; choose Pick start or Pick end again".into());
+        }
+        if pointer.position.x < 0.0
+            || pointer.position.y < 0.0
+            || pointer.position.x >= f64::from(pointer.size.0)
+            || pointer.position.y >= f64::from(pointer.size.1)
+        {
+            return Err("Measurement pixel must lie inside the captured viewport".into());
+        }
+        let ndc = pointer.ndc();
+        let (origin, direction) = picking.camera.ray(
+            ndc.x as f32,
+            ndc.y as f32,
+            pointer.size.0 as f32 / pointer.size.1 as f32,
+        );
+        self.pick_measurement_ray(
+            actor,
+            token,
+            Ray {
+                origin: origin.as_dvec3(),
+                direction: direction.as_dvec3(),
+            },
+        )
     }
 
     pub fn review_measurement(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
@@ -205,6 +402,11 @@ impl Session {
         if draft.owner != actor {
             return Err(
                 "Another actor owns this measurement; Review preview before applying it".into(),
+            );
+        }
+        if draft.picking.is_some() {
+            return Err(
+                "Pick the measurement endpoint or cancel endpoint picking before Apply".into(),
             );
         }
         let id = draft.measurement.id;

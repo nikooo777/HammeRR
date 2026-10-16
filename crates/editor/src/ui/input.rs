@@ -22,6 +22,28 @@ pub(super) fn edit_selection(
 pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
     let shared = session_of(ui);
     let mut session = lock(&shared);
+    let measurement_report = session.measurement_state();
+    if !measurement_report["draft"]["picking"].is_null() {
+        if measurement_report["draft"]["owner"] != Actor::User.label() {
+            app.set_message("Review the shared measurement in Measurements… before cancelling endpoint picking.".into());
+            return true;
+        }
+        let result = if let Some(controller) = &ui.borrow().measurements {
+            controller.cancel_pick(&mut session)
+        } else {
+            session
+                .cancel_measurement_pick(
+                    Actor::User,
+                    measurement_report["draft"]["token"].as_u64().unwrap(),
+                )
+                .map(|_| ())
+        };
+        match result {
+            Ok(()) => app.set_surface_picking(false),
+            Err(error) => app.set_message(error.into()),
+        }
+        return true;
+    }
     let entity_report = session.get_entity_placement();
     if entity_report["draft"]["picking"] == true {
         if entity_report["draft"]["owner"] != Actor::User.label() {

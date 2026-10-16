@@ -820,15 +820,36 @@ fn endpoint_picks_hit_actual_model_triangles_and_skip_hidden_models() {
         state["draft"]["last_pick"]["target"],
         crate::identity::id_string(id)
     );
+    let draft = session.measurements.draft.as_ref().unwrap();
+    let stored = draft.measurement.clone();
+    let (_, surface) = draft.last_pick.unwrap();
+    assert_eq!(stored.start, request(None).start);
+    assert_eq!(stored.end, surface.hit.point);
     assert_eq!(
         state["draft"]["measurement"]["end"],
-        json!(expected.hit.point.to_array())
+        json!(stored.end.to_array())
     );
+    for (actual, expected) in stored
+        .end
+        .to_array()
+        .into_iter()
+        .zip(expected.hit.point.to_array())
+    {
+        assert!(
+            (expected.next_down()..=expected.next_up()).contains(&actual),
+            "Stored surface point {actual} differs from independent model intersection {expected}"
+        );
+    }
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.document().undo_labels().count(), history);
     session
-        .cancel_measurement(Actor::Agent, state["draft"]["token"].as_u64().unwrap())
+        .apply_measurement(Actor::Agent, state["draft"]["token"].as_u64().unwrap())
         .unwrap();
+    let saved = session.measurements().unwrap().measurements[0].clone();
+    assert_eq!(saved.start, stored.start);
+    assert_eq!(saved.end, stored.end);
+    session.undo(Actor::Agent).unwrap();
+    assert_eq!(session.document().vmf(), &source);
     session.set_visibility(Actor::Agent, "hide", &[id]).unwrap();
     let token = preview(&mut session, Actor::Agent, request(None));
     let token = arm(&mut session, Actor::Agent, token, Endpoint::End);

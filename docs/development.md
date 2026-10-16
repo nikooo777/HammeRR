@@ -790,7 +790,7 @@ python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-h
 
 `--runtime` requires the supported installed engine, running Steam, Cage, grim and the private launch prerequisites above. Each native case uses a fresh private process with `-insecure`, post-map `sv_lan 1`, verified hardware channel and no desktop input/focus change. Before loading the exact published or Run-staged BSP, an independent mounted-source inspection must show all six original custom materials absent. Native image checks compare all six face hues and quadrant orientation for LDR and HDR. `--reflections` additionally captures paired cubemaps and checks both manifests and private Run rebasing. Use `--steam-root` for a nondefault checked Steam root; `--reuse-fixture /path/to/fixture.json` repeats native views from hash-checked saved BSPs without repeating authoring/capture. Inspect `results.json`, `fixture.json` and per-view `runtime.json`; archive consistency alone does not establish native sky display.
 
-The private observer is created by `mapspawn` with `SpawnEntityFromTable` and
+The private `info_target` observer is created by `mapspawn` with `SpawnEntityFromTable` and
 scheduled with `AddThinkToEnt` from one verified `player_spawn` callback with a
 positive userid. The validator checks creation, listener registration, callback
 and scheduling markers in order before the first view; `runtime_observer`

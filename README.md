@@ -188,6 +188,11 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Colored guides between selected entity reference points](docs/images/fgd-lines.png) | ![Particle definitions and effect-name choices](docs/images/particle-browser.png) |
 | Show colored links to the unique named points referenced by selected entities. | Search active particle systems, inspect their definitions and choose effects for entities. |
 
+| Source projector guides |
+| --- |
+| ![Selected projector with its square near and far planes](docs/images/source-projector-guide.png) |
+| Show projector direction, field of view and near/far distances. |
+
 | Connections | Safe renaming |
 | --- | --- |
 | ![Connection form with suggestions](docs/images/entity-connections.png) | ![Rename preview listing every reference to update](docs/images/entity-rename.png) |
@@ -314,7 +319,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Material detail scattering |
 | --- |
 | ![Material-generated foliage on displaced terrain in Counter-Strike: Source](docs/images/terrain-detail-scattering.png) |
-| Generate decorative models, billboards and fixed cross/tri foliage from brush and terrain materials, with blend alpha and baked lighting. |
+| Generate decorative models, billboards and fixed cross/tri foliage from brush and terrain materials, with blend alpha, baked lighting and a map-wide tint. |
 
 [Material detail scattering →](docs/material-detail-scattering.md)
 

@@ -95,6 +95,7 @@ cameraspace(integer) : "Camera Space" : 0
     assert_eq!(session.document().undo_labels().count(), default_history);
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 960));
+    super::tests::scroll_inspector_to_control(&app, "Advanced properties");
     super::tests::save_ui_snapshot(app.window(), "source-projector-guide-inspector");
     session.undo(Actor::Agent).unwrap();
     refresh_panel(&app, &mut session);

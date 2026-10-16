@@ -748,3 +748,95 @@ fn moved_sources_require_explicit_refit_before_corner_editing() {
     document.edit("refit", |tx| refit(tx, id)).unwrap();
     assert!(with_corners(document.vmf(), id, corners).is_ok());
 }
+
+#[test]
+fn corner_editing_retains_left_handed_axes_and_rejects_ambiguous_or_unsupported_bindings() {
+    let (mut document, face) = fixture(false);
+    let ObjectId::Entity(id) = document
+        .edit("overlay", |tx| create(tx, face, options()))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let definition = parse(document.entity(id).unwrap()).unwrap();
+    document
+        .edit("left handed frame", |tx| {
+            tx.entity_mut(id)?.properties.set(
+                "BasisV",
+                format_vec3(-DVec3::from_array(definition.basis_v)),
+            );
+            Ok(())
+        })
+        .unwrap();
+    let before = document.vmf().clone();
+    let corners = [[-24.0, -16.0], [-20.0, 24.0], [28.0, 16.0], [32.0, -20.0]];
+    assert_eq!(
+        with_corners(&before, id, corners).unwrap().1.basis_v,
+        definition.basis_v.map(|value| -value)
+    );
+    for case in 0..8 {
+        let mut invalid = before.clone();
+        let index = invalid
+            .entities
+            .iter()
+            .position(|entity| entity.id == id)
+            .unwrap();
+        match case {
+            0 => invalid.entities[index].hidden = true,
+            1 => invalid.world.solids[0].hidden = true,
+            2 => invalid.entities[index]
+                .properties
+                .set("sides", u32::MAX.to_string()),
+            3 => {
+                let other = invalid.world.solids[0]
+                    .sides
+                    .iter()
+                    .find(|side| side.id != face.side)
+                    .unwrap()
+                    .id;
+                invalid.entities[index]
+                    .properties
+                    .set("sides", format!("{} {other}", face.side));
+            }
+            4 => {
+                let duplicate = invalid.entities[index]
+                    .properties
+                    .get("uv0")
+                    .unwrap()
+                    .to_owned();
+                invalid.entities[index]
+                    .properties
+                    .0
+                    .push(("uv0".into(), duplicate));
+            }
+            5 => {
+                let mut owner = Document::new(invalid);
+                owner
+                    .edit("model", |tx| {
+                        edit::tie_to_entity(tx, &[face.solid], "func_brush", &[])
+                    })
+                    .unwrap();
+                invalid = owner.into_vmf();
+            }
+            6 => {
+                let mut terrain = Document::new(invalid);
+                terrain
+                    .edit("terrain", |tx| {
+                        displacement::edit::create(tx, &[face], 2, 0)
+                    })
+                    .unwrap();
+                invalid = terrain.into_vmf();
+            }
+            7 => {
+                let u = DVec3::from_array(definition.basis_u);
+                let v = -DVec3::from_array(definition.basis_v);
+                invalid.entities[index]
+                    .properties
+                    .set("BasisV", format_vec3((v + u * 0.005).normalize()));
+            }
+            _ => unreachable!(),
+        }
+        assert!(with_corners(&invalid, id, corners).is_err(), "case {case}");
+    }
+    assert_eq!(document.vmf(), &before);
+}

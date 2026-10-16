@@ -12,6 +12,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import validate_native_runtime as runtime
+from private_runtime_config import (
+    finish_private_launch,
+    private_launch_options,
+    private_observer,
+    verify_private_launch,
+)
 from validate_authored_planes import records
 from validate_bump_lighting import texture
 from validate_face_lighting import DEFAULT_BINARY, Client, detail
@@ -58,7 +64,7 @@ function HammeRRThink() {
     local player = Entities.FindByClassname(null, "player");
     if (player == null) return 0.5;
     if (stage == 0) {
-        SendToConsole("sv_cheats 1; sv_lan 1; joystick 0; bot_quota 0; bot_kick; jointeam 2; joinclass 1; hidepanel info; hidepanel team; hidepanel class_ter; hidepanel class_ct; r_drawvgui 0; gameui_hide; cl_drawhud 0; r_drawviewmodel 0; r_drawothermodels 0; mat_fullbright 0; r_waterforceexpensive 1; r_drawtranslucentworld 1; con_notifytime 0");
+        SendToConsole("sv_cheats 1; sv_lan 1; joystick 0; bot_quota 0; bot_kick; jointeam 2; joinclass 1; hidepanel info; hidepanel team; hidepanel class_ter; hidepanel class_ct; r_drawvgui 0; gameui_hide; cl_drawhud 0; r_drawviewmodel 0; r_drawothermodels 0; mat_fullbright 0; toggle r_waterforceexpensive 1; toggle r_drawtranslucentworld 1; toggle con_notifytime 0");
         ready_at = Time() + 6.0;
         stage = 1;
     }
@@ -74,7 +80,7 @@ function HammeRRThink() {
             phase = next;
             phase_at = Time();
             SendToConsole(phase == 1 ? "setang -75 0 0" : "setang 75 0 0");
-            SendToConsole("sv_lan; mat_hdr_level; mat_fullbright; r_waterforceexpensive; r_drawtranslucentworld; r_drawvgui; cl_drawhud; r_drawviewmodel; r_drawothermodels; mat_dxlevel");
+            SendToConsole("sv_lan; mat_hdr_level; mat_fullbright; help r_waterforceexpensive; help r_drawtranslucentworld; r_drawvgui; cl_drawhud; r_drawviewmodel; r_drawothermodels; help mat_dxlevel");
         }
         local eye = player.EyePosition();
         local origin = player.GetOrigin();
@@ -342,13 +348,25 @@ def worker(args):
     ) == str(output / "wayland")
     game = runtime.private_game(root, output, args.bsp)
     shutil.copytree(args.fixture_game / "materials", game / "materials")
-    assert (game / f"materials/{TOP}.vmt").read_text() == top_material(
-        BOTTOMS[args.variant]
-    )
+    assert (game / f"materials/{TOP}.vmt").read_text() == top_material(BOTTOMS["red"])
     check_native(args.bsp.read_bytes(), BOTTOMS[args.variant])
-    (game / "scripts/vscripts/hammerr_observer.nut").write_text(OBSERVER)
+    (game / "scripts/vscripts/hammerr_observer.nut").write_text(
+        private_observer(OBSERVER)
+    )
     for name in ["listenserver.cfg", "server.cfg"]:
-        assert "sv_lan 1" in (game / "cfg" / name).read_text()
+        assert re.search(r"(?m)^toggle sv_lan 1$", (game / "cfg" / name).read_text())
+    launch_options = private_launch_options(
+        root,
+        game,
+        controls={
+            "servercfgfile": "server.cfg",
+            **{
+                name: value
+                for name, value in CONTROLS.items()
+                if name not in {"r_waterforceexpensive", "r_drawtranslucentworld"}
+            },
+        },
+    )
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     environment = {
         **os.environ,
@@ -367,22 +385,12 @@ def worker(args):
         "-h",
         "720",
         "-novid",
-        "-insecure",
+        *launch_options,
         "-nomaster",
         "-nojoy",
         "-console",
         "-port",
         "27589",
-        "+con_logfile",
-        "hammerr-runtime.log",
-        "+sv_lan",
-        "1",
-        "+mat_hdr_level",
-        "0",
-        "+fps_max",
-        "60",
-        "+map",
-        "hammerr_runtime",
     ]
     captures = {}
     with (output / "launcher.log").open("w") as log:
@@ -418,6 +426,7 @@ def worker(args):
                         previous is None or row[1] - previous["state"][1] >= 1.5
                     ):
                         values = controls(text)
+                        verify_private_launch(game, text)
                         subprocess.run(
                             ["grim", str(output / f"{key}.png")], check=True, timeout=5
                         )
@@ -446,6 +455,7 @@ def worker(args):
             ]:
                 assert message not in text.lower(), (message, text[-8000:])
             report = {
+                "private_launch": verify_private_launch(game, text),
                 "pid": process.pid,
                 "captures": captures,
                 "game": str(game),
@@ -466,6 +476,7 @@ def worker(args):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+            finish_private_launch(game)
 
 
 def pixels(path):
@@ -516,6 +527,15 @@ def compare(first, second):
 
 def native_cases(args, fixture):
     assert shutil.which("cage") and shutil.which("grim"), "Cage and grim are required"
+    common = args.output / "runtime-materials"
+    for case in fixture["cases"].values():
+        assert material_hashes(Path(case["fixture_game"])) == case["materials_sha256"]
+    shutil.copytree(
+        Path(fixture["cases"]["red"]["fixture_game"]) / "materials",
+        common / "materials",
+    )
+    (common / f"materials/{TOP}.vmt").write_text(top_material(BOTTOMS["red"]))
+    expected_materials = material_hashes(common)
     results = {}
     for name, case in fixture["cases"].items():
         output = args.output / name
@@ -527,7 +547,7 @@ def native_cases(args, fixture):
             "--bsp",
             case["bsp"],
             "--fixture-game",
-            case["fixture_game"],
+            str(common),
             "--variant",
             name,
             "--output",
@@ -537,7 +557,7 @@ def native_cases(args, fixture):
         ]
         runtime.private_compositor(command, output, timeout=63)
         results[name] = json.loads((output / "runtime.json").read_text())
-        assert results[name]["materials_sha256"] == case["materials_sha256"]
+        assert results[name]["materials_sha256"] == expected_materials
         results[name]["frames"] = {
             view: frame_stats(output / f"{view}-0.ppm") for view in VIEWS
         }
@@ -550,6 +570,7 @@ def native_cases(args, fixture):
             for row in results[name]["repeat"].values()
         ), results[name]
     assert results["red"]["pid"] != results["blue"]["pid"]
+    assert results["red"]["materials_sha256"] == results["blue"]["materials_sha256"]
     differences = {
         view: compare(
             args.output / "red" / f"{view}-0.ppm",
@@ -570,6 +591,9 @@ def native_cases(args, fixture):
     assert differences["below"]["changed"] > differences["below"]["pixels"] * 0.6
     return {
         "cases": results,
+        "runtime_materials_sha256": expected_materials,
+        "runtime_top_bottom": BOTTOMS["red"],
+        "runtime_materials_identical": True,
         "roi": REGION,
         "differences": differences,
         "bottom_material_dependent_pixels": True,

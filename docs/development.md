@@ -1167,11 +1167,14 @@ pre/post-map `sv_lan 1` and the shared preservation/cleanup policy.
 
 ```sh
 cargo test -p compiler --test detail_sprites --test detail_lighting
+cargo test -p compiler --test detail_sprites generated_shape_sway
 cargo test -p source-formats detail_props
 python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-sprites-check
 python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-orientations-native --runtime --orientation-views
 python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-shapes-check
 python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-shapes-native --runtime
+python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-sway-check --sway
+python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-sway-native --sway --runtime
 python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-check
 python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-native --runtime
 python3 -B scripts/validate_detail_light_styles.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-light-styles-check
@@ -1196,6 +1199,22 @@ preservation, nonunit Gaussian scales and rejected shape/sway combinations.
 `--runtime` compares detail ON/OFF captures, tri-parameter silhouettes and
 unit/scaled cross and tri silhouettes.
 
+The generated-shape sway regression checks SDK bytes 0/127/255, default-zero
+output identity, unchanged sampling/lighting/unrelated lumps, deterministic
+repeated and reopened builds, and atomic rejection of malformed, out-of-range
+or unsupported sway. Bounds cover rest geometry; client sway and avoidance
+can move vertices beyond it.
+
+`validate_detail_shapes --sway` uses cross-zero, cross-half and tri-full fixtures
+with encoded bytes 0, 127 and 255. With `--runtime`, each variant runs in one
+private process with amplitude 8 temporal frames, amplitude 0 temporal frames,
+and a detail-disabled background. Frames are separated by 1.5 seconds. The
+checks require positive-byte motion, zero-byte stability, zero-amplitude
+stability and unchanged background pixels within the measured tolerances.
+The worker sets `cl_detail_max_sway` explicitly; the game's default 0 would
+suppress this motion. This mode retains the usual foreground/background,
+source/history and output preservation checks.
+
 `validate_detail_lighting` compares bright, dim and colored static lights for
 explicit models and generated sprites, without changing placement. It checks
 Fullbright's white base colors, Direct LDR's baked colors, the final HDR shared
@@ -1211,7 +1230,8 @@ separate model and sprite masks subtract detail-disabled backgrounds. These
 controls check native response, without assuming SDK half-color extras restore
 static-base intensity. Compiler and source-format tests cover record caps,
 missing-channel zero fill, malformed ranges/layouts and atomic rejection.
-Detail shadows and authored sway remain unsupported.
+Detail shadows and sway on plain sprites, model entries or explicit detail
+entities remain unsupported.
 
 All four validators need fresh output directories and installed CS:S/FGD assets.
 Native modes retain the shared private-launch, source/configuration preservation

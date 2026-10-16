@@ -161,7 +161,7 @@ fn model(nodes: &[Node]) -> Result<Model, String> {
         .any(|key| node.key.eq_ignore_ascii_case(key))
         {
             return Err(format!(
-                "Detail dictionary field {} is unsupported; material scattering supports models and static sprites without sway",
+                "Detail dictionary field {} is unsupported; material scattering supports models, plain sprites and cross/tri shapes",
                 node.key
             ));
         }
@@ -373,6 +373,7 @@ fn place(
         Asset::Sprite(sprite) => {
             prop.scale = random.sprite_scale(sprite.random_scale)?;
             prop.orientation = sprite.orientation;
+            prop.sway = sprite.sway;
             prop.kind = sprites::KIND;
             if let Some(shape) = sprite.shape {
                 prop.kind = shape.kind;

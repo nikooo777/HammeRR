@@ -17,6 +17,7 @@ pub(super) struct Definition {
     pub record: DetailSprite,
     pub random_scale: f64,
     pub orientation: u8,
+    pub sway: u8,
     pub shape: Option<Shape>,
 }
 
@@ -46,10 +47,11 @@ impl Definition {
         }
         let orientation = orientation as u8;
         let random_scale = number(nodes, "spriterandomscale", 0.0, 0.0, 1.0)?;
-        if number(nodes, "sway", 0.0, 0.0, 1.0)? != 0.0 {
-            return Err("Detail sprite sway is unsupported".into());
-        }
+        let sway = number(nodes, "sway", 0.0, 0.0, 1.0)?;
         let shape = Shape::parse(nodes)?;
+        if sway != 0.0 && shape.is_none() {
+            return Err("Detail sprite sway requires a generated cross or tri shape".into());
+        }
         if shape.is_some() && orientation != 0 {
             return Err("Detail sprite shapes require detailOrientation=0".into());
         }
@@ -97,6 +99,7 @@ impl Definition {
             record,
             random_scale,
             orientation,
+            sway: (255.0 * f64::from(sway as f32)) as u8,
             shape,
         })
     }
@@ -192,14 +195,19 @@ pub(super) fn check_prop_bounds(sprite: DetailSprite, prop: &DetailProp) -> Resu
     let origin = DVec3::from_array(prop.origin.map(f64::from));
     let angles = DVec3::from_array(prop.angles.map(f64::from));
     match prop.kind {
-        KIND => check_bounds(sprite, origin, angles, prop.orientation, prop.scale),
-        2 | 3 if prop.orientation == 0 && prop.sway == 0 => Shape {
+        KIND if prop.sway == 0 => {
+            check_bounds(sprite, origin, angles, prop.orientation, prop.scale)
+        }
+        2 | 3 if prop.orientation == 0 => Shape {
             kind: prop.kind,
             angle: prop.shape_angle,
             size: prop.shape_size,
         }
         .check_bounds(sprite, origin, angles, prop.scale),
-        _ => Err("Detail sprite shape requires fixed orientation without sway".into()),
+        _ => Err(
+            "Detail sprite shape requires fixed orientation; plain sprites require zero sway"
+                .into(),
+        ),
     }
 }
 

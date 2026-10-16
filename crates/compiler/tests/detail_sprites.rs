@@ -254,7 +254,7 @@ fn static_shapes_reuse_sprite_dictionary_and_preserve_native_parameter_bytes() {
         ("sprite_shape tri shape_angle 256", "shape_angle"),
         ("sprite_shape tri shape_size -0.1", "shape_size"),
         ("sprite_shape tri shape_size NaN", "shape_size"),
-        ("sprite_shape tri sway 0.1", "sway"),
+        ("sprite_shape tri sway NaN", "sway"),
         (
             "sprite_shape tri spriterandomscale 1.1",
             "spriterandomscale",
@@ -284,6 +284,68 @@ fn static_shapes_reuse_sprite_dictionary_and_preserve_native_parameter_bytes() {
     assert!(mixed.props.iter().all(|prop| prop.model == 0));
     dictionary(&fixture, 64, SPRITE);
     assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
+}
+
+#[test]
+fn generated_shape_sway_encodes_native_bytes_without_changing_sampling_or_zero_output() {
+    let mut fixture = fixture();
+    let source = fixture.source.write(&Default::default());
+    let fixed = SPRITE.replace("detailOrientation 2", "detailOrientation 0");
+    for shape in ["cross", "tri"] {
+        let entry = format!("{fixed} sprite_shape {shape} spriterandomscale 0.2");
+        dictionary(&fixture, 64, &entry);
+        let baseline = compiled(&fixture);
+        let expected = baseline.detail_props().unwrap().unwrap();
+        for (sway, encoded) in [("0", 0), ("0.003921568627", 1), ("0.5", 127), ("1", 255)] {
+            dictionary(&fixture, 64, &format!("{entry} sway {sway}"));
+            let bsp = compiled(&fixture);
+            let bytes = bsp.to_bytes();
+            if encoded == 0 {
+                assert_eq!(bytes, baseline.to_bytes());
+            }
+            let mut rows = bsp.detail_props().unwrap().unwrap();
+            assert!(!rows.props.is_empty());
+            for prop in &mut rows.props {
+                assert_eq!(prop.sway, encoded);
+                prop.sway = 0;
+            }
+            assert_eq!(rows, expected);
+            for index in 0..source_formats::bsp::LUMP_COUNT {
+                assert_eq!(bsp.lump(index), baseline.lump(index));
+            }
+            assert_eq!(compiled(&fixture).to_bytes(), bytes);
+            let reopened = Vmf::parse(&source).unwrap();
+            assert_eq!(
+                compiler::compile(&reopened, &fixture.game)
+                    .bsp
+                    .unwrap()
+                    .to_bytes(),
+                bytes
+            );
+        }
+        for sway in ["NaN", "inf", "-0.1", "1.1"] {
+            dictionary(&fixture, 64, &format!("{entry} sway {sway}"));
+            rejected(&fixture, "sway");
+        }
+    }
+    for entry in [
+        format!("{fixed} sway 0.1"),
+        format!("{fixed} sway 1e-100"),
+        "model models/props/test.mdl sway 0.1".into(),
+    ] {
+        dictionary(&fixture, 64, &entry);
+        rejected(&fixture, "sway");
+    }
+    assert_eq!(fixture.source.write(&Default::default()), source);
+    dictionary(&fixture, 64, SPRITE);
+    assert_eq!(compiled(&fixture).to_bytes(), fixture.previous);
+    detail_model::write(fixture.directory.path(), "test");
+    let mut explicit = Entity::new(900_000, "prop_detail");
+    explicit.properties.set("model", "models/props/test.mdl");
+    explicit.properties.set("origin", "0 0 32");
+    explicit.properties.set("sway", "0.1");
+    fixture.source.entities.push(explicit);
+    rejected(&fixture, "sway=0");
 }
 
 #[test]

@@ -35,6 +35,7 @@ FACTORS = (0.25, 0.45, 0.70, 1.0)
 PATCHES = ((400, 240), (880, 240), (400, 480), (880, 480))
 OBSERVER_NAME = "hammerr_packed_sky_observer"
 FINISHED = "HAMMERR_PACKED_SKY_FINISHED"
+NATIVE_CASES = ("published-ldr", "published-dual-ldr", "published-dual-hdr", "run-dual-hdr", "run-reflections-hdr")
 OBSERVER = """
 stage <- 0;
 view <- 0;
@@ -504,8 +505,8 @@ def worker(args):
         (output / "runtime.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
-def native_views(args, fixture):
-    views = {}
+def native_views(args, fixture, report):
+    views = report["views"]
     cases = fixture["cases"]
     requests = [
         ("published-ldr", cases[0]["bsp"], Path(cases[0]["bsp"]).stem, cases[0]["family"], 0),
@@ -516,12 +517,22 @@ def native_views(args, fixture):
     if fixture["coexistence"]:
         combined = fixture["coexistence"]
         requests.append(("run-reflections-hdr", combined["run"]["bsp"], combined["run"]["map"], cases[1]["family"], 2))
+    available = {row[0] for row in requests}
+    selected = set(args.native_case) if args.native_case else available
+    require(selected <= available, f"Native cases are unavailable in this fixture: {sorted(selected - available)}")
+    requests = [row for row in requests if row[0] in selected]
+    report["requested_native_cases"] = [row[0] for row in requests]
     for index, (name, bsp, namespace, family, level) in enumerate(requests):
         output = args.output / name
         command = [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", "--binary", str(args.binary), "--game-dir", str(args.game_dir), "--output", str(output), "--bsp", bsp, "--map-name", namespace, "--family", family, "--hdr-level", str(level), "--port", str(args.port + index), "--probe-library", str(args.probe_library)]
-        runtime.private_compositor(command, output, timeout=145)
-        views[name] = json.loads((output / "runtime.json").read_text())
+        report["executed_native_cases"].append(name)
+        try:
+            runtime.private_compositor(command, output, timeout=145)
+        finally:
+            if (output / "runtime.json").is_file():
+                views[name] = json.loads((output / "runtime.json").read_text())
         require(views[name]["success"], views[name])
+        report["passed_native_cases"].append(name)
     require(len({view["hardware"]["native_pid"] for view in views.values()}) == len(views), "Native sky cases reused a process")
     return views
 
@@ -532,6 +543,7 @@ def main():
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--native-case", action="append", choices=NATIVE_CASES, help="Run only this named native case; repeat to select several (default: all available).")
     parser.add_argument("--reflections", action="store_true")
     parser.add_argument("--steam-root", type=Path)
     parser.add_argument("--timeout", type=int, default=600)
@@ -549,6 +561,8 @@ def main():
     args.game_dir = args.game_dir.resolve(strict=True)
     require(60 <= args.timeout <= 900 and 1024 <= args.port <= 65525, "Invalid validation deadline or port")
     require(not args.reflections or args.runtime, "Reflection generation requires explicit --runtime")
+    require(not args.native_case or args.runtime, "Native case selection requires explicit --runtime")
+    require(not args.native_case or "run-reflections-hdr" not in args.native_case or args.reflections, "The reflection native case requires explicit --reflections")
     if args.runtime or args.worker:
         args.probe_library = args.probe_library.resolve(strict=True)
     if args.worker:
@@ -559,7 +573,7 @@ def main():
     require(not os.environ.get("LD_PRELOAD"), "Sky validation must not inherit LD_PRELOAD")
     args.output.mkdir(parents=True, mode=0o700)
     before = reflections.protected_files(args, [])
-    report = {"success": False, "native_exercised": False, "desktop_input": False}
+    report = {"success": False, "native_exercised": False, "desktop_input": False, "native_case_scope": "selected" if args.native_case else "all_available", "requested_native_cases": args.native_case or [], "executed_native_cases": [], "passed_native_cases": [], "views": {}}
     try:
         if args.reuse_fixture:
             fixture = json.loads(args.reuse_fixture.read_text())
@@ -573,7 +587,7 @@ def main():
         preserved = asset_snapshot(Path(fixture["fixture_game"]))
         require(preserved == fixture["original_assets"] and probe.digest(Path(fixture["source"]).read_bytes()) == fixture["source_sha256"], "Fixture source changed")
         if args.runtime:
-            report["views"] = native_views(args, fixture)
+            native_views(args, fixture, report)
             report["native_exercised"] = True
         require(asset_snapshot(Path(fixture["fixture_game"])) == preserved and probe.digest(Path(fixture["source"]).read_bytes()) == fixture["source_sha256"], "Validation changed original fixture assets or VMF")
         report.update({"success": True, "archive_verified": True, "source_and_installed_assets_preserved": True})
@@ -581,6 +595,7 @@ def main():
         report.update({"success": False, "error": str(error), "traceback": traceback.format_exc()})
         raise
     finally:
+        report["native_exercised"] = any(view.get("native_exercised", False) for view in report["views"].values())
         report["installed_assets_preserved"] = reflections.protected_files(args, []) == before
         if not report["installed_assets_preserved"]:
             report["success"] = False

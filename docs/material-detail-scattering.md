@@ -147,9 +147,9 @@ These bounds cover the shape at rest. Runtime sway and client-wide player
 avoidance can move vertices beyond them; compilation does not produce an
 animated bounds envelope or collision.
 
-To enable sway for generated cross/tri shapes:
+To enable sway for generated plain sprites or cross/tri shapes:
 
-1. Add `sway 0.5` to the dictionary shape entry. `sway` accepts finite values
+1. Add `sway 0.5` to the dictionary sprite entry. `sway` accepts finite values
    from 0 to 1 and defaults to 0. The SDK byte encoding truncates after converting
    to float: `0` stores `0`, `0.5` stores `127`, and `1` stores `255`.
 2. Rebuild the map, then click **Run Map**.
@@ -158,9 +158,13 @@ To enable sway for generated cross/tri shapes:
    disable motion again. This is a global client control, not a saved map or
    compiler setting.
 
-Nonzero sway is supported only for generated cross/tri shapes at orientation 0.
-Plain sprites, dictionary models and explicit detail entities require zero
-sway. Lighting and checked rest geometry retain their existing rules.
+Generated plain sprites support sway at orientations 0, 1 and 2; cross/tri
+shapes require orientation 0. Dictionary models and explicit detail entities
+require zero sway. A vertical billboard with an encoded nonzero sway byte uses
+the native half-precision path even without styles, so raw scales below 2⁻²⁴
+reject. Values that quantize to byte zero retain the existing fast path unless
+styles require the half path. Lighting and checked rest geometry retain their
+existing rules.
 
 Sprites share one atlas: **World settings…** → **Detail material file**
 (`detailmaterial`), or installed `detail/detailsprites` when left empty. A custom
@@ -221,8 +225,9 @@ Each receiver supports styles 1–63 with up to 63 extras. The LDR and HDR array
 use one shared per-object style list, with zero entries where only the other
 channel contributes. Their combined limit is 65,536 records; exceeding it
 rejects the complete build before replacing the previous BSP. Styled vertical
-billboards also reject raw scales below 2⁻²⁴ for their native half-float path;
-unstyled vertical billboards retain the existing positive-float scale rules.
+billboards and vertical billboards with an encoded nonzero sway byte reject raw
+scales below 2⁻²⁴ for their native half-float path. Unstyled vertical billboards
+with encoded sway zero retain the existing positive-float scale rules.
 Colors must remain finite when all authored style patterns reach their
 maximum `z` brightness. Fullbright and maps without extra contributions emit no
 style arrays.

@@ -49,9 +49,6 @@ impl Definition {
         let random_scale = number(nodes, "spriterandomscale", 0.0, 0.0, 1.0)?;
         let sway = number(nodes, "sway", 0.0, 0.0, 1.0)?;
         let shape = Shape::parse(nodes)?;
-        if sway != 0.0 && shape.is_none() {
-            return Err("Detail sprite sway requires a generated cross or tri shape".into());
-        }
         if shape.is_some() && orientation != 0 {
             return Err("Detail sprite shapes require detailOrientation=0".into());
         }
@@ -195,7 +192,11 @@ pub(super) fn check_prop_bounds(sprite: DetailSprite, prop: &DetailProp) -> Resu
     let origin = DVec3::from_array(prop.origin.map(f64::from));
     let angles = DVec3::from_array(prop.angles.map(f64::from));
     match prop.kind {
-        KIND if prop.sway == 0 => {
+        KIND => {
+            if prop.sway != 0 {
+                check_native_scale(prop.scale)?;
+                check_origin(origin)?;
+            }
             check_bounds(sprite, origin, angles, prop.orientation, prop.scale)
         }
         2 | 3 if prop.orientation == 0 => Shape {
@@ -204,10 +205,7 @@ pub(super) fn check_prop_bounds(sprite: DetailSprite, prop: &DetailProp) -> Resu
             size: prop.shape_size,
         }
         .check_bounds(sprite, origin, angles, prop.scale),
-        _ => Err(
-            "Detail sprite shape requires fixed orientation; plain sprites require zero sway"
-                .into(),
-        ),
+        _ => Err("Detail sprite shape requires fixed orientation".into()),
     }
 }
 
@@ -314,6 +312,57 @@ fn check_orientation_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swaying_plain_sprites_require_positive_native_half_scales() {
+        let sprite = DetailSprite {
+            upper_left: [-4.0, 16.0],
+            lower_right: [12.0, -16.0],
+            ..Default::default()
+        };
+        for orientation in 0..=2 {
+            let mut prop = DetailProp {
+                kind: KIND,
+                orientation,
+                sway: 1,
+                scale: MIN_NATIVE_SCALE * 0.5,
+                ..Default::default()
+            };
+            assert!(
+                check_prop_bounds(sprite, &prop)
+                    .unwrap_err()
+                    .contains("half precision")
+            );
+            prop.scale = MIN_NATIVE_SCALE;
+            assert!(check_prop_bounds(sprite, &prop).is_ok());
+        }
+        let prop = DetailProp {
+            kind: KIND,
+            orientation: VERTICAL,
+            sway: 0,
+            scale: f32::MIN_POSITIVE,
+            ..Default::default()
+        };
+        assert!(check_prop_bounds(sprite, &prop).is_ok());
+        let shifted = DetailSprite {
+            upper_left: [-4.0, -2.0],
+            lower_right: [12.0, -4.0],
+            ..sprite
+        };
+        let mut prop = DetailProp {
+            kind: KIND,
+            orientation: VERTICAL,
+            origin: [0.0, 0.0, (MAX_COMPILE_COORD + 1.0) as f32],
+            ..Default::default()
+        };
+        assert!(check_prop_bounds(shifted, &prop).is_ok());
+        prop.sway = 1;
+        assert!(
+            check_prop_bounds(shifted, &prop)
+                .unwrap_err()
+                .contains("origin")
+        );
+    }
 
     #[test]
     fn explicit_uvs_preserve_sdk_arithmetic_and_default_orientation() {

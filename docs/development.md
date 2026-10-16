@@ -1170,6 +1170,8 @@ cargo test -p compiler --test detail_sprites --test detail_lighting
 cargo test -p compiler --test detail_sprites generated_shape_sway
 cargo test -p source-formats detail_props
 python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-sprites-check
+python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-plain-sway-check --sway
+python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-plain-sway-native --sway --runtime
 python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-orientations-native --runtime --orientation-views
 python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-shapes-check
 python3 -B scripts/validate_detail_shapes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-shapes-native --runtime
@@ -1215,6 +1217,14 @@ The worker sets `cl_detail_max_sway` explicitly; the game's default 0 would
 suppress this motion. This mode retains the usual foreground/background,
 source/history and output preservation checks.
 
+`validate_detail_sprites --sway` adds generated plain orientations 0, 1 and 2
+with byte 127, checking unchanged raw scales, placement, dictionary, SDK lighting
+and unrelated lumps, deterministic output and default-reader rejection without
+the sway opt-in. `--runtime` applies the same amplitude 8/0 temporal controls to
+each orientation through the shared phase worker. An encoded nonzero sway byte
+requires the native half-scale minimum 2⁻²⁴ even for unstyled vertical billboards;
+encoded zero retains their prior fast behavior unless styles select the slow path.
+
 `validate_detail_lighting` compares bright, dim and colored static lights for
 explicit models and generated sprites, without changing placement. It checks
 Fullbright's white base colors, Direct LDR's baked colors, the final HDR shared
@@ -1230,8 +1240,8 @@ separate model and sprite masks subtract detail-disabled backgrounds. These
 controls check native response, without assuming SDK half-color extras restore
 static-base intensity. Compiler and source-format tests cover record caps,
 missing-channel zero fill, malformed ranges/layouts and atomic rejection.
-Detail shadows and sway on plain sprites, model entries or explicit detail
-entities remain unsupported.
+Detail shadows and sway on model entries or explicit detail entities remain
+unsupported.
 
 All four validators need fresh output directories and installed CS:S/FGD assets.
 Native modes retain the shared private-launch, source/configuration preservation

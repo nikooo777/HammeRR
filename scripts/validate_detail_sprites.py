@@ -130,10 +130,30 @@ def validate(args):
                     if index != 35:
                         require(before == after, f"Nonunit orientation changed unrelated lump {index}")
                 scaled_orientations[str(orientation)] = {"bsp": str(variant_bsp), "bsp_sha256": probe.digest(variant_data), "count": len(scales), "sprite_entries": len(variant["sprites"]), "scale_range": [min(scales), max(scales)]}
+            sway_orientations = {}
+            if args.sway:
+                for orientation in [0, 1, 2]:
+                    dictionary_path.write_text(dictionary(FIELDS.replace("detailOrientation 2", f"detailOrientation {orientation}") + " sway 0.5"))
+                    sway_bsp, sway_data, sway_result = compile_pair(client, args.output, f"sway-orientation-{orientation}", ids)
+                    rows = detail_records(sway_data, allow_sprites=True, allow_baked=True, sprite_orientation=orientation, allow_sway=True)
+                    require(len(rows["props"]) == 134 and all(row["sway"] == 127 for row in rows["props"]), "Plain sprite sway bytes or count differ")
+                    require(rows["sprites"] == parsed["sprites"] and [{**{key: value for key, value in row.items() if key != "sway"}, "orientation": 2} for row in rows["props"]] == parsed["props"], "Sway changed placement, raw scales, dictionary or SDK lighting")
+                    try:
+                        detail_records(sway_data, allow_sprites=True, allow_baked=True, sprite_orientation=orientation)
+                    except AssertionError:
+                        pass
+                    else:
+                        raise AssertionError("Default reader accepted plain sway without its opt-in")
+                    for index, (before, after) in enumerate(zip(probe.bsp_lumps(data), probe.bsp_lumps(sway_data), strict=True)):
+                        if index != 35:
+                            require(before == after, f"Plain sway changed unrelated lump {index}")
+                    _, repeated_sway, _ = compile_pair(client, args.output, f"sway-orientation-{orientation}-repeated", ids)
+                    require(repeated_sway == sway_data, "Plain sway output is nondeterministic")
+                    sway_orientations[str(orientation)] = {"bsp": str(sway_bsp), "bsp_sha256": probe.digest(sway_data), "count": sway_result["stats"]["detail_props"], "encoded_sway": 127}
             dictionary_path.write_text(dictionary())
             _, repeated, _ = compile_pair(client, args.output, "detail-sprites-repeated", ids)
             require(repeated == data and source.read_bytes() == saved and detail(client, ids) == authored, "Sprite compilation changed deterministic bytes or source")
-            report = {"success": True, "stats": result["stats"], "records": parsed, "orientations": orientations, "scaled_orientations": scaled_orientations, "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "empty_control_geometry_exact": True, "native_exercised": False, "atlas": "installed detail/detailsprites", "fixture_game": str(game), "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
+            report = {"sway_orientations": sway_orientations, "success": True, "stats": result["stats"], "records": parsed, "orientations": orientations, "scaled_orientations": scaled_orientations, "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "empty_control_geometry_exact": True, "native_exercised": False, "atlas": "installed detail/detailsprites", "fixture_game": str(game), "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
             (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
             return report
     finally:
@@ -190,6 +210,21 @@ def orientation_views(args, result):
         scale_controls[str(orientation)] = {"native_unit": unit_native["native"], "different_pixels": changed, "unit_pixels": sum(unit_mask), "scaled_pixels": sum(scaled_mask)}
     return {"captures": {f"{orientation}-{view}": report for (orientation, view), (report, _) in captures.items()}, "silhouettes": comparisons, "scale_silhouettes": scale_controls}
 
+def sway_views(args, result):
+    from validate_detail_shapes import sway_frames
+    captures = {}
+    for orientation, variant in result["sway_orientations"].items():
+        output = args.output / f"native-sway-orientation-{orientation}"
+        subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),
+            "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir),
+            "--runtime", "--runtime-bsp", variant["bsp"], "--fixture-game", result["fixture_game"],
+            "--expected-count", "134", "--expected-sprites", "134", "--sprite-orientation", orientation,
+            "--view", "elevated", "--baked-lighting", "--sway-amplitude", "8", "--port", str(args.port)], check=True, timeout=150)
+        report = json.loads((output / "results.json").read_text())
+        require(report["native_exercised"] and report["native"]["success"] and report["bsp_sha256"] == variant["bsp_sha256"], report)
+        captures[orientation] = {"native": report["native"], "motion": sway_frames(output / "runtime", variant["encoded_sway"])}
+    return captures
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -198,6 +233,7 @@ def main():
     parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--sway", action="store_true", help="Validate generated plain sprite sway in all three native orientations")
     parser.add_argument("--orientation-views", action="store_true", help="Validate nonunit fixed/full sprites at level and elevated native views")
     parser.add_argument("--port", type=int, default=27709)
     args = parser.parse_args()
@@ -205,10 +241,14 @@ def main():
     args.game_dir = args.game_dir.resolve(strict=True)
     args.output = args.output.resolve()
     require(not args.orientation_views or args.runtime, "--orientation-views requires --runtime")
+    require(not (args.sway and args.orientation_views), "Run sway and orientation silhouette controls separately")
     require(not args.output.exists(), "Use a fresh absent output directory")
     args.output.mkdir(parents=True, mode=0o700)
     result = validate(args)
-    if args.runtime:
+    if args.runtime and args.sway:
+        result.update({"native_exercised": True, "sway_views": sway_views(args, result)})
+        (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
+    elif args.runtime:
         native_output = args.output / "native"
         subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),
             "--binary", str(args.binary), "--output", str(native_output), "--game-dir", str(args.game_dir),

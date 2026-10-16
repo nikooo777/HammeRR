@@ -1,7 +1,7 @@
 use super::*;
 use source_formats::fgd::Catalog;
 
-const FGD: &str = "@BaseClass line(12 34 56,targetname,aim) = shared [ aim(target_destination) : \"Target\" : \"End\" ] @PointClass base(shared) line(65 43 21,targetname,start,targetname,finish) = sample [ start(string) : \"Start\" : \"Start\" finish(string) : \"End\" : \"End\" ]";
+const FGD: &str = "@BaseClass line(12 34 56,targetname,aim) line(65 43 21,targetname,start,targetname,finish) = shared [ aim(target_destination) : \"Target\" : \"End\" ] @PointClass base(shared) = sample [ start(string) : \"Start\" : \"Start\" finish(string) : \"End\" : \"End\" ]";
 
 fn entity(id: u32, name: &str, origin: &str) -> Entity {
     let mut entity = Entity::new(id, "sample");

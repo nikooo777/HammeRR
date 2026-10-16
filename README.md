@@ -401,7 +401,7 @@ Also: a typed inspector with color pickers, brightness sliders and spawn flags; 
 | Reflection face bindings | Generated reflections |
 | --- | --- |
 | ![Reviewing reflection sample assignments](docs/images/cubemap-faces.png) | ![Local reflections on a compiled floor in Counter-Strike: Source](docs/images/compiled-reflections.png) |
-| Preview and override which reflection sample a face uses. | Capture local LDR reflections during Compile and keep them working when you play. |
+| Preview and override which reflection sample a face uses. | Capture local LDR or paired LDR/HDR reflections during Compile and keep them working when you play. |
 
 [Cubemap faces →](docs/cubemap-faces.md) · [Generated reflections →](docs/reflections.md)
 
@@ -433,7 +433,7 @@ The editor covers most everyday brush work. Notable gaps:
 
 - **Terrain**: creation, resolution edits, live sculpt/blend strokes, vertex handles and full/half-edge subdivision work; other fractional edge tools remain planned.
 - **Models**: static meshes, reference poses, skins, bodygroups and visual browsing work; animation and scaling remain planned.
-- **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting, diffuse bounces and LDR reflections work; exposure, HDR cubemap capture and prop lighting remain planned.
+- **Compiler**: Fast and Detailed visibility, independent LDR/HDR lighting, diffuse bounces and reflection generation are available; exposure and prop lighting remain planned.
 
 The full picture is in [Status and roadmap](docs/status.md).
 

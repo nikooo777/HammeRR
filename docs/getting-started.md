@@ -9,7 +9,7 @@
 - **A Vulkan-capable graphics driver** for the editor window and rendered views. Headless editing and compiling work without one.
 - **FFmpeg and ffplay** on `PATH` for optional [sound audition and audio export](sounds.md).
 - **Counter-Strike: Source** installed through Steam. HammeRR uses its materials and entity definitions, and launches the Linux client to play compiled maps.
-- **Cage, grim and Bubblewrap** for optional [generated LDR reflections](reflections.md). Capture also needs a running Steam client and usable Linux user namespaces.
+- **Cage, grim and Bubblewrap** for optional [generated reflections](reflections.md). Capture also needs a running Steam client and usable Linux user namespaces.
 
 ## Build
 
@@ -25,7 +25,7 @@ This produces five programs in `target/release/`:
 | `hammerr-headless` | The same editing session and stdio MCP tools, with a GUI-independent build. See [Without a window](mcp.md#without-a-window). |
 | `hammerr-compile` | The standalone map compiler. |
 | `hammerr-physics` | A helper used when building maps with CS:S engine physics. Keep it in the same folder as the other programs. |
-| `hammerr-native-runtime` | The private client helper for [generated LDR reflections](reflections.md). Keep it beside the editor, headless server and compiler. |
+| `hammerr-native-runtime` | The private client helper for [generated reflections](reflections.md). Keep it beside the editor, headless server and compiler. |
 
 ## Launch
 

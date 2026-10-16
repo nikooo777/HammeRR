@@ -433,6 +433,11 @@ The format and library checks cover bounded ZIP/PAK data, source provenance,
 capture receipts, registered namespace rebasing, cancellation and publication
 guards. Software UI checks exercise shared settings, runtime drafts and owned
 binding review without desktop input; `HAMMERR_UI_SNAPSHOTS` saves their windows.
+The software capture controls also exercise paired LDR/HDR generation, retained
+generation when switching lit modes, atomic Fullbright rejection and the
+`build-hdr-reflection-controls.png` snapshot. Runtime inspection reports supported
+and selected channels separately from map eligibility. The reflection settings
+fixture covers both lit modes without launching a capture client.
 Set `HAMMERR_UI_CAPTURE_ENGINE_ROOT` to a supported running Steam installation
 for a capture-runtime readiness screenshot. This only configures the runtime;
 the software UI check never launches CS:S.

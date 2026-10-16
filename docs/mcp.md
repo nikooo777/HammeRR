@@ -419,8 +419,9 @@ Positive finite `float`, `integer` and numeric `string` values draw three
 world-axis rings for selected visible generic point entities. Missing authored
 values use the FGD default; authored zero/negative values suppress the guide
 without falling back. Invalid/missing/duplicate/unsupported values retain source
-text and report errors without fabricated radii. Loaded models, brush entities,
-specialized lights, hidden objects and working-region exclusions suppress
+text and report errors without fabricated radii. Loaded models, model/studio
+classes (including missing assets), brush entities, specialized lights, hidden
+objects and working-region exclusions suppress
 display with explicit reasons. Intrinsic state remains independent of display
 eligibility. At most sixteen distinct helpers per entity, 128 guides per frame
 and 32 segments per ring are supported. Scalar values must be finite and within

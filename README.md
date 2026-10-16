@@ -181,12 +181,12 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | Place entities on surfaces | FGD entity helpers |
 | --- | --- |
 | ![Reviewing a new point entity on a picked surface](docs/images/entity-placement-controls.png) | ![Selected point entity with property-radius guides](docs/images/fgd-spheres.png) |
-| Pick a surface and review snapped contact, bounds and orientation before creating an entity. | Class boxes share picking and framing; selected property radii add distance guides. |
+| Pick a surface and review snapped contact, bounds and orientation before creating an entity. | Class boxes share picking and framing; selected radius guides use named properties or the class’s radius field. |
 
-| Particle effects |
-| --- |
-| ![Particle definitions and effect-name choices](docs/images/particle-browser.png) |
-| Search active particle systems, inspect their definitions and choose effects for entities. |
+| Entity connection guides | Particle effects |
+| --- | --- |
+| ![Colored guides between selected entity reference points](docs/images/fgd-lines.png) | ![Particle definitions and effect-name choices](docs/images/particle-browser.png) |
+| Show colored links to the unique named points referenced by selected entities. | Search active particle systems, inspect their definitions and choose effects for entities. |
 
 | Connections | Safe renaming |
 | --- | --- |

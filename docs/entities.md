@@ -119,7 +119,9 @@ edges while these guides remain visible.
 
 Only selected, visible generic point entities display these rings; loaded model
 meshes, brush entities and specialized light helpers keep their existing
-previews. Numeric `float`, `integer` and `string` properties are supported.
+previews. Model/studio classes and entities with a model path suppress these
+guides even if the asset fails to load, because fade distances can use screen
+pixels. Numeric `float`, `integer` and `string` properties are supported.
 Malformed, missing, duplicate or unsupported values retain their source text and
 show diagnostics without substitute rings. The shared inspector report separates
 intrinsic radius validity from selection/visibility suppression and reports

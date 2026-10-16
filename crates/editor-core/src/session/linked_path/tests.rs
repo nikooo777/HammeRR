@@ -204,6 +204,52 @@ fn names_avoid_case_insensitive_hidden_collisions_and_reference_acquisitions_rej
 }
 
 #[test]
+fn wildcard_path_targets_without_fgd_cannot_acquire_new_nodes() {
+    for actor in [Actor::User, Actor::Agent] {
+        for classname in ["path_corner", "path_track"] {
+            let mut session = Session::new(Err("no definitions or assets".into()));
+            assert!(session.definitions.class(classname).is_none());
+            session
+                .create_entity(
+                    actor,
+                    classname,
+                    Some(DVec3::ZERO),
+                    BTreeMap::from([
+                        ("targetname".into(), "existing_path".into()),
+                        ("target".into(), "route_*".into()),
+                    ]),
+                )
+                .unwrap();
+            let scan = references::scan(&session.document, &session.definitions);
+            let reference = scan.iter().find(|item| item.target == "route_*").unwrap();
+            assert!(!reference.declared);
+            let source = session.document().vmf().clone();
+            let history = session.document().undo_labels().count();
+            let state = preview(
+                &mut session,
+                actor,
+                Request {
+                    prefix: "safe".into(),
+                    ..request()
+                },
+            );
+            let rendered = session.render_document().vmf().clone();
+            let error = session
+                .preview_linked_path(actor, request(), &session.linked_path_stamp())
+                .unwrap_err();
+            assert!(
+                error.contains("would acquire an existing reference"),
+                "{error}"
+            );
+            assert_eq!(session.document().vmf(), &source);
+            assert_eq!(session.document().undo_labels().count(), history);
+            assert_eq!(session.render_document().vmf(), &rendered);
+            assert_eq!(session.linked_path(), state);
+        }
+    }
+}
+
+#[test]
 fn invalid_requests_and_stale_snapshots_preserve_the_current_preview() {
     let mut session = fixture();
     let state = preview(&mut session, Actor::User, request());

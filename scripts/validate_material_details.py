@@ -131,6 +131,28 @@ def terrain_dictionary(low=True, high=True):
     return 'detail { hammerr_tufts { density 512 ' + ' '.join(entries) + ' } }\n'
 
 
+def skew_terrain_base(client, parent, far_y):
+    solid = int(parent.split(":")[1])
+    components = client.call("get_brush_components", {"solids": [solid]})
+    shape = components["brushes"][0]
+    far = next(face for face in shape["faces"] if all(shape["vertices"][index]["position"][1] == far_y for index in face["vertices"]))
+    client.call("select_brush_components", {"components": [{"solid": solid, "sides": [far["side"]]}], "snapshot": components["snapshot"]})
+    authored = detail(client, [parent])
+    history = client.call("get_map_info")["undo"]
+    draft = client.call("preview_component_scale", {"factors": [0.5, 1, 1], "texture_lock": False, "snapshot": client.call("get_brush_components", {"solids": [solid]})["snapshot"]})
+    require(detail(client, [parent]) == authored and client.call("get_map_info")["undo"] == history, "Skew preview changed source or history")
+    client.call("commit_component_edit", {"token": draft["preview"]["token"]})
+    skewed = detail(client, [parent])
+    require(skewed != authored and len(client.call("get_map_info")["undo"]) == len(history) + 1, "Skewed base did not commit once")
+    corners = client.call("get_brush_components", {"solids": [solid]})["brushes"][0]["vertices"]
+    far_x = [vertex["position"][0] for vertex in corners if vertex["position"][1] == far_y]
+    require(max(far_x) - min(far_x) == 72, "Skewed base must retain a half-width far edge")
+    client.call("undo")
+    require(detail(client, [parent]) == authored, "Undo did not restore the unskewed base")
+    client.call("redo")
+    require(detail(client, [parent]) == skewed, "Redo did not restore the skewed base")
+
+
 def validate_terrain(args):
     game = runtime.private_game(args.game_dir, args.output / "source-game")
     material = game / f"materials/{MATERIAL}.vmt"
@@ -148,6 +170,8 @@ def validate_terrain(args):
             for index, (low, high) in enumerate([([-160, 16, 0], [-16, 160, 24]), ([16, 16, 0], [160, 160, 24])]):
                 parent = client.call("create_block", {"mins": low, "maxs": high, "material": TEXTURE})["id"]
                 ids.append(parent)
+                if args.skewed_terrain:
+                    skew_terrain_base(client, parent, high[1])
                 shape = detail(client, [parent])[0]
                 target = face_ref(shape, next(face for face in shape["faces"] if face["normal"] == [0, 0, 1]))
                 faces.append(target)
@@ -180,12 +204,16 @@ def validate_terrain(args):
             require(detail(client, ids) == authored and client.call("get_terrain_grids", {"faces": faces}) == grids, "VMF reopen changed terrain source")
             bsp, data, result = compile_pair(client, args.output, "terrain-material-details", ids)
             parsed = detail_records(data, allow_baked=True)
-            require(result["stats"]["detail_props"] == len(parsed["props"]) == 20 and result["stats"]["detail_prop_models"] == 2, result)
+            per_patch = 7 if args.skewed_terrain else 10
+            require(result["stats"]["detail_props"] == len(parsed["props"]) == per_patch * 2 and result["stats"]["detail_prop_models"] == 2, result)
             require(set(parsed["models"]) == {MODEL, TERRAIN_MODEL}, parsed)
             for negative, expected in [(True, MODEL), (False, TERRAIN_MODEL)]:
                 props = [row for row in parsed["props"] if (row["origin"][0] < 0) == negative]
-                require(len(props) == 10 and all(row["model"] == expected for row in props), parsed)
+                require(len(props) == per_patch and all(row["model"] == expected for row in props), parsed)
                 require(all(16 <= row["origin"][1] <= 160 for row in props), "Generated terrain props escaped the patch")
+                if args.skewed_terrain:
+                    center_x = -88 if negative else 88
+                    require(all(abs(row["origin"][0] - center_x) <= 72 * (1 - (row["origin"][1] - 16) / 288) + 0.001 for row in props), "Generated details escaped the skewed base edges")
                 require(all(row["origin"][2] == 24 if negative else 31 < row["origin"][2] <= 32.01 for row in props), "Generated terrain props do not follow displaced height")
             leaves = records(data, 10, "<ihh6h4HhH", expected_version=1)
             require(all(leaves[row["leaf"]][0] & 1 == 0 and leaves[row["leaf"]][1] >= 0 for row in parsed["props"]), "Terrain detail leaves are not open and visible")
@@ -194,8 +222,8 @@ def validate_terrain(args):
                     require(before == after, f"Terrain scattering changed unrelated lump {index}")
             controls = {}
             for name, low, high, expected_count, expected_model in [
-                ("empty-low", False, True, 10, TERRAIN_MODEL),
-                ("empty-high", True, False, 10, MODEL),
+                ("empty-low", False, True, per_patch, TERRAIN_MODEL),
+                ("empty-high", True, False, per_patch, MODEL),
                 ("empty-both", False, False, 0, None),
             ]:
                 dictionary_path.write_text(terrain_dictionary(low, high))
@@ -208,7 +236,7 @@ def validate_terrain(args):
             _, repeated, _ = compile_pair(client, args.output, "terrain-material-details-repeated", ids)
             require(repeated == data, "Terrain dictionary restore changed deterministic BSP bytes")
             require(detail(client, ids) == authored and client.call("get_terrain_grids", {"faces": faces}) == grids and source.read_bytes() == saved, "Terrain compilation changed source grids or VMF")
-            report = {"success": True, "terrain": True, "stats": result["stats"], "records": parsed, "empty_controls": controls, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "empty_control_geometry_exact": True, "native_exercised": False, "fixture_game": str(game), "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
+            report = {"success": True, "terrain": True, "skewed_terrain": args.skewed_terrain, "base_areas": [15552, 15552] if args.skewed_terrain else [20736, 20736], "stats": result["stats"], "records": parsed, "empty_controls": controls, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "empty_control_geometry_exact": True, "native_exercised": False, "fixture_game": str(game), "bsp": str(bsp), "bsp_sha256": probe.digest(data)}
             (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
             return report
     finally:
@@ -223,6 +251,7 @@ def main():
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--terrain", action="store_true")
+    parser.add_argument("--skewed-terrain", action="store_true")
     parser.add_argument("--port", type=int, default=27699)
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
@@ -230,7 +259,7 @@ def main():
     args.output = args.output.resolve()
     require(not args.output.exists(), "Use a fresh absent output directory")
     args.output.mkdir(parents=True, mode=0o700)
-    result = validate_terrain(args) if args.terrain else validate(args)
+    result = validate_terrain(args) if args.terrain or args.skewed_terrain else validate(args)
     if args.runtime:
         native_output = args.output / "native"
         subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")),

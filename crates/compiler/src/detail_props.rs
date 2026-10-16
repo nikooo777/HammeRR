@@ -15,8 +15,6 @@ use crate::{
 mod assets;
 mod scatter;
 
-mod assets;
-
 const MAX_PROPS: usize = 16_384;
 const MAX_LEAF_WORK: usize = 4_000_000;
 
@@ -283,10 +281,10 @@ pub(crate) fn bake(
     if report.has_errors() {
         return Ok(Stats::default());
     }
-    builder.props.props.sort_by_key(|prop| prop.leaf);
-    bsp.set_detail_props(&builder.props)
-        .map_err(|error| error.to_string())?;
     if !builder.props.props.is_empty() {
+        builder.props.props.sort_by_key(|prop| prop.leaf);
+        bsp.set_detail_props(&builder.props)
+            .map_err(|error| error.to_string())?;
         report.diagnostics.push(Diagnostic::warning("Detail model props are non-colliding client-only models with unbaked white lighting; sprites, terrain scattering, detail light styles and baked detail lighting remain unfinished", None, None));
     }
     Ok(Stats {

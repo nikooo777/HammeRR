@@ -327,13 +327,58 @@ With **CS:S engine physics**:
 
 For brush entities, use **Faces · materials & textures** to assign different physical surfaces to individual faces, or switch **Selection** to **Objects** and apply one material across the entity. A model with a single property also records that property on its native body. The property covering the greatest emitted face area determines the base mass: solid materials use collision volume and density; shell materials use emitted area, thickness and density. Per-face contact properties stay independent. **Build details…** reports the base mass and chosen property in the entity diagnostic. See [Physics and brush-model mass](physics.md) for the 50,000 kg cap, runtime mass controls and asset limits.
 
-Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings preserve the primary or selected terrain secondary property and are checked before and after native serialization. Custom density controls, liquids in detail brushes or brush entities, and rotating/blocking contact remain unfinished.
+Limits: at most 127 shared world, terrain and brush-model surface properties including default. Names must use 1–127 ASCII letters, digits, underscores, dots or dashes, and custom property definitions must be available to the game. Collision triangle mappings preserve the primary or selected terrain secondary property and are checked before and after native serialization. Custom density controls and liquids in detail brushes or brush entities remain unfinished. Rotating contact has the bounded support described below.
 
 ### Brush entities and pivots
 
 Brush entities keep their **origin** property. To set the pivot with geometry instead, put one visible `tools/toolsorigin` brush inside the entity: the center of that brush becomes the pivot. The compiler removes the origin brush and writes the rest of the entity relative to it, keeping texture and lightmap placement. The VMF itself is not changed.
 
 These fail with a diagnostic: more than one origin brush in an entity, origin brushes in the world or `func_detail`, entities made only of an origin brush, and models larger than ±16,384 units around their pivot. Hidden origin brushes are ignored.
+
+### Rotating doors and removable restraints
+
+A rotating door can push a movable physics prop and reverse when solid brushes
+restrain it. Permanently removing those restraints allows the door to push the
+same prop aside, open fully and close again.
+
+1. Select a door brush and click **Tie to entity…**. Choose
+   `func_door_rotating`, then **Tie selected brushes to entity**. Set **Name**
+   and its pivot as described above.
+2. In **Advanced properties**, set `distance` to `90`, `speed` to `30`, `wait`
+   to `4`, `forceclosed` and `dmg` to `0`, `spawnflags` to `48` and `solidbsp`
+   to `0`. These settings keep the door open until another input closes it
+   and allow reversal when obstructed.
+3. Place a `prop_physics` in its swing path. Choose **World Model** with
+   **Browse…**; `models/props_junk/wood_crate001a.mdl` is a supported example.
+   Keep its `spawnflags` at `0` so the crate remains movable.
+   Use two perpendicular `func_brush` restraints to hold it in that path. Give
+   each restraint a distinct **Name**, with `StartDisabled`, `Solidity` and
+   `solidbsp` set to `0` in **Advanced properties**.
+4. To protect the crate from damage, place a `filter_activator_class` named
+   `contact_no_damage`. In **Advanced properties**, set `filterclass` to `*`
+   and `Negated` to `1`. Set the crate's `damagefilter` to `contact_no_damage`.
+5. Place a named `logic_relay`. Open its **Connections…**, click
+   **Add connection**, and connect **OnTrigger** to each restraint's **Kill**
+   input. Leave the parameter empty, set delay to `0`, choose **Once**, then
+   **Apply connection** for each restraint. See [Connections](entities.md#connections-inputs-and-outputs).
+6. Connect a button or trigger to the door's **Open** input. After obstruction
+   returns the door to **OnFullyClosed**, trigger the relay. Allow the released
+   prop to settle, then send **Open** again; use **Close** for the return trip.
+7. Choose **Physics bodies → CS:S engine physics** in **Build settings…**, then
+   **Close** and **Run Map**.
+
+![Connection editor for a named target and input](images/entity-connections.png)
+
+Limits: this covers a 90° door at 30°/s, a movable wooden crate protected by a
+damage filter and complete removal of both perpendicular restraints. **Kill**
+permanently removes the restraints for that play session. Contact recovery after **Disable** on resting
+restraints remains unresolved; re-enabling restraints, crushing damage and
+broader moving-body interactions remain unverified. Solid `func_rotating`
+brushes can push dynamic props with **StartForward** and stop with **Stop**;
+their nonsolid counterparts do not provide that contact. In this physics path,
+door reversal does not fire **OnBlockedOpening**, **OnBlockedClosing** or the
+matching **OnUnblocked** outputs. Use actual completion outputs for endpoint
+logic.
 
 ### Moving platforms
 
@@ -352,9 +397,10 @@ These fail with a diagnostic: more than one origin brush in an entity, origin br
 
 ![Physics settings and build diagnostics](images/build-status.png)
 
-Limits: vertical kinematic platform support is available. Rotating contacts,
-crushing/blocking, horizontal friction carry and broader dynamic bodies remain
-unfinished. Ordinary brush-entity pivot and compiler physics limits apply.
+Limits: vertical kinematic platform support is available. Broader
+crushing/blocking behavior, horizontal friction carry and dynamic bodies remain
+unfinished. See the bounded rotating-contact case above. Ordinary brush-entity
+pivot and compiler physics limits apply.
 
 ### Water
 

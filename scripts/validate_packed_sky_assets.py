@@ -265,6 +265,13 @@ def author(args):
             before = snapshot(client, source, ids)
             inspection = client.call("inspect_sky_assets")
             require(inspection["authored_name"] == family and inspection["ldr_ready"] and inspection["hdr_ready"] is paired, inspection)
+            client.call("set_compile_settings", {"pack_sky_assets": False})
+            reference = args.output / f"{family}-unpacked.bsp"
+            unpacked_result = client.call("compile_map", {"path": str(reference)})
+            require(unpacked_result["success"] and unpacked_result["leak"] is None, unpacked_result)
+            unpacked = probe.read_bounded(reference, probe.MAX_BSP_BYTES)
+            require("sky_assets" not in unpacked_result["stats"] and MANIFEST not in pak(unpacked), "Unpacked reference contains packed sky assets")
+            require(snapshot(client, source, ids) == before, "Reference compilation changed the frozen source or history")
             runtime_before = client.call("get_native_capture_runtime")
             client.call("set_compile_settings", {"pack_sky_assets": True})
             require(client.call("get_native_capture_runtime") == runtime_before and snapshot(client, source, ids) == before, "Enabling packing changed runtime readiness or source")
@@ -274,8 +281,7 @@ def author(args):
             channels = "ldr_hdr" if paired else "ldr"
             verified = verify_sky(data, family, channels, expected)
             require(result["stats"]["sky_assets"] == {"family": family, "channels": channels, "files": len(expected), "asset_bytes": sum(map(len, expected.values()))}, result)
-            if not paired:
-                require(all(old == new for index, (old, new) in enumerate(zip(probe.bsp_lumps(disabled), probe.bsp_lumps(data), strict=True)) if index != 40), "Packing changed non-PAK compile output")
+            require(all(old == new for index, (old, new) in enumerate(zip(probe.bsp_lumps(unpacked), probe.bsp_lumps(data), strict=True)) if index != 40), "Packing changed non-PAK output from the same frozen source")
             client.call("set_compile_settings", {"pack_sky_assets": False})
             require(not client.call("get_compile_status")["launch"]["ready"], "Packing setting change did not reject previous output")
             client.call("set_compile_settings", {"pack_sky_assets": True})
@@ -320,7 +326,7 @@ def author(args):
                 offline.rename(live)
                 client.call("reload_material_assets")
             require(snapshot(client, source, ids) == before and asset_snapshot(game) == original_assets, "Packing or Run changed source, history or original assets")
-            cases.append({"family": family, "channels": channels, "bsp": str(path), "published": verified, "compile": result, "job_settings": job["settings"], "inspection": inspection, "run": run, "missing_source_foreground_background_preserves_output": True, "source_mount_removed_and_reloaded_before_run": True, "tampered_output_rejected": True})
+            cases.append({"family": family, "channels": channels, "bsp": str(path), "published": verified, "compile": result, "job_settings": job["settings"], "inspection": inspection, "unpacked_reference": {"bsp": str(reference), "bsp_sha256": probe.digest(unpacked), "packing_only_non_pak_exact": True}, "run": run, "missing_source_foreground_background_preserves_output": True, "source_mount_removed_and_reloaded_before_run": True, "tampered_output_rejected": True})
         coexistence = None
         if args.reflections:
             ids.append(client.call("create_block", {"mins": [144, 136, -248], "maxs": [248, 240, -232], "material": token + "/receiver"})["id"])

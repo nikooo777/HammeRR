@@ -15,7 +15,7 @@ from validate_visibility import ROOM
 OBSERVER = (
     runtime.OBSERVER.replace("stage <- 0;", "stage <- 0;\nocclusion_start <- null;\nocclusion_stage <- 0;")
     .replace("sv_cheats 1; joystick 0;", "sv_cheats 1; joystick 0; bot_quota 0; bot_kick; r_drawviewmodel 0; cl_drawhud 0;")
-    .replace("setpos -64 -64 32; setang 25 45 0; mat_fullbright", "noclip; setpos -160 0 64; setang 0 0 0; r_occlusion 1; r_occludeemaxarea 100; r_occluderminarea 0; r_occlusion; mat_fullbright")
+    .replace("setpos -64 -64 32; setang 25 45 0; mat_fullbright", "noclip; setpos -160 0 64; setang 0 0 0; toggle r_occlusion 1; toggle r_occludeemaxarea 100; toggle r_occluderminarea 0; help r_occlusion; mat_fullbright")
     .replace("    return 1.0;", """
     if (stage == 2) {
         if (occlusion_start == null) occlusion_start = Time();

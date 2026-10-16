@@ -140,7 +140,8 @@ def fixture(args, game, name):
 
 
 def worker(args):
-    shutil.copytree(args.assets, args.output / "cstrike/materials", dirs_exist_ok=True)
+    private = runtime.private_game(args.game_dir.resolve(), args.output, args.bsp)
+    shutil.copytree(args.assets, private / "materials", dirs_exist_ok=True)
     runtime.OBSERVER = runtime.OBSERVER.replace(
         "setpos -64 -64 32", "setpos -224 -176 32"
     )

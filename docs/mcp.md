@@ -52,7 +52,7 @@ Use `--mcp-port <port>` to change the port, or `--no-mcp` to turn the server off
    }
    ```
 
-The server accepts `--game` and `--fgd` as described in [Getting started](getting-started.md). `editor --headless` remains available with the same stdio tools. The standalone server opens no editor window and serves no HTTP endpoint. Engine-physics builds need `hammerr-physics`, and generated LDR reflections need `hammerr-native-runtime`, beside the executable. Build these helpers with `cargo build --release -p compiler -p native-runtime`.
+The server accepts `--game` and `--fgd` as described in [Getting started](getting-started.md). `editor --headless` remains available with the same stdio tools. The standalone server opens no editor window and serves no HTTP endpoint. Engine-physics builds need `hammerr-physics`, and generated reflections need `hammerr-native-runtime`, beside the executable. Build these helpers with `cargo build --release -p compiler -p native-runtime`.
 
 ## What agents know
 
@@ -403,20 +403,39 @@ bounds. Other helper declarations remain listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history. See [Entity definitions](entities.md).
 
-### Generated LDR reflections
+### Generated reflections
 
-`set_compile_settings {"lighting":"direct_ldr","generate_reflections":true}` enables the same **Generate LDR reflections** control as **Build settings…**. Enabling the setting starts no process. Generation with Fullbright or Direct LDR + HDR rejects atomically; turn generation off before choosing either mode, or supply both changes in one update.
+`set_compile_settings {"lighting":"direct_ldr","generate_reflections":true}` enables the same **Generate reflections** control as **Build settings…**. Use `lighting:"direct_ldr_hdr"` to request paired LDR and HDR captures. Enabling starts no process. Fullbright with generation rejects atomically; turn generation off before choosing Fullbright, or supply both changes in one update. The existing boolean, seven build settings and tool schemas remain unchanged.
 
 | Tool | Arguments and behavior |
 | --- | --- |
-| `get_native_capture_runtime` | Returns resolved `engine_root` and `steam_root`, `configured_engine_root` and `configured_steam_root` overrides, `steam_root_source`, `ready`, `reason` and `editable`, plus `channel:"ldr"`, `default_sample_size:128` and `maximum_sample_size:128`. This is configuration readiness; it does not launch a client. |
+| `get_native_capture_runtime` | Returns resolved `engine_root` and `steam_root`, `configured_engine_root` and `configured_steam_root` overrides, `steam_root_source`, `ready`, `reason` and `editable`, plus `supported_channels:["ldr","hdr"]`, selected `channel` (`"ldr"` or `"ldr_hdr"`), `default_sample_size:128` and `maximum_sample_size:128`. Readiness checks the environment; it neither launches a client nor proves the map has eligible HDR arrays. |
 | `set_native_capture_runtime` | Replaces both machine-local overrides with `engine_root` and `steam_root`; omitted or null values clear that override to its checked default. Changed pairs validate before mutation. Invalid updates preserve the previous pair; active jobs freeze changes. |
 
 The default engine installation is the mounted game's base directory only when it verifies as supported CS:S. Custom source assets can use an explicit installation override. The Steam default is the unique running main client's root, checked against client configuration and the installation's library relationship. An explicit Steam override must match that client. These roots stay outside recipes, recent maps and VMF; startup `--engine-root` and `--steam-root` set the same machine context.
 
-Existing `compile_map`, `start_compile` and `run_map` perform the shared compile/capture/verify/publication job. `get_compile_status.job.settings.generate_reflections` and `job.native_runtime` retain its start configuration; `job.reflections.samples_complete` and `job.reflections.samples_total` report capture progress. Cancellation waits for owned-process cleanup and the preservation audit. Failed, cancelled or stale capture preserves the prior published BSP and launch state without adding map Undo.
+Existing `compile_map`, `start_compile` and `run_map` perform the shared compile/capture/verify/publication job. `get_compile_status.job.settings.generate_reflections` and `job.native_runtime` retain its start configuration; `job.reflections.channel` identifies `ldr` or `ldr_hdr`; `job.reflections.samples_complete` and `job.reflections.samples_total` report capture progress. For dual builds, progress totals include both channel passes (`2 ×` sample positions). `stats.reflections.channel` is `ldr` or `ldr_hdr`; `verified_samples` counts logical positions, while `capture_artifacts` lists both receipts for a dual result and the existing `artifacts` path remains the first receipt. Cancellation waits for owned-process cleanup and the preservation audit. Failed, cancelled or stale capture preserves the prior published BSP and launch state without adding map Undo.
 
-Generation supports one LDR capture bounce, 1–32 distinct integer sample positions and cube edges up to 128 pixels; size `0` uses 128 pixels. HDR capture and editor reflection preview are unavailable. The native helper, private compositor dependencies, supported assets and running Steam client must pass preflight. See [Generated LDR reflections](reflections.md) for controls and capture limits, and [Cubemap faces](cubemap-faces.md) for binding authoring.
+Generation supports one capture bounce per channel, 1–32 distinct integer sample positions and cube edges up to 128 pixels; size `0` uses 128 pixels. Direct LDR uses `mat_hdr_level 0`; dual lighting captures LDR first and HDR with `mat_hdr_level 2`, retaining both lighting channels. HDR capture requires nonempty native HDR lighting/world-light/ambient arrays and rejects known HDR fallback warnings. Both matching sample sets and preservation/source guards must pass before one publication. Additional bounces and editor reflection previews are unavailable. The native helper, private compositor dependencies, supported assets and running Steam client must pass preflight. See [Generated reflections](reflections.md) for controls and capture limits, and [Cubemap faces](cubemap-faces.md) for binding authoring.
+
+Generated packing keeps the existing version-1 `channel:"ldr"` manifest for
+LDR-only builds. Dual builds use version 2 with `channel:"ldr_hdr"`, LDR `samples`
+and matching `hdr_samples`: helper IDs, integer origins, sizes and edges must
+pair exactly, with independent bootstrap and packed-asset hashes. HDR textures use
+`materials/maps/<namespace>/cX_Y_Z.hdr.vtf`; material aliases remain unsuffixed.
+`default_texture` remains LDR; optional `hdr_default_texture` records a captured
+HDR default. An extra LDR default from the HDR pass is validated and diagnosed,
+with raw evidence retained; it never replaces the LDR pass's published default.
+
+HDR samples require VTF 7.4 RGBA16F with seven native faces and complete mips.
+Packing bit-preserves finite nonnegative RGB on the six image faces at every mip,
+sets unused alpha to half-float one and zeros unused sphere/header data. Negative
+zero is permitted; negative RGB or nonfinite values reject. Reflectivity and
+bump metadata must also be finite and nonnegative; unknown flag bits reject. The raw HDR receipt
+remains available separately from canonical packed bytes. Both channels share
+64 MiB generated assets, 1,024 material aliases and 4 MiB per VTF. Run staging
+rebases all registered channel/default names with their data hashes retained.
+No new MCP tool or authoring setting is required.
 
 ### Explicit model detail props
 
@@ -466,7 +485,7 @@ For point/spot/sun lights, HDR selects `_lightHDR`, then `_light`; eight-number 
 
 `hdr.map_data_present` reports nonempty HDR light samples, world lights and ambient samples (native lumps 53/54/55). **Build details…** shows **HDR data ready** or **HDR unavailable: incomplete map data**. Legitimately empty output preserves a valid dual/LDR BSP and names the missing arrays in diagnostics; it receives no dummy emitters or probes. Input, solve, budget and cancellation failures preserve prior output. This flag describes map-data eligibility, not the game's selected channel. CS:S selects the baked LDR or HDR channel according to its HDR setting and hardware support; select that setting before a fresh map load.
 
-HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. HDR skybox textures, HDR cubemap capture, editor HDR previews, exposure authoring and baked prop lightmaps remain unavailable. See [Compile and play](compile-and-play.md#hdr-channels).
+HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. HDR skybox textures, editor HDR previews, exposure authoring and baked prop lightmaps remain unavailable. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
 
 ### Water material binding
 
@@ -779,7 +798,7 @@ Preferences use `recent-maps.json` in recovery storage. `HAMMERR_RECENT_MAPS_DIR
 
 ### Build recipes
 
-`get_build_recipes` returns built-in and custom recipes with all seven settings and readable descriptions, registry `revision`, current `active` identity, editability, persistence, path and errors. Built-in IDs `fast` and `final` are immutable. Fast preview uses Fullbright, no physics, Fast visibility/sampling, no bounces and 0° smoothing. Final lighting uses Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45° smoothing, retaining the compiler's existing requirements and limits. Both disable reflection generation. Custom recipes can retain Direct LDR + HDR, or Direct LDR with reflection generation, without changing either built-in recipe. Older recipes without `generate_reflections` load with generation disabled.
+`get_build_recipes` returns built-in and custom recipes with all seven settings and readable descriptions, registry `revision`, current `active` identity, editability, persistence, path and errors. Built-in IDs `fast` and `final` are immutable. Fast preview uses Fullbright, no physics, Fast visibility/sampling, no bounces and 0° smoothing. Final lighting uses Direct LDR, engine physics, Detailed visibility/sampling, four bounces and 45° smoothing, retaining the compiler's existing requirements and limits. Both disable reflection generation. Custom recipes can retain Direct LDR or Direct LDR + HDR with reflection generation, without changing either built-in recipe. Older recipes without `generate_reflections` load with generation disabled.
 
 | Tool | Arguments and effect |
 | --- | --- |

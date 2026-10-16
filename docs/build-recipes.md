@@ -11,7 +11,7 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 3. Click **Apply recipe**. **Current recipe** identifies the applied recipe; the individual controls below show its settings.
 4. Click **Close**, then **Compile** or **Run Map**. Applying a recipe does not start a build.
 
-| Recipe | Lighting | LDR reflections | Physics | Visibility | Sampling | Indirect light | Brush smoothing |
+| Recipe | Lighting | Reflections | Physics | Visibility | Sampling | Indirect light | Brush smoothing |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Fast preview** | Fullbright | Off | No physics bodies | Fast (conservative) | Fast (32 directions) | Direct only | 0° |
 | **Final lighting** | Direct LDR | Off | CS:S engine physics | Detailed (portal clipping) | Detailed (512 directions) | Four diffuse bounces | 45° |
@@ -22,8 +22,8 @@ Build recipes recall a complete set of native compiler settings. Use the built-i
 
 ## Save or change a custom recipe
 
-1. Set **Build lighting**, **Generate LDR reflections**, **Physics bodies**, **Visibility quality**, **Indirect light**, **Brush smoothing angle**, and **Sampling quality** as needed. Reflection generation requires **Direct LDR**. A changed value clears the applied recipe label to **Custom settings**.
-2. Enter a unique **Recipe name**, then click **Save current as new**. The new recipe stores all seven current values. Capture runtime paths remain separate machine settings; see [Generated LDR reflections](reflections.md).
+1. Set **Build lighting**, **Generate reflections**, **Physics bodies**, **Visibility quality**, **Indirect light**, **Brush smoothing angle**, and **Sampling quality** as needed. Reflection generation requires **Direct LDR** or **Direct LDR + HDR**; the lighting mode chooses LDR alone or both channels. A changed value clears the applied recipe label to **Custom settings**.
+2. Enter a unique **Recipe name**, then click **Save current as new**. The new recipe stores all seven current values. Capture runtime paths remain separate machine settings; see [Generated reflections](reflections.md).
 3. To update an existing custom recipe, choose it under **Build recipe**, adjust the individual settings, and click **Replace with current**. **Recipe name** also becomes the replacement's name.
 4. To change only its name, choose the recipe, edit **Recipe name**, then click **Rename recipe**. To remove it, click **Delete recipe**; current compiler settings remain available.
 5. Click **Cancel recipe edit** to discard the pending name and selection edits. Settings already applied or changed with the individual controls remain in effect.

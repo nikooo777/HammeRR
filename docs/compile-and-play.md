@@ -48,6 +48,14 @@ Choose these with **Build settings…** in the toolbar, before or after compilin
 - **Direct LDR**: bakes direct light from static, switchable and animated point/spot lights and the sun, plus diffuse sky ambient, into world, terrain and brush-entity lightmaps with shadows. See [Lighting](#lighting).
 - **Direct LDR + HDR**: builds independent LDR and HDR channels with the same lighting features and separate authored inputs. See [HDR channels](#hdr-channels) for map-data eligibility and runtime limits.
 
+**Generate reflections** (Direct LDR and Direct LDR + HDR)
+
+Off by default. Enable it to capture one native reflection bounce during
+**Compile** or **Run Map**. **Direct LDR** captures LDR; **Direct LDR + HDR**
+captures both channels before a single publication. Read the capture runtime
+status and use **Configure capture…** when needed. **Fullbright** requires this
+setting off. See [Generated reflections](reflections.md).
+
 **Physics bodies**
 
 - **No physics bodies** (default).
@@ -186,7 +194,7 @@ do not add baked shadows or collision.
 
 ![Independent LDR and HDR build controls](images/build-hdr-controls.png)
 
-Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh map load; live changes may trigger save/reload. Exposure authoring, HDR skybox textures, HDR cubemap capture, editor HDR previews and baked prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
+Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh map load; live changes may trigger save/reload. Enable **Generate reflections** to capture paired LDR/HDR cubemaps after baking; complete HDR arrays and a supported capture runtime are required. Exposure authoring, HDR skybox textures, editor HDR previews and baked prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
 
 #### Brush-entity lightmaps
 
@@ -371,8 +379,9 @@ Depth-specific material packing, currents and custom damping remain unfinished.
 2. Select a helper and open **Cubemap faces…** to inspect automatic choices or
    preview manual face bindings. Review them before **Apply**; **Cancel** keeps
    the previous bindings.
-3. Open **Build settings…**, choose **Build lighting → Direct LDR**, enable
-   **Generate LDR reflections**, then **Close** and **Compile** or **Run Map**.
+3. Open **Build settings…**, choose **Build lighting → Direct LDR** or
+   **Direct LDR + HDR**, enable **Generate reflections**, then **Close** and
+   **Compile** or **Run Map**.
 
 See [Generated reflections](reflections.md) for runtime setup, cancellation and
 limits, and [Cubemap faces](cubemap-faces.md) for binding controls. Generation

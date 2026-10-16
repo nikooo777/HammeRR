@@ -36,6 +36,7 @@ New to HammeRR? Read [Getting started](getting-started.md) and [Editor basics](b
 | [Particle effects](particles.md) | Active manifest definitions, metadata and guarded effect-name choices |
 | [Sounds](sounds.md) | Sound files and script names, audition, volume and entity assignment |
 | [Entities and logic](entities.md) | Placing entities, lights, brush entities, inputs/outputs, safe renaming, editing many entities |
+| [Linked paths](path-authoring.md) | Ordered open or closed path_corner/path_track chains with preview and Undo |
 | [Organizing and checking maps](map-tools.md) | Finding objects, visibility, statistics, map checks, design notes, autosave and recovery |
 | [Compile and play](compile-and-play.md) | Building BSPs, lighting, physics, leaks, launching Counter-Strike: Source |
 | [Water](water.md) | Flat world pools, underwater materials, fog and floating objects |

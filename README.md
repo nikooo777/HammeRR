@@ -171,6 +171,13 @@ Setup details, conventions and the full tool list are in [AI agents and MCP](doc
 | ![Connection form with suggestions](docs/images/entity-connections.png) | ![Rename preview listing every reference to update](docs/images/entity-rename.png) |
 | Wire outputs to inputs, with suggestions from the map and the game's entity definitions. | Rename an entity and update every reference to it in one step. |
 
+| Linked paths |
+| --- |
+| ![Reviewing an ordered linked path](docs/images/linked-path.png) |
+| Create named open or closed path-node chains in one Undo step. |
+
+[Linked paths →](docs/path-authoring.md)
+
 | Edit many entities |
 | --- |
 | ![Shared property editing with mixed values](docs/images/batch-properties.png) |

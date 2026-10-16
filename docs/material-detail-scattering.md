@@ -182,14 +182,40 @@ The existing MCP operations use the same compiler: paint through `edit_faces`,
 change `detailvbsp` and `detailmaterial` through the world property draft, then call `compile_map` or
 `start_compile`. No separate scatter objects or authoring operation are needed.
 
-Generated details retain their existing lighting colors. Explicit
-[models](model-detail-props.md) and [cards/shapes](detail-sprites.md) may attenuate
-baked base and style colors with `_detail_lighting_tint`; generated dictionary
-entries do not accept that compiler property.
+To attenuate baked lighting on every generated model, card and shape in this map:
 
-**Fullbright** keeps white unbaked detail colors. **Direct LDR** bakes each model
-and sprite's direct light and spherical ambient from the final filtered
-world/terrain lightmaps and sky. Configured diffuse bounces contribute through
+1. Open **World settings…**.
+2. Enter `_generated_detail_lighting_tint` in **Custom property key**.
+3. Enter three integer channels, such as `255 128 64`, in **Value**, then click
+   **Stage value**. The property appears as **Generated detail lighting tint ·
+   linear RGB**.
+4. Click **Apply properties**, then **Compile** and **Run Map** to inspect the
+   result. The edit supports Undo and save/reopen; the viewport does not preview
+   compiled detail colors.
+
+Each channel must be an integer from 0 to 255 and multiplies that channel's
+linear lighting by its value divided by 255. These are attenuation factors,
+not display sRGB values: `128` keeps approximately half the linear intensity.
+Omission and `255 255 255` preserve the original compiled bytes. To reset,
+select **Remove override** for this property, then **Apply properties**.
+Malformed imported tint values and repeated tint keys stop the build.
+
+The modifier applies once to each completed baked base and style contribution
+in both lighting channels. Black retains contributing style slots and the
+existing native precision rules. Dynamic lights and the client's
+`mat_fullbright` override keep their engine behavior. Runtime tint, opacity and
+`rendercolor` modulation are unsupported.
+
+This world property affects generated details on flat surfaces and terrain.
+Explicit [models](model-detail-props.md) and [cards/shapes](detail-sprites.md)
+keep their independent `_detail_lighting_tint`. Dictionaries and materials stay
+unchanged; per-entry dictionary tint remains unavailable. The same world edit
+uses the existing `begin_property_edit`, `update_property_edit` and
+`commit_property_edit` MCP operations.
+
+**Fullbright** stores white or the authored tint as unbaked detail colors.
+**Direct LDR** bakes each model and sprite's direct light and spherical ambient
+from the final filtered world/terrain lightmaps and sky. Configured diffuse bounces contribute through
 those maps. **Direct LDR + HDR** leaves the HDR pass's color in the single shared
 detail base-color field, following Valve VRAD's LDR-then-HDR order. The native
 format does not provide separate LDR and HDR base colors. Placement and leaf
@@ -245,7 +271,7 @@ maximum `z` brightness. Fullbright and maps without extra contributions emit no
 style arrays.
 [Explicit model detail props](model-detail-props.md#choose-a-lighting-origin)
 can sample at a named `info_lighting` helper. Generated models, sprites and
-shapes keep their existing sample points. Authored render tint remains
+shapes keep their existing sample points. Runtime render tint remains
 unfinished. Detail objects do not cast new baked shadows.
 
 [Explicit detail sprites](detail-sprites.md) place individual cards from the same

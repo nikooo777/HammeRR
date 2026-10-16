@@ -91,11 +91,11 @@ def validate(args):
             lighting.require(field["label"] == "Generated detail lighting tint · linear RGB" and field["kind"] == "string" and field["control"] == "text" and field["value"] == "255 32 16", "World inspector does not expose the linear text contract")
             token = client.call("begin_property_edit", {"world": True})["draft"]["token"]
             client.call("update_property_edit", {"token": token, "changes": [{"action": "set", "key": KEY, "value": "128 64 0"}]})
-            draft = client.call("get_property_edit", {"token": token})
+            draft = client.call("get_property_edit")
             before = snapshot(client, ids)
             for value in ["", "1 2", "1 2 3 4", "-1 0 0", "256 0 0", "1.5 0 0", "NaN 0 0"]:
                 client.call("update_property_edit", {"token": token, "changes": [{"action": "set", "key": KEY.upper(), "value": value}]}, error=True)
-                lighting.require(client.call("get_property_edit", {"token": token}) == draft and snapshot(client, ids) == before, "Rejected world tint replaced a valid draft or source/history")
+                lighting.require(client.call("get_property_edit") == draft and snapshot(client, ids) == before, "Rejected world tint replaced a valid draft or source/history")
             client.call("cancel_property_edit", {"token": token})
             _, accepted, _ = compile_pair(client, args.output, "reopened", ids)
             previous = args.output / "rejected.bsp"
@@ -167,6 +167,8 @@ def main():
     args.binary = args.binary.resolve(strict=True)
     args.game_dir = args.game_dir.resolve(strict=True)
     args.output = args.output.resolve()
+    if args.hdr_control is not None:
+        args.hdr_control = args.hdr_control.resolve(strict=True)
     lighting.require(not args.output.exists(), "Use a fresh absent output directory")
     lighting.require(1024 <= args.port <= 65530, "Invalid native port")
     args.output.mkdir(parents=True, mode=0o700)

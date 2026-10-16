@@ -41,10 +41,14 @@ removes its runtime entity. The sprite has no collision.
    Both shapes require `detailOrientation 0`. Cross shapes require omitted or
    zero angle/size. Clear `sprite_shape` and keep both shape parameters zero to
    return to a plain card. Use `scale` for size; keep `modelscale` at `1`.
-6. Open **Build settings…**, choose **Direct LDR** under **Build lighting**,
+6. To attenuate baked lighting, add `_detail_lighting_tint` in **Property key**
+   with three integer channels in **Value**, for example `255 128 64`, and press
+   Enter. This is **Baked lighting tint · linear RGB**: each channel multiplies
+   the corresponding linear lighting component by its value divided by 255.
+7. Open **Build settings…**, choose **Direct LDR** under **Build lighting**,
    then **Close** and **Compile**. **Build details…** reports **Detail props**,
    **Sprite entries** and **Diagnostics**.
-7. Click **Run Map** to inspect the sprite in CS:S. `r_drawdetailprops 0` hides
+8. Click **Run Map** to inspect the sprite in CS:S. `r_drawdetailprops 0` hides
    details and `r_drawdetailprops 1` restores them.
 
 ![Explicit atlas sprites in Counter-Strike: Source](images/explicit-detail-sprites.png)
@@ -90,7 +94,7 @@ may extend beyond the box, and pass the normal atlas, bounds, open-leaf and
 lighting checks. A selected boundary point may fail the open-leaf check; the
 compiler does not move it inward.
 
-Named lighting origins, authored tint, entity I/O, parenting, scripts, collision and
+Named lighting origins, entity I/O, parenting, scripts, collision and
 nondefault render/fade settings are unsupported. The editor shows the entity
 helper; it does not preview the compiled atlas card.
 
@@ -100,7 +104,23 @@ budgets](material-detail-scattering.md), including 4096 sprite dictionary entrie
 and 65536 material lookups. A supported atlas uses a static square VTF at most
 4096 pixels per side and 64 MiB, with the required `UnlitGeneric` flags.
 
-**Fullbright** keeps white unbaked colors. Lit builds sample a plain card's
+`_detail_lighting_tint` accepts exactly three integers from 0 to 255 on explicit
+cards and shapes. Omission and `255 255 255` preserve the existing compiled
+bytes. A channel of `128` retains approximately half its linear lighting; these
+values are attenuation factors, not display sRGB or target screen colors. The
+client performs its normal gamma conversion. `0 0 0` stores black lighting while
+retaining contributing style slots and their native half-precision path.
+
+The modifier applies once to each baked base and style contribution in each
+lighting channel, preserving the SDK half-strength style encoding. Dual builds
+retain the tinted final HDR shared base and separate tinted LDR/HDR extras.
+**Fullbright** starts from white and stores the authored tint without styles.
+This compiler property does not provide runtime tint, opacity or a
+`rendercolor` alias. Dynamic light is added afterward; the game's
+`mat_fullbright` override can bypass the slow-path baked color. Generated
+dictionary details do not accept this property.
+
+Lit builds sample a plain card's
 scaled anchor midpoint or a cross/tri shape's stored origin, using the stored
 local-up normal. Shape angle and size do not move that receiver. The sampling
 point must remain open and visible. Static lighting, style extras and the shared final HDR base follow

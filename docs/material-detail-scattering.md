@@ -182,6 +182,11 @@ The existing MCP operations use the same compiler: paint through `edit_faces`,
 change `detailvbsp` and `detailmaterial` through the world property draft, then call `compile_map` or
 `start_compile`. No separate scatter objects or authoring operation are needed.
 
+Generated details retain their existing lighting colors. Explicit
+[models](model-detail-props.md) and [cards/shapes](detail-sprites.md) may attenuate
+baked base and style colors with `_detail_lighting_tint`; generated dictionary
+entries do not accept that compiler property.
+
 **Fullbright** keeps white unbaked detail colors. **Direct LDR** bakes each model
 and sprite's direct light and spherical ambient from the final filtered
 world/terrain lightmaps and sky. Configured diffuse bounces contribute through

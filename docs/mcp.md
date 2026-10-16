@@ -405,16 +405,30 @@ listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history.
 
-`get_entity_inspector.helpers.spheres` resolves `sphere(property)` declarations
+`get_entity_inspector.helpers.spheres` resolves `sphere(property)` and
+zero-argument `sphere()` declarations
 for point entities, including brushless FGD `@FilterClass` definitions such as
 `filter_enemy`, through the same Session operations as the property panel and
-`render_view`. Each entry reports `property`, `raw`, `value_source` (`authored`,
+`render_view`. Each entry reports `property`, `raw`, `implicit_property`, `value_source` (`authored`,
 `fgd_default` or `missing`), `property_type`, `radius`, `center`, potential
 `guide_bounds`, intrinsic `state`, `error`, `displayed` and `suppression_reason`.
 `raw_truncated` and `property_truncated` identify bounded diagnostic previews;
 `sphere_limits` states the scope and caps. Use ordinary `set_entity_properties`
 with `set` or `remove` to author or clear a radius override. No new tool or
 viewport setting is required.
+
+`sphere()` binds the declared `radius` property, matched case-insensitively,
+only when its FGD kind is `float`, `integer` or `string`. The reported property
+uses the declaration's spelling. `implicit_property` is always serialized:
+true for a zero-argument attempt, including an unsupported missing/wrong-type
+declaration; false for named helpers and the synthetic limit diagnostic. It
+describes the binding independently of `value_source`. Missing/incompatible
+declarations report `state:"unsupported"`, no radius/bounds and no ring.
+Equivalent effective keys such as `sphere()` and `sphere(radius)` deduplicate
+case-insensitively in resolved declaration order, retaining the first binding
+flag. Declared properties without a usable value retain the existing
+missing/invalid diagnostics; zero or negative values remain nonpositive with
+no fabricated fallback radius or infinite guide.
 
 Positive finite `float`, `integer` and numeric `string` values draw three
 world-axis rings for selected visible generic point entities. Missing authored
@@ -424,7 +438,7 @@ text and report errors without fabricated radii. Loaded models, model/studio
 classes (including missing assets), brush entities, specialized lights, hidden
 objects and working-region exclusions suppress
 display with explicit reasons. Intrinsic state remains independent of display
-eligibility. At most sixteen distinct helpers per entity, 128 guides per frame
+eligibility. At most sixteen distinct effective properties per entity, 128 guides per frame
 and 32 segments per ring are supported. Scalar values must be finite and within
 ±65536; native conversion must retain finite, noncollapsed geometry. Diagnostic
 previews cap raw values at 256 bytes and property names at 128 bytes; oversized
@@ -488,7 +502,9 @@ The reserved PAK entry `hammerr/packed-sky.json` uses version 1 with exact `fami
 
 Packing requires complete UTF-8 VMT syntax with one root and unambiguous scalar declarations. Directives, duplicate keys, C-style block comments, bracket-wrapped scalars and unsupported/nested parameters reject. Patch replacement requires an existing key; insertion cannot change an existing value. Every declared runtime texture remains in the closure even if a later Patch overrides it. These are HammeRR admission rules; scalar rendering behavior and HDR radiance are not evaluated.
 
-World verification requires exactly one first `worldspawn`, one canonical lowercase `classname` key for it and one case-insensitive `skyname` key whose value matches the manifest verbatim. Every block requires lowercase spelling for `classname` keys; the `worldspawn` class value remains case-insensitive. Entity text is bounded to 4 MiB, 65,536 flat blocks and 262,144 total key/value pairs, with every key and value at most 2047 UTF-8 bytes. Keys that become `classname` or `skyname` after removing trailing ASCII spaces reject rather than act as alternative identities. The flat reader admits ASCII unquoted tokens without parentheses, single quotes or unsupported controls; quoted UTF-8, punctuation and non-NUL control values are preserved. These conservative parser and identity limits describe HammeRR admission, not general native-engine ceilings.
+World verification requires exactly one first `worldspawn`, one canonical lowercase `classname` key for it and one case-insensitive `skyname` key whose value matches the manifest verbatim. Every block requires lowercase spelling for `classname` keys; the `worldspawn` class value remains case-insensitive. Entity text is bounded to 4 MiB, 65,536 flat blocks and 262,144 total key/value pairs, with every key and value at most 2047 UTF-8 bytes. Keys that become `classname` or `skyname` after removing trailing ASCII spaces reject rather than act as alternative identities.
+
+The flat reader admits ASCII unquoted tokens without parentheses, single quotes or unsupported control separators. An unquoted token immediately followed by a double quote rejects (`key"value"`); quoted-first adjacency remains parsed normally. Quoted UTF-8, punctuation and non-NUL controls remain literal. Packed-world verification additionally rejects every key/value equal to `{` or beginning with `}`, including quoted tokens. Empty quoted keys/values, quoted `{prefix` and embedded braces remain admitted. These conservative parser and identity rules describe HammeRR's subset, not general native-engine ceilings.
 
 Both synchronous and background builds guard original source identities, winning-mount resolution, destination leases and the current map/path/settings/content snapshot before publication. Packing-only builds need no native capture runtime. Failure, staleness or cancellation preserves previous output. After publication, packing-only Run can verify and stage the sky without the original custom mount, including after material reload. Run verifies before and after generated-cubemap rebasing and preserves the sky manifest and registered bytes literally. Combined reflection builds retain their existing native/runtime/content-freshness requirements. The compiler CLI exposes the same default-off choice as `--pack-sky-assets`.
 

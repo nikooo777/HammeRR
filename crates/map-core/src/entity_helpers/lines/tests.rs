@@ -252,7 +252,7 @@ fn nodeid_binding_requires_declared_ownership_and_can_mix_with_named_endpoints()
             resolve(
                 catalog.class("link").unwrap(),
                 &source,
-                &Targets::new(&[target.clone()], &catalog)
+                &Targets::new(std::slice::from_ref(&target), &catalog)
             )[0]
             .state,
             "missing"

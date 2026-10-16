@@ -7,6 +7,11 @@
 
 use std::fmt;
 
+mod flat_blocks;
+pub use flat_blocks::{
+    FlatBlock, FlatBlockLimits, parse_flat_blocks_bounded, parse_flat_blocks_controlled,
+};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     String(String),
@@ -59,6 +64,11 @@ pub enum ParseErrorKind {
     NestingLimit,
     NodeLimit,
     NulByte,
+    ByteLimit,
+    BlockLimit,
+    PairLimit,
+    ExpectedOpenBrace,
+    NestedBlock,
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -72,6 +82,11 @@ impl fmt::Display for ParseErrorKind {
             Self::NestingLimit => "block nesting exceeds the input limit",
             Self::NodeLimit => "node count exceeds the input limit",
             Self::NulByte => "NUL bytes are not accepted",
+            Self::ByteLimit => "text exceeds the input byte limit",
+            Self::BlockLimit => "block count exceeds the input limit",
+            Self::PairLimit => "pair count exceeds the input limit",
+            Self::ExpectedOpenBrace => "expected an anonymous block beginning with '{'",
+            Self::NestedBlock => "nested blocks are not accepted in flat entity text",
         })
     }
 }

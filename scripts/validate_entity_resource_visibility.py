@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import struct
 from pathlib import Path
 from unittest.mock import patch
 
@@ -130,6 +131,19 @@ def validate(client, output, game):
             changed = sum(shown[i:i + 3] != plain[i:i + 3] for i in range(0, len(shown), 4))
             measurements[f"{flag}-{name}"] = {"changed_pixels": changed}
             check(changed > 80, f"Independent {flag} declaration contributes actual pixels in {name}")
+            if flag == "entity_model_guides" and name == "top":
+                scale = SIZE / camera["ortho_height"]
+                center = [SIZE / 2 + 48 * scale, SIZE / 2]
+                box_half = 4 * scale + 2
+                mesh_half = 24 * scale + 1
+                outside = sum(
+                    shown[index:index + 3] != plain[index:index + 3]
+                    and max(abs((index // 4) % SIZE + 0.5 - center[0]), abs((index // 4) // SIZE + 0.5 - center[1])) > box_half
+                    and max(abs((index // 4) % SIZE + 0.5 - center[0]), abs((index // 4) // SIZE + 0.5 - center[1])) <= mesh_half
+                    for index in range(0, len(shown), 4)
+                )
+                measurements["model_top_outside_box"] = {"changed_pixels": outside, "required_pixels": 1000, "projected_triangle_area": (48 * scale) ** 2 / 2, "excluded_box_half_pixels": box_half}
+                check(outside > 1000, "The known 48-unit model triangle draws over 1000 Top pixels outside the ordinary 8-unit box and its two-pixel margin")
         omitted, _ = render(f"defaults-{name}", camera)
         explicit, metadata = render(f"explicit-on-{name}", camera, **dict.fromkeys(FLAGS, True))
         check(omitted == explicit == controls[True, True, name] and all(metadata["view"][flag] for flag in FLAGS), f"Omitted and explicit true produce exact default pixels in {name}")
@@ -206,6 +220,12 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     game = output / "game"
     fixture(game)
+    vtx = game / "models/props/test.dx90.vtx"
+    data = bytearray(vtx.read_bytes())
+    assert struct.unpack_from("<I", data, 146)[0] == 3
+    assert struct.unpack_from("<3H", data, 134) == (0, 1, 2)
+    struct.pack_into("<3H", data, 134, 0, 2, 1)
+    vtx.write_bytes(data)
     with patch.dict(os.environ, {"HAMMERR_RECENT_MAPS_DIR": str(output / "recent"), "HAMMERR_BUILD_RECIPES": str(output / "recipes.json")}):
         client = Client(None, args.binary.resolve(), output, game / "gameinfo.txt")
     try:

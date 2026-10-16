@@ -25,6 +25,7 @@ export component CompileWindow inherits Window {
     in property <string> reflection-description;
     callback change-reflections(bool);
     in property <string> capture-summary;
+    in property <string> capture-details;
     in property <bool> capture-editable;
     in property <bool> capture-editing;
     in property <bool> capture-current;
@@ -120,6 +121,7 @@ export component CompileWindow inherits Window {
                 }
                 if root.capture-editing: VerticalLayout {
                     spacing: 8px;
+                    Text { text: root.capture-details; wrap: word-wrap; color: #bac2ce; }
                     Text { text: "CS:S installation override"; }
                     HorizontalLayout {
                         LineEdit { text <=> root.capture-engine-root; placeholder-text: "Automatic from mounted CS:S game"; enabled: root.capture-editable; horizontal-stretch: 1; }
@@ -127,7 +129,7 @@ export component CompileWindow inherits Window {
                     }
                     Text { text: "Steam client override"; }
                     HorizontalLayout {
-                        LineEdit { text <=> root.capture-steam-root; placeholder-text: "Automatic from running Steam client"; enabled: root.capture-editable; horizontal-stretch: 1; }
+                        LineEdit { text <=> root.capture-steam-root; placeholder-text: "Automatic from checked Steam client configuration"; enabled: root.capture-editable; horizontal-stretch: 1; }
                         Button { text: "Choose Steam folder…"; enabled: root.capture-editable; clicked => { root.choose-capture-root(1); } }
                     }
                     Text { text: "Leave an override empty to use its checked automatic value. Apply validates both paths. These machine settings stay outside map recipes and recent maps."; wrap: word-wrap; color: #bac2ce; }

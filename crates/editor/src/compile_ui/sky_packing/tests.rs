@@ -185,4 +185,31 @@ fn sky_packing_controls_share_callbacks_restores_job_guards_and_result_statistic
         });
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
     save_ui_snapshot(controller.window.window(), "build-pack-sky-details");
+    let output = directory.path().join("packed-sky-room.bsp");
+    let published = std::fs::read(&output).unwrap();
+    let request = lock(&shared)
+        .begin_compile(Actor::User, Some(&output))
+        .unwrap();
+    let result = request.run();
+    assert!(result.is_ok(), "{:?}", result.as_ref().err());
+    assert!(result.as_ref().unwrap().output.stats.sky_assets.is_some());
+    let mut external_source = std::fs::read_to_string(&first).unwrap();
+    external_source.push_str("\n// source changed after worker preparation\n");
+    std::fs::write(&first, external_source).unwrap();
+    lock(&shared).finish_compile(Actor::User, &result);
+    controller.refresh(&lock(&shared));
+    let status = lock(&shared).compile_status();
+    assert_eq!(status["job"]["status"], "failed");
+    assert_eq!(status["job"]["result"]["published"], false);
+    assert_eq!(status["job"]["result"]["stats"]["sky_assets"]["files"], 7);
+    assert!(status["job"]["result"]["error"].as_str().is_some());
+    assert_eq!(std::fs::read(&output).unwrap(), published);
+    assert!(
+        !controller
+            .window
+            .get_details()
+            .contains("Packed sky assets:")
+    );
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
 }

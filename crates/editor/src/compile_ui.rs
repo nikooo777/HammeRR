@@ -647,7 +647,11 @@ impl Controller {
             ""
         };
         let hdr = hdr_lighting_details(&result["stats"]);
-        let packed_sky = sky_packing::details(&result["stats"]);
+        let packed_sky = if job["status"] == "completed" && result["published"] == true {
+            sky_packing::details(&result["stats"])
+        } else {
+            String::new()
+        };
         let samples = result["stats"]["cubemap_samples"]
             .as_u64()
             .map(|count| format!("\nCubemap samples: {count}"))

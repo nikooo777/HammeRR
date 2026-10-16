@@ -376,7 +376,16 @@ pub(crate) fn supervise(directory: &Path) -> io::Result<()> {
     guard::ensure_no_client(&request.environment.engine_root)?;
     let helper = helper()?;
     check_caller(&request, &directory)?;
-    let baseline = guard::begin(&request.environment, &helper, &directory)?;
+    let baseline = match guard::begin(&request.environment, &helper, &directory) {
+        Ok(baseline) => baseline,
+        Err(error) => {
+            let audit = guard::finish_preflight(&directory);
+            return Err(match audit {
+                Ok(()) => error,
+                Err(audit) => invalid(format!("{error}; preflight preservation: {audit}")),
+            });
+        }
+    };
     let start = Instant::now();
     let operation = (|| {
         check_caller(&request, &directory)?;
@@ -707,10 +716,16 @@ mod tests {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
 
+    fn private_directory() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        directory
+    }
+
     #[test]
     fn lease_namespace_is_independent_of_job_temporary_paths() {
         assert_eq!(lease_directory().parent(), Some(Path::new("/tmp")));
-        let directory = tempfile::tempdir().unwrap();
+        let directory = private_directory();
         let lease = lease_at(directory.path()).unwrap();
         assert_eq!(
             lease_at(directory.path()).err().unwrap().kind(),
@@ -722,7 +737,7 @@ mod tests {
 
     #[test]
     fn lease_refuses_fifo_without_waiting() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = private_directory();
         let path =
             std::ffi::CString::new(directory.path().join("capture.lock").as_os_str().as_bytes())
                 .unwrap();
@@ -757,7 +772,7 @@ mod tests {
     #[test]
     fn inherited_lease_survives_either_owner_until_cleanup_finishes() {
         for kill_supervisor in [false, true] {
-            let directory = tempfile::tempdir().unwrap();
+            let directory = private_directory();
             let lease = lease_at(directory.path()).unwrap();
             let mut command = Command::new(std::env::current_exe().unwrap());
             command

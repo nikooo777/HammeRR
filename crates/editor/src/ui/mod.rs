@@ -157,6 +157,19 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     );
 }
 
+fn refresh_sky_preview_status(app: &AppWindow, session: &mut Session) {
+    let view = session.view();
+    app.set_sky_preview_status(
+        session
+            .skybox_preview_for(view)
+            .map_or_else(
+                || "Set world skyname to select a 2D sky".to_owned(),
+                |sky| sky.summary(),
+            )
+            .into(),
+    );
+}
+
 fn bind_model_guide_reload(app: &AppWindow, shared: SharedSession) {
     let weak = app.as_weak();
     app.on_reload_model_guides(move || {
@@ -206,15 +219,7 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
             app.set_sky_preview_error("".into());
             session.set_view(view);
             refresh_view_controls(&app, &session);
-            app.set_sky_preview_status(
-                session
-                    .skybox_preview_for(view)
-                    .map_or_else(
-                        || "Set world skyname to select a 2D sky".to_owned(),
-                        |sky| sky.summary(),
-                    )
-                    .into(),
-            );
+            refresh_sky_preview_status(&app, &mut session);
         }
     });
 }
@@ -222,15 +227,7 @@ fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
     refresh_view_controls(app, session);
-    app.set_sky_preview_status(
-        session
-            .skybox_preview_for(session.view())
-            .map_or_else(
-                || "Set world skyname to select a 2D sky".to_owned(),
-                |sky| sky.summary(),
-            )
-            .into(),
-    );
+    refresh_sky_preview_status(app, session);
     app.set_fog_preview_status(
         session.fog_preview_state()["summary"]
             .as_str()
@@ -2700,15 +2697,7 @@ pub(super) fn run(
                     }
                     app.set_show_tools(session.view().tool_textures);
                     app.set_sky_preview(session.view().sky_preview);
-                    app.set_sky_preview_status(
-                        session
-                            .skybox_preview_for(session.view())
-                            .map_or_else(
-                                || "Set world skyname to select a 2D sky".to_owned(),
-                                |skybox| skybox.summary(),
-                            )
-                            .into(),
-                    );
+                    refresh_sky_preview_status(&app, &mut session);
                     app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);
@@ -2801,15 +2790,7 @@ pub(super) fn run(
                     }
                     app.set_show_tools(session.view().tool_textures);
                     app.set_sky_preview(session.view().sky_preview);
-                    app.set_sky_preview_status(
-                        session
-                            .skybox_preview_for(session.view())
-                            .map_or_else(
-                                || "Set world skyname to select a 2D sky".to_owned(),
-                                |skybox| skybox.summary(),
-                            )
-                            .into(),
-                    );
+                    refresh_sky_preview_status(&app, &mut session);
                     app.set_surface_view(session.view().surface.index());
                     app.set_smoothing_view_group(session.view().smoothing_group as i32);
                     app.set_show_leak(session.view().leak_path);

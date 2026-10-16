@@ -141,6 +141,52 @@ An authored finite origin within ±65536 is required. Loaded catalog source
 files remain available, but inherited helper declarations do not retain their
 own file/line provenance.
 
+### Display a literal FGD model guide
+
+A generic point class can declare one `studio("models/editor/playerstart.mdl")`
+or `studioprop("models/editor/camera.mdl")` helper to display its mounted mesh.
+The viewport and agent renders use the same deliberately untextured reference
+mesh. This is an editor resource guide, with no shader, animated-pose or engine
+collision claim.
+
+1. Click **Entity…**, then **Load FGD…** and load the definition. Included,
+   inherited and extended declarations resolve through the same catalog.
+2. Place or select the point entity. Read **FGD model guide** in the inspector's
+   helper summary: it names the helper and canonical model path, whether the
+   mesh is displayed, and any source or admission error.
+3. Edit **Rotation** using **Pitch**, **Yaw** and **Roll** to orient the guide, or move the entity.
+   Transform previews move the guide without adding a stored `model` property.
+4. Pick, frame, snap, place or use **Working region…** with the entity. These
+   operations retain its ordinary FGD box. Mesh triangles outside that box are
+   not picking or placement surfaces, and do not enlarge selection framing.
+5. Click **Reload models** beneath the helper summary after replacing model
+   files. Successful and failed model lookups share the existing model
+   cache; FGD reload re-evaluates the declaration without changing values or
+   Undo history.
+
+Missing, malformed, blank-body or oversized assets retain the editable box and
+an explicit diagnostic. Authored model fields, a declared model property,
+specialized lights and ropes, and sprite/decal/overlay sources retain their
+existing behavior. Hidden or region-excluded guides do not read their assets.
+Agents inspect the same declaration, catalog sources, state, suppression
+reason, visual bounds and `material_policy: "flat_editor"` through
+`get_entity_inspector.helpers.model_guide`, and see its mesh in `render_view`.
+**Model details…** continues to inspect authored model entities.
+
+Limits: Only one exact literal `models/*.mdl` argument is supported; zero
+arguments, property bindings, extra arguments and multiple studio/studioprop
+declarations remain explicit unsupported cases. The guide uses LOD0 static or
+reference geometry, existing Source angle conventions, authored skin/body,
+unit-modelscale guards and rendercolor tint. It does not load guide VMTs or
+VTFs, including during material reload. Ordinary model previews retain their
+own materials. Paths cap at 256 bytes, errors at 512 bytes, and each scene at
+64 eligible source evaluations, 65536 vertices and 393216 indices in entity-ID
+order. The shared model cache caps at 128 entries and 256 MiB; MDL, VVD and VTX
+reads cap at 64 MiB each. Origins and complete visual bounds must remain finite
+within ±65536 units. Visual bounds are reported separately from object bounds.
+Loaded catalog files provide declaration provenance; inherited helper
+file/line locations are not retained.
+
 ### Inspect a property radius
 
 FGD `sphere(property)` declarations add three world-axis guide rings around a

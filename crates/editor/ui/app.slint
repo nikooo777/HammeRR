@@ -1899,6 +1899,8 @@ export component AppWindow inherits Window {
     in property <string> selection-detail;
     in property <bool> entity-selected;
     in property <string> entity-helper-status;
+    in property <bool> has-fgd-model-guide;
+    callback reload-model-guides();
     in property <bool> can-inspect-model;
     in property <bool> can-cubemap-faces;
     callback inspect-model();
@@ -2780,6 +2782,11 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                         color: #bac2ce;
                         font-size: 12px;
+                    }
+
+                    if root.has-fgd-model-guide: Button {
+                        text: "Reload models";
+                        clicked => { root.reload-model-guides(); }
                     }
 
                     if root.entity-selected: CheckBox {

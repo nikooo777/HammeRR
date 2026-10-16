@@ -9,6 +9,7 @@ use super::{Session, models::Models, working_region::Evaluation};
 
 mod icons;
 mod lines;
+mod models;
 mod projectors;
 mod spheres;
 
@@ -26,6 +27,8 @@ pub struct Report {
     pub spheres: Vec<spheres::Report>,
     pub icon_sprite: Option<render::icons::Report>,
     pub icon_limits: &'static str,
+    pub model_guide: Option<models::Report>,
+    pub model_guide_limits: &'static str,
     pub sphere_limits: &'static str,
     pub lines: Vec<lines::Report>,
     pub line_limits: &'static str,
@@ -86,11 +89,17 @@ impl Session {
         let entity = document
             .entity(id)
             .ok_or_else(|| format!("no entity:{id}"))?;
-        let appearance = entity
+        let mut appearance = entity
             .classname()
             .and_then(|classname| self.definitions.class(classname))
             .map(Appearance::resolve)
             .unwrap_or_default();
+        let model_guide = self.inspected_fgd_model(id);
+        if let Some(guide) = &model_guide
+            && guide.declaration_supported
+        {
+            appearance.unsupported.retain(|name| name != &guide.helper);
+        }
         let evaluation = self.working_evaluation(document);
         let model = evaluation
             .models
@@ -143,6 +152,21 @@ impl Session {
             );
         }
         let icon_sprite = self.inspected_icon(id);
+        if let Some(guide) = &model_guide {
+            status += &format!(
+                ". FGD model guide: {}; {}({}); flat editor mesh only, ordinary helper bounds and picking",
+                if guide.displayed {
+                    "displayed"
+                } else {
+                    guide.suppression_reason.unwrap_or(guide.state)
+                },
+                guide.helper,
+                guide.path.as_deref().unwrap_or(&guide.literal)
+            );
+            if let Some(error) = &guide.error {
+                status += &format!(" ({error})");
+            }
+        }
         if let Some(icon) = &icon_sprite {
             status += &format!(
                 ". FGD icon sprite: {}; {}",
@@ -248,6 +272,8 @@ impl Session {
             sphere_limits: spheres::LIMITS,
             icon_sprite,
             icon_limits: render::icons::LIMITS,
+            model_guide,
+            model_guide_limits: models::LIMITS,
             lines,
             line_limits: lines::LIMITS,
             source_projector,
@@ -267,7 +293,7 @@ impl Session {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Property sphere and literal targetname line guides are reported separately and never change these object bounds; other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
+            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Sphere, targetname line, literal icon and literal studio/studioprop model guides are reported separately and never change these object bounds; other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
         })
     }
 }

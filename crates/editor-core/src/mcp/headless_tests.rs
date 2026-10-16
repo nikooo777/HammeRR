@@ -284,3 +284,51 @@ fn headless_map_tools_and_status_do_not_initialize_graphics() {
     assert_eq!(lock(&session).document().objects().count(), 0);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }
+
+#[test]
+fn literal_model_guide_failures_are_shared_with_the_inspector_before_graphics_startup() {
+    let mut session = Session::new(Err("No mounted content for this fixture".into()));
+    session.set_definitions(
+        Actor::Agent,
+        source_formats::fgd::Catalog::parse(
+            "@PointClass size(4 4 4) studio(\"models/editor/playerstart.mdl\") = helper_sample []",
+        )
+        .unwrap(),
+    );
+    let ObjectId::Entity(id) = session
+        .create_entity(
+            Actor::Agent,
+            "helper_sample",
+            Some(glam::DVec3::ZERO),
+            Default::default(),
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    let before = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let shared = Arc::new(Mutex::new(session));
+    let server = EditorServer::new(shared.clone(), None);
+    let report = value(server.get_entity_inspector(Parameters(
+        serde_json::from_value(json!({"id": format!("entity:{id}")})).unwrap(),
+    )));
+    assert_eq!(report["helpers"]["model_guide"]["source"], "fgd_literal");
+    assert_eq!(report["helpers"]["model_guide"]["state"], "unavailable");
+    assert_eq!(
+        report["helpers"]["model_guide"]["material_policy"],
+        "flat_editor"
+    );
+    assert!(
+        report["helpers"]["model_guide"]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("not found"))
+    );
+    assert_eq!(
+        report["helpers"]["world_bounds"],
+        json!([[-2.0, -2.0, -2.0], [2.0, 2.0, 2.0]])
+    );
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).document().undo_labels().count(), history);
+}

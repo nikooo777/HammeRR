@@ -4,6 +4,7 @@ use source_formats::{
     mdl::ModelHeader,
     model::{Part, Vertex},
 };
+use std::collections::HashSet;
 
 fn asset() -> Arc<Asset> {
     Arc::new(Asset::new(
@@ -58,11 +59,42 @@ fn cached_asset(asset: Arc<Asset>) -> Library {
                 result: Ok(asset),
                 used: 0,
                 bytes,
+                material_bindings: true,
             },
         )]),
         bytes,
         ..Library::default()
     }
+}
+
+#[test]
+fn geometry_only_cache_skips_material_reload_until_a_normal_model_requests_bindings() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = material_game(directory.path());
+    let initial = asset();
+    *initial.materials.write().unwrap() = Err("Deferred editor guide bindings".into());
+    let mut library = cached_asset(initial.clone());
+    library
+        .entries
+        .get_mut(&initial.path)
+        .unwrap()
+        .material_bindings = false;
+    assert_eq!(library.reload_materials(&fs).refreshed, 0);
+    assert!(library.reload_materials(&fs).materials.is_empty());
+    assert!(Arc::ptr_eq(
+        &initial,
+        &library.get_geometry(&fs, &initial.path).unwrap()
+    ));
+    assert!(initial.materials().is_err());
+    assert!(!library.entries[&initial.path].material_bindings);
+    assert!(Arc::ptr_eq(
+        &initial,
+        &library.get(&fs, &initial.path).unwrap()
+    ));
+    assert!(library.entries[&initial.path].material_bindings);
+    assert_eq!(&*initial.materials().unwrap(), &["test"]);
+    assert_eq!(library.bytes, initial.memory_bytes());
+    assert_eq!(library.reload_materials(&fs).refreshed, 1);
 }
 
 fn material_game(directory: &std::path::Path) -> GameFs {
@@ -144,6 +176,7 @@ fn material_reload_reselects_preferred_missing_and_deleted_paths_without_copying
                 result: Err("Unsupported cached geometry".into()),
                 used: index as u64,
                 bytes: 0,
+                material_bindings: true,
             },
         );
     }
@@ -486,6 +519,80 @@ fn model_scene_uses_material_batches_normals_and_wire_geometry_without_a_helper_
             .iter()
             .all(|vertex| vertex.normal == [0.0, 0.0, 1.0])
     );
+}
+
+#[test]
+fn fgd_model_guides_add_real_meshes_without_replacing_boxes_or_expanding_scene_bounds() {
+    let mut entity = Entity::new(7, "sample");
+    entity.properties.set("origin", "0 0 32");
+    let guide_asset = asset();
+    *guide_asset.materials.write().unwrap() = Err("Deferred editor guide bindings".into());
+    let instance = Instance::new(&entity, guide_asset).unwrap();
+    let mut vmf = map_core::Document::empty().vmf().clone();
+    vmf.entities.push(entity);
+    let fs = GameFs {
+        game_dir: Default::default(),
+        base_dir: Default::default(),
+        mounts: Vec::new(),
+    };
+    let selected = HashSet::from([ObjectId::Entity(7)]);
+    let helpers = BTreeMap::from([(
+        ObjectId::Entity(7),
+        map_core::entity_helpers::Appearance {
+            local_bounds: Some([DVec3::splat(-1.0), DVec3::splat(1.0)]),
+            ..Default::default()
+        },
+    )]);
+    let baseline = crate::SceneMesh::build_with_helpers_filtered(
+        &vmf,
+        &fs,
+        &mut crate::MaterialLibrary::default(),
+        (&selected, &HashSet::new()),
+        &[],
+        (&[], &helpers),
+        |_| true,
+    );
+    let guides = [instance];
+    let mut materials = crate::MaterialLibrary::default();
+    let material_count = materials.len();
+    let mesh = crate::SceneMesh::build_with_visual_helpers_filtered(
+        &vmf,
+        &fs,
+        &mut materials,
+        (&selected, &HashSet::new()),
+        &[],
+        (&[], &helpers),
+        (&BTreeMap::new(), &guides),
+        |_| true,
+    );
+    assert_eq!((mesh.mins, mesh.maxs), (baseline.mins, baseline.maxs));
+    assert_eq!(mesh.lines, baseline.lines);
+    assert_eq!(
+        mesh.selection_outline_ranges,
+        baseline.selection_outline_ranges
+    );
+    assert_eq!(mesh.stats.model_entities, 0);
+    assert_eq!(mesh.stats.fgd_model_helpers, 1);
+    assert_eq!(mesh.vertices.len(), baseline.vertices.len() + 4);
+    assert_eq!(mesh.indices.len(), baseline.indices.len() + 6);
+    assert_eq!(materials.len(), material_count);
+    assert!(
+        mesh.batches
+            .iter()
+            .all(|batch| batch.material == crate::MaterialLibrary::EDITOR)
+    );
+    let hidden = crate::SceneMesh::build_with_visual_helpers_filtered(
+        &vmf,
+        &fs,
+        &mut crate::MaterialLibrary::default(),
+        (&selected, &HashSet::new()),
+        &[],
+        (&[], &helpers),
+        (&BTreeMap::new(), &guides),
+        |_| false,
+    );
+    assert!(hidden.vertices.is_empty());
+    assert_eq!(hidden.stats.fgd_model_helpers, 0);
 }
 
 #[test]

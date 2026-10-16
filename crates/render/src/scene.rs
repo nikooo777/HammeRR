@@ -85,6 +85,7 @@ pub struct SceneStats {
     pub displacements: usize,
     pub point_entities: usize,
     pub model_entities: usize,
+    pub fgd_model_helpers: usize,
     pub missing_materials: usize,
 }
 
@@ -633,6 +634,15 @@ impl Builder<'_> {
     }
 
     fn add_model(&mut self, instance: &crate::models::Instance, selected: bool) {
+        self.add_model_with_material(instance, selected, None);
+    }
+
+    fn add_model_with_material(
+        &mut self,
+        instance: &crate::models::Instance,
+        selected: bool,
+        material_override: Option<MaterialId>,
+    ) {
         let first = self.vertices.len() as u32;
         let model = &instance.asset.model;
         for vertex in &model.vertices {
@@ -662,14 +672,21 @@ impl Builder<'_> {
         let materials = instance.asset.materials();
         for part in model.parts_for_body(instance.body) {
             let material_index = model.skins[instance.skin][part.material];
-            let material = match &materials {
-                Ok(materials) => self.material(&materials[material_index]),
-                Err(_) => {
-                    let id = self.library.unavailable_model();
-                    if self.indices.len() <= id {
-                        self.indices.resize_with(id + 1, Vec::new);
+            let material = if let Some(material) = material_override {
+                if self.indices.len() <= material {
+                    self.indices.resize_with(material + 1, Vec::new);
+                }
+                material
+            } else {
+                match &materials {
+                    Ok(materials) => self.material(&materials[material_index]),
+                    Err(_) => {
+                        let id = self.library.unavailable_model();
+                        if self.indices.len() <= id {
+                            self.indices.resize_with(id + 1, Vec::new);
+                        }
+                        id
                     }
-                    id
                 }
             };
             self.indices[material].extend(part.indices.iter().map(|&index| first + index));
@@ -942,6 +959,36 @@ impl SceneMesh {
         icons: &BTreeMap<u32, crate::icons::Instance>,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_visual_helpers_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            entities,
+            (icons, &[]),
+            include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_visual_helpers_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
+        let (icons, model_guides) = guides;
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
@@ -1009,6 +1056,11 @@ impl SceneMesh {
             .map(|v| Vec3::from(v.position))
             .chain(builder.icon_bounds.iter().copied())
             .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
+        for instance in model_guides.iter().filter(|instance| include(instance.id)) {
+            builder.add_model_with_material(instance, false, Some(MaterialLibrary::EDITOR));
+            builder.stats.model_entities -= 1;
+            builder.stats.fgd_model_helpers += 1;
+        }
         let mut indices = Vec::with_capacity(builder.indices.iter().map(Vec::len).sum());
         let mut batches = Vec::new();
         let mut stats = builder.stats;

@@ -98,6 +98,7 @@ struct Entry {
     result: Result<Arc<Asset>, String>,
     used: u64,
     bytes: usize,
+    material_bindings: bool,
 }
 
 #[derive(Default)]
@@ -126,14 +127,18 @@ fn read(fs: &GameFs, path: &str) -> Result<Vec<u8>, String> {
         .ok_or_else(|| format!("Model asset {path} was not found"))
 }
 
-fn load(fs: &GameFs, path: &str) -> Result<Asset, String> {
+fn load(fs: &GameFs, path: &str, material_bindings: bool) -> Result<Asset, String> {
     let stem = path.strip_suffix(".mdl").unwrap();
     let mdl = read(fs, path)?;
     source_formats::mdl::ModelHeader::parse(&mdl).map_err(|error| format!("{path}: {error}"))?;
     let vvd = read(fs, &format!("{stem}.vvd"))?;
     let vtx = read(fs, &format!("{stem}.dx90.vtx"))?;
     let model = Model::parse(&mdl, &vvd, &vtx).map_err(|error| format!("{path}: {error}"))?;
-    let materials = resolve_materials(fs, &model);
+    let materials = if material_bindings {
+        resolve_materials(fs, &model)
+    } else {
+        Err("Flat editor guide does not request material bindings".into())
+    };
     Ok(Asset::new(path.into(), model, materials))
 }
 
@@ -193,13 +198,48 @@ pub struct MaterialReloadReport {
 
 impl Library {
     pub fn get(&mut self, fs: &GameFs, path: &str) -> Result<Arc<Asset>, String> {
+        self.get_with_materials(fs, path, true)
+    }
+
+    pub fn get_geometry(&mut self, fs: &GameFs, path: &str) -> Result<Arc<Asset>, String> {
+        self.get_with_materials(fs, path, false)
+    }
+
+    fn get_with_materials(
+        &mut self,
+        fs: &GameFs,
+        path: &str,
+        material_bindings: bool,
+    ) -> Result<Arc<Asset>, String> {
         let path = model_path(path)?;
         self.serial = self.serial.wrapping_add(1);
         if let Some(entry) = self.entries.get_mut(&path) {
             entry.used = self.serial;
+            if material_bindings && !entry.material_bindings {
+                if let Ok(asset) = &entry.result {
+                    let mut materials = resolve_materials(fs, &asset.model);
+                    let mut bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+                    if self.bytes - entry.bytes + bytes > MAX_CACHE_BYTES {
+                        materials =
+                            Err("Model material resolution exceeds the cache budget".into());
+                        bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+                    }
+                    let material_bytes = material_binding_bytes(&materials);
+                    *asset
+                        .materials
+                        .write()
+                        .map_err(|_| MATERIAL_BINDINGS_ERROR)? = materials;
+                    asset
+                        .material_bytes
+                        .store(material_bytes, Ordering::Relaxed);
+                    self.bytes = self.bytes - entry.bytes + bytes;
+                    entry.bytes = bytes;
+                }
+                entry.material_bindings = true;
+            }
             return entry.result.clone();
         }
-        let result = load(fs, &path)
+        let result = load(fs, &path, material_bindings)
             .map(Arc::new)
             .map_err(|error| error.chars().take(1024).collect::<String>());
         let bytes = result.as_ref().map_or(0, |asset| asset.memory_bytes());
@@ -229,6 +269,7 @@ impl Library {
                 result: result.clone(),
                 used: self.serial,
                 bytes,
+                material_bindings,
             },
         );
         result
@@ -238,6 +279,9 @@ impl Library {
         let mut report = MaterialReloadReport::default();
         let mut names = BTreeSet::new();
         for (path, entry) in &mut self.entries {
+            if !entry.material_bindings {
+                continue;
+            }
             let Ok(asset) = &entry.result else {
                 continue;
             };

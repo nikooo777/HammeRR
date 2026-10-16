@@ -22,6 +22,8 @@ pub struct BuildSettings {
     pub smoothing_angle: u8,
     #[serde(default)]
     pub generate_reflections: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pack_sky_assets: bool,
 }
 
 impl BuildSettings {
@@ -34,6 +36,7 @@ impl BuildSettings {
             bounces: options.bounces,
             smoothing_angle: options.smoothing_angle,
             generate_reflections: options.generate_reflections,
+            pack_sky_assets: options.pack_sky_assets,
         }
     }
 
@@ -46,6 +49,7 @@ impl BuildSettings {
             bounces: self.bounces,
             smoothing_angle: self.smoothing_angle,
             generate_reflections: self.generate_reflections,
+            pack_sky_assets: self.pack_sky_assets,
         }
         .validate()?;
         Ok(())
@@ -242,6 +246,100 @@ mod tests {
         saved.build_settings.lighting = "fullbright".into();
         assert!(store.save(&[saved]).is_err());
         assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn sky_packing_context_roundtrips_and_legacy_bytes_stay_compatible() {
+        let legacy = br#"{"lighting":"fullbright","physics":"none","sky_quality":"fast","visibility":"fast","bounces":0,"smoothing_angle":0,"generate_reflections":false}"#;
+        let settings: BuildSettings = serde_json::from_slice(legacy).unwrap();
+        settings.validate().unwrap();
+        assert_eq!(
+            settings,
+            BuildSettings::from_options(compiler::Options::default())
+        );
+        assert_eq!(serde_json::to_vec(&settings).unwrap(), legacy.as_slice());
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
+        let mut saved = entry(directory.path().join("portable.vmf"));
+        store.save(std::slice::from_ref(&saved)).unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let original = fs::read(&path).unwrap();
+        assert!(
+            !String::from_utf8(original.clone())
+                .unwrap()
+                .contains("pack_sky_assets")
+        );
+        assert_eq!(store.load().unwrap(), [saved.clone()]);
+        for lighting in ["fullbright", "direct_ldr", "direct_ldr_hdr"] {
+            saved.build_settings = BuildSettings::from_options(compiler::Options {
+                lighting: compiler::LightingMode::parse(lighting).unwrap(),
+                pack_sky_assets: true,
+                ..Default::default()
+            });
+            store.save(std::slice::from_ref(&saved)).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            let file: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(file["version"], FORMAT_VERSION);
+            assert_eq!(
+                file["entries"][0]["build_settings"]["pack_sky_assets"],
+                true
+            );
+            let restarted = Store {
+                directory: directory.path().to_owned(),
+            };
+            assert_eq!(restarted.load().unwrap(), [saved.clone()]);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        fs::write(&path, &original).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(!loaded[0].build_settings.pack_sky_assets);
+        store.save(&loaded).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn invalid_sky_packing_context_is_rejected_without_rewriting() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store {
+            directory: directory.path().to_owned(),
+        };
+        let mut saved = entry(directory.path().join("portable.vmf"));
+        saved.build_settings.pack_sky_assets = true;
+        store.save(std::slice::from_ref(&saved)).unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let original = fs::read(&path).unwrap();
+        let valid: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        let mut invalid = Vec::new();
+        for value in [
+            serde_json::json!(null),
+            serde_json::json!("true"),
+            serde_json::json!(1),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            let mut file = valid.clone();
+            file["entries"][0]["build_settings"]["pack_sky_assets"] = value;
+            invalid.push(serde_json::to_vec(&file).unwrap());
+        }
+        let mut unknown = valid;
+        unknown["entries"][0]["build_settings"]["pack_sky_asset"] = serde_json::json!(true);
+        invalid.push(serde_json::to_vec(&unknown).unwrap());
+        invalid.push(
+            String::from_utf8(original)
+                .unwrap()
+                .replace(
+                    "\"pack_sky_assets\": true",
+                    "\"pack_sky_assets\": true, \"pack_sky_assets\": false",
+                )
+                .into_bytes(),
+        );
+        for bytes in invalid {
+            fs::write(&path, &bytes).unwrap();
+            assert!(store.load().is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
     }
 
     #[test]

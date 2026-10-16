@@ -217,6 +217,7 @@ impl Session {
                 bounces: Some(settings.bounces),
                 smoothing_angle: Some(settings.smoothing_angle),
                 generate_reflections: Some(settings.generate_reflections),
+                pack_sky_assets: Some(settings.pack_sky_assets),
             },
         );
         if let Err(error) = result {
@@ -506,6 +507,158 @@ mod tests {
             session.recent_game_directory(),
             Some(std::fs::canonicalize(".").unwrap())
         );
+    }
+
+    #[test]
+    fn sky_packing_recent_context_restarts_and_restores_only_for_the_same_game() {
+        fn mounted_session(base_directory: &Path, game_directory: &Path) -> Session {
+            Session::new(Ok(source_formats::gamefs::GameFs {
+                game_dir: game_directory.to_owned(),
+                base_dir: base_directory.to_owned(),
+                mounts: Vec::new(),
+            }))
+        }
+
+        for actor in [Actor::User, Actor::Agent] {
+            let directory = tempfile::tempdir().unwrap();
+            let first = map_file(directory.path(), "portable.vmf");
+            let second = map_file(directory.path(), "default.vmf");
+            let game_directory = directory.path().join("cstrike");
+            let other_game = directory.path().join("other-game");
+            fs::create_dir(&game_directory).unwrap();
+            fs::create_dir(&other_game).unwrap();
+            let preferences = directory.path().join("preferences");
+            let mut current = mounted_session(directory.path(), &game_directory);
+            current.configure_recent_maps(Ok(preferences.clone()));
+            current.open(actor, &first, false).unwrap();
+            let source = fs::read(&first).unwrap();
+            current
+                .update_build_settings(
+                    actor,
+                    BuildSettingsUpdate {
+                        lighting: Some("direct_ldr_hdr"),
+                        physics: Some("engine"),
+                        sky_quality: Some("balanced"),
+                        visibility: Some("detailed"),
+                        bounces: Some(2),
+                        smoothing_angle: Some(35),
+                        pack_sky_assets: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let retained = current.compile_options();
+            assert!(
+                current.recent_maps.entries[0]
+                    .build_settings
+                    .pack_sky_assets
+            );
+            current.new_map(actor, false).unwrap();
+            current
+                .update_build_settings(
+                    actor,
+                    BuildSettingsUpdate {
+                        lighting: Some("fullbright"),
+                        pack_sky_assets: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            current.open(actor, &second, false).unwrap();
+            let disabled = current.compile_options();
+            let mut restarted = mounted_session(directory.path(), &game_directory);
+            restarted.configure_recent_maps(Ok(preferences.clone()));
+            assert!(!restarted.compile_options().pack_sky_assets);
+            restarted.open_recent_map(actor, &first, false).unwrap();
+            assert_eq!(restarted.compile_options(), retained);
+            assert_eq!(restarted.compile_settings()["pack_sky_assets"], true);
+            assert_eq!(
+                restarted.recent_maps()["entries"][0]["context_compatible"],
+                true
+            );
+            assert!(!restarted.document().is_dirty());
+            assert_eq!(restarted.document().undo_labels().count(), 0);
+            restarted.open_recent_map(actor, &second, false).unwrap();
+            assert_eq!(restarted.compile_options(), disabled);
+            restarted.compiling = true;
+            restarted.open_recent_map(actor, &first, false).unwrap();
+            assert_eq!(restarted.compile_options(), disabled);
+            assert!(
+                restarted.recent_maps.entries[0]
+                    .build_settings
+                    .pack_sky_assets
+            );
+            restarted.compiling = false;
+            restarted.open_recent_map(actor, &first, false).unwrap();
+            assert_eq!(restarted.compile_options(), retained);
+            let stored = restarted.recent_maps.entries[0].clone();
+            let mut incompatible = mounted_session(directory.path(), &other_game);
+            incompatible.configure_recent_maps(Ok(preferences.clone()));
+            let options = incompatible.compile_options();
+            incompatible.open_recent_map(actor, &first, false).unwrap();
+            assert_eq!(incompatible.compile_options(), options);
+            assert_eq!(incompatible.recent_maps.entries[0], stored);
+            assert_eq!(
+                incompatible.recent_maps()["entries"][0]["context_compatible"],
+                false
+            );
+            let mut unmounted = Session::new(Err("no mounted game".into()));
+            unmounted.configure_recent_maps(Ok(preferences));
+            let options = unmounted.compile_options();
+            unmounted.open_recent_map(actor, &first, false).unwrap();
+            assert_eq!(unmounted.compile_options(), options);
+            assert_eq!(unmounted.recent_maps.entries[0], stored);
+            assert_eq!(fs::read(&first).unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn invalid_sky_packing_recent_records_block_persistence_without_losing_context() {
+        let (directory, mut current) = fixture();
+        let path = map_file(directory.path(), "portable.vmf");
+        current.open(Actor::User, &path, false).unwrap();
+        current
+            .update_build_settings(
+                Actor::Agent,
+                BuildSettingsUpdate {
+                    pack_sky_assets: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let preferences = directory.path().join("preferences");
+        let storage = preferences.join(recent_maps::FILE_NAME);
+        let original: Value = serde_json::from_slice(&fs::read(&storage).unwrap()).unwrap();
+        let entries = current.recent_maps.entries.clone();
+        let options = current.compile_options();
+        let before = map_state(&current);
+        let mut invalid = Vec::new();
+        for value in [json!(null), json!("true"), json!(1)] {
+            let mut file = original.clone();
+            file["entries"][0]["build_settings"]["pack_sky_assets"] = value;
+            invalid.push(file);
+        }
+        let mut unknown = original;
+        unknown["entries"][0]["build_settings"]["pack_sky_asset"] = json!(true);
+        invalid.push(unknown);
+        for file in invalid {
+            let bytes = serde_json::to_vec(&file).unwrap();
+            fs::write(&storage, &bytes).unwrap();
+            current.configure_recent_maps(Ok(preferences.clone()));
+            assert_eq!(current.recent_maps()["persistence"], "blocked");
+            assert!(
+                current.recent_maps()["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("could not load")
+            );
+            assert_eq!(current.recent_maps.entries, entries);
+            assert_eq!(current.compile_options(), options);
+            assert_eq!(map_state(&current), before);
+            assert!(current.clear_recent_maps().is_err());
+            assert!(current.remove_recent_map(&path).is_err());
+            assert_eq!(fs::read(&storage).unwrap(), bytes);
+        }
     }
 
     #[test]

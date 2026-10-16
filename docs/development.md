@@ -847,6 +847,7 @@ desktop input or focus changes.
 ```sh
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-rotating-removal-check
 python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-rotating-removal-client --runtime
+python3 -B scripts/validate_rotating_removal_recovery.py --binary target/debug/hammerr-headless --output /tmp/hammerr-disable-wake-client --runtime --release-mode disable-wake
 ```
 
 The default authors two rotating doors, movable crates protected by a damage
@@ -868,6 +869,16 @@ must push its crate while the nonsolid control leaves its crate stable.
 assertion fails. This validates recovery after permanent restraint removal;
 contact refresh after **Disable** and broader crushing/blocking behavior remain
 unresolved.
+
+The experimental `--release-mode disable-wake` keeps all four restraints present
+but nonsolid, then queues one **Wake** on the same crate immediately before the
+retry **Open** in the same script tick. It retains every obstruction and recovery
+assertion and uses a distinct fixture receipt; a failed recovery exits with an
+error and retains observations rather than producing a passing aggregate. This
+tests a wake intervention without an authored impulse, teleport or replacement.
+The queued marker does not prove delivery or awake state. Neither outcome alone
+establishes a contact-cache cause, Disable-only recovery or a compiler hull
+defect. The default remains permanent **Kill** removal.
 
 
 ### Brush-model physics surfaces

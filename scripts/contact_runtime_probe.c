@@ -456,31 +456,25 @@ static bool resolve_tracked(void) {
         const char *expected = index == 0             ? "prop_physics"
                                : index < STABLE_COUNT ? "func_door_rotating"
                                                       : "func_brush";
-        const char *expected_model = index == 0 ? "models/props_junk/wood_crate001a.mdl" : NULL;
-        char name[128] = {0}, classname[128] = {0}, model[256] = {0};
-        bool name_returned = false, class_returned = false, model_returned = false;
+        char name[128] = {0}, classname[128] = {0};
+        bool name_returned = false, class_returned = false;
         bool name_ok = query_key(entity, "targetname", name, sizeof(name), &name_returned);
         bool class_ok = !invalidated && query_key(entity, "classname", classname, sizeof(classname),
                                                   &class_returned);
-        bool model_ok =
-            !invalidated && query_key(entity, "model", model, sizeof(model), &model_returned);
         bool identity_ok = name_ok && !strcmp(name, item->name) && class_ok;
-        bool class_model_ok = class_ok && !strcmp(classname, expected) &&
-                              (index != 0 || (model_ok && !strcmp(model, expected_model)));
-        if (!item->seen || !identity_ok || !class_model_ok) {
+        bool class_matches = class_ok && !strcmp(classname, expected);
+        if (!item->seen || !identity_ok || !class_matches) {
             query_diagnostic(item, entity, number, "targetname", name, sizeof(name), name_returned,
                              item->name);
             query_diagnostic(item, entity, number, "classname", classname, sizeof(classname),
                              class_returned, expected);
-            query_diagnostic(item, entity, number, "model", model, sizeof(model), model_returned,
-                             expected_model);
         }
         if (!identity_ok) {
             fail("ambiguous_entity_or_roundtrip");
             return false;
         }
-        if (!class_model_ok) {
-            fail("unexpected_entity_class_or_model");
+        if (!class_matches) {
+            fail("unexpected_entity_class");
             return false;
         }
         if (item->seen && (item->freed || item->entity != entity || item->edict != edict ||
@@ -573,6 +567,55 @@ static bool enumerate_objects(size_t *environment_count, size_t *object_count) {
 
 static bool finite_vector(Vector vector) {
     return isfinite(vector.x) && isfinite(vector.y) && isfinite(vector.z);
+}
+
+static bool copy_mapped_string(const char *source, char *value, size_t capacity, size_t *copied) {
+    uintptr_t start = (uintptr_t)source;
+    *copied = 0;
+    memset(value, 0, capacity);
+    if (!source)
+        return false;
+    for (size_t index = 0; index < capacity; index++) {
+        if (index > UINTPTR_MAX - start)
+            return false;
+        const void *at = (const void *)(start + index);
+        if (!mapped(at, 1, false))
+            return false;
+        memcpy(value + index, at, 1);
+        *copied = index + 1;
+        if (!value[index])
+            return true;
+    }
+    return false;
+}
+
+static bool verify_physics_name(const Tracked *crate) {
+    typedef const char *(*Name)(const void *);
+    Name name_at = (Name)method(crate->object, 0x1948a8, 75, &physics, 0x370f0);
+    if (!name_at)
+        return false;
+    const char *address = name_at(crate->object);
+    char name[256];
+    size_t copied;
+    bool readable = copy_mapped_string(address, name, sizeof(name), &copied);
+    const char *expected = "models/props_junk/wood_crate001a.mdl";
+    bool matches = readable && !strcmp(name, expected);
+    if (readable && (!sample_count || !matches))
+        query_diagnostic(crate, crate->entity, crate->index, "physics_debug_name", name,
+                         sizeof(name), true, expected);
+    if (!matches) {
+        emit(
+            "{\"event\":\"physics_name_failure\",\"sample\":%lu,\"object\":\"%p\",\"owner\":\"%p\",\"returned_pointer\":\"%p\",\"bounded_read_success\":%s,\"bytes_read\":%zu}\n",
+            sample_count, crate->object, crate->entity, (const void *)address,
+            readable ? "true" : "false", copied);
+        fail("unexpected_physics_debug_name");
+        return false;
+    }
+    emit(
+        "{\"event\":\"physics_name\",\"sample\":%lu,\"object\":\"%p\",\"owner\":\"%p\",\"collide\":\"%p\",\"returned_pointer\":\"%p\",\"name\":\"%s\",\"bounded_read_success\":true,\"bytes_read\":%zu,\"fixture_label_only\":true}\n",
+        sample_count, crate->object, crate->entity, crate->collide, (const void *)address, name,
+        copied);
+    return !invalidated;
 }
 
 static bool contacts(void *object, size_t *count) {
@@ -684,6 +727,8 @@ static void observe(void) {
              item->index, item->object_count, item->object, item->collide);
     }
     Tracked *crate = &tracked[0];
+    if (!verify_physics_name(crate))
+        return;
     typedef bool (*Asleep)(const void *);
     typedef void (*Velocity)(const void *, Vector *, Vector *);
     typedef float (*SimulationTime)(const void *);

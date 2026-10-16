@@ -210,6 +210,20 @@ def verify(output, release_mode):
         )
         for field in ["object", "owner", "collide"]:
             assert len({pointer(row[field]) for row in samples}) == 1, field
+        names = grouped.get("physics_name", [])
+        assert len(names) == len(samples)
+        assert [row["sample"] for row in names] == list(range(len(samples)))
+        expected_name = "models/props_junk/wood_crate001a.mdl"
+        for row, sample in zip(names, samples, strict=True):
+            assert row["bounded_read_success"] and row["fixture_label_only"]
+            assert row["name"] == expected_name
+            assert row["bytes_read"] == len(expected_name.encode()) + 1 <= 256
+            pointer(row["returned_pointer"])
+            assert (row["object"], row["owner"], row["collide"]) == (
+                sample["object"],
+                sample["owner"],
+                sample["collide"],
+            )
         for row in samples:
             vector(row["velocity"])
             vector(row["angular_velocity"])
@@ -360,6 +374,7 @@ def verify(output, release_mode):
                 "same_entity_object_collide_observed": True,
                 "sleeping_and_awake_directly_observed": True,
                 "snapshot_lifetime_checked": True,
+                "fixture_physics_debug_name": expected_name,
                 "limits": "Sampled pointer continuity does not exclude physics allocator reuse within a step or establish unchanged hull bytes. A valid observer does not establish recovery or a contact-cache cause.",
             }
         )

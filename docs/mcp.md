@@ -400,8 +400,8 @@ within ±65536 are required. Loaded model meshes and specialized lights retain
 precedence. Invalid/ambiguous size declarations expose an amber marker and
 `invalid_fgd_size`; working-region bounds remain unresolved with an explicit
 error. Picking, framing, area/volume selection and placement use the same valid
-bounds. Helper forms outside the box/color, property-sphere, literal-line and
-literal-icon scopes remain listed and unevaluated. Catalog source
+bounds. Helper forms outside the box/color, property-sphere, literal-line,
+literal-icon and literal-model scopes remain listed and unevaluated. Catalog source
 paths are available; individual inherited helpers lack file/line provenance.
 FGD reload changes no source values or Undo history.
 
@@ -583,6 +583,56 @@ placement, framing and working-region inclusion; image extents do not become
 selection targets. Read/render operations preserve source, history and camera.
 Animated icons, generic `sprite()` helpers, runtime `env_sprite` behavior and
 native Sprite rendering modes remain outside this feature.
+
+`get_entity_inspector.helpers.model_guide` reports one literal
+`studio("models/*.mdl")` or `studioprop("models/*.mdl")` declaration from the
+loaded FGD catalog. A class without either declaration returns null. Existing
+`load_entity_definitions`, inspector and `render_view` calls share the property
+panel and viewport's Session operations; no new tool or setting is added.
+
+The report contains `source:"fgd_literal"`, `helper`, exact `literal`,
+`literal_truncated`, canonical optional `path`, `declaration_supported`, `state`,
+`displayed`, `suppression_reason`, `error`, separate `visual_bounds`, optional
+`pose` (`static` or `reference`), `skin`, `body` and
+`material_policy:"flat_editor"`. State is `unsupported`, `not_loaded`, `ready`
+or `unavailable`. A valid declaration suppressed before lookup remains
+`not_loaded` without reading its asset; the scene geometry budget can reject a
+loaded asset as `unavailable`. `helpers.definition_sources` lists catalog files.
+This declaration provenance does not identify the winning MDL/VVD/VTX mount,
+and the report exposes no authored transform fields or per-helper file/line
+locations. `helpers.model_guide_limits` gives the supported scope and budgets.
+
+Only one exact literal path is admitted, at most 256 bytes, with no surrounding
+whitespace, traversal, controls or wildcards. Zero-argument, property-driven,
+extra-argument and multiple declarations remain unsupported. The shared model
+loader uses LOD0 static/reference geometry, existing pose/skin/body validation
+and unit-modelscale guards. Origins and complete visual bounds must remain
+finite within ±65536 units. At most 64 eligible source evaluations, including
+failed lookups, run in entity-ID order per scene, with 65,536 vertices and
+393,216 indices. The existing model cache holds at most 128 entries/256 MiB;
+MDL, VVD and DX90 VTX files cap at 64 MiB each. Report errors cap at 512 bytes.
+
+Guides display selected or unselected and follow displayed previews. Authored
+model fields, including an empty value, declared model properties, specialized
+lights/ropes, sprite/decal/overlay helpers and brush/nonpoint sources retain
+precedence. Invalid FGD size, hidden or working-region-excluded sources, invalid
+origins and scene budgets suppress display with explicit reasons. Missing,
+malformed, blank-body or oversized models retain the ordinary editable box and
+an error. Visual mesh triangles never become pick or placement surfaces;
+ordinary boxes retain bounds, contact, selection, snapping, framing and
+working-region inclusion.
+
+`flat_editor` uses the existing geometry renderer and editor material, including
+entity `rendercolor` tint, without guide VMT/VTF reads or shader fidelity.
+Guide-only cache entries defer material-name resolution and material-reload
+prefetch; an ordinary model preview may later resolve bindings on the same
+geometry. The guide stays flat. **Reload models** beneath the helper summary
+calls the same operation as `reload_model_assets`, refreshing cached successes
+and failures. Definition reload re-evaluates declarations; material reload does
+not reread model geometry. Inspection and rendering preserve source, Undo,
+camera and unrelated model-choice drafts, and add no stored `model` property.
+**Model details…** and `inspect_entity_model` continue to target authored model
+entities. Animated poses and engine collision fidelity remain unavailable.
 
 ### Portable sky assets
 
@@ -791,6 +841,9 @@ Source, mask, camera, viewport-size, visibility and grid changes guard the gestu
 - UI: **Edit terrain… → Operation → Subdivide base cage → Preview → Apply / Cancel**. Compilation uses the saved explicit rows and its existing mixed-resolution LOD rules; there is no extra compiler setting.
 
 ### Source model previews
+
+Literal FGD model guides use the separate `helpers.model_guide` report and keep
+ordinary helper-box spatial behavior.
 
 - `inspect_model` takes a `path` under `models/` and optional zero-based `skin` and native `body` number. It reads MDL44/48, VVD4 and DX90 VTX7 LOD0 data on the CPU, returning geometry counts, selected-body material paths, skin count, local/hull bounds and resource limits. `pose` is `static` or `reference`; `reference_bones` counts decoded pose bones, and `static_prop` reports asset eligibility. It preserves map/history and does not initialize graphics.
 - `inspect_entity_model` takes optional `id` (defaults to the selected entity). It reports the shared asset, authored skin, transformed bounds, displayed/hidden state and helper fallback reason from the rendered draft. Static meshes, checked reference poses and selected bodygroups at scale 1 and LOD 0 are supported. Unsupported/missing/malformed assets remain helpers and inspection errors explain unavailable data.

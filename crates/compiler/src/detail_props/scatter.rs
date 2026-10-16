@@ -152,12 +152,16 @@ fn model(nodes: &[Node]) -> Result<Model, String> {
             "sprite",
             "spritesize",
             "spriterandomscale",
+            "sprite_shape",
+            "shape_angle",
+            "shape_size",
+            "sway",
         ]
         .iter()
         .any(|key| node.key.eq_ignore_ascii_case(key))
         {
             return Err(format!(
-                "Detail dictionary field {} is unsupported; material scattering supports models and plain sprites without shapes or sway",
+                "Detail dictionary field {} is unsupported; material scattering supports models and static sprites without sway",
                 node.key
             ));
         }
@@ -168,6 +172,12 @@ fn model(nodes: &[Node]) -> Result<Model, String> {
         }
         Asset::Sprite(sprites::Definition::parse(nodes)?)
     } else {
+        if ["sprite_shape", "shape_angle", "shape_size", "sway"]
+            .into_iter()
+            .any(|key| nodes.iter().any(|node| node.key.eq_ignore_ascii_case(key)))
+        {
+            return Err("Detail sprite shape and sway fields require a sprite entry".into());
+        }
         if value(nodes, "spritesize")?.is_some() || value(nodes, "spriterandomscale")?.is_some() {
             return Err("Detail sprite size and random scale require a sprite entry".into());
         }
@@ -363,6 +373,12 @@ fn place(
         Asset::Sprite(sprite) => {
             prop.scale = random.sprite_scale(sprite.random_scale)?;
             prop.orientation = sprite.orientation;
+            prop.kind = sprites::KIND;
+            if let Some(shape) = sprite.shape {
+                prop.kind = shape.kind;
+                prop.shape_angle = shape.angle;
+                prop.shape_size = shape.size;
+            }
             builder.add_sprite(sprite.record, prop, leaf_point, control)
         }
     }

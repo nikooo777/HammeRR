@@ -16,6 +16,9 @@ STEAM_API_SHA256 = "c0cc3d2802e5f2463bfa0046c41d2f65a6335baaeefbba6c7dbd5681d5ca
 PRIVATE_CVARS = frozenset(
     {
         "bot_quota",
+        "cl_detail_avoid_force",
+        "cl_detail_avoid_radius",
+        "cl_detail_max_sway",
         "cl_drawhud",
         "con_logfile",
         "fps_max",

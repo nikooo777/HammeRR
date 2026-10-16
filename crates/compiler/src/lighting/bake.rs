@@ -810,14 +810,30 @@ pub(crate) fn bake(
         detail_model_centers: settings.detail_model_centers,
         options,
     };
-    let mut stats = bake_channel(&ctx, LightingKind::Ldr, bsp, report, &mut budget)?;
+    let mut detail_ldr = None;
+    let mut detail_hdr = None;
+    let mut stats = bake_channel(
+        &ctx,
+        LightingKind::Ldr,
+        bsp,
+        report,
+        &mut budget,
+        &mut detail_ldr,
+    )?;
     stats.work = budget.work;
     stats.smoothed_faces = normals.faces;
     stats.smoothed_corners = normals.corners;
     stats.normal_work = normal_work;
     stats.prop_shadows = prop_stats;
     if dual && !report.has_errors() {
-        let hdr = bake_channel(&ctx, LightingKind::Hdr, bsp, report, &mut budget)?;
+        let hdr = bake_channel(
+            &ctx,
+            LightingKind::Hdr,
+            bsp,
+            report,
+            &mut budget,
+            &mut detail_hdr,
+        )?;
         stats.hdr = Some(crate::HdrLightingStats {
             world_lights: hdr.lights,
             light_styles: hdr.light_styles,
@@ -853,6 +869,14 @@ pub(crate) fn bake(
         .checked_add(stats.hdr.as_ref().map_or(0, |hdr| hdr.lighting_bytes))
         .filter(|&bytes| bytes <= MAX_TOTAL_LIGHTING_BYTES)
         .ok_or("Dual-channel lighting exceeds its aggregate 32 MiB sample budget")?;
+    let style_start = budget.work;
+    super::details::finish(bsp, detail_ldr.as_ref(), detail_hdr.as_ref(), &mut budget)?;
+    let style_work = budget.work - style_start;
+    if let Some(hdr) = &mut stats.hdr {
+        hdr.lighting_work += style_work;
+    } else {
+        stats.work += style_work;
+    }
     stats.total_work = budget.work;
     Ok(stats)
 }
@@ -881,6 +905,7 @@ fn bake_channel(
     bsp: &mut Bsp,
     report: &mut Report,
     budget: &mut Budget<'_>,
+    detail_lighting: &mut Option<super::details::Channel>,
 ) -> Result<BakeStats, String> {
     let start_work = budget.work;
     let ChannelContext {
@@ -1201,7 +1226,7 @@ fn bake_channel(
         report,
         budget,
     )?;
-    super::details::bake(
+    *detail_lighting = super::details::bake(
         &super::details::Context {
             map,
             tree,

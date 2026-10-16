@@ -10,7 +10,7 @@ pub const MAX_DETAIL_PROP_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_DETAIL_PROP_MODELS: usize = 1024;
 pub const MAX_DETAIL_PROPS: usize = 16_384;
 const MAX_SPRITES: usize = 4096;
-const MAX_LIGHTING: usize = 65_536;
+pub const MAX_DETAIL_PROP_LIGHTING: usize = 65_536;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
@@ -157,7 +157,7 @@ impl DetailProps {
             }
             if prop.light_style_count != 0
                 && u64::from(prop.light_styles) + u64::from(prop.light_style_count)
-                    > MAX_LIGHTING as u64
+                    > MAX_DETAIL_PROP_LIGHTING as u64
             {
                 return Err(invalid(
                     "detail-prop light-style range exceeds supported bounds",
@@ -255,6 +255,84 @@ impl Bsp {
         Ok(())
     }
 
+    pub fn set_detail_props_with_lighting(
+        &mut self,
+        props: &DetailProps,
+        ldr: &[DetailPropLighting],
+        hdr: Option<&[DetailPropLighting]>,
+    ) -> io::Result<()> {
+        let total = ldr
+            .len()
+            .checked_add(hdr.map_or(0, <[DetailPropLighting]>::len));
+        if props.props.len() > MAX_DETAIL_PROPS
+            || props.models.len() > MAX_DETAIL_PROP_MODELS
+            || props.sprites.len() > MAX_SPRITES
+            || total.is_none_or(|count| count > MAX_DETAIL_PROP_LIGHTING)
+            || ldr
+                .iter()
+                .chain(hdr.into_iter().flatten())
+                .any(|record| !(1..=63).contains(&record.style))
+            || hdr.is_some_and(|hdr| {
+                hdr.len() != ldr.len() || hdr.iter().zip(ldr).any(|(a, b)| a.style != b.style)
+            })
+        {
+            return Err(invalid(
+                "detail-prop lighting exceeds its total bound or channel style layout differs",
+            ));
+        }
+        for prop in &props.props {
+            let start = prop.light_styles as usize;
+            let end = start.checked_add(usize::from(prop.light_style_count));
+            if prop.light_style_count > 63
+                || end.is_none_or(|end| end > ldr.len()) && prop.light_style_count != 0
+            {
+                return Err(invalid(
+                    "detail-prop lighting range exceeds its bounded style array",
+                ));
+            }
+            if prop.light_style_count != 0
+                && ldr[start..end.unwrap()]
+                    .windows(2)
+                    .any(|pair| pair[0].style >= pair[1].style)
+            {
+                return Err(invalid(
+                    "detail-prop receiver styles must be distinct and increasing",
+                ));
+            }
+        }
+        let data = props.to_bytes(self.records::<Leaf>()?.len())?;
+        let mut ldr_data = Vec::new();
+        append(&mut ldr_data, ldr);
+        let hdr_data = hdr.map(|records| {
+            let mut data = Vec::new();
+            append(&mut data, records);
+            data
+        });
+        self.game_lumps
+            .retain(|lump| ![*b"dprp", *b"dplt", *b"dplh"].contains(&lump.id));
+        self.game_lumps.push(GameLump {
+            id: *b"dprp",
+            flags: 0,
+            version: 4,
+            data,
+        });
+        self.game_lumps.push(GameLump {
+            id: *b"dplt",
+            flags: 0,
+            version: 0,
+            data: ldr_data,
+        });
+        if let Some(data) = hdr_data {
+            self.game_lumps.push(GameLump {
+                id: *b"dplh",
+                flags: 0,
+                version: 0,
+                data,
+            });
+        }
+        Ok(())
+    }
+
     pub fn detail_prop_lighting(&self, hdr: bool) -> io::Result<Option<Vec<DetailPropLighting>>> {
         let id = if hdr { *b"dplh" } else { *b"dplt" };
         let mut lumps = self.game_lumps.iter().filter(|lump| lump.id == id);
@@ -269,7 +347,7 @@ impl Bsp {
             return Err(invalid("unsupported detail-prop lighting game lump"));
         }
         let mut data = lump.data.as_slice();
-        let result = records(&mut data, MAX_LIGHTING)?;
+        let result = records(&mut data, MAX_DETAIL_PROP_LIGHTING)?;
         if !data.is_empty() {
             return Err(invalid("detail-prop lighting payload has trailing bytes"));
         }

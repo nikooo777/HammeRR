@@ -6,7 +6,7 @@ from pathlib import Path
 
 import validate_cubemap_capture_probe as probe
 import validate_native_runtime as runtime
-from validate_compile_jobs import stopped_on_exit, wait_job
+from validate_compile_jobs import stopped_on_exit
 from validate_cubemap_reflections import ppm
 from validate_detail_props import SMALL_BUSH, compile_pair, detail_records
 from validate_face_lighting import DEFAULT_BINARY, Client, detail, face_ref
@@ -104,19 +104,7 @@ def validate(args):
             _, dual, _ = compile_pair(client, args.output, "dual-shared-base", ids)
             dual_rows = detail_records(dual, allow_sprites=True, allow_baked=True)
             require(all(linear(row)[2] > 0 and linear(row)[0] == linear(row)[1] == 0 for row in dual_rows["props"]), "Dual-channel details did not retain the final HDR shared base")
-            previous = args.output / "rejected-style.bsp"
-            previous.write_bytes(dual)
-            client.call("set_entity_properties", {"id": light, "set": {"style": "1"}})
-            before = detail(client, ids), client.call("get_map_info")["undo"]
-            response = client.call("compile_map", {"path": str(previous)}, error=True)
-            failure = json.loads(response["content"][0]["text"])
-            require(not failure["success"] and "receives nonzero light style 1" in json.dumps(failure["diagnostics"]), failure)
-            require(previous.read_bytes() == dual and (detail(client, ids), client.call("get_map_info")["undo"]) == before, "Rejected style bake changed source/history/output")
-            client.call("start_compile", {"path": str(previous)})
-            job = wait_job(client)
-            require(job["status"] == "failed" and previous.read_bytes() == dual and (detail(client, ids), client.call("get_map_info")["undo"]) == before, job)
-            client.call("set_entity_properties", {"id": light, "set": {"style": "0"}})
-            result = {"success": True, "controls": controls, "fixture_game": str(game), "source_history_preserved": True, "foreground_background_exact": True, "fullbright_white_default_preserved": True, "hdr_shared_base": True, "style_rejected_atomically": True, "native_exercised": False}
+            result = {"success": True, "controls": controls, "fixture_game": str(game), "light_id": light, "object_ids": ids, "fixture_source": str(args.output / "bright.vmf"), "source_history_preserved": True, "foreground_background_exact": True, "fullbright_white_default_preserved": True, "hdr_shared_base": True, "native_exercised": False}
             (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
             return result
     finally:

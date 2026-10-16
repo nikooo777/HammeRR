@@ -691,8 +691,8 @@ impl Controller {
                     .as_u64()
                     .unwrap_or_default();
                 let lighting = match result["stats"]["lighting_mode"].as_str() {
-                    Some("direct_ldr") => "Baked static LDR lighting",
-                    Some("direct_ldr_hdr") => "Baked static HDR shared lighting",
+                    Some("direct_ldr") => "Baked LDR lighting",
+                    Some("direct_ldr_hdr") => "Baked HDR shared lighting",
                     _ => "Unbaked white lighting",
                 };
                 format!("\nDetail props: {count} · Model assets: {models} · Sprite entries: {sprites} · {lighting} · No collision")

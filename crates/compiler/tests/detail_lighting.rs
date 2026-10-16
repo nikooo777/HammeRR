@@ -197,7 +197,7 @@ fn detail_lighting_keeps_fullbright_and_geometry_and_handles_zero_and_shadowed_l
 }
 
 #[test]
-fn only_actual_direct_or_reflected_styles_at_detail_receivers_reject_atomically() {
+fn only_actual_direct_styles_allocate_native_detail_records() {
     for (origin, extra) in [
         ("0.5 0.5 180", vec![("_distance", "32")]),
         ("0.5 0.5 180", vec![("_light", "0 0 0 0")]),
@@ -229,28 +229,25 @@ fn only_actual_direct_or_reflected_styles_at_detail_receivers_reject_atomically(
         ],
     );
     let before = fixture.source.write(&Default::default());
-    let path = fixture.directory.path().join("previous.bsp");
-    std::fs::write(&path, b"previous output").unwrap();
-    let output = compiler::compile_with_options(
-        &fixture.source,
-        &fixture.game,
-        options(LightingMode::DirectLdr, 0),
+    let bsp = compiled(&fixture, LightingMode::DirectLdr, 0);
+    let props = bsp.detail_props().unwrap().unwrap();
+    assert_eq!(
+        (
+            props.props[0].light_styles,
+            props.props[0].light_style_count
+        ),
+        (0, 1)
     );
-    assert!(output.report.has_errors() && output.bsp.is_none());
-    assert!(
-        output
-            .report
-            .diagnostics
-            .iter()
-            .any(|item| item.message.contains("receives nonzero light style 1"))
-    );
-    assert!(!output.write(&path).unwrap());
-    assert_eq!(std::fs::read(path).unwrap(), b"previous output");
+    assert_eq!(color(&bsp), DVec3::ZERO);
+    let styles = bsp.detail_prop_lighting(false).unwrap().unwrap();
+    assert_eq!(styles.len(), 1);
+    assert_eq!(styles[0].style, 1);
+    assert_eq!(styles[0].lighting.linear(), [60.0; 3]);
     assert_eq!(fixture.source.write(&Default::default()), before);
 }
 
 #[test]
-fn reflected_styles_are_checked_even_when_the_direct_normal_faces_away() {
+fn reflected_styles_reach_details_even_when_the_direct_normal_faces_away() {
     let mut fixture = fixture();
     std::fs::write(
         fixture.directory.path().join("materials/test/lit.vmt"),
@@ -288,21 +285,13 @@ fn reflected_styles_are_checked_even_when_the_direct_normal_faces_away() {
     assert!(base.x > 0.0 && base.y > 0.0 && base.z == 0.0, "{base}");
     assert!(bounced.x > base.x, "{base} -> {bounced}");
     fixture.source.entities[light].properties.set("style", "1");
-    let output = compiler::compile_with_options(
-        &fixture.source,
-        &fixture.game,
-        options(LightingMode::DirectLdr, 0),
-    );
-    assert!(
-        output.bsp.is_none()
-            && output
-                .report
-                .diagnostics
-                .iter()
-                .any(|item| item.message.contains("receives nonzero light style 1")),
-        "{:?}",
-        output.report
-    );
+    let bsp = compiled(&fixture, LightingMode::DirectLdr, 0);
+    let extra = bsp.detail_prop_lighting(false).unwrap().unwrap();
+    assert_eq!(extra.len(), 1);
+    assert_eq!(extra[0].style, 1);
+    let reflected = DVec3::from_array(extra[0].lighting.linear());
+    assert!((reflected * 2.0 - base).abs().max_element() <= 1.0);
+    assert_eq!(color(&bsp), DVec3::ZERO);
 }
 
 #[test]
@@ -457,4 +446,79 @@ fn material_sprites_and_explicit_models_share_baked_color_without_reseeding() {
         baked_bsp.to_bytes()
     );
     assert_eq!(fixture.source.write(&Default::default()), before);
+}
+
+#[test]
+fn detail_style_channel_union_keeps_shared_offsets_and_zero_fills_missing_channels() {
+    let mut fixture = fixture();
+    entity(
+        &mut fixture.source,
+        "prop_detail",
+        "64 0 16",
+        &[("model", "models/props/test.mdl")],
+    );
+    for (style, ldr, hdr) in [
+        ("1", "255 0 0 120", "0 0 0 0"),
+        ("2", "0 0 0 0", "0 0 255 80"),
+    ] {
+        entity(
+            &mut fixture.source,
+            "light",
+            "0.5 0.5 180",
+            &[
+                ("style", style),
+                ("_light", ldr),
+                ("_lightHDR", hdr),
+                ("_constant_attn", "1"),
+                ("_quadratic_attn", "0"),
+            ],
+        );
+    }
+    let before = fixture.source.write(&Default::default());
+    let bsp = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
+    let props = bsp.detail_props().unwrap().unwrap();
+    let ldr = bsp.detail_prop_lighting(false).unwrap().unwrap();
+    let hdr = bsp.detail_prop_lighting(true).unwrap().unwrap();
+    assert_eq!(ldr.len(), 4);
+    assert_eq!(
+        ldr.iter().map(|value| value.style).collect::<Vec<_>>(),
+        [1, 2, 1, 2]
+    );
+    assert_eq!(
+        ldr.iter().map(|value| value.style).collect::<Vec<_>>(),
+        hdr.iter().map(|value| value.style).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        props
+            .props
+            .iter()
+            .map(|prop| (prop.light_styles, prop.light_style_count))
+            .collect::<Vec<_>>(),
+        [(0, 2), (2, 2)]
+    );
+    assert_eq!(ldr[0].lighting.linear(), [60.0, 0.0, 0.0]);
+    assert_eq!(hdr[0].lighting.linear(), [0.0; 3]);
+    assert_eq!(ldr[1].lighting.linear(), [0.0; 3]);
+    assert_eq!(hdr[1].lighting.linear(), [0.0, 0.0, 40.0]);
+    assert_eq!(color(&bsp), DVec3::ZERO);
+    assert_eq!(
+        compiled(&fixture, LightingMode::DirectLdrHdr, 0).to_bytes(),
+        bsp.to_bytes()
+    );
+    assert_eq!(fixture.source.write(&Default::default()), before);
+    let reopened = Vmf::parse(&before).unwrap();
+    assert_eq!(
+        compiler::compile_with_options(
+            &reopened,
+            &fixture.game,
+            options(LightingMode::DirectLdrHdr, 0)
+        )
+        .bsp
+        .unwrap()
+        .to_bytes(),
+        bsp.to_bytes()
+    );
+    let fullbright = compiled(&fixture, LightingMode::Fullbright, 0);
+    assert!(fullbright.detail_prop_lighting(false).unwrap().is_none());
+    assert!(fullbright.detail_prop_lighting(true).unwrap().is_none());
 }

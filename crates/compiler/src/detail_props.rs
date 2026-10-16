@@ -13,6 +13,7 @@ use crate::{
 
 mod assets;
 mod scatter;
+mod shapes;
 mod sprites;
 
 const MAX_PROPS: usize = 16_384;
@@ -221,13 +222,7 @@ impl<'a> Builder<'a> {
         leaf_point: DVec3,
         control: &Control,
     ) -> Result<(), String> {
-        sprites::check_bounds(
-            sprite,
-            DVec3::from_array(prop.origin.map(f64::from)),
-            DVec3::from_array(prop.angles.map(f64::from)),
-            prop.orientation,
-            prop.scale,
-        )?;
+        sprites::check_prop_bounds(sprite, &prop)?;
         if !self.sprite_atlas_checked {
             self.validator
                 .sprite_atlas(self.fs, &self.sprite_material, control)?;
@@ -246,7 +241,6 @@ impl<'a> Builder<'a> {
             index
         };
         prop.model = index;
-        prop.kind = sprites::KIND;
         self.add_record(prop, leaf_point, control)
     }
 
@@ -360,7 +354,7 @@ pub(crate) fn bake(
         builder.props.props.sort_by_key(|prop| prop.leaf);
         bsp.set_detail_props(&builder.props)
             .map_err(|error| error.to_string())?;
-        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models and vertical billboards; Fullbright uses unbaked white lighting, while lit builds bake static detail colors; shaped sprites and nonzero detail light styles remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models, plain sprites and static cross/tri shapes; Fullbright uses unbaked white lighting, while lit builds bake direct, ambient and style colors; authored sway is unsupported", None, None));
     }
     let mut model_centers = vec![DVec3::ZERO; builder.props.models.len()];
     for &(index, bounds) in builder.models.values() {

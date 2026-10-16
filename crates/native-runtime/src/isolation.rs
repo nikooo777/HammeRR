@@ -63,6 +63,9 @@ impl Launch {
                 "Native isolation requires a private owned capture directory",
             ));
         }
+        let scratch = directory.join("tmp");
+        fs::create_dir(&scratch)?;
+        fs::set_permissions(&scratch, fs::Permissions::from_mode(0o700))?;
         let info_path = directory.join("isolation-info.json");
         let info = OpenOptions::new()
             .write(true)
@@ -71,6 +74,7 @@ impl Launch {
             .open(&info_path)?;
         let mut command = Command::new(preflight()?);
         command
+            .env("TMPDIR", &scratch)
             .args([
                 "--die-with-parent",
                 "--ro-bind",
@@ -184,7 +188,7 @@ mod tests {
         let directory = directory.path().canonicalize().unwrap();
         let program = Path::new("/bin/sh").canonicalize().unwrap();
         let mut launch = Launch::new(&directory, &program).unwrap();
-        launch.command.args(["-c", "if (printf changed > \"$1/asset\") 2>/dev/null; then exit 11; fi; if (printf cache > \"$1/sound/sound.cache\") 2>/dev/null; then exit 12; fi; printf owned > \"$2/output\"; printf '%s' \"$$\" > \"$2/pid\"; while test ! -f \"$2/release\"; do sleep 0.02; done", "fixture"])
+        launch.command.args(["-c", "if (printf changed > \"$1/asset\") 2>/dev/null; then exit 11; fi; if (printf cache > \"$1/sound/sound.cache\") 2>/dev/null; then exit 12; fi; test \"$TMPDIR\" = \"$2/tmp\" || exit 13; printf lock > \"$TMPDIR/source_engine_fixture.lock\" || exit 14; printf scratch > \"$TMPDIR/scratch\" || exit 15; printf owned > \"$2/output\"; printf '%s' \"$$\" > \"$2/pid\"; while test ! -f \"$2/release\"; do sleep 0.02; done", "fixture"])
             .arg(source.path()).arg(&directory).process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         let mut child = launch.spawn().unwrap();
         let result: io::Result<()> = (|| {
@@ -219,6 +223,8 @@ mod tests {
             if fs::read(source.path().join("asset"))? != b"original"
                 || source.path().join("sound/sound.cache").exists()
                 || fs::read(directory.join("output"))? != b"owned"
+                || fs::read(directory.join("tmp/source_engine_fixture.lock"))? != b"lock"
+                || fs::read(directory.join("tmp/scratch"))? != b"scratch"
             {
                 return Err(invalid(
                     "Isolation fixture did not protect sources and allow private output",

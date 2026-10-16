@@ -205,7 +205,7 @@ impl Session {
             origin: ray.origin,
             direction: ray.direction.normalize(),
         };
-        let grids = self.terrain_grids(faces, true)?;
+        let grids = self.terrain_surface_grids(faces, true)?;
         let hidden = self.hidden_terrain_tool_faces();
         let hit = query::pick_face_filtered(
             self.render_document(),
@@ -263,7 +263,7 @@ impl Session {
         }
         let hidden = self.hidden_terrain_tool_faces();
         let mut bounds = None;
-        for row in self.terrain_triangles(&faces, true)? {
+        for row in self.terrain_surface_triangles(&faces, true)? {
             if self.component_hidden(row.face.solid, &HashSet::new()) || hidden.contains(&row.face)
             {
                 continue;
@@ -305,7 +305,7 @@ impl Session {
         let selected = highlight.selected.clone();
         let faces = highlight.powers.keys().copied().collect::<Vec<_>>();
         let hidden = self.hidden_terrain_tool_faces();
-        let Ok(rows) = self.terrain_triangles(&faces, true) else {
+        let Ok(rows) = self.terrain_surface_triangles(&faces, true) else {
             return;
         };
         for row in rows {
@@ -518,7 +518,7 @@ impl Session {
     ) -> Result<Vec<(FaceId, Vec<usize>)>, String> {
         let spec = self.checked_volume(token)?.spec;
         let region = map_core::region::Region::from_bounds(spec.mins, spec.maxs)?;
-        let rows = self.terrain_triangles(faces, true)?;
+        let rows = self.terrain_surface_triangles(faces, true)?;
         let hidden = self.hidden_terrain_tool_faces();
         let mut targets = Vec::new();
         for row in rows {

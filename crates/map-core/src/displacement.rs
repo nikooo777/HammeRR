@@ -6,12 +6,14 @@ use crate::brush::Face;
 pub mod brush;
 pub mod collision;
 pub mod edit;
+pub mod lod;
 pub mod neighbors;
 pub mod resample;
 pub mod sew;
 pub mod smoothing;
 pub mod stroke;
 pub mod subdivide;
+pub mod surface;
 pub mod triangles;
 
 #[derive(Debug, Clone)]

@@ -151,7 +151,7 @@ impl Session {
         }) {
             return Err("Select visible terrain vertices for handles".into());
         }
-        let grids = self.terrain_grids(&faces, false)?;
+        let grids = self.terrain_surface_grids(&faces, false)?;
         let mut mins = DVec3::splat(f64::INFINITY);
         let mut maxs = DVec3::splat(f64::NEG_INFINITY);
         for grid in &grids {

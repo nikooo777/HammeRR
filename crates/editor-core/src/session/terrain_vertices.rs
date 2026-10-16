@@ -113,7 +113,7 @@ impl Session {
         let Some(hit) = self.pick_terrain_triangle(ray, faces)? else {
             return Ok(None);
         };
-        let grids = self.terrain_grids(&[hit.triangle.face], true)?;
+        let grids = self.terrain_surface_grids(&[hit.triangle.face], true)?;
         let grid = &grids[0];
         let indices = map_core::displacement::triangles::indices(grid.power)
             .map_err(|error| error.to_string())?[hit.triangle.triangle];
@@ -156,7 +156,7 @@ impl Session {
             .map(|grid| (grid.face, grid.power))
             .collect::<BTreeMap<_, _>>();
         let faces = grids.iter().map(|grid| grid.face).collect::<Vec<_>>();
-        let grids = self.terrain_grids(&faces, true)?;
+        let grids = self.terrain_surface_grids(&faces, true)?;
         if grids
             .iter()
             .any(|grid| powers.get(&grid.face) != Some(&grid.power))
@@ -200,7 +200,7 @@ impl Session {
             return;
         }
         let hidden = self.hidden_terrain_tool_faces();
-        let Ok(grids) = self.terrain_grids(&faces, true) else {
+        let Ok(grids) = self.terrain_surface_grids(&faces, true) else {
             return;
         };
         for grid in grids {
@@ -230,7 +230,7 @@ impl Session {
     ) -> Result<Vec<(FaceId, Vec<usize>)>, String> {
         let spec = self.checked_volume(token)?.spec;
         let region = map_core::region::Region::from_bounds(spec.mins, spec.maxs)?;
-        let grids = self.terrain_grids(faces, true)?;
+        let grids = self.terrain_surface_grids(faces, true)?;
         let hidden = self.hidden_terrain_tool_faces();
         let mut targets = Vec::new();
         for grid in grids {

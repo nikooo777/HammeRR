@@ -133,6 +133,7 @@ impl Region {
         entity_bounds: impl Fn(&Entity) -> Option<(DVec3, DVec3)>,
     ) -> Selection {
         let mut result = Selection::default();
+        let terrain = crate::displacement::surface::prepare(document.vmf());
         for id in document.objects() {
             let solids: Vec<_> = match id {
                 ObjectId::Solid(id) => document.solid(id).into_iter().collect(),
@@ -166,12 +167,11 @@ impl Region {
                         .faces
                         .iter()
                         .filter_map(|face| {
-                            let info = solid.sides[face.side].displacement.as_ref()?;
-                            let mesh = crate::DisplacementMesh::build(face, info).ok()?;
-                            mesh.positions
-                                .iter()
-                                .all(|point| point.is_finite())
-                                .then_some((face.side, mesh))
+                            let mesh = terrain.get(&FaceId {
+                                solid: solid.id,
+                                side: solid.sides[face.side].id,
+                            })?;
+                            Some((face.side, mesh))
                         })
                         .collect::<Vec<_>>();
                     let surface_matches = |mesh: &crate::DisplacementMesh| {

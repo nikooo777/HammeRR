@@ -121,6 +121,7 @@ impl Picker {
         include_entity: impl Fn(&Entity) -> bool,
     ) -> Self {
         let mut primitives = Vec::new();
+        let surfaces = crate::displacement::surface::prepare(document.vmf());
         let mut add = |order, object, solid: &Solid| {
             if solid.hidden || !include_solid(solid) {
                 return;
@@ -134,12 +135,11 @@ impl Picker {
                     .iter()
                     .filter_map(|face| {
                         let side = &solid.sides[face.side];
-                        let info = side.displacement.as_ref()?;
-                        let mesh = crate::DisplacementMesh::build(face, info).ok()?;
-                        mesh.positions
-                            .iter()
-                            .all(|point| point.is_finite())
-                            .then_some((side.id, mesh))
+                        let mesh = surfaces.get(&crate::surface::FaceId {
+                            solid: solid.id,
+                            side: side.id,
+                        })?;
+                        Some((side.id, mesh))
                     })
                     .flat_map(|(side, mesh)| {
                         mesh.triangles()

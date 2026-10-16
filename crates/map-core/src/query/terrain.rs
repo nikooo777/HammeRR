@@ -87,9 +87,16 @@ pub(super) fn pick(
     ray: &Ray,
     solid: &Solid,
     include_face: &impl Fn(&Solid, &Side, DVec3) -> bool,
+    surfaces: &crate::displacement::surface::Prepared,
 ) -> Option<(f64, usize)> {
     let mut nearest = None::<(f64, usize)>;
-    for (side, mesh) in meshes(solid) {
+    for (side, source) in solid.sides.iter().enumerate() {
+        let Some(mesh) = surfaces.get(&crate::surface::FaceId {
+            solid: solid.id,
+            side: source.id,
+        }) else {
+            continue;
+        };
         let (mins, maxs) = mesh.positions.iter().fold(
             (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
             |(lo, hi), point| (lo.min(*point), hi.max(*point)),

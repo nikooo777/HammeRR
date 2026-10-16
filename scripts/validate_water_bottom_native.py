@@ -503,12 +503,15 @@ def valid_pose(row, vertical_sides=False):
         return False
     eye, angle = list(configured.values())[int(phase)]
     expected_yaw = -90 if vertical_sides and phase == 1 else 0
+    yaw_error = (
+        abs((yaw - expected_yaw + 180) % 360 - 180) if vertical_sides else abs(yaw)
+    )
     return (
         team == 2
         and health == 100
         and max(abs(x), abs(y), abs(z - eye)) < 1
         and abs(pitch - angle) < 1
-        and abs(yaw - expected_yaw) < 1
+        and yaw_error < 1
         and abs(roll) < 1
         and (0 <= wet < 3 if phase == 0 else wet == 3)
     )

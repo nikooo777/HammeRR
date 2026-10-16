@@ -524,13 +524,17 @@ impl Session {
             {
                 return Err("Map, content, runtime or build settings changed during reflection capture; previous output preserved".into());
             }
-            if self
+            let job = self
                 .compilation
                 .job
                 .as_ref()
-                .is_none_or(|job| job.token != result.token)
-            {
-                return Err("Reflection compile job was replaced".into());
+                .filter(|job| job.token == result.token)
+                .ok_or("Reflection compile job was replaced")?;
+            if job.source_path != self.path {
+                return Err(
+                    "Map source path changed during reflection capture; previous output preserved"
+                        .into(),
+                );
             }
             result.control.checkpoint()?;
             let pending = publication

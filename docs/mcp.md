@@ -509,7 +509,7 @@ For point/spot/sun lights, HDR selects `_lightHDR`, then `_light`; eight-number 
 
 `hdr.map_data_present` reports nonempty HDR light samples, world lights and ambient samples (native lumps 53/54/55). **Build details…** shows **HDR data ready** or **HDR unavailable: incomplete map data**. Legitimately empty output preserves a valid dual/LDR BSP and names the missing arrays in diagnostics; it receives no dummy emitters or probes. Input, solve, budget and cancellation failures preserve prior output. This flag describes map-data eligibility, not the game's selected channel. CS:S selects the baked LDR or HDR channel according to its HDR setting and hardware support; select that setting before a fresh map load.
 
-HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. HDR skybox textures, editor HDR previews, exposure authoring and baked prop lightmaps remain unavailable. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
+HammeRR limits are 16 MiB of samples, 8,192 world lights and 65,536 probes per channel, 32 MiB total samples and one cancellable 100-million-work budget covering preparation and both passes. A shared 512 MiB live channel-allocation budget also applies; source assets retain their separate reader limits. Authored mounted HDR sky families retain the native material path; sky-specific HDR asset validation, portable custom sky packing, editor HDR previews, exposure authoring and baked prop lightmaps remain unavailable. Paired cubemap capture uses **Generate reflections** and the guarded workflow above. See [Compile and play](compile-and-play.md#hdr-channels).
 
 ### Water material binding
 
@@ -780,7 +780,9 @@ This is a display filter, independent of compile regions; see
 
 `get_map_info.skybox` and `render_view` image metadata report `name`, `ready`, `summary` and per-face `suffix`, `material`, `issue` and `size`. An empty `skyname` returns `name: null` and `ready: false`. Missing or unsupported faces leave the ordinary tool surfaces visible. Axis-aligned VMT scale/translation and unequal face dimensions are supported, within 4096 pixels per axis and 64 MiB per texture file.
 
-Preview controls leave VMF and Undo unchanged; author `skyname` through the existing world-property draft. Sky surfaces retain depth, picking and visibility filtering. Planar, flat, wireframe and diagnostic views retain their usual behavior. 3D sky-camera transforms, HDR, fog, exposure and animated materials are outside this preview; see [2D sky preview](sky.md).
+Preview controls leave VMF and Undo unchanged; author `skyname` through `begin_property_edit` with `world: true`. Pass its token to `update_property_edit` with `changes: [{"action":"set","key":"skyname","value":"sky_dust_hdr"}]`, then to `commit_property_edit`. This is the same undoable **World settings…** edit. CS:S uses the exact mounted family; it does not append `_hdr` automatically. A stock HDR family's LDR fallback can make this preview ready without validating its HDR textures or establishing the game's selected channel. Compilation preserves the name but does not automatically pack original custom sky assets. See [Compiled HDR skies](sky.md#compiled-hdr-skies).
+
+Sky surfaces retain depth, picking and visibility filtering. Planar, flat, wireframe and diagnostic views retain their usual behavior. 3D sky-camera transforms, HDR rendering, fog, exposure and animated materials are outside this preview; see [2D sky preview](sky.md).
 
 ### Fog preview
 

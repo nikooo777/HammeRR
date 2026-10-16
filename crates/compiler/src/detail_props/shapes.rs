@@ -22,6 +22,12 @@ impl Shape {
             }
             return Ok(None);
         };
+        let angle = number(nodes, "shape_angle", 0.0, 0.0, 255.0)?;
+        let size = number(nodes, "shape_size", 0.0, 0.0, 1.0)?;
+        Self::parameters(name, angle, size).map(Some)
+    }
+
+    pub fn parameters(name: &str, angle: f64, size: f64) -> Result<Self, String> {
         let kind = if name.eq_ignore_ascii_case("cross") {
             CROSS
         } else if name.eq_ignore_ascii_case("tri") {
@@ -29,19 +35,21 @@ impl Shape {
         } else {
             return Err("Detail sprite_shape must be cross or tri".into());
         };
-        let angle = number(nodes, "shape_angle", 0.0, 0.0, 255.0)?;
-        if angle.fract() != 0.0 {
+        if !angle.is_finite() || !(0.0..=255.0).contains(&angle) || angle.fract() != 0.0 {
             return Err("Detail shape_angle must be an integer within 0–255".into());
         }
-        let size = number(nodes, "shape_size", 0.0, 0.0, 1.0)? as f32;
+        if !size.is_finite() || !(0.0..=1.0).contains(&size) {
+            return Err("Detail shape_size must be finite and within 0–1".into());
+        }
+        let size = size as f32;
         if kind == CROSS && (angle != 0.0 || size != 0.0) {
             return Err("Cross detail shapes require shape_angle=0 and shape_size=0; the native cross geometry ignores these parameters".into());
         }
-        Ok(Some(Self {
+        Ok(Self {
             kind,
             angle: angle as u8,
             size: (255.0 * f64::from(size)) as u8,
-        }))
+        })
     }
 
     fn quads(self, sprite: DetailSprite, origin: DVec3, angles: DVec3) -> Vec<[DVec3; 4]> {
@@ -101,8 +109,7 @@ impl Shape {
         scale: f32,
     ) -> Result<(), String> {
         super::sprites::check_geometry(sprite, scale)?;
-        super::sprites::check_native_scale(scale)?;
-        super::sprites::check_origin(origin)?;
+        super::sprites::check_native_transform(scale, origin)?;
         if !origin.is_finite()
             || !angles.is_finite()
             || !matches!(self.kind, CROSS | TRI)

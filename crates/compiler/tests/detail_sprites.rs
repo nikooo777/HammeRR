@@ -515,6 +515,218 @@ fn explicit_sprites_preserve_sdk_fields_deduplication_and_runtime_consumption() 
 }
 
 #[test]
+fn explicit_sprite_controls_share_native_records_and_preserve_zero_defaults() {
+    let mut fixture = fixture();
+    for (index, (orientation, shape)) in [
+        (0, None),
+        (1, None),
+        (2, None),
+        (0, Some("cross")),
+        (0, Some("tri")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut entity = explicit_sprite(800_000 + index as u32, orientation);
+        entity
+            .properties
+            .set("origin", format!("{} 0 32", index as i32 * 32 - 64));
+        entity.properties.set("scale", "1.001");
+        if let Some(shape) = shape {
+            entity.properties.set("sprite_shape", shape);
+            if shape == "tri" {
+                entity.properties.set("shape_angle", "35");
+                entity.properties.set("shape_size", "0.5");
+            }
+        }
+        fixture.source.entities.push(entity);
+    }
+    let options = compiler::Options {
+        lighting: compiler::LightingMode::DirectLdr,
+        bounces: 0,
+        ..Default::default()
+    };
+    let baseline = compiler::compile_with_options(&fixture.source, &fixture.game, options);
+    assert!(!baseline.report.has_errors(), "{:?}", baseline.report);
+    let baseline = baseline.bsp.unwrap();
+    let expected = baseline.detail_props().unwrap().unwrap();
+    for (sway, encoded) in [
+        ("0", 0),
+        ("1e-100", 0),
+        ("0.003921568627", 1),
+        ("0.5", 127),
+        ("1", 255),
+    ] {
+        for entity in &mut fixture.source.entities {
+            if entity.classname() == Some("prop_detail_sprite") {
+                entity.properties.set("sway", sway);
+            }
+        }
+        let source = fixture.source.write(&Default::default());
+        let output = compiler::compile_with_options(&fixture.source, &fixture.game, options);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let bsp = output.bsp.unwrap();
+        let mut rows = bsp.detail_props().unwrap().unwrap();
+        assert_eq!(rows.sprites, expected.sprites);
+        let explicit = rows
+            .props
+            .iter()
+            .filter(|prop| prop.origin[2] == 32.0)
+            .collect::<Vec<_>>();
+        assert_eq!(explicit.len(), 5);
+        for prop in explicit {
+            assert_eq!(prop.scale, 1.001);
+            assert_eq!(prop.sway, encoded);
+            match prop.origin[0] as i32 {
+                -64 => assert_eq!((prop.kind, prop.orientation), (1, 0)),
+                -32 => assert_eq!((prop.kind, prop.orientation), (1, 1)),
+                0 => assert_eq!((prop.kind, prop.orientation), (1, 2)),
+                32 => assert_eq!((prop.kind, prop.shape_angle, prop.shape_size), (2, 0, 0)),
+                64 => assert_eq!((prop.kind, prop.shape_angle, prop.shape_size), (3, 35, 127)),
+                _ => unreachable!(),
+            }
+        }
+        for prop in &mut rows.props {
+            prop.sway = 0;
+        }
+        assert_eq!(rows, expected);
+        if encoded == 0 {
+            assert_eq!(bsp.to_bytes(), baseline.to_bytes());
+        }
+        for index in 0..source_formats::bsp::LUMP_COUNT {
+            assert_eq!(baseline.lump(index), bsp.lump(index));
+        }
+        let reopened = Vmf::parse(&source).unwrap();
+        assert_eq!(
+            compiler::compile_with_options(&reopened, &fixture.game, options)
+                .bsp
+                .unwrap()
+                .to_bytes(),
+            bsp.to_bytes()
+        );
+        assert_eq!(fixture.source.write(&Default::default()), source);
+    }
+    let mut fixture = self::fixture();
+    fixture.source.entities.push(explicit_sprite(800_000, 2));
+    let baseline = compiled(&fixture).to_bytes();
+    for (key, value) in [
+        ("scale", "1"),
+        ("sway", "0"),
+        ("sprite_shape", ""),
+        ("shape_angle", "0"),
+        ("shape_size", "0"),
+        ("spriterandomscale", "0"),
+    ] {
+        fixture
+            .source
+            .entities
+            .last_mut()
+            .unwrap()
+            .properties
+            .set(key, value);
+    }
+    assert_eq!(compiled(&fixture).to_bytes(), baseline);
+}
+
+#[test]
+fn explicit_sprite_scale_precision_matches_native_fast_and_slow_paths() {
+    let mut fixture = fixture();
+    let mut entity = explicit_sprite(800_000, 2);
+    entity.properties.set("position_ul", "-0.0001 0.0001");
+    entity.properties.set("position_lr", "0.0001 -0.0001");
+    fixture.source.entities.push(entity);
+    let base = fixture.source.clone();
+    for (scale, accepted) in [
+        ("0.0000000298023223876953125", false),
+        ("0.000000059604644775390625", true),
+        ("65504", true),
+        ("65505", false),
+    ] {
+        for (orientation, shape, sway) in [
+            (0, None, "0"),
+            (1, None, "0"),
+            (2, None, "0.5"),
+            (0, Some("cross"), "0"),
+            (0, Some("tri"), "0"),
+        ] {
+            fixture.source = base.clone();
+            let entity = fixture.source.entities.last_mut().unwrap();
+            entity
+                .properties
+                .set("detailOrientation", orientation.to_string());
+            entity.properties.set("scale", scale);
+            entity.properties.set("sway", sway);
+            if let Some(shape) = shape {
+                entity.properties.set("sprite_shape", shape);
+            }
+            if accepted {
+                let rows = details(&fixture);
+                assert!(
+                    rows.props.iter().any(|prop| prop.origin[2] == 32.0
+                        && prop.scale == scale.parse::<f32>().unwrap())
+                );
+            } else {
+                rejected(&fixture, "half precision");
+            }
+        }
+        fixture.source = base.clone();
+        let entity = fixture.source.entities.last_mut().unwrap();
+        entity.properties.set("scale", scale);
+        let baseline = compiled(&fixture).to_bytes();
+        fixture
+            .source
+            .entities
+            .last_mut()
+            .unwrap()
+            .properties
+            .set("sway", "1e-100");
+        assert_eq!(compiled(&fixture).to_bytes(), baseline);
+    }
+}
+
+#[test]
+fn explicit_shape_controls_reject_unrepresentable_parameters_atomically() {
+    let mut fixture = fixture();
+    for changes in [
+        vec![("sprite_shape", "unknown")],
+        vec![("sprite_shape", "cross"), ("shape_angle", "1")],
+        vec![("sprite_shape", "cross"), ("shape_size", "0.5")],
+        vec![("sprite_shape", "tri"), ("shape_angle", "0.5")],
+        vec![("sprite_shape", "tri"), ("shape_angle", "256")],
+        vec![("sprite_shape", "tri"), ("shape_size", "NaN")],
+        vec![("sprite_shape", "tri"), ("shape_size", "1.1")],
+        vec![("sprite_shape", "tri"), ("detailOrientation", "2")],
+        vec![("shape_angle", "1")],
+        vec![("shape_size", "0.5")],
+        vec![("scale", "NaN")],
+        vec![("scale", "inf")],
+        vec![("scale", "1e-100")],
+        vec![("scale", "-1")],
+        vec![("sway", "1.1")],
+        vec![("sway", "-0.1")],
+        vec![("modelscale", "2")],
+        vec![
+            ("scale", "2"),
+            ("angles", "0 0 0"),
+            ("position_ul", "-9000 16"),
+        ],
+    ] {
+        let mut entity = explicit_sprite(800_000, 0);
+        let expected = if changes.last().unwrap().0 == "position_ul" {
+            "bounds"
+        } else {
+            changes.last().unwrap().0
+        };
+        for (key, value) in changes {
+            entity.properties.set(key, value);
+        }
+        fixture.source.entities.push(entity);
+        rejected(&fixture, expected);
+        fixture.source.entities.pop();
+    }
+}
+
+#[test]
 fn explicit_sprite_failures_are_atomic_without_model_assets() {
     let mut fixture = fixture();
     for (key, value, expected) in [
@@ -526,11 +738,11 @@ fn explicit_sprite_failures_are_atomic_without_model_assets() {
         ("tex_size", "0 4", "texture rectangle"),
         ("tex_total_size", "0", "texture rectangle"),
         ("detailOrientation", "0.5", "integer"),
-        ("scale", "2", "scale=1"),
+        ("scale", "0", "scale"),
         ("rendercolor", "128 255 255", "rendercolor"),
         ("lightingorigin", "missing", "model-only"),
         ("parentname", "moving", "parentname"),
-        ("sway", "0.1", "sway=0"),
+        ("sway", "NaN", "sway"),
         ("spriterandomscale", "0.2", "spriterandomscale=0"),
     ] {
         let mut entity = explicit_sprite(800_000, 2);

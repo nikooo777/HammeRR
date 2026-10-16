@@ -15,7 +15,6 @@ use crate::{Diagnostic, Report};
 
 const LIGHTING_SCALE: f64 = 255.0;
 const STYLE_COUNT: usize = 64;
-const MIN_STYLED_SPRITE_SCALE: f32 = f32::from_bits(103 << 23);
 const MAX_AUTHORED_STYLE_GAIN: f32 = 550.0 * (1.0 / 264.0);
 const OPEN_RECEIVER: &str =
     "Detail lighting hull or sprite midpoint must lie in open visible world space";
@@ -327,10 +326,11 @@ pub(super) fn finish(
         if count > 63 {
             return Err("Detail receiver exceeds 63 native light styles".into());
         }
-        if count != 0 && prop.kind == 1 && prop.scale < MIN_STYLED_SPRITE_SCALE {
-            return Err(
-                "Styled detail sprite scale underflows the native half-float renderer".into(),
-            );
+        if count != 0 && prop.kind == 1 {
+            crate::detail_props::check_native_sprite_transform(
+                prop.scale,
+                DVec3::from_array(prop.origin.map(f64::from)),
+            )?;
         }
         budget.consume((count * 3 + 3) * channels)?;
         check_native_sum(prop.lighting, &ldr_records[start..])?;
@@ -416,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn styled_sprite_half_underflow_and_aggregate_union_cap_reject_atomically() {
+    fn styled_sprite_native_transform_and_aggregate_union_cap_reject_atomically() {
         let control = crate::Control::default();
         let mut budget = Budget::new(&control);
         let records = [DetailPropLighting {
@@ -433,7 +433,7 @@ mod tests {
             props: vec![DetailProp {
                 kind: 1,
                 orientation: 2,
-                scale: MIN_STYLED_SPRITE_SCALE * 0.5,
+                scale: f32::from_bits(103 << 23) * 0.5,
                 ..Default::default()
             }],
             ..Default::default()
@@ -446,10 +446,28 @@ mod tests {
         assert!(
             finish(&mut bsp, Some(&style), None, &mut budget)
                 .unwrap_err()
-                .contains("half-float")
+                .contains("half precision")
         );
         assert_eq!(bsp.to_bytes(), before);
-        details.props[0].scale = MIN_STYLED_SPRITE_SCALE;
+        for (scale, origin, expected) in [
+            (65505.0, [0.0; 3], "maximum"),
+            (1.0, [0.0, 0.0, (MAX_COMPILE_COORD + 1.0) as f32], "origin"),
+        ] {
+            details.props[0].scale = scale;
+            details.props[0].origin = origin;
+            let mut bsp = style_bsp(&details);
+            let before = bsp.to_bytes();
+            finish(&mut bsp, Some(&empty), None, &mut budget).unwrap();
+            assert_eq!(bsp.to_bytes(), before);
+            assert!(
+                finish(&mut bsp, Some(&style), None, &mut budget)
+                    .unwrap_err()
+                    .contains(expected)
+            );
+            assert_eq!(bsp.to_bytes(), before);
+        }
+        details.props[0].scale = f32::from_bits(103 << 23);
+        details.props[0].origin = [0.0; 3];
         let mut bsp = style_bsp(&details);
         finish(&mut bsp, Some(&style), None, &mut budget).unwrap();
         assert_eq!(

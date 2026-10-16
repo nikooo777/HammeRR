@@ -251,6 +251,7 @@ def validate_tint(args):
             inspector = client.call("get_entity_inspector", {"id": sprites[0]})
             field = next(field for field in inspector["properties"] if field["key"] == TINT_KEY)
             require(field["advanced"] and field["value"] == "255 32 16", "Shared Advanced properties did not expose authored tint")
+            require(field["label"] == "Baked lighting tint · linear RGB", "Inspector tint label does not state its baked linear meaning")
             _, accepted, _ = compile_pair(client, args.output, "tint-reopened", ids)
             previous = args.output / "tint-rejected.bsp"
             previous.write_bytes(accepted)

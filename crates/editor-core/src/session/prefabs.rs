@@ -5,6 +5,9 @@ use map_core::{ObjectId, transfer};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+mod thumbnails;
+pub use thumbnails::Thumbnail;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
     pub position: DVec3,
@@ -26,11 +29,13 @@ impl Default for Placement {
 
 pub(super) struct State {
     store: Result<Store, String>,
+    thumbnails: thumbnails::State,
 }
 impl Default for State {
     fn default() -> Self {
         Self {
             store: Err("Prefab storage is not configured".into()),
+            thumbnails: thumbnails::State::default(),
         }
     }
 }

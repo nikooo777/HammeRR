@@ -105,6 +105,44 @@ fn bounds_label(bounds: &serde_json::Value) -> String {
         (high[2] + low[2]) * 0.5
     )
 }
+fn thumbnail_image(window: &PrefabsWindow, thumbnail: &crate::session::prefabs::Thumbnail) {
+    window.set_thumbnail(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+        slint::Rgba8Pixel,
+    >::clone_from_slice(
+        &thumbnail.image.pixels,
+        thumbnail.image.width,
+        thumbnail.image.height,
+    )));
+    window.set_has_thumbnail(true);
+}
+
+fn refresh_thumbnail(window: &PrefabsWindow, session: &Session, selected: Option<&str>) {
+    window.set_has_thumbnail(false);
+    window.set_can_render_thumbnail(false);
+    let Some(name) = selected else {
+        window.set_thumbnail_status(
+            "Textures stay external. Rendering starts only when requested.".into(),
+        );
+        return;
+    };
+    match session.cached_prefab_thumbnail(name) {
+        Ok(Some(thumbnail)) => {
+            thumbnail_image(window, &thumbnail);
+            window.set_can_render_thumbnail(true);
+            window.set_thumbnail_status("Real assembly geometry and editor point helpers. Textures are omitted; authored hidden objects are included.".into());
+        }
+        Ok(None) => {
+            let report = session.prefab_thumbnail_report(name);
+            if let Some(error) = report["error"].as_str() {
+                window.set_thumbnail_status(error.into());
+            } else {
+                window.set_can_render_thumbnail(true);
+                window.set_thumbnail_status("Ready to render real assembly geometry and editor point helpers. Textures are omitted; authored hidden objects are included.".into());
+            }
+        }
+        Err(error) => window.set_thumbnail_status(error.into()),
+    }
+}
 fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, force: bool) {
     let mut form = state.borrow_mut();
     let seen = (
@@ -147,6 +185,7 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
             .into(),
     );
     form.stamp = report["snapshot"].as_str().unwrap_or_default().into();
+    refresh_thumbnail(window, session, form.selected.as_deref());
     if let Some(error) = report["error"].as_str() {
         window.set_message(error.into());
         window.set_entries(Default::default());
@@ -374,6 +413,27 @@ impl Controller {
                 refresh(&window, &session, &form, true);
             }
         });
+        window.on_render_thumbnail({
+            let (window, shared, form) = (window.as_weak(), shared.clone(), form.clone());
+            move || {
+                let window = window.unwrap();
+                let mut session = lock(&shared);
+                let result = form
+                    .borrow()
+                    .selected
+                    .as_deref()
+                    .ok_or_else(|| "Choose a prefab first".to_string())
+                    .and_then(|name| session.prefab_thumbnail(name, true));
+                refresh(&window, &session, &form, true);
+                match result {
+                    Ok(thumbnail) => thumbnail_image(&window, &thumbnail),
+                    Err(error) => {
+                        window.set_has_thumbnail(false);
+                        window.set_thumbnail_status(error.into());
+                    }
+                }
+            }
+        });
         Ok(Self {
             window,
             form,
@@ -398,6 +458,126 @@ impl Controller {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn prefab_thumbnail_controls_show_cpu_diagnostics_and_preserve_owned_placement() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (session, directory, _) = crate::test_assets::prefabs();
+        let source = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.show(&lock(&shared)).unwrap();
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(!controller.window.get_can_render_thumbnail());
+        controller.window.invoke_begin_save();
+        controller.window.set_prefab_name("Visual fixture".into());
+        controller.window.invoke_save();
+        controller.window.invoke_choose("Visual fixture".into());
+        assert!(controller.window.get_can_render_thumbnail());
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(
+            controller
+                .window
+                .get_thumbnail_status()
+                .contains("Ready to render")
+        );
+        controller.window.invoke_preview();
+        let rendered = lock(&shared).render_document().vmf().clone();
+        std::fs::write(directory.path().join("Visual fixture.vmf"), "invalid VMF").unwrap();
+        let clipboard = lock(&shared).clipboard_report();
+        controller.window.invoke_refresh();
+        assert!(!controller.window.get_can_render_thumbnail());
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(controller.window.get_thumbnail_status().contains("source"));
+        controller.window.invoke_render_thumbnail();
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(controller.window.get_thumbnail_status().contains("source"));
+        assert_eq!(
+            lock(&shared).prefab_thumbnail_report("Visual fixture")["graphics"]["initialized"],
+            false
+        );
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        assert_eq!(lock(&shared).render_document().vmf(), &rendered);
+        assert_eq!(lock(&shared).clipboard_report(), clipboard);
+        assert_eq!(lock(&shared).history_snapshot(), history);
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-thumbnail-failure");
+    }
+
+    #[test]
+    #[ignore = "requires a graphics adapter for actual prefab thumbnail UI validation"]
+    fn prefab_thumbnail_controls_render_refresh_and_clear_actual_pixels_on_source_failure() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                threading: false,
+            },
+        )))
+        .unwrap();
+        let (session, directory, _) = crate::test_assets::prefabs();
+        let source = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let clipboard = session.clipboard_report();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.show(&lock(&shared)).unwrap();
+        controller.window.invoke_begin_save();
+        controller
+            .window
+            .set_prefab_name("Visual brush assembly".into());
+        controller.window.invoke_save();
+        controller
+            .window
+            .invoke_choose("Visual brush assembly".into());
+        controller.window.invoke_render_thumbnail();
+        assert!(
+            controller.window.get_has_thumbnail(),
+            "{}",
+            controller.window.get_thumbnail_status()
+        );
+        let first = lock(&shared)
+            .cached_prefab_thumbnail("Visual brush assembly")
+            .unwrap()
+            .unwrap();
+        assert!(
+            first
+                .image
+                .pixels
+                .chunks_exact(4)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                > 3
+        );
+        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-thumbnail");
+        controller.window.invoke_render_thumbnail();
+        assert!(controller.window.get_has_thumbnail());
+        let refreshed = lock(&shared)
+            .cached_prefab_thumbnail("Visual brush assembly")
+            .unwrap()
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first.image, &refreshed.image));
+        std::fs::remove_file(directory.path().join("Visual brush assembly.vmf")).unwrap();
+        controller.window.invoke_refresh();
+        assert!(!controller.window.get_has_thumbnail());
+        assert!(!controller.window.get_can_render_thumbnail());
+        assert!(
+            controller
+                .window
+                .get_thumbnail_status()
+                .contains("no longer exists")
+        );
+        assert_eq!(lock(&shared).document().vmf(), &source);
+        assert_eq!(lock(&shared).clipboard_report(), clipboard);
+        assert_eq!(lock(&shared).history_snapshot(), history);
+    }
     #[cfg(target_os = "linux")]
     #[test]
     fn prefab_rename_controls_cancel_guard_collisions_and_stale_owned_placement() {

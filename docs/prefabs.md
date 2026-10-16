@@ -17,6 +17,22 @@ files; placement uses the same checked preview, naming and Undo behavior as Past
 
 ![Prefab search, assembly details and placement controls](images/prefab-library.png)
 
+## Inspect an assembly's shape
+
+1. Choose an entry in **Prefab library**. Counts and source diagnostics are
+   available immediately, including when graphics are unavailable.
+2. Click **Render thumbnail**. **Flat geometry · 320 × 240** shows the actual
+   brush, terrain and model shape with the normal editor helpers for point
+   entities. The isolated preview includes authored hidden objects and omits
+   textures and sky. It does not change the map, selection, clipboard, camera,
+   active placement review or Undo.
+3. Click **Refresh thumbnail** to regenerate pixels. **Refresh library** checks
+   external VMF edits; changed, removed or invalid sources clear the old image
+   and show a diagnostic. Missing models and referenced instances produce an
+   explicit error without a substitute image.
+
+![Isolated flat geometry thumbnail beside prefab search and placement](images/prefab-thumbnail.png)
+
 ## Place an assembly
 
 1. Choose a prefab to inspect its object, group, layer and face counts, size,
@@ -106,11 +122,19 @@ operations are separate from map Undo.
   metadata policy. Invalid placement retains the previous clipboard and preview.
 - Assets remain external references. Mount the required game/custom content;
   the library does not package textures or models.
+- Thumbnails render one selected entry on request and cache at most eight
+  320 × 240 images. Every retrieval rechecks exact source bytes, file identity
+  and content/FGD settings. Limits are 2 MiB source text, 128 brushes, 1024 sides,
+  64 sides per brush, 65536 displacement vertices, eight model paths, sixteen
+  model instances, 64 material bindings, 200000 vertices and 600000 indices.
+  Larger valid assemblies can still use ordinary placement. Use **Model details…**
+  → **Reload models** after repairing external model files. Graphics
+  failures retain CPU inspection and can be retried with **Render thumbnail**.
 - Rename requires Linux and a filesystem supporting atomic no-replace rename;
   unsupported operations fail without a copy/delete fallback. Independent writers
   can still race source-file changes after snapshot validation; existing targets
   are never overwritten. Preview source identity/size/mtime changes are checked
   before Apply, including changes made by another Session.
-- Isolated thumbnails, direct replacement from selection, local-frame placement,
-  referenced instances and linked editing are unavailable. Applied copies can be
-  transformed independently through the normal controls.
+- Thumbnail grids, textured thumbnails, direct replacement from selection,
+  local-frame placement, referenced instances and linked editing are unavailable.
+  Applied copies can be transformed independently through the normal controls.

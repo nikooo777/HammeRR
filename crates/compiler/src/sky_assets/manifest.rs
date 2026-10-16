@@ -273,6 +273,14 @@ fn world_family(bsp: &Bsp, control: &Control) -> io::Result<String> {
                     "Packed sky entity token exceeds HammeRR's 2047-byte admission limit",
                 ));
             }
+            if [key.as_str(), value.as_str()]
+                .into_iter()
+                .any(|token| token == "{" || token.starts_with('}'))
+            {
+                return Err(invalid(
+                    "Packed sky entity tokens cannot be '{' or begin with '}'",
+                ));
+            }
             if key.eq_ignore_ascii_case("classname") && key != "classname" {
                 return Err(invalid(
                     "Packed sky entity classname keys must use canonical lowercase spelling",

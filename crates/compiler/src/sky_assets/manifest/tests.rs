@@ -827,3 +827,27 @@ fn world_identity_entity_value_admission_counts_quoted_utf8_bytes() {
         );
     }
 }
+
+#[test]
+fn world_identity_rejects_native_brace_cursor_tokens_across_every_entity_block() {
+    for text in [
+        r#"{ classname worldspawn message "} ignored" skyname test }"#,
+        r#"{ classname worldspawn "} hidden" ignored skyname test }"#,
+        r#"{ classname worldspawn message "{" skyname test }"#,
+        r#"{ classname worldspawn "{" ignored skyname test }"#,
+        r#"{ classname worldspawn skyname test } { classname missing_class message "{" } { classname info_target }"#,
+        r#"{ classname worldspawn skyname test } { classname missing_class message "} classname worldspawn" skyname other }"#,
+    ] {
+        let mut bsp = Bsp::new();
+        bsp.set_entities(text);
+        assert!(
+            world_family(&bsp, &Control::default())
+                .unwrap_err()
+                .to_string()
+                .contains("tokens cannot be '{' or begin with '}'")
+        );
+    }
+    let mut bsp = Bsp::new();
+    bsp.set_entities("{ classname worldspawn skyname test message \"{prefix\" \"\" \"\" punctuation \"()' braces { and }\" unicode \"café\" control \"\u{0001}\" }");
+    assert_eq!(world_family(&bsp, &Control::default()).unwrap(), "test");
+}

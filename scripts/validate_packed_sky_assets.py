@@ -451,7 +451,7 @@ def worker(args):
     }
     flags = private_launch_options(args.game_dir, game, hdr_level=args.hdr_level, map_name=args.map_name, log_name="hammerr-packed-sky.log", controls={"servercfgfile": "hammerr_packed_sky_postmap.cfg", "mat_fullbright": 0, **reflections.HDR_CONTROLS})
     command = [str(args.game_dir / "cstrike_linux64"), "-game", str(game), "-windowed", "-w", str(probe.WIDTH), "-h", str(probe.HEIGHT), "-novid", *flags, "-nomaster", "-nojoy", "-console", "-port", str(args.port)]
-    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "published_bsp_loaded_exact": True, "desktop_input": False, "archive_verified": True, "native_exercised": True, "faces": [], "hardware": None}
+    report = {"success": False, "map": args.map_name, "family": args.family, "hdr_level": args.hdr_level, "bsp_sha256": probe.digest(data), "probe_sha256": probe.digest(args.probe_library.read_bytes()), "original_custom_source_mounted": False, "runtime_source_audit": source_audit, "staged_bsp_bytes_exact": True, "published_bsp_loaded_exact": False, "desktop_input": False, "archive_verified": True, "native_exercised": False, "faces": [], "hardware": None}
     console = game / "hammerr-packed-sky.log"
     try:
         with private_native_process(command, args.game_dir, game, output, environment, report) as process:
@@ -468,12 +468,14 @@ def worker(args):
                 hardware = reflections.verify_hardware(report["hardware_observations"], args.hdr_level)
                 if hardware:
                     report["hardware"] = hardware
+                    report["native_exercised"] = True
                 if len(captures) < 6 and marker in text and hardware:
                     report["private_launch"] = verify_private_launch(game, text)
                     index = len(captures)
                     for extension in ["png", "ppm"]:
                         subprocess.run(["grim", *(["-t", "ppm"] if extension == "ppm" else []), str(output / f"{FACES[index]}.{extension}")], check=True, timeout=5)
                     captures.append(pixel_evidence(output / f"{FACES[index]}.ppm", index, args.hdr_level == 2))
+                    report["published_bsp_loaded_exact"] = True
                     if len(captures) == 6:
                         probe.write_cfg(cfg, f"echo {FINISHED}\ndisconnect\nquit\n")
                     else:

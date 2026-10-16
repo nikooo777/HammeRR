@@ -120,6 +120,22 @@ impl Picker {
         include_points: bool,
         include_entity: impl Fn(&Entity) -> bool,
     ) -> Self {
+        Self::with_entity_bounds(
+            document,
+            include_solid,
+            include_points,
+            include_entity,
+            entity_bounds,
+        )
+    }
+
+    pub fn with_entity_bounds(
+        document: &Document,
+        include_solid: impl Fn(&Solid) -> bool,
+        include_points: bool,
+        include_entity: impl Fn(&Entity) -> bool,
+        point_bounds: impl Fn(&Entity) -> Option<(DVec3, DVec3)>,
+    ) -> Self {
         let mut primitives = Vec::new();
         let surfaces = crate::displacement::surface::prepare(document.vmf());
         let mut add = |order, object, solid: &Solid| {
@@ -208,7 +224,7 @@ impl Picker {
                 if !entity.hidden
                     && entity.solids.is_empty()
                     && include_entity(entity)
-                    && let Some((mins, maxs)) = entity_bounds(entity)
+                    && let Some((mins, maxs)) = point_bounds(entity)
                 {
                     primitives.push(Primitive {
                         bounds: Bounds { mins, maxs },

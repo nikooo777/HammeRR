@@ -55,6 +55,7 @@ impl Record {
 
 pub(super) struct Evaluation {
     pub models: Models,
+    pub helpers: std::collections::BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
     pub ropes: Arc<render::ropes::Preview>,
     pub objects: HashSet<ObjectId>,
     pub solids: HashSet<u32>,
@@ -114,7 +115,12 @@ fn display_solid_bounds(solid: &source_formats::vmf::Solid) -> Option<[DVec3; 2]
     checked_bounds(bounds)
 }
 
-fn records(document: &Document, models: &Models, region: Option<[DVec3; 2]>) -> Vec<Record> {
+fn records(
+    document: &Document,
+    models: &Models,
+    helpers: &std::collections::BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+    region: Option<[DVec3; 2]>,
+) -> Vec<Record> {
     enum Source<'a> {
         Solid(&'a source_formats::vmf::Solid),
         Entity(&'a source_formats::vmf::Entity),
@@ -144,21 +150,38 @@ fn records(document: &Document, models: &Models, region: Option<[DVec3; 2]>) -> 
             Source::Entity(entity) => {
                 if entity.solids.is_empty() {
                     let instance = instances.get(&id).copied();
+                    let helper = helpers.get(&id);
                     let source = if instance.is_some_and(render::models::Instance::has_geometry) {
                         "model"
+                    } else if helper.is_some_and(|helper| helper.invalid_size) {
+                        "invalid_fgd_size"
+                    } else if helper.is_some_and(|helper| helper.local_bounds.is_some()) {
+                        "fgd_size"
                     } else if entity.properties.get("model").is_some() {
                         "model_helper_fallback"
                     } else {
                         "helper"
                     };
                     let bounds = instance
+                        .filter(|instance| instance.has_geometry())
                         .map(|instance| instance.bounds())
+                        .or_else(|| helper.and_then(|helper| helper.world_bounds(entity)))
+                        .or_else(|| instance.map(|instance| instance.bounds()))
                         .or_else(|| query::entity_bounds(entity));
+                    let bounds = if source == "invalid_fgd_size" {
+                        None
+                    } else {
+                        bounds
+                    };
                     (
                         entity.hidden,
                         checked_bounds(bounds),
                         source,
-                        models.issues.get(&entity.id).cloned(),
+                        models.issues.get(&entity.id).cloned().or_else(|| {
+                            helper
+                                .filter(|helper| !helper.errors.is_empty())
+                                .map(|helper| helper.errors.join("; "))
+                        }),
                     )
                 } else {
                     children = entity
@@ -270,10 +293,11 @@ impl Session {
         }
         self.working_region.cache.borrow_mut().take();
         let models = self.model_instances(document);
+        let helpers = self.fgd_helper_appearances(document, &models);
         let mut objects = HashSet::new();
         let mut solids = HashSet::new();
         let records = if self.working_region.enabled {
-            let records = records(document, &models, self.working_region.bounds);
+            let records = records(document, &models, &helpers, self.working_region.bounds);
             for record in &records {
                 if record.included {
                     if record.owner.is_none() {
@@ -320,6 +344,7 @@ impl Session {
         let evaluation = Arc::new(Evaluation {
             ropes,
             models,
+            helpers,
             objects,
             solids,
             records,
@@ -451,7 +476,7 @@ impl Session {
         let mut records = if self.working_region.enabled {
             evaluation.records.clone()
         } else {
-            records(document, &evaluation.models, None)
+            records(document, &evaluation.models, &evaluation.helpers, None)
         };
         if !self.view.tool_textures {
             let tools = document

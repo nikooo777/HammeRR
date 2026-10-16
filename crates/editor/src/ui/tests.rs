@@ -7199,3 +7199,52 @@ pub(crate) fn material_reload_button_replaces_failed_cached_previews_without_sou
     save_ui_snapshot(window.window(), "material-reload");
     window.hide().unwrap();
 }
+
+#[test]
+pub(crate) fn entity_panel_shows_shared_fgd_box_status_and_invalid_definition_diagnostics() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut session = Session::new(Err("no assets needed".into()));
+    session.set_definitions(
+        Actor::Agent,
+        Catalog::parse("@PointClass size(-24 -12 0, 40 20 72) sphere(radius) = sample []").unwrap(),
+    );
+    let id = session
+        .create_entity(Actor::Agent, "sample", Some(DVec3::ZERO), BTreeMap::new())
+        .unwrap();
+    let ObjectId::Entity(entity) = id else {
+        unreachable!()
+    };
+    let source = session.document().vmf().clone();
+    let history = session.document().undo_labels().count();
+    let app = AppWindow::new().unwrap();
+    refresh_panel(&app, &mut session);
+    assert_eq!(
+        app.get_entity_helper_status().as_str(),
+        session.entity_helper_report(entity).unwrap().status
+    );
+    assert!(app.get_entity_helper_status().contains("64 × 32 × 72"));
+    assert!(app.get_entity_helper_status().contains("sphere"));
+    app.show().unwrap();
+    app.window().set_size(slint::PhysicalSize::new(1600, 960));
+    save_ui_snapshot(app.window(), "fgd-size-helpers");
+    session.set_definitions(
+        Actor::Agent,
+        Catalog::parse("@PointClass size(0 0 0) = sample []").unwrap(),
+    );
+    refresh_panel(&app, &mut session);
+    assert!(app.get_entity_helper_status().contains("Invalid FGD size"));
+    assert!(
+        app.get_entity_helper_status()
+            .contains("positive dimensions")
+    );
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.document().undo_labels().count(), history);
+    app.hide().unwrap();
+}

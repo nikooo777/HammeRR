@@ -144,7 +144,7 @@ impl Session {
             }
         }
         let mut rows = Vec::new();
-        let model_bounds = self.model_bounds_in(&self.document);
+        let model_bounds = self.display_bounds_in(&self.document);
         for id in self.document.objects() {
             let (kind, classname, targetname, hidden, solids) = match id {
                 ObjectId::Solid(id) => {

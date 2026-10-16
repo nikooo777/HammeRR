@@ -252,7 +252,7 @@ impl EditorServer {
         run(|| {
             let session = self.session();
             let ids = ids_or_selection(&session, args.ids.as_deref())?;
-            let model_bounds = session.model_bounds_in(session.document());
+            let model_bounds = session.display_bounds_in(session.document());
             let objects = ids
                 .iter()
                 .map(|&id| {

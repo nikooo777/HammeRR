@@ -84,10 +84,17 @@ impl Session {
             |solid| !hidden.contains(&solid.id),
             |entity| {
                 !model_ids.contains(&ObjectId::Entity(entity.id))
+                    && !evaluation
+                        .helpers
+                        .get(&ObjectId::Entity(entity.id))
+                        .is_some_and(|helper| helper.local_bounds.is_some())
                     && evaluation.objects.contains(&ObjectId::Entity(entity.id))
             },
             &mut retain,
         );
+        for hit in self.pick_fgd_helpers(document, &evaluation, ray) {
+            retain(hit);
+        }
         for instance in models
             .instances
             .iter()

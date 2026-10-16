@@ -36,6 +36,7 @@ pub mod cubemap_bindings;
 pub mod definitions;
 pub mod entity_placement;
 mod favorites;
+pub mod fgd_helpers;
 pub mod fog;
 pub mod grid_preferences;
 pub mod groups;
@@ -399,7 +400,9 @@ impl Session {
         let class = entity
             .classname()
             .and_then(|name| self.definitions.class(name));
-        Ok(inspector::inspect(entity, class))
+        let mut inspector = inspector::inspect(entity, class);
+        inspector.helpers = Some(self.entity_helper_report(id)?);
+        Ok(inspector)
     }
 
     pub fn set_entity_color(
@@ -869,6 +872,7 @@ impl Session {
 
     pub fn set_definitions(&mut self, actor: Actor, catalog: Catalog) {
         let count = catalog.classes().count();
+        self.clear_paint_stroke();
         self.definitions = catalog;
         self.definitions_error = None;
         self.definitions_serial += 1;
@@ -1858,11 +1862,16 @@ impl Session {
                 |solid| !hidden.contains(&solid.id),
                 |entity| {
                     !ids.contains(&ObjectId::Entity(entity.id))
+                        && !evaluation
+                            .helpers
+                            .get(&ObjectId::Entity(entity.id))
+                            .is_some_and(|helper| helper.local_bounds.is_some())
                         && evaluation.objects.contains(&ObjectId::Entity(entity.id))
                 },
             );
             ordinary
                 .into_iter()
+                .chain(self.pick_fgd_helpers(document, &evaluation, ray))
                 .chain(
                     models
                         .instances
@@ -2064,13 +2073,13 @@ impl Session {
             HashSet::new()
         };
         let evaluation = self.working_evaluation(document);
-        let mut mesh = SceneMesh::build_with_models_filtered(
+        let mut mesh = SceneMesh::build_with_helpers_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
             (&selected, &selected_faces),
             &overlays,
-            &evaluation.models.instances,
+            (&evaluation.models.instances, &evaluation.helpers),
             |id| evaluation.objects.contains(&id),
         );
         if let Some(points) = self.pointfile_points() {

@@ -21,6 +21,7 @@ pub enum Control {
 
 #[derive(Debug, Serialize)]
 pub struct Inspector {
+    pub helpers: Option<crate::session::fgd_helpers::Report>,
     pub title: String,
     pub classname: String,
     pub description: String,
@@ -312,6 +313,7 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
     });
     let classname = entity.classname().unwrap_or("entity");
     Inspector {
+        helpers: None,
         title: title(classname),
         classname: classname.into(),
         description: class.map_or("", |class| &class.description).into(),

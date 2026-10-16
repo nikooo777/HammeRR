@@ -188,6 +188,17 @@ pub fn parse_bounded(
     parse_impl(src, false, Some((max_depth, max_nodes)))
 }
 
+pub fn parse_lenient_bounded(
+    src: &str,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<Vec<Node>, ParseError> {
+    if let Some(offset) = src.find('\0') {
+        return Err(ParseError::at(src, offset, ParseErrorKind::NulByte));
+    }
+    parse_impl(src, true, Some((max_depth, max_nodes)))
+}
+
 fn parse_impl(
     src: &str,
     lenient: bool,
@@ -418,6 +429,33 @@ mod tests {
 #[cfg(test)]
 mod bounded_tests {
     use super::*;
+    #[test]
+    fn bounded_lenient_input_preserves_engine_syntax_and_enforces_limits() {
+        let source = "Shader { /* hidden { ignored value } */ $a 1 Proxies { x 1";
+        assert_eq!(
+            parse_lenient_bounded(source, 2, 4).unwrap(),
+            parse_lenient(source).unwrap()
+        );
+        assert_eq!(
+            parse_lenient_bounded(source, 1, 4).unwrap_err().kind,
+            ParseErrorKind::NestingLimit
+        );
+        assert_eq!(
+            parse_lenient_bounded(source, 2, 3).unwrap_err().kind,
+            ParseErrorKind::NodeLimit
+        );
+        assert_eq!(
+            parse_lenient_bounded("root {}\0", 1, 1).unwrap_err().kind,
+            ParseErrorKind::NulByte
+        );
+        assert_eq!(
+            parse_lenient_bounded("root { incomplete", 1, 2)
+                .unwrap_err()
+                .kind,
+            ParseErrorKind::MissingValue
+        );
+    }
+
     #[test]
     fn bounded_input_checks_structure_before_building_recursive_nodes() {
         assert!(parse_bounded("root { key value }", 1, 2).is_ok());

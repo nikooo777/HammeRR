@@ -88,6 +88,22 @@ fn cubemap_window_keeps_cached_inspection_and_requires_current_owned_review() {
     let state = lock(&shared).cubemap_binding_state();
     assert_eq!(state["draft"]["report"]["assignments"][0]["helper"], near);
     assert_eq!(state["draft"]["report"]["assignments"][0]["manual"], false);
+    assert!(controller.window.get_ready());
+    assert!(controller.window.window().is_visible());
+    controller
+        .window
+        .window()
+        .set_size(slint::PhysicalSize::new(1000, 940));
+    crate::ui::tests::save_ui_snapshot(controller.window.window(), "cubemap-faces");
+    for label in [
+        "Bind selected faces",
+        "Clear all manual bindings",
+        "Refresh",
+        "Apply",
+        "Cancel",
+    ] {
+        crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
+    }
     controller.window.invoke_apply();
     assert_eq!(lock(&shared).document().vmf(), &before);
     controller.window.invoke_refresh();

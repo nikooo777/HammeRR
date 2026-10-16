@@ -134,8 +134,42 @@ sphere declarations per entity and 128 guides per frame are accepted, with 32
 segments per ring. Scalar values must be finite and within ±65536; native
 floating-point conversion must retain a finite, noncollapsed guide. Diagnostic
 previews retain at most 256 bytes of raw value and 128 bytes of property name,
-with explicit truncation flags. Zero-argument `sphere()`, `line`, `iconsprite`, `sprite`, `studio`,
+with explicit truncation flags. Zero-argument `sphere()`, `iconsprite`, `sprite`, `studio`,
 frustum and other helper declarations remain outside this preview scope.
+
+FGD `line(R G B, targetname, property)` draws a selected generic point entity's
+origin to the point named by that property. A second `targetname, property` pair
+draws between two named points instead. Repeated declarations retain their own
+literal FGD colors; `rendercolor` does not recolor these editor links.
+
+1. Place an `info_target`, then set its **Name** to `beam_end`.
+2. Place an `env_laser` and set **Target of Laser** to `beam_end`.
+3. Select the laser to show its origin-to-target line. Read the helper summary
+   for missing, ambiguous or suppressed endpoints. Change **Target of Laser**
+   through the property panel or **Advanced properties** to update the same guide.
+4. For `env_beam`, set **Start Entity** and **Ending Entity**, then select the beam
+   to see the line between those named origins. Transform previews move the
+   displayed endpoints without committing an edit.
+
+These links are editor guides; they do not simulate beams, parenting, attachments
+or entity I/O. Only unique, exact-case literal target names are displayed.
+Case-insensitive name collisions are ambiguous, and case-only matches report an
+unsupported state rather than guessing native matching behavior. Wildcards,
+`!tokens`, `nodeid` lookup and brush endpoints are unavailable. Reference values
+use authored properties before labeled FGD defaults. Targets need one authored
+`targetname` and one finite authored origin within ±65536 units. Missing,
+duplicate, invalid and coincident endpoints add no replacement geometry.
+
+Generic visible point sources retain the same specialized-helper exclusions as
+spheres. Endpoints may be model or light points when their origins are valid.
+Both source and endpoints must be visible and included in **Working region…**;
+hidden or excluded duplicate names still count toward ambiguity. Lines never
+change object bounds, picking, framing, placement or volume selection. The shared
+inspector and `get_entity_inspector.helpers.lines` report resolution separately
+from selection/visibility suppression. Limits are sixteen declarations per
+entity, 128 displayed lines, 65536 lookup entities/name values, and 128/256 bytes
+for property/value previews. Oversized inputs are rejected before clipped text
+can be resolved.
 
 How lights, spotlights and the sun are baked, including falloff distances and sky ambient, is covered in [Compile and play](compile-and-play.md#lighting).
 

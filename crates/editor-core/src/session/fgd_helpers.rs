@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::{Session, models::Models, working_region::Evaluation};
 
+mod lines;
 mod spheres;
 
 #[derive(Debug, Serialize)]
@@ -22,6 +23,8 @@ pub struct Report {
     pub definition_sources: Vec<String>,
     pub spheres: Vec<spheres::Report>,
     pub sphere_limits: &'static str,
+    pub lines: Vec<lines::Report>,
+    pub line_limits: &'static str,
     pub limits: &'static str,
 }
 
@@ -134,6 +137,7 @@ impl Session {
             );
         }
         let spheres = self.inspected_spheres(id);
+        let lines = self.inspected_lines(id);
         if !spheres.is_empty() {
             let displayed = spheres.iter().filter(|sphere| sphere.displayed).count();
             let unavailable = spheres
@@ -145,10 +149,37 @@ impl Session {
                 ". Sphere guides: {displayed} displayed, {suppressed} suppressed, {unavailable} unavailable; authored/FGD scalar guides, not runtime influence bounds"
             );
         }
+        if !lines.is_empty() {
+            let displayed = lines.iter().filter(|line| line.displayed).count();
+            let unavailable = lines.iter().filter(|line| line.state != "ready").count();
+            status += &format!(
+                ". Line guides: {displayed} displayed, {} suppressed, {unavailable} unavailable",
+                lines.len() - displayed - unavailable
+            );
+            for line in lines.iter().filter(|line| !line.displayed).take(3) {
+                let properties = line
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.property.as_deref().unwrap_or("self"))
+                    .collect::<Vec<_>>()
+                    .join(" → ");
+                let state = if line.state == "ready" {
+                    line.suppression_reason.unwrap_or("suppressed")
+                } else {
+                    line.state
+                };
+                status += &format!(". {properties}: {}", state.replace('_', " "));
+                if let Some(error) = &line.error {
+                    status += &format!(" ({error})");
+                }
+            }
+        }
         Ok(Report {
             status,
             spheres,
             sphere_limits: spheres::LIMITS,
+            lines,
+            line_limits: lines::LIMITS,
             bounds_source,
             invalid_size: appearance.invalid_size,
             world_bounds: bounds.map(|(mins, maxs)| [mins.to_array(), maxs.to_array()]),
@@ -164,7 +195,7 @@ impl Session {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Named-property sphere guides are reported separately and never change these object bounds; other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
+            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Property sphere and literal targetname line guides are reported separately and never change these object bounds; other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
         })
     }
 }

@@ -21,7 +21,7 @@ Inspect the applied family's material and texture structure before choosing a sk
 
 1. Open **World settings…** and click **Inspect applied sky…**. The inspector uses the applied `skyname`; pending property edits remain staged. To inspect a changed name, click **Apply properties**, reopen **World settings…**, and inspect again.
 2. Read **LDR assets** and **HDR assets**. Both describe supported material declarations and VTF structure, independently of the editor preview and the game's active channel.
-3. Scroll through **Right**, **Back**, **Left**, **Front**, **Up** and **Down**. Each face shows its exact `skybox/<skyname><suffix>` material, shader, winning directory or VPK source, Patch includes, texture parameters and references, dimensions, format and issues.
+3. Compare the six face buttons: **Right**, **Back**, **Left**, **Front**, **Up** and **Down** show LDR/HDR readiness together. Choose a face to read its exact `skybox/<skyname><suffix>` material, shader, winning directory or VPK source, additional Patch sources, texture references, dimensions, format and issues.
 4. Repair the named material or texture in the reported mount, then click **Refresh sky assets**. Read failures remain visible; a broken winning asset does not silently select a healthy lower mount.
 5. Click **Close** to return to the existing property edit. Inspection does not change the map, Undo, camera, selection, clipboard or drafts, and starts no game or compiler process.
 

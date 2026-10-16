@@ -183,9 +183,12 @@ fn insertion_and_head_middle_tail_removal_keep_retained_identity_and_saved_data(
                     );
                     assert_eq!(session.document().vmf(), &expected);
                     assert_eq!(session.document().undo_labels().count(), history + 1);
+                    let saved_source = Document::new(source.clone()).snapshot_for_save();
+                    let saved_expected = Document::new(expected.clone()).snapshot_for_save();
                     let directory = tempfile::tempdir().unwrap();
                     let path = directory.path().join("changed-path.vmf");
                     session.save(actor, Some(&path)).unwrap();
+                    assert_eq!(session.document().vmf(), &saved_expected);
                     assert_eq!(
                         Vmf::parse(&std::fs::read_to_string(path).unwrap())
                             .unwrap()
@@ -193,9 +196,9 @@ fn insertion_and_head_middle_tail_removal_keep_retained_identity_and_saved_data(
                         expected.entities
                     );
                     session.undo(actor).unwrap();
-                    assert_eq!(session.document().vmf(), &source);
+                    assert_eq!(session.document().vmf(), &saved_source);
                     session.redo(actor).unwrap();
-                    assert_eq!(session.document().vmf(), &expected);
+                    assert_eq!(session.document().vmf(), &saved_expected);
                 }
             }
         }

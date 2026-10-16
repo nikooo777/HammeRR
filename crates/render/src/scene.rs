@@ -139,7 +139,7 @@ pub struct FaceOverlay {
 struct Builder<'a> {
     icons: &'a BTreeMap<u32, crate::icons::Instance>,
     displayed_icons: Vec<crate::icons::Instance>,
-    icon_bounds: Vec<Vec3>,
+    helper_bounds: Vec<Vec3>,
     models: &'a [crate::models::Instance],
     helpers: &'a BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
     overlays: &'a [FaceOverlay],
@@ -400,7 +400,7 @@ impl Builder<'_> {
         self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
     }
 
-    fn add_point_entity(&mut self, entity: &Entity, selected: bool) {
+    fn add_point_entity(&mut self, entity: &Entity, selected: bool, model_guide: bool) {
         let Some(origin) = entity.origin() else {
             return;
         };
@@ -452,7 +452,10 @@ impl Builder<'_> {
             .cloned();
         if let Some(icon) = &icon {
             self.displayed_icons.push(icon.clone());
-            self.icon_bounds.extend([mins.as_vec3(), maxs.as_vec3()]);
+        }
+        let resource_guide = icon.is_some() || model_guide;
+        if resource_guide {
+            self.helper_bounds.extend([mins.as_vec3(), maxs.as_vec3()]);
         }
         for normal in [
             Vec3::X,
@@ -470,7 +473,7 @@ impl Builder<'_> {
             };
             let right = up.cross(normal);
             let corners = [up - right, up + right, -up + right, -up - right];
-            if icon.is_some() {
+            if resource_guide {
                 if selected {
                     self.selection_loop(corners.map(|c| center + (normal + c) * half * 1.05));
                 }
@@ -1024,7 +1027,7 @@ impl SceneMesh {
         let mut builder = Builder {
             icons,
             displayed_icons: Vec::new(),
-            icon_bounds: Vec::new(),
+            helper_bounds: Vec::new(),
             models,
             helpers,
             overlays,
@@ -1072,7 +1075,10 @@ impl SceneMesh {
         {
             let is_selected = selected.contains(&ObjectId::Entity(entity.id));
             if entity.solids.is_empty() {
-                builder.add_point_entity(entity, is_selected);
+                let model_guide = model_guides
+                    .iter()
+                    .any(|guide| guide.id == ObjectId::Entity(entity.id));
+                builder.add_point_entity(entity, is_selected, model_guide);
             }
             for solid in entity.solids.iter().filter(|s| !s.hidden) {
                 builder.add_solid(solid, is_selected);
@@ -1083,7 +1089,7 @@ impl SceneMesh {
             .vertices
             .iter()
             .map(|v| Vec3::from(v.position))
-            .chain(builder.icon_bounds.iter().copied())
+            .chain(builder.helper_bounds.iter().copied())
             .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
         for instance in model_guides.iter().filter(|instance| include(instance.id)) {
             builder.add_model_with_material(instance, false, Some(MaterialLibrary::EDITOR));

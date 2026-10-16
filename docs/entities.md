@@ -149,6 +149,9 @@ The viewport and agent renders use the same deliberately untextured reference
 mesh. This is an editor resource guide, with no shader, animated-pose or engine
 collision claim.
 
+A ready mesh replaces the filled marker so small camera and constraint guides
+remain visible. Selecting the entity still outlines its ordinary FGD box.
+
 1. Click **Entity…**, then **Load FGD…** and load the definition. Included,
    inherited and extended declarations resolve through the same catalog.
 2. Place or select the point entity. Read **FGD model guide** in the inspector's

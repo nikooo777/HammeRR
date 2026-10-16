@@ -1383,18 +1383,35 @@ linear attenuation within RGBExp32 quantization, actual fixed/vertical/tri
 records, black style membership, unchanged unrelated lumps, save/reopen and
 atomic foreground/background malformed-channel failures. `--runtime` compares
 white and asymmetric tint using separate model and sprite ON-minus-OFF masks;
-detail-disabled ROI backgrounds must remain exactly identical. It covers fast
+LDR detail-disabled ROI backgrounds must remain exactly identical. It covers fast
 vertical and slow fixed sprites, actual named-light TurnOn/TurnOff on the same
 white/tinted BSPs, plus dual-channel style colors with measured HDR hardware.
+LDR detail-disabled backgrounds and unattenuated red pixels must match exactly.
+HDR additionally needs one independently verified repeat of the identical white
+BSP, with unchanged launch, hardware and style controls. Pass its completed
+output through `--hdr-control`, or use `native-hdr-white-control` inside the tint
+output directory. Every decoded red base and LDR/HDR style contribution must be
+exactly equal across white/tinted BSPs before accepting pixel noise.
+HDR target deviations may not exceed the repeat's measured maximum amplitude:
+hard ceilings are one 8-bit code value for background and two for visible red,
+with each control/target mean at most 0.01 code values. The target's changed
+background frequency exceeded this repeat's frequency; only maximum amplitude
+was reproduced, and the downstream cause remains unconfirmed. No tolerance is
+scaled to fit a failed comparison. Green/blue must remain monotone, with more
+than 150 pixels per channel decreasing beyond the measured noise amplitude.
+All deviations and the negative-control receipt are recorded. These HDR limits
+do not alter the exact LDR checks or claim target screen RGB values.
+
 The supplied existing `hdr_runtime_probe.c` observer must be built first; no new
 native observer is introduced. Gamma conversion means screen pixels are not
 expected to equal the authored linear bytes.
 
-The native tint comparison requires unchanged red, monotone green/blue
-attenuation and at least 150 detail pixels per attenuated channel with a
-three-code reduction. Matching detail-disabled backgrounds cancel the shared
-alpha-compositing term; ratios of blended foreground means are unsuitable for
-dim translucent cards. Style switching uses the unattenuated red channel.
+The native tint comparison requires exact LDR red, the bounded HDR control above,
+monotone green/blue attenuation and more than 150 detail pixels per attenuated
+channel with at least a three-code reduction. Matching detail-disabled backgrounds
+cancel the shared alpha-compositing term; ratios of blended foreground means are
+unsuitable for dim translucent cards. Style switching uses the unattenuated red
+channel.
 
 After an interrupted native tint run, add `--resume-tint` to verify completed
 capture receipts and launch only missing views. Add `--analyze-only` to inspect

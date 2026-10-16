@@ -22,6 +22,7 @@ CONTROLS = {"bright": "255 255 255 180", "dim": "255 255 255 40", "colored": "25
 REGIONS = {"models": (230, 215, 590, 620), "sprites": (680, 215, 1160, 620)}
 TINT_KEY = "_detail_lighting_tint"
 TINT = [255, 32, 16]
+HDR_CAPTURE_LIMITS = {"off_max": 1, "red_max": 2, "mean": 0.01}
 
 
 def require(condition, message):
@@ -276,7 +277,16 @@ def validate_tint(args):
         client.close()
 
 
-def tint_color_measurements(frames):
+def pixel_deviation(values):
+    return {"maximum": max(values), "mean": sum(values) / len(values), "changed_samples": sum(value != 0 for value in values), "samples": len(values)}
+
+
+def check_hdr_deviation(control, target, maximum, name):
+    require(control["maximum"] <= maximum and control["mean"] <= HDR_CAPTURE_LIMITS["mean"], f"Identical-white HDR {name} control exceeds hard capture limits: {control}")
+    require(target["maximum"] <= min(control["maximum"], maximum) and target["mean"] <= HDR_CAPTURE_LIMITS["mean"], f"HDR {name} differs beyond measured amplitude or hard mean limits: {control}, {target}")
+
+
+def tint_color_measurements(frames, hdr_control=None):
     measurements = {}
     for kind, (left, top, right, bottom) in REGIONS.items():
         mask = []
@@ -288,15 +298,30 @@ def tint_color_measurements(frames):
                 background.extend(abs(a - b) for a, b in zip(pixels["white"]["off"], pixels["tinted"]["off"], strict=True))
                 if all(max(abs(a - b) for a, b in zip(value["on"], value["off"], strict=True)) > 12 for value in pixels.values()):
                     mask.append(offset)
-        require(background and max(background) == 0, f"{kind} detail-disabled background changed under baked tint")
+        require(background, f"{kind} has no detail-disabled background control")
+        if hdr_control is None:
+            require(max(background) == 0, f"{kind} detail-disabled background changed under baked tint")
         require(len(mask) > 150, f"{kind} lacks stable visible detail pixels for tint control")
         means = {name: [sum(frame["on"][offset + axis] for offset in mask) / len(mask) for axis in range(3)] for name, frame in frames.items()}
         delta = [[frames["white"]["on"][offset + axis] - frames["tinted"]["on"][offset + axis] for offset in mask] for axis in range(3)]
-        require(all(value == 0 for value in delta[0]), f"{kind} tint changed the unattenuated red control")
+        noise = None
+        minimum_reduction = 3
+        if hdr_control is None:
+            require(all(value == 0 for value in delta[0]), f"{kind} tint changed the unattenuated red control")
+        else:
+            offsets = [(y * probe.WIDTH + x) * 3 for y in range(top, bottom) for x in range(left, right)]
+            control_off = pixel_deviation([abs(frames["white"]["off"][offset + axis] - hdr_control["off"][offset + axis]) for offset in offsets for axis in range(3)])
+            target_off = pixel_deviation(background)
+            control_red = pixel_deviation([abs(frames["white"]["on"][offset] - hdr_control["on"][offset]) for offset in mask])
+            target_red = pixel_deviation(list(map(abs, delta[0])))
+            check_hdr_deviation(control_off, target_off, HDR_CAPTURE_LIMITS["off_max"], f"{kind} background")
+            check_hdr_deviation(control_red, target_red, HDR_CAPTURE_LIMITS["red_max"], f"{kind} unattenuated red")
+            minimum_reduction = max(minimum_reduction, control_red["maximum"] + 1)
+            noise = {"identical_white_background": control_off, "tint_background": target_off, "identical_white_red": control_red, "tint_red": target_red, "hard_limits": HDR_CAPTURE_LIMITS, "changed_frequency_reproduced": False, "policy": "Target maxima must fit measured identical-white amplitudes without scaling; each mean independently stays at most 0.01 code values. Changed frequency did not match the repeat; the downstream cause is unconfirmed."}
         require(all(value >= 0 for channel in delta[1:] for value in channel), f"{kind} attenuated channels increased under tint")
-        reductions = [sum(value >= 3 for value in channel) for channel in delta[1:]]
+        reductions = [sum(value >= minimum_reduction for value in channel) for channel in delta[1:]]
         require(all(count > 150 for count in reductions), f"{kind} lacks actual green/blue tint reductions: {reductions}")
-        measurements[kind] = {"stable_detail_pixels": len(mask), "foreground_rgb": means, "background_max_difference": max(background), "red_max_difference": max(map(abs, delta[0])), "green_blue_decreased_pixels": reductions, "green_blue_max_increase": max(0, -min(min(channel) for channel in delta[1:])), "oracle": "Exact unattenuated red and monotone per-pixel green/blue attenuation; common alpha-background terms cancel"}
+        measurements[kind] = {"stable_detail_pixels": len(mask), "foreground_rgb": means, "background_max_difference": max(background), "red_max_difference": max(map(abs, delta[0])), "green_blue_decreased_pixels": reductions, "green_blue_max_increase": max(0, -min(min(channel) for channel in delta[1:])), "significant_minimum_decrease": minimum_reduction, "hdr_capture_control": noise, "oracle": "LDR red is exact; HDR red/background require independent identical-white amplitude controls and explicit hard limits. Green/blue attenuate monotonically per pixel; common alpha-background terms cancel."}
     return measurements
 
 
@@ -330,12 +355,26 @@ def checked_tint_capture(args, control, output, style):
     return result
 
 
+
+def hdr_red_radiance(report):
+    rows = {color: detail_records(probe.read_bounded(Path(report["controls"][f"styled-direct_ldr_hdr-{color}"]["bsp"]), probe.MAX_BSP_BYTES), allow_sprites=True, allow_baked=True, allow_styles=True) for color in ["white", "tinted"]}
+    require(tint_layout(rows["white"]) == tint_layout(rows["tinted"]), "HDR tint source layout differs")
+    fields = {color: {"base": [row["lighting"] for row in values["props"]], "ldr_styles": values["style_lighting_ldr"], "hdr_styles": values["style_lighting_hdr"]} for color, values in rows.items()}
+    counts = {}
+    for name in ["base", "ldr_styles", "hdr_styles"]:
+        white, tinted = fields["white"][name], fields["tinted"][name]
+        require(white is not None and tinted is not None and len(white) == len(tinted) == 86, "HDR tint red control requires every base and style receiver")
+        require(all(left[0] * 2.0**left[3] == right[0] * 2.0**right[3] for left, right in zip(white, tinted, strict=True)), f"HDR tint changed decoded red {name} radiance")
+        counts[name] = len(white)
+    return {"decoded_red_exact": True, "checked_records": counts}
+
 def tint_resume_inputs(args, report):
     require(report["success"] and report["tint"] == TINT and all(report[key] for key in ["source_history_preserved", "foreground_background_exact", "saved_reopened"]), "Tint source validation receipt is incomplete")
     require(len(report["checks"]) == 7 and all(all(check.values()) for check in report["checks"].values()), "Tint identity/color/style source checks failed")
     paths = [*args.output.glob("*.vmf"), *args.output.glob("*.bsp"), *Path(report["fixture_game"]).joinpath("materials").rglob("*"), args.probe_library]
     require((args.output / "detail-tint.vmf").is_file() and (args.output / "detail-tint-authored.vmf").is_file(), "Tint saved source fixtures are missing")
-    paths.extend(path for directory in args.output.glob("native-*") for path in directory.rglob("*") if path.is_file() and path.suffix in [".ppm", ".png", ".json", ".jsonl"])
+    directories = [*args.output.glob("native-*"), *([args.hdr_control] if args.hdr_control is not None else [])]
+    paths.extend(path for directory in directories for path in directory.rglob("*") if path.is_file() and path.suffix in [".ppm", ".png", ".json", ".jsonl"])
     guarded = {str(path): probe.digest(path.read_bytes()) for path in paths if path.is_file()}
     if args.frozen_captures is not None:
         frozen = json.loads(probe.read_bounded(args.frozen_captures, 1024**2))
@@ -375,7 +414,17 @@ def native_tint(args, report, resume=False, analyze_only=False):
             result = checked_tint_capture(args, control, output, style)
             pair[color] = {"on": ppm(output / "runtime/details-on.ppm"), "off": ppm(output / "runtime/details-off.ppm")}
             captures[name] = result["native"]
-        measurements = tint_color_measurements(pair)
+        hdr_control_frames = None
+        if suite == "styled-direct_ldr_hdr":
+            control_output = args.hdr_control or args.output / "native-hdr-white-control"
+            require(control_output.is_dir(), "HDR tint needs a completed identical-white negative control in --hdr-control or native-hdr-white-control")
+            independent = checked_tint_capture(args, report["controls"][f"{suite}-white"], control_output, style)
+            pair_receipts = [captures[f"{suite}-{style}-{color}"] for color in ["white", "tinted"]]
+            require(all(independent["native"]["hardware"]["native_pid"] != receipt["hardware"]["native_pid"] for receipt in pair_receipts), "HDR identical-white control must use an independent native process")
+            require(all(independent["native"]["private_launch"]["controls"] == receipt["private_launch"]["controls"] for receipt in pair_receipts), "HDR identical-white launch controls differ from the tint pair")
+            captures["hdr-identical-white-control"] = {"output": str(control_output), "native": independent["native"], "source_red_radiance": hdr_red_radiance(report)}
+            hdr_control_frames = {"on": ppm(control_output / "runtime/details-on.ppm"), "off": ppm(control_output / "runtime/details-off.ppm")}
+        measurements = tint_color_measurements(pair, hdr_control=hdr_control_frames)
         frames[f"{suite}-{style}"] = pair
         captures[f"{suite}-{style}-measurements"] = measurements
     switching = {}
@@ -413,6 +462,7 @@ def main():
     parser.add_argument("--tint", action="store_true", help="Validate explicit linear baked-lighting tint, identity bytes and native fast/slow/style/HDR controls")
     parser.add_argument("--resume-tint", action="store_true", help="Reuse checked completed tint captures and launch only missing native views")
     parser.add_argument("--analyze-only", action="store_true", help="With --resume-tint, verify existing captures without launching native views")
+    parser.add_argument("--hdr-control", type=Path, help="Completed identical-white HDR capture; required for bounded HDR-only pixel comparisons")
     parser.add_argument("--frozen-captures", type=Path, help="Optional existing relative-path SHA256 manifest for immutable completed captures")
     parser.add_argument("--probe-library", type=Path, default=Path(__file__).resolve().parent.parent / "target/debug/hammerr_hdr_probe.so")
     parser.add_argument("--port", type=int, default=27719)
@@ -420,6 +470,8 @@ def main():
     args.binary = args.binary.resolve(strict=True)
     args.game_dir = args.game_dir.resolve(strict=True)
     args.output = args.output.resolve()
+    if args.hdr_control is not None:
+        args.hdr_control = args.hdr_control.resolve(strict=True)
     require(not args.analyze_only or args.resume_tint and args.tint and args.runtime, "Analysis-only requires --tint --runtime --resume-tint")
     require(args.frozen_captures is None or args.resume_tint, "Frozen capture hashes require --resume-tint")
     require(not args.resume_tint or args.tint and args.runtime, "Tint resume requires --tint --runtime")

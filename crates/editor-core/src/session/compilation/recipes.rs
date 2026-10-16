@@ -32,6 +32,8 @@ struct Settings {
     smoothing_angle: u8,
     #[serde(default)]
     generate_reflections: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pack_sky_assets: bool,
 }
 
 impl From<compiler::Options> for Settings {
@@ -44,6 +46,7 @@ impl From<compiler::Options> for Settings {
             bounces: options.bounces,
             smoothing_angle: options.smoothing_angle,
             generate_reflections: options.generate_reflections,
+            pack_sky_assets: options.pack_sky_assets,
         }
     }
 }
@@ -58,6 +61,7 @@ impl Settings {
             bounces: self.bounces,
             smoothing_angle: self.smoothing_angle,
             generate_reflections: self.generate_reflections,
+            pack_sky_assets: self.pack_sky_assets,
         }
         .validate()
     }
@@ -71,6 +75,7 @@ impl Settings {
             bounces: Some(self.bounces),
             smoothing_angle: Some(self.smoothing_angle),
             generate_reflections: Some(self.generate_reflections),
+            pack_sky_assets: Some(self.pack_sky_assets),
         }
     }
 }
@@ -97,7 +102,7 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · reflections {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · reflections {} · sky packing {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
@@ -108,7 +113,8 @@ impl Recipe {
                 "on"
             } else {
                 "off"
-            }
+            },
+            if options.pack_sky_assets { "on" } else { "off" }
         );
         json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings,"description":description})
     }
@@ -174,6 +180,7 @@ fn builtins() -> [Recipe; 2] {
                 bounces: compiler::MAX_LIGHT_BOUNCES,
                 smoothing_angle: 45,
                 generate_reflections: false,
+                pack_sky_assets: false,
             }
             .into(),
         },
@@ -855,6 +862,210 @@ mod tests {
             restored.compile_options().lighting,
             compiler::LightingMode::DirectLdr
         );
+    }
+
+    #[test]
+    fn sky_packing_legacy_recipe_bytes_and_builtin_defaults_stay_compatible() {
+        let legacy = br#"{"version":1,"next_id":2,"recipes":[{"id":"custom:1","name":"Legacy","settings":{"lighting":"fullbright","physics":"none","sky_quality":"fast","visibility":"fast","bounces":0,"smoothing_angle":0,"generate_reflections":false}}]}"#;
+        let file: File = serde_json::from_slice(legacy).unwrap();
+        validate(&file).unwrap();
+        assert_eq!(
+            file.recipes[0].settings.options().unwrap(),
+            compiler::Options::default()
+        );
+        assert_eq!(serde_json::to_vec(&file).unwrap(), legacy.as_slice());
+        let mut current = session();
+        for recipe in builtins() {
+            assert!(!recipe.settings.pack_sky_assets);
+            assert!(
+                recipe.json(true)["description"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("sky packing off")
+            );
+            current
+                .update_build_settings(
+                    Actor::Agent,
+                    BuildSettingsUpdate {
+                        pack_sky_assets: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            current
+                .apply_build_recipe(Actor::User, &recipe.id, None)
+                .unwrap();
+            assert_eq!(
+                current.compile_options(),
+                recipe.settings.options().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn sky_packing_custom_recipes_restart_restore_replace_and_freeze() {
+        for actor in [Actor::User, Actor::Agent] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(FILE_NAME);
+            let mut current = session();
+            current.configure_build_recipes_at(Ok(path.clone()));
+            let before = map_state(&current);
+            current
+                .update_build_settings(
+                    actor,
+                    BuildSettingsUpdate {
+                        lighting: Some("direct_ldr_hdr"),
+                        physics: Some("engine"),
+                        sky_quality: Some("balanced"),
+                        visibility: Some("detailed"),
+                        bounces: Some(2),
+                        smoothing_angle: Some(35),
+                        generate_reflections: Some(true),
+                        pack_sky_assets: Some(true),
+                    },
+                )
+                .unwrap();
+            let retained = current.compile_options();
+            current
+                .save_build_recipe(actor, "Portable", None, None)
+                .unwrap();
+            let bytes = fs::read(&path).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap()["recipes"][0]["settings"]["pack_sky_assets"],
+                true
+            );
+            let mut restarted = session();
+            restarted.configure_build_recipes_at(Ok(path.clone()));
+            assert!(!restarted.compile_options().pack_sky_assets);
+            let saved = restarted.build_recipes();
+            assert_eq!(saved["recipes"][2]["settings"]["pack_sky_assets"], true);
+            assert!(
+                saved["recipes"][2]["description"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("sky packing on")
+            );
+            restarted
+                .apply_build_recipe(actor, "custom:1", None)
+                .unwrap();
+            assert_eq!(restarted.compile_options(), retained);
+            restarted.compiling = true;
+            let frozen = restarted.build_recipes();
+            assert!(restarted.apply_build_recipe(actor, "fast", None).is_err());
+            assert!(
+                restarted
+                    .save_build_recipe(actor, "Changed", Some("custom:1"), None)
+                    .is_err()
+            );
+            assert!(
+                restarted
+                    .rename_build_recipe(actor, "custom:1", "Changed", None)
+                    .is_err()
+            );
+            assert!(
+                restarted
+                    .delete_build_recipe(actor, "custom:1", None)
+                    .is_err()
+            );
+            assert_eq!(restarted.build_recipes(), frozen);
+            assert_eq!(restarted.compile_options(), retained);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            restarted.compiling = false;
+            restarted.apply_build_recipe(actor, "fast", None).unwrap();
+            assert!(!restarted.compile_options().pack_sky_assets);
+            restarted
+                .save_build_recipe(actor, "Portable", Some("custom:1"), None)
+                .unwrap();
+            let replaced = fs::read(&path).unwrap();
+            assert!(
+                !String::from_utf8(replaced)
+                    .unwrap()
+                    .contains("pack_sky_assets")
+            );
+            let mut restored = session();
+            restored.configure_build_recipes_at(Ok(path));
+            restored
+                .update_build_settings(
+                    actor,
+                    BuildSettingsUpdate {
+                        pack_sky_assets: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            restored
+                .apply_build_recipe(actor, "custom:1", None)
+                .unwrap();
+            assert_eq!(restored.compile_options(), compiler::Options::default());
+            assert_eq!(map_state(&current), before);
+            assert_eq!(map_state(&restarted), before);
+            assert_eq!(map_state(&restored), before);
+        }
+    }
+
+    #[test]
+    fn invalid_sky_packing_recipe_records_block_writes_and_preserve_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let mut current = session();
+        current.configure_build_recipes_at(Ok(path.clone()));
+        current
+            .update_build_settings(
+                Actor::Agent,
+                BuildSettingsUpdate {
+                    pack_sky_assets: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        current
+            .save_build_recipe(Actor::Agent, "Portable", None, None)
+            .unwrap();
+        let original = fs::read(&path).unwrap();
+        let valid: Value = serde_json::from_slice(&original).unwrap();
+        let retained = current.build_recipes()["recipes"].clone();
+        let options = current.compile_options();
+        let before = map_state(&current);
+        let mut invalid = Vec::new();
+        for value in [json!(null), json!("true"), json!(1), json!([]), json!({})] {
+            let mut file = valid.clone();
+            file["recipes"][0]["settings"]["pack_sky_assets"] = value;
+            invalid.push(serde_json::to_vec(&file).unwrap());
+        }
+        let mut unknown = valid;
+        unknown["recipes"][0]["settings"]["pack_sky_asset"] = json!(true);
+        invalid.push(serde_json::to_vec(&unknown).unwrap());
+        invalid.push(
+            String::from_utf8(original)
+                .unwrap()
+                .replace(
+                    "\"pack_sky_assets\": true",
+                    "\"pack_sky_assets\": true, \"pack_sky_assets\": false",
+                )
+                .into_bytes(),
+        );
+        for bytes in invalid {
+            fs::write(&path, &bytes).unwrap();
+            current.configure_build_recipes_at(Ok(path.clone()));
+            let state = current.build_recipes();
+            assert_eq!(state["persistence"], "blocked");
+            assert_eq!(state["custom_editable"], false);
+            assert!(state["error"].as_str().unwrap().contains("could not load"));
+            assert_eq!(state["recipes"], retained);
+            assert!(
+                current
+                    .save_build_recipe(Actor::Agent, "Changed", Some("custom:1"), None)
+                    .is_err()
+            );
+            assert!(
+                current
+                    .delete_build_recipe(Actor::Agent, "custom:1", None)
+                    .is_err()
+            );
+            assert_eq!(current.compile_options(), options);
+            assert_eq!(map_state(&current), before);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
     }
 
     #[test]

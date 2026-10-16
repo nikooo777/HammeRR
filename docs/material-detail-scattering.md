@@ -75,6 +75,10 @@ leaf while the stored model origin stays on its surface. Models keep white
 unbaked lighting; baked detail
 lighting and light styles remain unfinished.
 
+Groups may be empty, including the alpha-zero groups in installed model detail
+types. An empty selected group emits no models and produces an informational
+diagnostic; it never falls back to a different group.
+
 **Detail material file** (`detailmaterial`) selects the runtime sprite atlas;
 it does not select the model dictionary. Maps without exposed `%detailtype`
 materials do not read the dictionary and retain their existing detail payload.

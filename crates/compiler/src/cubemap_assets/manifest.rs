@@ -34,15 +34,13 @@ pub(crate) fn bootstrap_cube(edge: u16) -> Result<Vec<u8>, String> {
     for (offset, value) in [(16, edge), (18, edge), (24, 1), (26, 0), (63, 1)] {
         bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
     }
-    bytes[32..36].copy_from_slice(&0.5f32.to_le_bytes());
-    bytes[40..44].copy_from_slice(&0.5f32.to_le_bytes());
     bytes[48..52].copy_from_slice(&1f32.to_le_bytes());
     bytes[57..61].copy_from_slice(&(-1i32).to_le_bytes());
     bytes[56] = mips;
     for mip in (0..mips).rev() {
         let size = usize::from((edge >> mip).max(1));
         for _ in 0..size * size * 7 {
-            bytes.extend_from_slice(&[255, 0, 255, 255]);
+            bytes.extend_from_slice(&[0, 0, 0, 0]);
         }
     }
     Ok(bytes)

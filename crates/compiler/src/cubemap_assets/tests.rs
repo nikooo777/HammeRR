@@ -100,7 +100,7 @@ fn capture_fixture(output: &Output) -> (CubemapAssetManifest, Vec<u8>, CaptureRe
             .iter_mut()
             .find(|entry| entry.name == sample.texture)
             .unwrap();
-        entry.data[80..].fill(0);
+        entry.data = native_black_cube(sample.edge);
     }
     captured
         .set_pak_data(&archive, PakLimits::default())
@@ -114,6 +114,74 @@ fn capture_fixture(output: &Output) -> (CubemapAssetManifest, Vec<u8>, CaptureRe
         preservation_passed: true,
     };
     (private_manifest, staged, receipt)
+}
+
+fn native_black_cube(edge: u16) -> Vec<u8> {
+    let legacy = manifest::bootstrap_cube(edge).unwrap();
+    let mut bytes = legacy[..80].to_vec();
+    bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&96u32.to_le_bytes());
+    bytes[52..56].copy_from_slice(&3u32.to_le_bytes());
+    bytes[68..72].copy_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&[0x30, 0, 0, 0, 96, 0, 0, 0, b'C', b'R', b'C', 2, 0, 0, 0, 0]);
+    bytes.resize(96 + (legacy.len() - 80) / 4 * 3, 0);
+    bytes
+}
+
+#[test]
+fn neutral_bootstraps_add_no_energy_and_keep_opaque_black_capture_freshness() {
+    for edge in [1, 32, 128] {
+        let bootstrap = manifest::bootstrap_cube(edge).unwrap();
+        let initial = source_formats::vtf::Vtf::parse(bootstrap.clone()).unwrap();
+        assert_eq!(initial.reflectivity, [0.0; 3]);
+        for mip in 0..initial.mip_count {
+            for face in 0..initial.faces {
+                assert!(
+                    initial
+                        .decode_rgba8(mip, 0, face)
+                        .unwrap()
+                        .pixels
+                        .chunks_exact(4)
+                        .all(|pixel| pixel == [0, 0, 0, 0])
+                );
+            }
+        }
+        let native = native_black_cube(edge);
+        let captured = source_formats::vtf::Vtf::parse(native.clone()).unwrap();
+        assert_eq!(captured.format, source_formats::vtf::ImageFormat::Bgr888);
+        for mip in 0..captured.mip_count {
+            for face in 0..captured.faces {
+                assert!(
+                    captured
+                        .decode_rgba8(mip, 0, face)
+                        .unwrap()
+                        .pixels
+                        .chunks_exact(4)
+                        .all(|pixel| pixel == [0, 0, 0, 255])
+                );
+            }
+        }
+        let sample = CubemapSampleAsset {
+            helper_id: 1,
+            origin: [0; 3],
+            size_enum: 0,
+            edge,
+            texture: "materials/maps/test/c0_0_0.vtf".into(),
+            bootstrap_sha256: hash(&bootstrap),
+            sha256: hash(&native),
+        };
+        manifest::validate_sample(&bootstrap, &sample, CubemapAssetPhase::Pending).unwrap();
+        manifest::validate_sample(&native, &sample, CubemapAssetPhase::Verified).unwrap();
+        assert!(manifest::validate_sample(&native, &sample, CubemapAssetPhase::Pending).is_err());
+        assert!(
+            manifest::validate_sample(&bootstrap, &sample, CubemapAssetPhase::Verified).is_err()
+        );
+        let mut header_only = bootstrap.clone();
+        header_only[32..36].copy_from_slice(&0.25f32.to_le_bytes());
+        assert!(
+            manifest::validate_sample(&header_only, &sample, CubemapAssetPhase::Verified).is_err()
+        );
+    }
 }
 
 fn merge(output: Output, game: &GameFs) -> Output {

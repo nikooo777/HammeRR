@@ -6,7 +6,7 @@ use source_formats::gamefs::asset_relative;
 use source_formats::keyvalues::{self, Node};
 use source_formats::vmf::Vmf;
 
-use super::Builder;
+use super::{Builder, sprites};
 use crate::{Control, Diagnostic, Report, emit, faces::Face, map::Map};
 
 mod terrain;
@@ -17,13 +17,19 @@ const MAX_SAMPLES: usize = 65_536;
 const MAX_TERRAIN_WORK: usize = 4_000_000;
 const DENSITY_AREA: f64 = 1_000_000.0;
 const LEAF_BIAS: f64 = 0.03125;
+const SPRITE_SCALE_SEED: u32 = 0x9e37_79b9;
 
 struct Model {
-    path: String,
+    asset: Asset,
     amount: f64,
     min_cos: f64,
     max_cos: f64,
     upright: bool,
+}
+
+enum Asset {
+    Model(String),
+    Sprite(sprites::Definition),
 }
 
 struct Group {
@@ -101,7 +107,7 @@ fn selected_model(models: &[Model], choice: f64) -> Option<&Model> {
     models.get(models.partition_point(|model| model.amount <= choice))
 }
 
-fn value<'a>(nodes: &'a [Node], key: &str) -> Result<Option<&'a str>, String> {
+pub(super) fn value<'a>(nodes: &'a [Node], key: &str) -> Result<Option<&'a str>, String> {
     let mut found = nodes
         .iter()
         .filter(|node| node.key.eq_ignore_ascii_case(key));
@@ -116,7 +122,13 @@ fn value<'a>(nodes: &'a [Node], key: &str) -> Result<Option<&'a str>, String> {
         .ok_or_else(|| format!("Detail dictionary {key} must be a value"))
 }
 
-fn number(nodes: &[Node], key: &str, default: f64, min: f64, max: f64) -> Result<f64, String> {
+pub(super) fn number(
+    nodes: &[Node],
+    key: &str,
+    default: f64,
+    min: f64,
+    max: f64,
+) -> Result<f64, String> {
     let Some(raw) = value(nodes, key)? else {
         return Ok(default);
     };
@@ -128,6 +140,7 @@ fn number(nodes: &[Node], key: &str, default: f64, min: f64, max: f64) -> Result
 }
 
 fn model(nodes: &[Node]) -> Result<Model, String> {
+    let sprite = value(nodes, "sprite")?.is_some();
     for node in nodes {
         if ![
             "model",
@@ -136,29 +149,43 @@ fn model(nodes: &[Node]) -> Result<Model, String> {
             "minangle",
             "maxangle",
             "detailorientation",
+            "sprite",
+            "spritesize",
+            "spriterandomscale",
         ]
         .iter()
         .any(|key| node.key.eq_ignore_ascii_case(key))
         {
             return Err(format!(
-                "Detail dictionary field {} is unsupported; material scattering supports models only, without sprites or shapes",
+                "Detail dictionary field {} is unsupported; material scattering supports models and plain sprites without shapes or sway",
                 node.key
             ));
         }
     }
-    let path = asset_relative(value(nodes, "model")?.ok_or(
-        "Detail dictionary entry requires a model; sprite and shape scattering is unsupported",
-    )?)
-    .map_err(|error| error.to_string())?;
-    if !path.starts_with("models/") || !path.ends_with(".mdl") {
-        return Err("Detail dictionary model must name a models/*.mdl asset".into());
-    }
+    let asset = if sprite {
+        if value(nodes, "model")?.is_some() {
+            return Err("Detail dictionary entry must select exactly one model or sprite".into());
+        }
+        Asset::Sprite(sprites::Definition::parse(nodes)?)
+    } else {
+        if value(nodes, "spritesize")?.is_some() || value(nodes, "spriterandomscale")?.is_some() {
+            return Err("Detail sprite size and random scale require a sprite entry".into());
+        }
+        let path = asset_relative(
+            value(nodes, "model")?.ok_or("Detail dictionary entry requires a model or sprite")?,
+        )
+        .map_err(|error| error.to_string())?;
+        if !path.starts_with("models/") || !path.ends_with(".mdl") {
+            return Err("Detail dictionary model must name a models/*.mdl asset".into());
+        }
+        if number(nodes, "detailOrientation", 0.0, 0.0, 2.0)? != 0.0 {
+            return Err("Detail dictionary models require detailOrientation=0".into());
+        }
+        Asset::Model(path)
+    };
     let upright = number(nodes, "upright", 0.0, 0.0, 1.0)?;
     if upright != 0.0 && upright != 1.0 {
         return Err("Detail dictionary upright must be 0 or 1".into());
-    }
-    if number(nodes, "detailOrientation", 0.0, 0.0, 2.0)? != 0.0 {
-        return Err("Detail dictionary models require detailOrientation=0".into());
     }
     let min_cos = number(nodes, "minAngle", 180.0, 0.0, 180.0)?
         .to_radians()
@@ -167,7 +194,7 @@ fn model(nodes: &[Node]) -> Result<Model, String> {
         .to_radians()
         .cos();
     Ok(Model {
-        path,
+        asset,
         amount: number(nodes, "amount", 1.0, 0.0, DENSITY_AREA)?,
         min_cos: min_cos.max(max_cos),
         max_cos,
@@ -242,7 +269,10 @@ pub(super) fn requested(map: &Map, models: &[emit::Model]) -> bool {
         .any(|face| detail_type(map, face).is_some())
 }
 
-struct Random(u32);
+struct Random {
+    state: u32,
+    scale_state: u32,
+}
 
 impl Random {
     fn face(face: &Face) -> Result<Self, String> {
@@ -255,12 +285,32 @@ impl Random {
                 seed = seed.rotate_left(5) ^ value.to_bits();
             }
         }
-        Ok(Self(seed))
+        Ok(Self {
+            state: seed,
+            scale_state: seed.rotate_left(16) ^ SPRITE_SCALE_SEED,
+        })
     }
 
     fn unit(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(214_013).wrapping_add(2_531_011);
-        (f64::from((self.0 >> 16) & 0x7fff) + 0.5) / 32_768.0
+        Self::next(&mut self.state)
+    }
+
+    fn next(state: &mut u32) -> f64 {
+        *state = state.wrapping_mul(214_013).wrapping_add(2_531_011);
+        (f64::from((*state >> 16) & 0x7fff) + 0.5) / 32_768.0
+    }
+
+    fn sprite_scale(&mut self, deviation: f64) -> Result<f32, String> {
+        if deviation == 0.0 {
+            return Ok(1.0);
+        }
+        let radial = (-2.0 * Self::next(&mut self.scale_state).ln()).sqrt();
+        let angle = std::f64::consts::TAU * Self::next(&mut self.scale_state);
+        let scale = (1.0 + deviation * radial * angle.cos()).abs() as f32;
+        if !scale.is_finite() || scale <= 0.0 || scale > 6.0 {
+            return Err("Detail sprite Gaussian scale does not fit positive native bounds".into());
+        }
+        Ok(scale)
     }
 }
 
@@ -299,7 +349,7 @@ fn place(
         return Ok(());
     }
     let origin = point.as_vec3();
-    let prop = DetailProp {
+    let mut prop = DetailProp {
         origin: origin.to_array(),
         angles: angles(normal, model.upright, random.unit() * 360.0),
         ..Default::default()
@@ -308,7 +358,14 @@ fn place(
     let leaf_point = origin.as_dvec3()
         + normal * LEAF_BIAS
         + inward * (LEAF_BIAS / inward.length().max(LEAF_BIAS));
-    builder.add(&model.path, prop, leaf_point, control)
+    match &model.asset {
+        Asset::Model(path) => builder.add(path, prop, leaf_point, control),
+        Asset::Sprite(sprite) => {
+            prop.scale = random.sprite_scale(sprite.random_scale)?;
+            prop.orientation = sprite.orientation;
+            builder.add_sprite(sprite.record, prop, leaf_point, control)
+        }
+    }
 }
 
 fn emit_face(

@@ -1114,3 +1114,38 @@ native terrain mode compares detail ON/OFF foliage in the exact MCP-built BSP;
 existing flat artifacts can be compared byte-for-byte after compiler changes.
 Runtime isolation, preservation and cleanup use the same policy as other private
 CS:S validators, including `-insecure`, `-default` and pre/post-map `sv_lan 1`.
+
+### Detail sprites, orientations and baked colors
+
+```sh
+cargo test -p compiler --test detail_sprites --test detail_lighting
+python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-sprites-check
+python3 -B scripts/validate_detail_sprites.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-orientations-native --runtime --orientation-views
+python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-check
+python3 -B scripts/validate_detail_lighting.py --binary target/debug/hammerr-headless --output /tmp/hammerr-detail-lighting-native --runtime
+```
+
+`validate_detail_sprites` checks native atlas UVs and anchors, deterministic
+placement, custom atlas validation, bounds/budgets, rejected selected groups,
+source/history preservation and exact foreground/background output. Plain
+orientations `0` (stored angles) and `1` (full billboard) require unit scale;
+orientation `2` retains vertical billboarding and absolute Gaussian scale.
+`--orientation-views` requires `--runtime` and compares detail ON/OFF silhouettes
+for orientations 0 and 1 from level and elevated cameras in four private
+Cage/VScript observations.
+
+`validate_detail_lighting` compares bright, dim and colored static lights for
+explicit models and generated sprites, without changing placement. It checks
+Fullbright's white base colors, Direct LDR's baked colors, the final HDR shared
+base under Direct LDR + HDR, and atomic contributing-style rejection through
+both foreground and background builds. `--runtime` additionally checks separate
+model and sprite foreground color masks against detail-disabled backgrounds.
+Nonzero styled contributions reject; unrelated styles are not blanket-blocked.
+Detail shadows, shaped/swaying sprites and explicit sprite entities remain
+unsupported.
+
+Both validators need fresh output directories and installed CS:S/FGD assets.
+Native modes retain the shared private-launch, source/configuration preservation
+and cleanup policy, including `-insecure` and pre/post-map `sv_lan 1`.
+The existing detail observer also accepts `--sprite-orientation 0|1|2` and
+`--view level|elevated` for prepared private sprite fixtures.

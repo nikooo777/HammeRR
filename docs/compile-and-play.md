@@ -163,9 +163,16 @@ With **Direct LDR** or **Direct LDR + HDR**:
 
 ![Baked Direct LDR lighting in Counter-Strike: Source](images/compiled-terrain.png)
 
+[Explicit detail models](model-detail-props.md) and [material-generated models and
+sprites](material-detail-scattering.md) receive static direct light plus filtered
+world/terrain/sky ambient, including configured bounces through the lightmaps.
+**Fullbright** retains their white unbaked base colors. Detail objects do not add
+baked shadows or collision. A nonzero animated or switchable contribution at a
+detail receiver rejects the build; unrelated styles remain usable.
+
 #### HDR channels
 
-**Direct LDR + HDR** keeps face lightmaps, light styles, world lights, reflected light and model-ambient probes separate for the two channels. CS:S selects the baked channel according to its HDR setting and hardware support. The editor viewport continues to show its existing preview lighting.
+**Direct LDR + HDR** keeps face lightmaps, light styles, world lights, reflected light and model-ambient probes separate for the two channels. CS:S selects the baked channel according to its HDR setting and hardware support. The editor viewport continues to show its existing preview lighting. Detail model and sprite base colors use one shared native field; in a dual-channel build it retains the final HDR pass's color rather than separate LDR/HDR detail values.
 
 1. Open **Build settings…** and choose **Build lighting → Direct LDR + HDR**.
 2. Set **Indirect light**, **Brush smoothing angle** and **Sampling quality**. These settings apply to both channels. Existing **Fast preview** and **Final lighting** recipes keep their original settings; use **Save current as new** to retain a custom HDR recipe.

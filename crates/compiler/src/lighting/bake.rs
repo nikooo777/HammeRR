@@ -532,7 +532,7 @@ fn terrain_shadows(map: &Map, budget: &mut Budget<'_>) -> Result<ShadowIndex<Tri
     ShadowIndex::new(triangles, &mut |amount| budget.consume(amount))
 }
 
-fn sky_visible(
+pub(super) fn sky_visible(
     direction: DVec3,
     origin: DVec3,
     shadows: &ShadowIndex<Occluder>,
@@ -592,6 +592,7 @@ pub(crate) struct Settings<'a> {
     pub vmf: &'a source_formats::vmf::Vmf,
     pub options: crate::Options,
     pub model_entities: &'a [usize],
+    pub detail_model_centers: &'a [DVec3],
     pub smoothing_sources: &'a [Option<std::sync::Arc<crate::faces::SmoothingSource>>],
 }
 
@@ -659,6 +660,7 @@ pub(crate) fn bake(
     let mut budget = Budget::new(control);
     let _shared_geometry_allocation =
         shared_geometry_allocation(map, bsp, settings.smoothing_sources, &budget)?;
+    let _detail_centers = budget.reserve::<DVec3>(settings.detail_model_centers.len())?;
     let world_hulls = occluders(map, 0, report, &mut budget)?;
     let mut faces = bsp
         .lighting_faces(LightingKind::Ldr)
@@ -805,6 +807,7 @@ pub(crate) fn bake(
         prop_bounds: &prop_bounds,
         model_count: has_receivers.iter().skip(1).filter(|&&lit| lit).count(),
         model_faces,
+        detail_model_centers: settings.detail_model_centers,
         options,
     };
     let mut stats = bake_channel(&ctx, LightingKind::Ldr, bsp, report, &mut budget)?;
@@ -868,6 +871,7 @@ struct ChannelContext<'a> {
     prop_bounds: &'a ShadowIndex<super::props::ProbeBounds>,
     model_count: usize,
     model_faces: usize,
+    detail_model_centers: &'a [DVec3],
     options: crate::Options,
 }
 
@@ -893,6 +897,7 @@ fn bake_channel(
         prop_bounds,
         model_count,
         model_faces,
+        detail_model_centers,
         options,
     } = *ctx;
     let sky_quality = options.sky_quality;
@@ -1193,6 +1198,26 @@ fn bake_channel(
             sky_radiance,
         },
         bsp,
+        report,
+        budget,
+    )?;
+    super::details::bake(
+        &super::details::Context {
+            map,
+            tree,
+            visibility,
+            kind,
+            model_centers: detail_model_centers,
+            lights: &lights,
+            shadows,
+            terrain: terrain_shadows,
+            props: prop_shadows,
+            directions: &ambient_directions,
+            sun_directions: &sun_directions,
+            sky_radiance,
+        },
+        bsp,
+        &mut candidates,
         report,
         budget,
     )?;

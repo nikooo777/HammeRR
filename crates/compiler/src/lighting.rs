@@ -9,6 +9,7 @@ mod bake;
 mod bounce;
 mod bump;
 mod culling;
+mod details;
 mod falloff;
 mod models;
 mod normals;

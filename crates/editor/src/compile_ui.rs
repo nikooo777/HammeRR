@@ -687,7 +687,15 @@ impl Controller {
                 let models = result["stats"]["detail_prop_models"]
                     .as_u64()
                     .unwrap_or_default();
-                format!("\nDetail props: {count} · Model assets: {models} · Unbaked white lighting · No collision")
+                let sprites = result["stats"]["detail_prop_sprites"]
+                    .as_u64()
+                    .unwrap_or_default();
+                let lighting = match result["stats"]["lighting_mode"].as_str() {
+                    Some("direct_ldr") => "Baked static LDR lighting",
+                    Some("direct_ldr_hdr") => "Baked static HDR shared lighting",
+                    _ => "Unbaked white lighting",
+                };
+                format!("\nDetail props: {count} · Model assets: {models} · Sprite entries: {sprites} · {lighting} · No collision")
             })
             .unwrap_or_default();
         let visibility = result["stats"]["clusters"]

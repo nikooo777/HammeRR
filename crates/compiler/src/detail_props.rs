@@ -13,6 +13,7 @@ use crate::{
 
 mod assets;
 mod scatter;
+mod sprites;
 
 const MAX_PROPS: usize = 16_384;
 const MAX_LEAF_WORK: usize = 4_000_000;
@@ -21,6 +22,8 @@ const MAX_LEAF_WORK: usize = 4_000_000;
 pub(crate) struct Stats {
     pub props: usize,
     pub models: usize,
+    pub sprites: usize,
+    pub model_centers: Vec<DVec3>,
 }
 
 fn class(entity: &Entity) -> bool {
@@ -125,12 +128,15 @@ struct Builder<'a> {
     head: i32,
     props: DetailProps,
     models: BTreeMap<String, (u16, assets::ModelBounds)>,
+    sprites: BTreeMap<[u32; 8], u16>,
+    sprite_material: String,
+    sprite_atlas_checked: bool,
     validator: assets::ModelValidator,
     work: usize,
 }
 
 impl<'a> Builder<'a> {
-    fn new(fs: &'a GameFs, bsp: &Bsp) -> Result<Self, String> {
+    fn new(fs: &'a GameFs, bsp: &Bsp, vmf: &Vmf) -> Result<Self, String> {
         Ok(Self {
             fs,
             nodes: bsp.records::<Node>().map_err(|error| error.to_string())?,
@@ -144,6 +150,15 @@ impl<'a> Builder<'a> {
                 .head_node,
             props: DetailProps::default(),
             models: BTreeMap::new(),
+            sprites: BTreeMap::new(),
+            sprite_material: vmf
+                .world
+                .properties
+                .get("detailmaterial")
+                .filter(|value| !value.is_empty())
+                .unwrap_or("detail/detailsprites")
+                .to_owned(),
+            sprite_atlas_checked: false,
             validator: assets::ModelValidator::default(),
             work: 0,
         })
@@ -196,6 +211,63 @@ impl<'a> Builder<'a> {
         let rotation = DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z);
         bounds.check_transform(origin, rotation)?;
         prop.model = model;
+        self.add_record(prop, leaf_point, control)
+    }
+
+    fn add_sprite(
+        &mut self,
+        sprite: source_formats::bsp::DetailSprite,
+        mut prop: DetailProp,
+        leaf_point: DVec3,
+        control: &Control,
+    ) -> Result<(), String> {
+        sprites::check_bounds(
+            sprite,
+            DVec3::from_array(prop.origin.map(f64::from)),
+            DVec3::from_array(prop.angles.map(f64::from)),
+            prop.orientation,
+            prop.scale,
+        )?;
+        if !self.sprite_atlas_checked {
+            self.validator
+                .sprite_atlas(self.fs, &self.sprite_material, control)?;
+            self.sprite_atlas_checked = true;
+        }
+        let key = sprites::key(sprite);
+        let index = if let Some(&index) = self.sprites.get(&key) {
+            index
+        } else {
+            if self.sprites.len() >= sprites::MAX_SPRITES {
+                return Err("Detail sprite dictionary exceeds its 4096-entry build budget".into());
+            }
+            let index = self.props.sprites.len() as u16;
+            self.sprites.insert(key, index);
+            self.props.sprites.push(sprite);
+            index
+        };
+        prop.model = index;
+        prop.kind = sprites::KIND;
+        self.add_record(prop, leaf_point, control)
+    }
+
+    fn add_record(
+        &mut self,
+        mut prop: DetailProp,
+        leaf_point: DVec3,
+        control: &Control,
+    ) -> Result<(), String> {
+        if self.props.props.len() >= MAX_PROPS {
+            return Err("Detail model props exceed the 16,384-object build budget".into());
+        }
+        if !leaf_point.is_finite()
+            || prop
+                .origin
+                .into_iter()
+                .chain(prop.angles)
+                .any(|value| !value.is_finite())
+        {
+            return Err("Detail prop transforms and leaf samples must remain finite".into());
+        }
         let mut cursor = self.head;
         while cursor >= 0 {
             control.checkpoint()?;
@@ -252,7 +324,7 @@ pub(crate) fn bake(
     if entities.len() > MAX_PROPS {
         return Err("Detail model props exceed the 16,384-object build budget".into());
     }
-    let mut builder = Builder::new(fs, bsp)?;
+    let mut builder = Builder::new(fs, bsp, vmf)?;
     for entity in entities {
         control.checkpoint()?;
         let result: Result<(), String> = (|| {
@@ -288,10 +360,17 @@ pub(crate) fn bake(
         builder.props.props.sort_by_key(|prop| prop.leaf);
         bsp.set_detail_props(&builder.props)
             .map_err(|error| error.to_string())?;
-        report.diagnostics.push(Diagnostic::warning("Detail model props are non-colliding client-only models with unbaked white lighting; sprites, detail light styles and baked detail lighting remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Detail props are non-colliding client-only models and vertical billboards; Fullbright uses unbaked white lighting, while lit builds bake static detail colors; shaped sprites and nonzero detail light styles remain unfinished", None, None));
+    }
+    let mut model_centers = vec![DVec3::ZERO; builder.props.models.len()];
+    for &(index, bounds) in builder.models.values() {
+        control.checkpoint()?;
+        model_centers[usize::from(index)] = bounds.lighting_center();
     }
     Ok(Stats {
         props: builder.props.props.len(),
         models: builder.props.models.len(),
+        sprites: builder.props.sprites.len(),
+        model_centers,
     })
 }

@@ -391,6 +391,7 @@ pub struct Stats {
     pub static_prop_leaf_refs: usize,
     pub detail_props: usize,
     pub detail_prop_models: usize,
+    pub detail_prop_sprites: usize,
     pub prop_shadow_props: usize,
     pub prop_shadow_models: usize,
     pub prop_shadow_triangles: usize,
@@ -910,6 +911,7 @@ fn build(
     }
     output.stats.detail_props = detail_stats.props;
     output.stats.detail_prop_models = detail_stats.models;
+    output.stats.detail_prop_sprites = detail_stats.sprites;
     if options.lighting.performs_lighting() {
         control.advance(Stage::Lighting)?;
         let stats = lighting::bake(
@@ -925,6 +927,7 @@ fn build(
                 options,
                 smoothing_sources: &emission.smoothing_sources,
                 model_entities: &emission.model_entities,
+                detail_model_centers: &detail_stats.model_centers,
             },
         )?;
         if output.report.has_errors() {

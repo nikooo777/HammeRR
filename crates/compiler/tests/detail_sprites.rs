@@ -3,7 +3,7 @@ mod common;
 mod detail_model;
 
 use glam::DVec3;
-use map_core::{Document, ObjectId, Plane, edit, surface::FaceId};
+use map_core::{Document, ObjectId, Plane, compile_region, edit, surface::FaceId};
 use source_formats::bsp::{Bsp, DetailProps, Leaf};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::vmf::{Entity, Vmf};
@@ -489,6 +489,105 @@ fn explicit_sprite_failures_are_atomic_without_model_assets() {
     )
     .unwrap();
     rejected(&fixture, "UnlitGeneric");
+}
+
+#[test]
+fn regions_filter_explicit_sprites_by_origin_and_keep_normal_validation() {
+    let mut fixture = fixture();
+    std::fs::write(
+        fixture.directory.path().join("materials/test/ground.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
+    std::fs::create_dir_all(fixture.directory.path().join("materials/tools")).unwrap();
+    std::fs::write(
+        fixture
+            .directory
+            .path()
+            .join("materials/tools/toolsblack.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
+    let mut document = Document::new(fixture.source);
+    document
+        .edit("sprite region", |tx| {
+            compile_region::apply(
+                tx,
+                Some(compile_region::Definition {
+                    enabled: true,
+                    bounds: compile_region::Bounds {
+                        mins: DVec3::new(-128.0, -128.0, 0.0),
+                        maxs: DVec3::splat(128.0),
+                    },
+                }),
+            )
+        })
+        .unwrap();
+    fixture.source = document.into_vmf();
+    for (id, origin) in [(800_000, "0 0 32"), (800_001, "127.75 127.75 32")] {
+        let mut entity = explicit_sprite(id, 2);
+        entity.properties.set("origin", origin);
+        entity.properties.set("angles", "0 0 0");
+        entity.properties.set("position_ul", "-8 16");
+        entity.properties.set("position_lr", "8 -16");
+        fixture.source.entities.push(entity);
+    }
+    let mut outside = explicit_sprite(800_002, 2);
+    outside.properties.set("origin", "128.001 0 32");
+    outside.properties.remove("tex_size");
+    outside.properties.set("scale", "2");
+    fixture.source.entities.push(outside);
+    let mut hidden = explicit_sprite(800_003, 2);
+    hidden.hidden = true;
+    hidden.properties.set("origin", "NaN 0 0");
+    fixture.source.entities.push(hidden);
+    let before = fixture.source.clone();
+    let output = compiler::compile_with_options(
+        &fixture.source,
+        &fixture.game,
+        compiler::Options {
+            lighting: compiler::LightingMode::DirectLdr,
+            bounces: 0,
+            ..Default::default()
+        },
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let scope = output.stats.compile_region.as_ref().unwrap();
+    for id in [800_000, 800_001] {
+        assert!(scope.included.contains(&format!("entity:{id}")));
+    }
+    for id in [800_002, 800_003] {
+        assert!(scope.omitted.contains(&format!("entity:{id}")));
+    }
+    let bsp = output.bsp.unwrap();
+    let rows = bsp.detail_props().unwrap().unwrap();
+    assert_eq!(
+        (rows.models.len(), rows.sprites.len(), rows.props.len()),
+        (0, 1, 2)
+    );
+    assert_eq!(rows.sprites[0].upper_left, [-8.0, 16.0]);
+    assert_eq!(rows.sprites[0].lower_right, [8.0, -16.0]);
+    assert!(
+        rows.props
+            .iter()
+            .any(|prop| prop.origin == [127.75, 127.75, 32.0])
+    );
+    assert_eq!(fixture.source, before);
+    fixture.previous = bsp.to_bytes();
+    let base = fixture.source.clone();
+    for (origin, key, value, expected) in [
+        ("0 0 32", "tex_size", "0 4", "texture rectangle"),
+        ("0 0 32", "position_ul", "-40000 16", "bounds"),
+        ("0 0 32", "lightingorigin", "missing", "model-only"),
+        ("128 0 32", "scale", "1", "open visible world leaf"),
+    ] {
+        fixture.source = base.clone();
+        let mut entity = explicit_sprite(800_004, 2);
+        entity.properties.set("origin", origin);
+        entity.properties.set(key, value);
+        fixture.source.entities.push(entity);
+        rejected(&fixture, expected);
+    }
 }
 
 #[test]

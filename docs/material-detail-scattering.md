@@ -217,8 +217,9 @@ shapes keep their existing sample points. Authored render tint remains
 unfinished. Detail objects do not cast new baked shadows.
 
 [Explicit detail sprites](detail-sprites.md) place individual cards from the same
-atlas without a scatter dictionary. They use scale one and require full-map
-builds; generated models, sprites and shapes retain this dictionary workflow.
+atlas without a scatter dictionary. They use scale one and the same inclusive
+authored-origin region selection as explicit models; generated models, sprites
+and shapes retain this dictionary workflow.
 
 Explicit model detail props are selected for a compile region by their authored
 origin, including the box boundary; an absent origin means world zero. Outside

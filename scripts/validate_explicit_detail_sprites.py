@@ -22,6 +22,41 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def validate_regions(client, args, ids, sprites, source, saved, data, expected):
+    authored = detail(client, ids)
+    draft = client.call("preview_compile_region", {"snapshot": client.call("get_compile_region")["snapshot"], "enabled": True, "mins": [-224, -224, 0], "maxs": [128, 128, 224]})
+    client.call("apply_compile_region", {"token": draft["draft"]["token"]})
+    outside = client.call("create_entity", {"classname": "prop_detail_sprite", "origin": [240, 0, 32], "properties": {"scale": "2", "tex_size": "invalid"}})["id"]
+    scoped = [*ids, outside]
+    region_bsp, region_data, region_result = compile_pair(client, args.output, "explicit-region", scoped)
+    parsed = detail_records(region_data, allow_sprites=True, allow_baked=True)
+    retained = [origin for origin in expected if all(-224 <= value <= 128 for value in origin[:2])]
+    require(sorted(row["origin"] for row in parsed["props"]) == sorted(retained) and len(retained) == 15, "Region did not retain explicit sprite origins inclusively")
+    scope = region_result["stats"]["compile_region"]
+    require(scope is not None and outside in scope["omitted"] and len(parsed["sprites"]) == 1, region_result)
+    previous = args.output / "region-rejected.bsp"
+    previous.write_bytes(region_data)
+    inside = next(sprite for sprite, origin in zip(sprites, expected, strict=True) if origin in retained)
+    failures = {}
+    for name, target, changes, message in [("inside-malformed", inside, {"tex_size": "0 128"}, "texture rectangle"), ("inclusive-boundary", outside, {"origin": "128 0 32", **FIELDS, "scale": "1"}, "open visible world leaf")]:
+        client.call("set_entity_properties", {"id": target, "set": changes})
+        before = state(client, scoped, source)
+        failure = json.loads(client.call("compile_map", {"path": str(previous)}, error=True)["content"][0]["text"])
+        require(not failure["success"] and message in json.dumps(failure["diagnostics"]), failure)
+        require(previous.read_bytes() == region_data and state(client, scoped, source) == before, "Region rejection changed source/history or prior BSP")
+        client.call("start_compile", {"path": str(previous)})
+        job = wait_job(client)
+        require(job["status"] == "failed" and previous.read_bytes() == region_data and state(client, scoped, source) == before, job)
+        failures[name] = failure["diagnostics"]
+        client.call("undo")
+    client.call("undo")
+    client.call("undo")
+    require(detail(client, ids) == authored and source.read_bytes() == saved, "Region controls changed authored explicit sprites or saved source")
+    _, restored, _ = compile_pair(client, args.output, "explicit-region-restored", ids)
+    require(restored == data, "Region disable changed full-map bytes")
+    return {"bsp": str(region_bsp), "bsp_sha256": probe.digest(region_data), "count": len(retained), "outside_invalid_omitted": True, "rejected": failures, "full_map_restored_exact": True}
+
+
 def validate(args):
     game = runtime.private_game(args.game_dir, args.output / "source-game")
     (game / "materials").mkdir(exist_ok=True)
@@ -81,7 +116,8 @@ def validate(args):
                 require(detail(client, ids) == authored, "Undo failed to restore explicit sprite fields")
             _, repeated, _ = compile_pair(client, args.output, "explicit-restored", ids)
             require(repeated == data and source.read_bytes() == saved, "Explicit sprite controls changed deterministic output or saved source")
-            result = {"success": True, "bsp": str(bsp), "bsp_sha256": probe.digest(data), "count": 24, "records": parsed, "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "unrelated_geometry_exact": True, "fixture_game": str(game), "native_exercised": False}
+            region = validate_regions(client, args, ids, sprites, source, saved, data, expected) if args.regions else None
+            result = {"regions": region, "success": True, "bsp": str(bsp), "bsp_sha256": probe.digest(data), "count": 24, "records": parsed, "rejected": rejected, "saved_reopened": True, "foreground_background_exact": True, "source_history_preserved": True, "unrelated_geometry_exact": True, "fixture_game": str(game), "native_exercised": False}
             (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
             return result
     finally:
@@ -95,6 +131,7 @@ def main():
     parser.add_argument("--fgd", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/SourceSDK/bin/source2009/bin/cstrike.fgd")
     parser.add_argument("--game-dir", type=Path, default=Path.home() / ".local/share/Steam/steamapps/common/Counter-Strike Source")
     parser.add_argument("--runtime", action="store_true")
+    parser.add_argument("--regions", action="store_true")
     parser.add_argument("--port", type=int, default=27729)
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
@@ -105,7 +142,9 @@ def main():
     result = validate(args)
     if args.runtime:
         output = args.output / "native"
-        subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")), "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--runtime", "--runtime-bsp", result["bsp"], "--fixture-game", result["fixture_game"], "--expected-count", "24", "--expected-sprites", "24", "--sprite-orientation", "2", "--baked-lighting", "--port", str(args.port)], check=True, timeout=150)
+        fixture = result["regions"] if args.regions else result
+        count = str(fixture["count"])
+        subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("validate_detail_props.py")), "--binary", str(args.binary), "--output", str(output), "--game-dir", str(args.game_dir), "--runtime", "--runtime-bsp", fixture["bsp"], "--fixture-game", result["fixture_game"], "--expected-count", count, "--expected-sprites", count, "--sprite-orientation", "2", "--baked-lighting", "--port", str(args.port)], check=True, timeout=150)
         native = json.loads((output / "results.json").read_text())
         require(native["native_exercised"] and native["native"]["success"], native)
         result.update({"native_exercised": True, "native": native["native"]})

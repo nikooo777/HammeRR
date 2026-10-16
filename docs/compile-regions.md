@@ -62,17 +62,18 @@ pending draft stale. Preview it again before applying.
    cage and grid, move the whole patch, or disable the region. Terrain is never
    clipped or flattened to fit.
 
-## Include model details
+## Include detail props
 
 1. Place [model detail props](model-detail-props.md) using `prop_detail` or the
-   imported `detail_prop` alias.
-2. Open **Compile region…** / **Region build…** and include each model's
+   imported `detail_prop` alias, or [explicit atlas sprites](detail-sprites.md)
+   using `prop_detail_sprite`.
+2. Open **Compile region…** / **Region build…** and include each detail's
    **Position** between **Minimum** and **Maximum**. Selection includes the box
    boundaries; an omitted origin is treated as `(0, 0, 0)`.
 3. Click **Preview region**, then **Apply region** and **Compile**. Outside and
-   hidden models are omitted. Included models keep their authored transforms
+   hidden details are omitted. Included details keep their authored transforms
    and rendering settings; their geometry may extend beyond the box.
-4. Check **Diagnostics** in **Build details…**. Included models still need
+4. Check **Diagnostics** in **Build details…**. Included details still need
    valid assets, supported rendering, Source bounds and open leaves. Lit builds
    also need an open visible lighting receiver. A point on the sealing boundary
    can fail these checks; move it into open space or enlarge the region.
@@ -129,11 +130,11 @@ pending draft stale. Preview it again before applying.
 - [Material detail scattering](material-detail-scattering.md) uses the final clipped
   exposed world/detail faces. Generated centers stay inside the region; models
   can extend beyond it. Source brushes and their material assignments stay whole.
-- Explicit model detail props use inclusive authored-origin selection, with an
+- Explicit model and sprite detail props use inclusive authored-origin selection, with an
   omitted origin treated as zero. Included records retain their source properties
-  and pass the normal model, transform, bounds, leaf and lighting checks. Their
+  and pass the normal asset, transform, bounds, leaf and lighting checks. Their
   geometry is never clipped or moved inward. Visible invalid origins reject before
-  selection. [Explicit detail sprites](detail-sprites.md) require full-map builds.
+  selection. Outside and hidden sprites are omitted before card and atlas validation.
 - Instances and visibility clusters require full-map builds. Retained slime,
   detail/model water and boundary-crossing water or terrain are also unsupported. These
   cases stop compilation and preserve prior output.

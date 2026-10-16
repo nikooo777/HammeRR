@@ -7,7 +7,7 @@ use source_formats::{
 use crate::test_common as common;
 
 #[test]
-fn detail_model_origins_use_inclusive_regions_and_preserve_authored_records() {
+fn detail_prop_origins_use_inclusive_regions_and_preserve_authored_records() {
     let (_directory, game, mut source) = fixture();
     let mut retained = Vec::new();
     let mut omitted = Vec::new();
@@ -18,6 +18,11 @@ fn detail_model_origins_use_inclusive_regions_and_preserve_authored_records() {
         ("detail_prop", Some("128.001 0 64"), false, false),
         ("prop_detail", None, false, true),
         ("prop_detail", Some("NaN 0 0"), true, false),
+        ("prop_detail_sprite", Some("-128 -128 0"), false, true),
+        ("PROP_DETAIL_SPRITE", Some("128 128 256"), false, true),
+        ("prop_detail_sprite", Some("128.001 0 64"), false, false),
+        ("prop_detail_sprite", None, false, true),
+        ("prop_detail_sprite", Some("NaN 0 0"), true, false),
     ] {
         let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
         let mut entity = Entity::new(id, class);
@@ -91,13 +96,13 @@ fn detail_model_origins_use_inclusive_regions_and_preserve_authored_records() {
 }
 
 #[test]
-fn detail_region_selection_rejects_invalid_origins_and_explicit_sprites() {
+fn detail_region_selection_rejects_invalid_model_and_sprite_origins() {
     let (_directory, game, source) = fixture();
     for (class, origin) in [
         ("prop_detail", "NaN 0 0"),
         ("detail_prop", "invalid"),
         ("prop_detail", "70000 0 0"),
-        ("prop_detail_sprite", "400 0 64"),
+        ("prop_detail_sprite", "NaN 0 0"),
     ] {
         let mut source = source.clone();
         let id = source.object_ids().chain(source.side_ids()).max().unwrap() + 1;
@@ -108,14 +113,7 @@ fn detail_region_selection_rejects_invalid_origins_and_explicit_sprites() {
         let error = prepare(&source, &game, &mut Report::default(), &Control::default())
             .err()
             .unwrap();
-        assert!(
-            error.contains(if class == "prop_detail_sprite" {
-                "do not support"
-            } else {
-                "valid finite origin"
-            }),
-            "{error}"
-        );
+        assert!(error.contains("valid finite origin"), "{error}");
         assert_eq!(source, before);
     }
 }

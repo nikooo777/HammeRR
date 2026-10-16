@@ -1,6 +1,8 @@
 mod common;
 #[path = "common/detail_model.rs"]
 mod detail_model;
+#[path = "material_details/generated_tint.rs"]
+mod generated_tint;
 
 use glam::{DQuat, DVec3, EulerRot};
 use map_core::displacement::DisplacementMesh;

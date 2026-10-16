@@ -21,6 +21,7 @@ const SPRITE_SCALE_SEED: u32 = 0x9e37_79b9;
 
 struct Model {
     asset: Asset,
+    lighting_tint: Tint,
     amount: f64,
     min_cos: f64,
     max_cos: f64,
@@ -139,7 +140,7 @@ pub(super) fn number(
         .ok_or_else(|| format!("Detail dictionary {key} must be finite and within {min}–{max}"))
 }
 
-fn model(nodes: &[Node]) -> Result<Model, String> {
+fn model(nodes: &[Node], lighting_tint: Tint) -> Result<Model, String> {
     let sprite = value(nodes, "sprite")?.is_some();
     for node in nodes {
         if ![
@@ -205,6 +206,7 @@ fn model(nodes: &[Node]) -> Result<Model, String> {
         .cos();
     Ok(Model {
         asset,
+        lighting_tint,
         amount: number(nodes, "amount", 1.0, 0.0, DENSITY_AREA)?,
         min_cos: min_cos.max(max_cos),
         max_cos,
@@ -212,7 +214,7 @@ fn model(nodes: &[Node]) -> Result<Model, String> {
     })
 }
 
-fn definition(nodes: &[Node]) -> Result<Definition, String> {
+fn definition(nodes: &[Node], lighting_tint: Tint) -> Result<Definition, String> {
     let density = number(nodes, "density", 0.0, 0.0, DENSITY_AREA)?;
     let mut groups = Vec::new();
     for node in nodes {
@@ -228,7 +230,7 @@ fn definition(nodes: &[Node]) -> Result<Definition, String> {
         let mut total = 0.0;
         for entry in children {
             if let Some(fields) = entry.children() {
-                match model(fields) {
+                match model(fields, lighting_tint) {
                     Ok(mut parsed) => {
                         total += parsed.amount;
                         parsed.amount = total;
@@ -369,7 +371,9 @@ fn place(
         + normal * LEAF_BIAS
         + inward * (LEAF_BIAS / inward.length().max(LEAF_BIAS));
     match &model.asset {
-        Asset::Model(path) => builder.add(path, prop, leaf_point, None, Tint::default(), control),
+        Asset::Model(path) => {
+            builder.add(path, prop, leaf_point, None, model.lighting_tint, control)
+        }
         Asset::Sprite(sprite) => {
             prop.scale = random.sprite_scale(sprite.random_scale)?;
             prop.orientation = sprite.orientation;
@@ -380,7 +384,13 @@ fn place(
                 prop.shape_angle = shape.angle;
                 prop.shape_size = shape.size;
             }
-            builder.add_sprite(sprite.record, prop, leaf_point, Tint::default(), control)
+            builder.add_sprite(
+                sprite.record,
+                prop,
+                leaf_point,
+                model.lighting_tint,
+                control,
+            )
         }
     }
 }
@@ -488,6 +498,7 @@ pub(super) fn bake(
     map: &Map,
     models: &[emit::Model],
     builder: &mut Builder,
+    lighting_tint: Tint,
     report: &mut Report,
     control: &Control,
 ) -> Result<(), String> {
@@ -532,7 +543,7 @@ pub(super) fn bake(
                     let fields = matches[0]
                         .children()
                         .ok_or("Detail type requires a block")?;
-                    let parsed = definition(fields)?;
+                    let parsed = definition(fields, lighting_tint)?;
                     definitions.insert(name.to_owned(), parsed);
                 }
                 let definition = &definitions[name];

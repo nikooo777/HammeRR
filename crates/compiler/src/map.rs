@@ -208,6 +208,7 @@ impl<'a> Map<'a> {
             .world
             .properties
             .iter()
+            .filter(|(key, _)| !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY))
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect();
         if !world_properties.iter().any(|(k, _)| k == "classname") {

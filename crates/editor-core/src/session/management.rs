@@ -8,6 +8,10 @@ use source_formats::vmf::Entity;
 use super::{Actor, SelectMode, Session};
 use crate::inspector;
 
+#[cfg(test)]
+#[path = "management/generated_detail_tint_tests.rs"]
+mod generated_detail_tint_tests;
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ObjectFilter {
     pub query: Option<String>,
@@ -616,6 +620,10 @@ impl Session {
         });
         let mut properties = Vec::new();
         for mut field in fields {
+            let generated_detail_tint = target == PropertyTarget::World
+                && field
+                    .key
+                    .eq_ignore_ascii_case(compiler::GENERATED_DETAIL_LIGHTING_TINT_KEY);
             let mut values = Vec::new();
             let mut compatible = true;
             for entity in &entities {
@@ -623,7 +631,8 @@ impl Session {
                 let property = class.and_then(|class| class.property(&field.key));
                 if entity.properties.get(&field.key).is_none() && property.is_none()
                     || property.is_some_and(|property| {
-                        property.kind != field.kind || property.read_only != field.read_only
+                        (!generated_detail_tint && property.kind != field.kind)
+                            || property.read_only != field.read_only
                     })
                 {
                     compatible = false;

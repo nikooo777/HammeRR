@@ -760,6 +760,33 @@ uninterpreted; native material acceptance and HDR radiance are separate checks.
 
 The software UI test `world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pending_edits` invokes the actual **Inspect applied sky…**, six face, **Refresh sky assets** and **Close** buttons. It verifies selected-face details, separate Patch provenance without repeating the root mount, preserved face choice during refresh, the applied name while a different skyname is staged, and an untouched transform draft and parent edit through repair and close. Create the directory named by `HAMMERR_UI_SNAPSHOTS` before enabling it; the test writes `sky-assets.png` through the offscreen backend.
 
+### Portable sky packing
+
+```sh
+cargo test -p source-formats flat_blocks
+cargo test -p compiler --lib sky_assets::
+cargo test -p compiler --test sky_packing
+cargo test -p editor-core --features mcp --lib sky_packing
+cargo test -p editor-core --features mcp --lib packed_
+cargo test -p editor sky_packing_controls_share_callbacks_restores_job_guards_and_result_statistics -- --test-threads=1
+python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-headless --output /tmp/hammerr-packed-sky-check
+```
+
+Compiler fixtures cover complete original LDR/HDR/Patch bytes, overridden runtime references, source and mount-lookup identity, strict raw-material admission, manifest/world consistency, offline closure reconstruction, collisions, aggregate budgets, cancellation and reflection rebasing. The compiler integration target covers default/explicit-off parity, Fullbright packing without capture context, unchanged non-PAK data, final write verification and CLI leases/failures. Session checks cover captured settings, atomic updates, freeze/closing rules, deferred source/destination/content guards, preserved previous outputs and source-free packed Run. Recipe/recent-map tests retain absent-field and disabled-field compatibility.
+
+The software UI test clicks **Pack sky assets**, restores it through recipes and recent maps, rejects active-job edits and displays only completed published packing statistics. It also prepares real packed statistics, changes the source VMF before publication, and checks that rejection preserves the old BSP without showing a **Packed sky assets** result. Create `HAMMERR_UI_SNAPSHOTS` before requesting snapshots; keys are `build-pack-sky-default`, `build-pack-sky-controls`, `build-pack-sky-active` and `build-pack-sky-details`.
+
+The private stdio script authors unique LDR and paired-HDR sky families, checks exact raw PAK/manifest bytes and statistics, compares synchronous/background builds, rejects missing dependencies without replacing output, removes the custom mount before reload and Run, and checks source/history preservation. Its normal mode uses a private recording launcher for staging checks and does not launch the native game. Use `--game-dir "/path/to/Counter-Strike Source"` for another installation and a fresh absent output directory.
+
+Build the [native HDR observer](#independent-ldr-and-hdr-lighting) before adding native views:
+
+```sh
+python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-headless --runtime --probe-library target/debug/hammerr_hdr_probe.so --output /tmp/hammerr-packed-sky-native
+python3 -B scripts/validate_packed_sky_assets.py --binary target/debug/hammerr-headless --runtime --reflections --probe-library target/debug/hammerr_hdr_probe.so --output /tmp/hammerr-packed-sky-reflections
+```
+
+`--runtime` requires the supported installed engine, running Steam, Cage, grim and the private launch prerequisites above. Each native case uses a fresh private process with `-insecure`, post-map `sv_lan 1`, verified hardware channel and no desktop input/focus change. Before loading the exact published or Run-staged BSP, an independent mounted-source inspection must show all six original custom materials absent. Native image checks compare all six face hues and quadrant orientation for LDR and HDR. `--reflections` additionally captures paired cubemaps and checks both manifests and private Run rebasing. Use `--steam-root` for a nondefault checked Steam root; `--reuse-fixture /path/to/fixture.json` repeats native views from hash-checked saved BSPs without repeating authoring/capture. Inspect `results.json`, `fixture.json` and per-view `runtime.json`; archive consistency alone does not establish native sky display.
+
 ### Recent maps and build recipes
 
 ```sh
@@ -770,7 +797,7 @@ python3 -B scripts/validate_recent_maps.py --binary target/debug/hammerr-headles
 python3 -B scripts/validate_build_recipes.py --binary target/debug/hammerr-headless --output /tmp/hammerr-build-recipes-check
 ```
 
-Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible seven-field build context, incompatible content, restart and storage repair. Remove/clear preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
+Recent-map checks use isolated preferences and multiple private stdio processes to cover MRU ordering/eviction, canonical aliases, missing/malformed files, dirty refusal, primary and auxiliary write failures, compatible eight-field build context, incompatible content, restart and storage repair. Remove/clear preserve map files and Undo. The script can omit `--output` to create a fresh temporary directory.
 
 Recipe checks cover immutable presets, bounded custom CRUD/apply, stale revisions, manual-value provenance invalidation, active/cancelling job guards, frozen completed-job names, output freshness, corrupt/oversized storage, conflict detection and atomic failure/retry. The headless script isolates recipe/recovery storage and verifies native compilation plus persistence across restart. Its output directory must not already exist; optional `--gameinfo` chooses a fixture game installation. Rebuild the selected executable before script validation when code changed; Cargo tests alone do not refresh the executable.
 

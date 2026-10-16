@@ -14,6 +14,7 @@ HammeRR includes its own native compiler, so it builds Counter-Strike: Source ma
    - **Indirect light**: **Direct only** (default), or **One diffuse bounce**, **Two diffuse bounces**, **Three diffuse bounces** or **Four diffuse bounces** to reflect light from world brushes and terrain.
    - **Brush smoothing angle**: **0°** keeps unassigned brush faces flat; higher angles blend eligible neighbors. Assigned face groups keep their rules.
    - **Sampling quality**, for either lit mode’s sky, model ambient and bounced light: **Fast (32 directions)**, **Balanced (128 directions)** or **Detailed (512 directions)**.
+   - **Pack sky assets**: include the applied sky family's supported materials and textures in the BSP. This is off by default and works with every lighting mode.
 3. Click **Close**, then **Compile** to build with the chosen settings, or **Run Map** to build and launch CS:S. Choose an output file if the map has not been saved.
 4. The progress bar below the toolbar offers **Build details…** to inspect the build. **Play built map** in that window launches the last successful build again without compiling, as long as the map and settings haven't changed.
 
@@ -56,6 +57,10 @@ captures both channels before a single publication. Read the capture runtime
 status and use **Configure capture…** when needed. **Fullbright** requires this
 setting off. See [Generated reflections](reflections.md).
 
+**Pack sky assets** (all lighting modes)
+
+Off by default. Embed the exact authored sky family's supported material and texture dependencies in the BSP. This works with **Fullbright**, **Direct LDR** and **Direct LDR + HDR**, independently of **Generate reflections**. See [Pack portable sky assets](#pack-portable-sky-assets) for steps and limits.
+
 **Physics bodies**
 
 - **No physics bodies** (default).
@@ -83,6 +88,26 @@ Visibility quality applies to every lighting mode. It is separate from the light
 - **Fast (32 directions)** (default), **Balanced (128 directions)** or **Detailed (512 directions)**: how many directions are sampled for [sky ambient and soft sun](#sun-and-sky), [model ambient](#model-ambient-lighting) and [bounced light](#bounced-light). More directions improve visibility sampling near narrow openings and make sun shadows less stepped, and take longer. Set **SunSpreadAngle** above zero to soften the sun's shadows.
 
 A previous build counts as out of date once its settings differ from the current ones.
+
+## Pack portable sky assets
+
+Include a custom sky with the map so playback can resolve its supported sky materials and textures from the BSP after the original custom content mount is removed.
+
+1. Open **World settings…**, set **SkyBox Texture Name** (`skyname`) to the exact mounted family, and click **Apply properties**. Custom definitions may label the field differently. **Inspect applied sky…** helps diagnose the six material and texture sources; packing applies stricter admission checks than read-only inspection.
+2. Open **Build settings…** and enable **Pack sky assets**. Keep **Generate reflections** off for packing alone; packing needs no native capture runtime and works with **Fullbright**. Enable reflections separately when the map also needs captured cubemaps.
+3. Click **Close**, then **Compile** or **Run Map**. Keep the original assets available until publication finishes. Missing, malformed, unsupported or changed dependencies stop publication and preserve the previous output; no alternate family or `_hdr` suffix is selected.
+4. Open **Build details…**. A completed, published build reports **Packed sky assets** with its family, **LDR** or **LDR + HDR**, file count and raw asset bytes. Counts exclude the manifest. Changing the current checkbox leaves this completed-build record unchanged and makes that build stale until its captured settings match again.
+5. Distribute the resulting BSP with the map. For a packing-only build, **Play built map** can still stage the packed sky after its original custom mount is removed and material assets are reloaded, provided the map and build settings still match. Other map dependencies must remain available normally; this setting packs the sky closure only.
+
+Supported families contain six static `UnlitGeneric` LDR faces, or six `Sky` faces with both LDR `$basetexture` and HDR `$hdrbasetexture` textures. HDR base textures must use RGBA16F or RGBA16 format. A declared HDR channel must be complete on all six faces even when the bake uses **Direct LDR** or **Fullbright**. Textures need complete VTF layouts, one frame, one face, depth one and at most 4096 pixels per axis.
+
+Packing retains the original six VMTs, bounded Patch include chains and every declared runtime LDR/HDR texture, including references overridden by Patch edits. It preserves file bytes, mip data, relative asset names and the authored `skyname`. Editor-only `%tooltexture` images are excluded. The supported VMT subset requires complete UTF-8 syntax with one root and unambiguous scalar declarations. Compressed HDR encodings, animation, conditions, proxies, unknown/nested material declarations, directives, duplicate keys, C-style block comments and bracket-wrapped scalar values reject. Patch replacement requires an existing key; insertion cannot change an existing value. Scalar rendering behavior and HDR pixel radiance are not evaluated.
+
+The BSP carries `hammerr/packed-sky.json`: a versioned list of its exact family, channels, canonical asset paths and SHA-256 hashes, without machine-specific mount paths. Publication checks the complete packed closure, current source identities and winning mounts, map/path/settings snapshot and destination before replacing output. **Run Map** and **Play built map** verify the closure from BSP bytes before staging; they do not reopen the original custom sky files. Run keeps the sky manifest and assets byte-for-byte while rebasing generated reflection names into its private namespace.
+
+Packing happens before optional reflection capture. Both features share the same final archive budget and one guarded publication. Combined reflection builds retain their native runtime and content-freshness requirements; packing alone does not add these reflection requirements. Packing does not choose the game's LDR/HDR channel, bake light from the image or add an HDR editor preview.
+
+Limits: 128 source assets, 1 MiB per VMT, 16 MiB per PAK entry and 259 bytes per full relative PAK name. The complete archive, including the sky manifest, existing entries and generated reflections, is bounded to 64 MiB encoded and 64 MiB decoded, with at most 4096 entries. Manifest JSON is at most 64 KiB; the BSP limit is 512 MiB. Existing case-insensitive name collisions reject rather than overwrite. Offline world verification requires one first `worldspawn` with one `skyname` matching the manifest exactly; entity text is bounded to 4 MiB, 65,536 blocks and 262,144 total key/value pairs. These are HammeRR admission limits.
 
 ## What gets compiled
 
@@ -194,7 +219,7 @@ do not add baked shadows or collision.
 
 ![Independent LDR and HDR build controls](images/build-hdr-controls.png)
 
-Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh map load; live changes may trigger save/reload. Enable **Generate reflections** to capture paired LDR/HDR cubemaps after baking; complete HDR arrays and a supported capture runtime are required. Mounted HDR sky families use the [authored sky name and native material path](sky.md#compiled-hdr-skies); separate [sky asset inspection](sky.md#inspect-mounted-sky-assets) checks supported material/VTF structure. Automatic sky structure admission checks, HDR sky radiance validation, portable custom sky packing, exposure authoring, editor HDR previews and baked prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
+Limits: this is an experimental compiler mode. A successful compile or an **HDR data ready** result does not establish that the game selected HDR. Native HDR requires nonempty HDR light samples, world lights and ambient samples, plus game and hardware support. Empty scenes do not receive dummy records. The game’s HDR setting must be selected before a fresh map load; live changes may trigger save/reload. Enable **Generate reflections** to capture paired LDR/HDR cubemaps after baking; complete HDR arrays and a supported capture runtime are required. Mounted HDR sky families use the [authored sky name and native material path](sky.md#compiled-hdr-skies); [Pack sky assets](#pack-portable-sky-assets) admits and embeds the supported complete material/VTF closure. HDR sky radiance validation, exposure authoring, editor HDR previews and baked prop lightmaps remain unfinished. Each channel shares the existing geometry and lighting limits; the 100-million-work cap covers the complete build’s lighting preparation and both passes.
 
 #### Brush-entity lightmaps
 

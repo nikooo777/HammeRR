@@ -31,7 +31,7 @@ MCP provides the same report through `inspect_sky_assets {}`. It reads current m
 
 Inspection supports static `Sky` and `UnlitGeneric` material declarations with bounded Patch resolution. LDR requires `$basetexture`; HDR requires `Sky` with `$hdrbasetexture` in RGBA16F or RGBA16 format. VTF layout must be complete, with one frame, one face, depth one and at most 4096 pixels per axis. Compressed HDR declarations, unknown parameters and nested material effects produce explicit issues. The report permits 128 distinct asset lookups, 64 MiB total reads and 1 MiB per material; limits and read counts accompany the result. Family names are limited to 256 bytes and must be relative, without surrounding whitespace or control characters.
 
-Structural readiness does not decode HDR pixel radiance or establish shader rendering. A declared texture transform can pass inspection while remaining unsupported by the LDR preview. Automatic compiler admission checks for sky structure, portable custom sky packing and an HDR editor preview remain separate work.
+Structural readiness does not decode HDR pixel radiance or establish shader rendering. A declared texture transform can pass inspection while remaining unsupported by the LDR preview. Explicit [Pack sky assets](compile-and-play.md#pack-portable-sky-assets) applies stricter complete raw-material and dependency checks before embedding original files. HDR radiance validation and an HDR editor preview remain separate work.
 
 ## Compiled HDR skies
 
@@ -41,7 +41,9 @@ CS:S resolves the exact authored sky family from mounted game content. Stock fam
 2. For a dual-channel map, open **Build settings…** and choose **Build lighting → Direct LDR + HDR**. Compile the map and check **HDR native map data** in **Build details…**.
 3. Select HDR in the game before loading the map. Native HDR still requires complete map data and game/hardware support; see [HDR channels](compile-and-play.md#hdr-channels).
 
-The compiler preserves `skyname`. Original sky materials and textures must remain available through the game's mounts; compilation does not automatically pack a custom sky into the BSP. **Inspect applied sky…** checks supported material and HDR VTF structure separately from compilation. **Generate reflections** checks referenced sky asset existence and source hashes as part of its capture guards, without establishing HDR sky radiance or shader rendering.
+The compiler preserves `skyname`. With default settings, original sky materials and textures must remain available through the game's mounts. Enable **Build settings… → Pack sky assets** to embed the supported complete family with original bytes and names; packing-only playback can then resolve the sky without the original custom mount. Packing works with **Fullbright** or either lit mode and includes every supported declared channel independently of the bake. See [Pack portable sky assets](compile-and-play.md#pack-portable-sky-assets) for its subset, publication guards and Run behavior.
+
+**Inspect applied sky…** remains a separate read-only material/VTF report. **Generate reflections** retains its own source guards and native/content-freshness requirements. Neither inspection nor packing establishes HDR pixel radiance, shader rendering or the game's selected channel.
 
 The editor continues to preview the family's LDR `$basetexture` fallback. The status **six LDR faces ready** describes that preview, without establishing HDR asset readiness or the game's selected channel. Baked sunlight and sky ambient use authored `light_environment` values rather than deriving lighting from the sky image.
 

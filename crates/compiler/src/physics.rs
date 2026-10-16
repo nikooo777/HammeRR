@@ -280,7 +280,10 @@ fn plan(
                             .ok_or("Model mass face count overflow")?,
                 )
                 .ok_or("Model mass faces escape the emitted BSP array")?;
-            Some(model_mass_material(map, model, faces)?)
+            let shapes = groups
+                .get(&MASK_SOLID)
+                .ok_or("Brush-model mass requires solid collision shapes")?;
+            Some(model_mass_material(map, shapes, faces)?)
         } else {
             None
         };
@@ -391,7 +394,7 @@ fn plan(
 
 fn model_mass_material(
     map: &Map,
-    model: &emit::Model,
+    shapes: &[Shape],
     faces: &[source_formats::bsp::Face],
 ) -> Result<(String, f32), String> {
     let mut areas = Vec::with_capacity(faces.len());
@@ -402,12 +405,11 @@ fn model_mass_material(
         areas.push((material_name(map, material)?.to_owned(), face.area));
     }
     let hidden = if areas.is_empty() {
-        let side = map.entities[model.entity]
-            .brushes
+        let side = shapes
             .iter()
-            .flat_map(|&index| &map.brushes[index].sides)
+            .flat_map(|shape| &map.brushes[shape.brush as usize].sides)
             .find(|side| !side.bevel)
-            .ok_or("Brush-model mass needs a source brush side")?;
+            .ok_or("Brush-model mass needs an included collision brush side")?;
         Some(material_name(map, side.material)?.to_owned())
     } else {
         None
